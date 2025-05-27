@@ -2,10 +2,14 @@ package manifest
 
 // Manifest defines the structure of the project manifest.
 type Manifest struct {
-	ApiVersion   string               `json:"apiVersion,omitempty" yaml:"apiVersion,omitempty"`
-	Project      string               `json:"project" yaml:"project"`
-	Environments []Environment        `json:"environments,omitempty" yaml:"environments,omitempty"`
-	Components   map[string]Component `json:"components" yaml:"components"`
+	// ApiVersion is the schema version of the manifest (e.g., "v1-alpha.1").
+	ApiVersion string `json:"apiVersion,omitempty" yaml:"apiVersion,omitempty"`
+	// Project is the project name.
+	Project string `json:"project" yaml:"project"`
+	// Environments is a list of environment definitions.
+	Environments []Environment `json:"environments,omitempty" yaml:"environments,omitempty"`
+	// Components is a map of component names to their configuration.
+	Components map[string]Component `json:"components" yaml:"components"`
 }
 
 // Environment defines the environment definition in the project.

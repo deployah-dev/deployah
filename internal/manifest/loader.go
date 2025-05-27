@@ -13,9 +13,6 @@ const (
 	DefaultManifestPath = ".deployah.yaml"
 )
 
-const DefaultEnvFile = ".env"
-const DefaultConfigFile = "config.yaml"
-
 // ResolveEnvironment returns the environment by name, or the default if name is empty.
 // Returns an error if not found or if multiple environments are defined but none specified.
 func ResolveEnvironment(environments []Environment, desiredEnvironment string) (*Environment, error) {
@@ -92,8 +89,10 @@ func fileExists(path string) bool {
 	return err == nil && !info.IsDir()
 }
 
-// Load loads the manifest from the given path, and resolves the environment.
-// It also substitutes variables in the manifest YAML.
+// Load reads and parses the manifest YAML file at the given path, resolves the environment
+// (using the provided envName or default resolution rules), and substitutes variables
+// according to precedence (environment definition < env file < OS environment).
+// Returns the fully parsed Manifest struct or an error.
 func Load(path string, envName string) (*Manifest, error) {
 	if path == "" {
 		path = DefaultManifestPath
