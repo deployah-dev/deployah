@@ -1,0 +1,108 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://deployah.dev/schemas/v1-alpha.1/environments.json",
+    "title": "Deployah Environments",
+    "description": "Schema for the environments section of the Deployah manifest.",
+    "type": "object",
+    "properties": {
+        "environments": {
+            "title": "Environments",
+            "description": "List of environment definitions. If not specified or empty, Deployah will fall back to hardcoded conventions such as config.yaml and .env.",
+            "type": "array",
+            "items": {
+                "type": "object",
+                "title": "Environment Definition",
+                "description": "The environment definition.",
+                "additionalProperties": false,
+                "uniqueItems": true,
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "title": "Environment Name",
+                        "description": "The name of the environment. Must be unique within the project.",
+                        "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*(?:/\\*)?$",
+                        "minLength": 2,
+                        "examples": [
+                            "development",
+                            "review/*",
+                            "testing/*",
+                            "production",
+                            "staging"
+                        ]
+                    },
+                    "envFile": {
+                        "type": "string",
+                        "title": "Environment File",
+                        "description": "The environment file to use for the environment. The {name} placeholder will be dynamically replaced with the environment name during processing.",
+                        "default": ".env.{name}",
+                        "examples": [
+                            ".env.production"
+                        ]
+                    },
+                    "configFile": {
+                        "type": "string",
+                        "title": "Configuration File",
+                        "description": "Specifies the configuration file to use for the environment. The {name} placeholder will be dynamically replaced with the environment name during processing.",
+                        "default": "config.{name}.yaml",
+                        "examples": [
+                            "config.staging.yaml"
+                        ]
+                    },
+                    "variables": {
+                        "type": "object",
+                        "title": "Template Variables",
+                        "description": "Template variables for the environment, used to substitute placeholders in the .deployah.yaml file. Values must be a string, number, or boolean. Complex types like arrays or objects are not allowed.",
+                        "propertyNames": {
+                            "type": "string",
+                            "title": "Variable Name",
+                            "description": "The name of the variable.",
+                            "pattern": "^[A-Z0-9]+(?:_[A-Z0-9]+)*$"
+                        },
+                        "additionalProperties": {
+                            "type": [
+                                "string",
+                                "number",
+                                "boolean"
+                            ]
+                        },
+                        "examples": [
+                            {
+                                "APP_ENV": "production",
+                                "REPLICAS": 3,
+                                "DEBUG": false
+                            }
+                        ],
+                        "default": {}
+                    }
+                },
+                "required": [
+                    "name"
+                ]
+            }
+        }
+    },
+    "required": ["environments"],
+    "additionalProperties": true,
+    "examples": [
+        [
+            {
+                "name": "production",
+                "envFile": ".env.production",
+                "configFile": "config.production.yaml",
+                "variables": {
+                    "APP_ENV": "production",
+                    "REPLICAS": 3
+                }
+            },
+            {
+                "name": "staging",
+                "envFile": ".env.staging",
+                "configFile": "config.staging.yaml",
+                "variables": {
+                    "APP_ENV": "staging",
+                    "REPLICAS": 1
+                }
+            }
+        ]
+    ]
+}

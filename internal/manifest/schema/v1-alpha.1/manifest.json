@@ -1,0 +1,542 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://deployah.dev/schemas/v1-alpha.1/manifest.json",
+    "title": "Deployah Configuration",
+    "description": "Deployah configuration file, used to configure the deployment process.",
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+        "apiVersion": {
+            "type": "string",
+            "title": "API Version",
+            "description": "Schema version, e.g. v1-alpha.1, v1-beta.2, v1-rc.1, v1",
+            "pattern": "^v[0-9]+(-(alpha|beta|rc)\\.[0-9]+)?$",
+            "examples": [
+                "v1-alpha.1",
+                "v1-beta.2",
+                "v1-rc.1",
+                "v1"
+            ]
+        },
+        "project": {
+            "type": "string",
+            "title": "Project Name",
+            "description": "The project name used to identify deployments and prefix Kubernetes resources. Must be a valid DNS-1123 subdomain containing only lowercase alphanumeric characters or '-'. Must start and end with an alphanumeric character.",
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+            "minLength": 3,
+            "maxLength": 64
+        },
+        "components": {
+            "type": "object",
+            "title": "Components Configuration",
+            "description": "The components configuration, defining deployable units in the project.",
+            "propertyNames": {
+                "type": "string",
+                "title": "Component Name",
+                "description": "The name of the component.",
+                "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                "minLength": 2
+            },
+            "minProperties": 1,
+            "patternProperties": {
+                "^[a-z0-9]+(?:-[a-z0-9]+)*$": {
+                    "type": "object",
+                    "title": "Component",
+                    "description": "A deployable unit in the project.",
+                    "additionalProperties": false,
+                    "properties": {
+                        "role": {
+                            "type": "string",
+                            "title": "Component Role",
+                            "description": "Defines the role of the component within the application and determines the default deployment strategy. Possible values: service, worker, job. Defaults to service if not specified. 'service' means the component is externally accessible; 'worker' is for long-running or background tasks; 'job' is for one-off tasks.",
+                            "default": "service",
+                            "enum": [
+                                "service",
+                                "worker",
+                                "job"
+                            ]
+                        },
+                        "envFile": {
+                            "type": "string",
+                            "title": "Environment File",
+                            "description": "Specifies the environment file for the component. If not provided, it defaults to .env.{componentName} or .env.{componentName}.{environmentName}. If both files exist, they will be merged together, with values from .env.{componentName}.{environmentName} overriding those in .env.{componentName}. Example: .env.api or .env.api.production.",
+                            "examples": [
+                                ".env.api",
+                                ".env.api.production"
+                            ]
+                        },
+                        "configFile": {
+                            "type": "string",
+                            "title": "Configuration File",
+                            "description": "Specifies the configuration file to use for the component. If not provided, it defaults to config.{componentName}.yaml or config.{componentName}.{environmentName}.yaml. If both files exist, they will be merged together, with values from config.{componentName}.{environmentName}.yaml overriding those in config.{componentName}.yaml.",
+                            "examples": [
+                                "config.api.yaml",
+                                "config.api.production.yaml"
+                            ]
+                        },
+                        "environments": {
+                            "type": "array",
+                            "title": "Environments",
+                            "description": "Specifies the environments where this component should be deployed. The values must correspond to environment names defined in your external configuration.",
+                            "minItems": 1,
+                            "items": {
+                                "type": "string"
+                            },
+                            "examples": [
+                                "env1",
+                                "env2"
+                            ]
+                        },
+                        "kind": {
+                            "type": "string",
+                            "title": "Component Kind",
+                            "description": "Specifies the kind of component. Use 'stateless' for components that can be easily scaled, such as API services or workers that do not require persistent storage. Use 'stateful' for components that require a persistent volume. Defaults to 'stateless' if not specified.",
+                            "default": "stateless",
+                            "enum": [
+                                "stateless",
+                                "stateful"
+                            ]
+                        },
+                        "image": {
+                            "type": "string",
+                            "title": "Container Image",
+                            "description": "Specifies the container image to use for the component, including the image name and optionally a tag or digest. If no tag is specified, ':latest' will be used by default.",
+                            "examples": [
+                                "nginx:1.28.0-alpine",
+                                "nginx@sha256:37075895d8461222f53afa7804aec2c57d69f9842995705cc54a0c4a70d68fc9",
+                                "nginx",
+                                "myregistry.com/myapp/backend:2.0",
+                                "wait4x/wait4x:latest"
+                            ]
+                        },
+                        "command": {
+                            "type": "array",
+                            "title": "Command",
+                            "description": "Specifies the command to run in the container, overriding the container image's ENTRYPOINT. The command should be provided as a list of strings. If both 'command' and 'args' are specified, 'command' replaces the ENTRYPOINT and 'args' replaces the CMD, following Docker conventions.",
+                            "items": {
+                                "type": "string"
+                            },
+                            "examples": [
+                                [
+                                    "python",
+                                    "app.py"
+                                ],
+                                [
+                                    "bash",
+                                    "-c",
+                                    "echo Hello, World!"
+                                ]
+                            ]
+                        },
+                        "args": {
+                            "type": "array",
+                            "title": "Arguments",
+                            "description": "Specifies arguments passed to the container's command. Overrides the container image's CMD. Should be provided as a list of strings.",
+                            "items": {
+                                "type": "string"
+                            },
+                            "examples": [
+                                [
+                                    "--port",
+                                    "8080"
+                                ],
+                                [
+                                    "--config",
+                                    "/etc/config.yaml"
+                                ],
+                                [
+                                    "http",
+                                    "http://localhost:8080"
+                                ]
+                            ]
+                        },
+                        "port": {
+                            "type": "integer",
+                            "title": "Port",
+                            "description": "Specifies the port on which the component listens. Defaults to 8080 if not specified. Ports below 1024 are restricted.",
+                            "default": 8080,
+                            "minimum": 1024,
+                            "maximum": 65535,
+                            "examples": [
+                                8181,
+                                9000
+                            ]
+                        },
+                        "autoscaling": {
+                            "type": "object",
+                            "title": "Autoscaling Configuration",
+                            "description": "Defines the autoscaling settings for the component, allowing automatic adjustment of replicas based on resource usage.",
+                            "additionalProperties": false,
+                            "properties": {
+                                "enabled": {
+                                    "type": "boolean",
+                                    "title": "Enabled",
+                                    "description": "Indicates whether autoscaling is enabled for the component.",
+                                    "default": false
+                                },
+                                "minReplicas": {
+                                    "type": "integer",
+                                    "title": "Minimum Replicas",
+                                    "description": "Specifies the minimum number of replicas to maintain when autoscaling is enabled.",
+                                    "default": 2,
+                                    "minimum": 1
+                                },
+                                "maxReplicas": {
+                                    "type": "integer",
+                                    "title": "Maximum Replicas",
+                                    "description": "Specifies the maximum number of replicas allowed when autoscaling is enabled.",
+                                    "default": 5,
+                                    "minimum": 1
+                                },
+                                "metrics": {
+                                    "title": "Metrics",
+                                    "description": "Defines the metrics used to trigger autoscaling.",
+                                    "type": "array",
+                                    "minItems": 1,
+                                    "items": {
+                                        "type": "object",
+                                        "title": "Metric",
+                                        "description": "Configuration for an individual autoscaling metric.",
+                                        "additionalProperties": false,
+                                        "properties": {
+                                            "type": {
+                                                "type": "string",
+                                                "title": "Metric Type",
+                                                "description": "The type of metric to monitor. Allowed values: 'cpu', 'memory'.",
+                                                "enum": [
+                                                    "cpu",
+                                                    "memory"
+                                                ]
+                                            },
+                                            "target": {
+                                                "type": "integer",
+                                                "title": "Target Value",
+                                                "description": "The target value for the metric (e.g., target CPU or memory utilization percentage).",
+                                                "minimum": 1
+                                            }
+                                        },
+                                        "required": [
+                                            "type",
+                                            "target"
+                                        ]
+                                    },
+                                    "default": [
+                                        {
+                                            "type": "cpu",
+                                            "target": 75
+                                        }
+                                    ],
+                                    "examples": [
+                                        [
+                                            {
+                                                "type": "cpu",
+                                                "target": 70
+                                            },
+                                            {
+                                                "type": "memory",
+                                                "target": 80
+                                            }
+                                        ]
+                                    ]
+                                }
+                            },
+                            "required": [
+                                "enabled",
+                                "minReplicas",
+                                "maxReplicas"
+                            ],
+                            "examples": [
+                                {
+                                    "enabled": true,
+                                    "minReplicas": 2,
+                                    "maxReplicas": 6,
+                                    "metrics": [
+                                        {
+                                            "type": "cpu",
+                                            "target": 70
+                                        }
+                                    ]
+                                },
+                                {
+                                    "enabled": true,
+                                    "minReplicas": 3,
+                                    "maxReplicas": 10,
+                                    "metrics": [
+                                        {
+                                            "type": "cpu",
+                                            "target": 65
+                                        },
+                                        {
+                                            "type": "memory",
+                                            "target": 75
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        "resources": {
+                            "type": "object",
+                            "title": "Resource Configuration",
+                            "description": "Defines the resource requests and limits for the component, including CPU, memory, and ephemeral storage. At least one resource field must be specified.",
+                            "additionalProperties": false,
+                            "properties": {
+                                "cpu": {
+                                    "type": "string",
+                                    "title": "CPU",
+                                    "description": "Specifies the CPU resource request or limit. Use Kubernetes format (e.g., '500m' for 0.5 CPU or '1' for 1 CPU core).",
+                                    "pattern": "^([1-9][0-9]*m?|[1-9][0-9]*|0m)$"
+                                },
+                                "memory": {
+                                    "type": "string",
+                                    "title": "Memory",
+                                    "description": "Specifies the memory resource request or limit. Use standard units like '256Mi' or '1Gi'.",
+                                    "pattern": "^[1-9][0-9]*(Ki|Mi|Gi|Ti|Pi|Ei)$"
+                                },
+                                "ephemeralStorage": {
+                                    "type": "string",
+                                    "title": "Ephemeral Storage",
+                                    "description": "Specifies the ephemeral storage resource request or limit. Use units like '500Mi' or '2Gi'.",
+                                    "pattern": "^[1-9][0-9]*(Ki|Mi|Gi|Ti|Pi|Ei)$"
+                                }
+                            },
+                            "anyOf": [
+                                {
+                                    "required": [
+                                        "cpu"
+                                    ]
+                                },
+                                {
+                                    "required": [
+                                        "memory"
+                                    ]
+                                },
+                                {
+                                    "required": [
+                                        "ephemeralStorage"
+                                    ]
+                                }
+                            ],
+                            "examples": [
+                                {
+                                    "cpu": "500m",
+                                    "memory": "512Mi"
+                                },
+                                {
+                                    "ephemeralStorage": "2Gi"
+                                }
+                            ]
+                        },
+                        "resourcePreset": {
+                            "type": "string",
+                            "title": "Resource Preset",
+                            "description": "Specifies a predefined resource configuration preset. Available values: nano, micro, small, medium, large, xlarge, 2xlarge. Higher presets may increase costs and depend on cluster capacity.",
+                            "enum": [
+                                "nano",
+                                "micro",
+                                "small",
+                                "medium",
+                                "large",
+                                "xlarge",
+                                "2xlarge"
+                            ],
+                            "examples": [
+                                "small",
+                                "medium",
+                                "xlarge"
+                            ]
+                        },
+                        "ingress": {
+                            "type": "object",
+                            "title": "Ingress Configuration",
+                            "description": "Specifies the ingress settings for exposing the component via HTTP/HTTPS.",
+                            "additionalProperties": false,
+                            "properties": {
+                                "host": {
+                                    "type": "string",
+                                    "title": "Host",
+                                    "description": "The hostname through which the component will be accessible (e.g., 'api.example.com').",
+                                    "pattern": "^(\\*\\.)?([a-zA-Z0-9-]+\\.)+[a-zA-Z]{2,}$"
+                                },
+                                "tls": {
+                                    "type": "boolean",
+                                    "title": "TLS",
+                                    "description": "Indicates whether TLS is enabled for secure HTTPS access. Defaults to false.",
+                                    "default": false
+                                }
+                            },
+                            "required": [
+                                "host"
+                            ],
+                            "examples": [
+                                {
+                                    "host": "app.example.com",
+                                    "tls": true
+                                },
+                                {
+                                    "host": "api.mydomain.dev"
+                                }
+                            ]
+                        },
+                        "env": {
+                            "type": "object",
+                            "title": "Environment Variables",
+                            "description": "Defines environment variables for the component as key-value pairs. Keys must be uppercase letters, numbers, or underscores, starting with a letter or underscore. Values must be a string, number, or boolean. Complex types like arrays or objects are not allowed.",
+                            "patternProperties": {
+                                "^[A-Z_][A-Z0-9_]*$": {
+                                    "type": [
+                                        "string",
+                                        "number",
+                                        "boolean"
+                                    ]
+                                }
+                            },
+                            "additionalProperties": false,
+                            "examples": [
+                                {
+                                    "NODE_ENV": "production",
+                                    "DEBUG": true,
+                                    "MAX_RETRIES": 5,
+                                    "TIMEOUT": 30.5
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "environments": {
+            "type": "array",
+            "title": "Environments",
+            "description": "List of environment definitions. If not specified or empty, Deployah will fall back to hardcoded conventions such as config.yaml and .env.",
+            "items": {
+                "type": "object",
+                "title": "Environment Definition",
+                "description": "The environment definition.",
+                "additionalProperties": false,
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "title": "Environment Name",
+                        "description": "The name of the environment. Must be unique within the project.",
+                        "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*(?:/\\*)?$",
+                        "minLength": 2,
+                        "examples": [
+                            "development",
+                            "review/*",
+                            "testing/*",
+                            "production",
+                            "staging"
+                        ]
+                    },
+                    "envFile": {
+                        "type": "string",
+                        "title": "Environment File",
+                        "description": "The environment file to use for the environment. The {name} placeholder will be dynamically replaced with the environment name during processing.",
+                        "default": ".env.{name}",
+                        "examples": [
+                            ".env.production"
+                        ]
+                    },
+                    "configFile": {
+                        "type": "string",
+                        "title": "Configuration File",
+                        "description": "Specifies the configuration file to use for the environment. The {name} placeholder will be dynamically replaced with the environment name during processing.",
+                        "default": "config.{name}.yaml",
+                        "examples": [
+                            "config.staging.yaml"
+                        ]
+                    },
+                    "variables": {
+                        "type": "object",
+                        "title": "Template Variables",
+                        "description": "Template variables for the environment, used to substitute placeholders in the .deployah.yaml file. Values must be a string, number, or boolean. Complex types like arrays or objects are not allowed.",
+                        "propertyNames": {
+                            "type": "string",
+                            "title": "Variable Name",
+                            "description": "The name of the variable.",
+                            "pattern": "^[A-Z0-9]+(?:_[A-Z0-9]+)*$"
+                        },
+                        "additionalProperties": {
+                            "type": [
+                                "string",
+                                "number",
+                                "boolean"
+                            ]
+                        },
+                        "examples": [
+                            {
+                                "APP_ENV": "production",
+                                "REPLICAS": 3,
+                                "DEBUG": false
+                            }
+                        ],
+                        "default": {}
+                    }
+                },
+                "required": [
+                    "name"
+                ]
+            }
+        }
+    },
+    "required": [
+        "apiVersion",
+        "project",
+        "components"
+    ],
+    "examples": [
+        {
+            "apiVersion": "v1-beta.2",
+            "project": "demo-project",
+            "environments": [
+                {
+                    "name": "production",
+                    "envFile": ".env.production",
+                    "configFile": "config.production.yaml"
+                },
+                {
+                    "name": "staging",
+                    "envFile": ".env.staging",
+                    "configFile": "config.staging.yaml"
+                }
+            ],
+            "components": {
+                "web": {
+                    "role": "service",
+                    "kind": "stateless",
+                    "image": "nginx:latest",
+                    "port": 8080,
+                    "ingress": {
+                        "host": "example.com",
+                        "tls": true
+                    }
+                },
+                "api": {
+                    "role": "service",
+                    "kind": "stateless",
+                    "image": "api:latest",
+                    "port": 8080,
+                    "autoscaling": {
+                        "enabled": true,
+                        "minReplicas": 2,
+                        "maxReplicas": 5,
+                        "metrics": [
+                            {
+                                "type": "cpu",
+                                "target": 75
+                            },
+                            {
+                                "type": "memory",
+                                "target": 80
+                            }
+                        ]
+                    },
+                    "resources": {
+                        "cpu": "100m",
+                        "memory": "256Mi"
+                    }
+                }
+            }
+        }
+    ]
+}
