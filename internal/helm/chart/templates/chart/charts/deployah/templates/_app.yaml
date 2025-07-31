@@ -1,0 +1,30 @@
+{{- define "deployah.app" -}}
+{{- if .Values.configMap.data }}
+{{ include "deployah.configmap" . }}
+{{- end }}
+
+{{- if .Values.image.repository }}
+{{ include "deployah.deployment" . }}
+{{- end }}
+
+{{ include "deployah.persistence" . }}
+
+{{ include "deployah.hpa" . }}
+{{ include "deployah.ingress" . }}
+
+{{- if or .Values.secret.data .Values.secret.stringData }}
+{{ include "deployah.secret" . }}
+{{- end }}
+
+{{ include "deployah.tls.secrets" . }}
+{{ include "deployah.tls.selfsigned" . }}
+
+{{- if and .Values.ports .Values.service.ports }}
+{{ include "deployah.service" . }}
+{{- end }}
+
+{{ include "deployah.serviceaccount" . }}
+{{ include "deployah.servicemonitor" . }}
+{{ include "deployah.cronjob" . }}
+{{ include "deployah.podmonitor" . }}
+{{- end }}

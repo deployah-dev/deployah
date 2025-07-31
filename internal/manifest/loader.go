@@ -1,3 +1,4 @@
+// Package manifest provides functions for parsing and manipulating manifest files.
 package manifest
 
 import (
@@ -5,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"github.com/charmbracelet/log"
 
 	"sigs.k8s.io/yaml"
 )
@@ -42,7 +44,7 @@ func ResolveEnvironment(environments []Environment, desiredEnvironment string) (
 	// If multiple environments are defined, and no environment is specified, return an error.
 	if len(environments) > 1 && desiredEnvironment == "" {
 		return nil, fmt.Errorf(
-			"multiple environments found but none specified, use --env with one of: %s",
+			"multiple environments found but none specified: %s",
 			formatEnvNames(environments),
 		)
 	}
@@ -134,7 +136,7 @@ func Load(path string, envName string) (*Manifest, error) {
 		return nil, fmt.Errorf("failed to select environment: %w", err)
 	}
 
-	fmt.Printf("[INFO] Selected environment: %s\n", env.Name)
+	log.Infof("Selected environment: %s", env.Name)
 
 	envFilePath, explicitlySet, err := resolveEnvFile(env)
 	if err != nil {
@@ -142,12 +144,12 @@ func Load(path string, envName string) (*Manifest, error) {
 	}
 	if envFilePath != "" {
 		if explicitlySet {
-			fmt.Printf("[INFO] Using explicitly set env file: %s\n", envFilePath)
+			log.Infof("Using explicily set env file: %s", envFilePath)
 		} else {
-			fmt.Printf("[INFO] Using resolved env file: %s\n", envFilePath)
+			log.Infof("Using resolved env file: %s", envFilePath)
 		}
 	} else {
-		fmt.Printf("[INFO] No env file found for environment '%s', proceeding without env file.\n", env.Name)
+		log.Infof("No env file found for environment '%s', proceeding without env file.", env.Name)
 	}
 
 	// Set the resolved env file path for substitution
@@ -175,6 +177,8 @@ func Load(path string, envName string) (*Manifest, error) {
 	if err := yaml.Unmarshal([]byte(substituted), &finalManifest); err != nil {
 		return nil, fmt.Errorf("failed to parse manifest YAML: %w", err)
 	}
+
+	FillManifestWithDefaults(&finalManifest, version)
 
 	return &finalManifest, nil
 }

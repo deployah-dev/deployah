@@ -1,3 +1,4 @@
+// Package manifest provides functions for parsing and manipulating manifest files.
 package manifest
 
 // Manifest defines the structure of the project manifest.
@@ -32,22 +33,18 @@ type Component struct {
 	Args           []string          `json:"args,omitempty" yaml:"args,omitempty"`
 	Port           int               `json:"port,omitempty" yaml:"port,omitempty"`
 	Autoscaling    *Autoscaling      `json:"autoscaling,omitempty" yaml:"autoscaling,omitempty"`
-	Resources      Resources         `json:"resources" yaml:"resources"`
-	ResourcePreset ResourcePreset    `json:"resourcePreset" yaml:"resourcePreset"`
-	Ingress        Ingress           `json:"ingress" yaml:"ingress"`
-	Env            map[string]string `json:"env" yaml:"env"`
+	Resources      Resources         `json:"resources,omitempty" yaml:"resources,omitempty"`
+	ResourcePreset ResourcePreset    `json:"resourcePreset,omitempty" yaml:"resourcePreset,omitempty"`
+	Ingress        Ingress           `json:"ingress,omitempty" yaml:"ingress,omitempty"`
+	Env            map[string]string `json:"env,omitempty" yaml:"env,omitempty"`
 }
 
 // Autoscaling defines the autoscaling settings for the component.
 type Autoscaling struct {
-	Enabled        bool              `json:"enabled,omitempty" yaml:"enabled,omitempty"`
-	MinReplicas    int               `json:"minReplicas,omitempty" yaml:"minReplicas,omitempty"`
-	MaxReplicas    int               `json:"maxReplicas,omitempty" yaml:"maxReplicas,omitempty"`
-	Metrics        []Metric          `json:"metrics,omitempty" yaml:"metrics,omitempty"`
-	Resources      Resources         `json:"resources" yaml:"resources"`
-	ResourcePreset ResourcePreset    `json:"resourcePreset" yaml:"resourcePreset"`
-	Ingress        Ingress           `json:"ingress" yaml:"ingress"`
-	Env            map[string]string `json:"env" yaml:"env"`
+	Enabled     bool     `json:"enabled,omitempty" yaml:"enabled,omitempty"`
+	MinReplicas int      `json:"minReplicas,omitempty" yaml:"minReplicas,omitempty"`
+	MaxReplicas int      `json:"maxReplicas,omitempty" yaml:"maxReplicas,omitempty"`
+	Metrics     []Metric `json:"metrics,omitempty" yaml:"metrics,omitempty"`
 }
 
 // Metric defines a metric used to trigger autoscaling.
@@ -58,9 +55,9 @@ type Metric struct {
 
 // Resources defines the resource requests and limits for the component.
 type Resources struct {
-	CPU              string `json:"cpu" yaml:"cpu"`
-	Memory           string `json:"memory" yaml:"memory"`
-	EphemeralStorage string `json:"ephemeralStorage" yaml:"ephemeralStorage"`
+	CPU              string `json:"cpu,omitempty" yaml:"cpu,omitempty"`
+	Memory           string `json:"memory,omitempty" yaml:"memory,omitempty"`
+	EphemeralStorage string `json:"ephemeralStorage,omitempty" yaml:"ephemeralStorage,omitempty"`
 }
 
 // Ingress specifies the ingress settings for exposing the component via HTTP/HTTPS.

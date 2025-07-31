@@ -1,0 +1,10 @@
+apiVersion: v2
+name: deployah
+version: 0.1.0-alpha.1
+dependencies:
+- name: common
+  repository: oci://registry-1.docker.io/bitnamicharts
+  version: 2.29.1
+description: A Helm Chart library intended for use as a dependency to deploy applications. This chart cannot be deployed directly.
+type: library
+appVersion: 0.1.0-alpha.1

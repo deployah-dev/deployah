@@ -1,0 +1,6 @@
+dependencies:
+- name: deployah
+  repository: file://charts/deployah
+  version: 0.1.0-alpha.1
+digest: sha256:ab91bc9dfec3b6408c78ece8ac8ac1c92289e3df228b2642e1caed8613b2d50e
+generated: "2025-07-27T13:56:17.817620119+02:00"

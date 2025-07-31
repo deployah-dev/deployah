@@ -71,6 +71,7 @@ func Execute() {
 	rootCmd.AddCommand(
 		NewInitCommand(),
 		NewValidateCommand(),
+		NewDeployCommand(),
 	)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)

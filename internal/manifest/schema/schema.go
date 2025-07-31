@@ -1,3 +1,4 @@
+// Package schema offers utilities for accessing and managing versioned schema files.
 package schema
 
 import (

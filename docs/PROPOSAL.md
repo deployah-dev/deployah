@@ -5,6 +5,7 @@
 This proposal outlines the development of a CLI tool named **Deployah** that simplifies the deployment of applications using Helm without requiring any prior knowledge of Kubernetes or Helm. The tool will serve as a wrapper around the Helm Go SDK, abstracting the complexities of Helm charts and Kubernetes manifests, enabling a seamless and user-friendly deployment experience.
 
 ### **Pronunciation**
+
 Deployah is pronounced as **"Dee-Ploy-Yah"** (/dɪˈplɔɪ.jə/). The name is a playful and modern take on "Deploy," adding an energetic and approachable feel.
 
 ## **Goals & Objectives**
@@ -73,7 +74,8 @@ Deployah will leverage Helm’s Go SDK to interact with Helm programmatically. I
 - **Language:** Go
 - **Libraries:** Helm Go SDK, Cobra (CLI framework), Viper (config parsing)
 - **Package Structure:**
-  ```
+
+```tree
   /cmd
     - root.go
     - deploy.go

@@ -1,3 +1,4 @@
+// Package manifest provides functions for parsing and manipulating manifest files.
 package manifest
 
 import (

@@ -1,3 +1,4 @@
+// Package manifest provides functions for parsing and manipulating manifest files.
 package manifest
 
 import (
@@ -20,7 +21,7 @@ func validateYAMLAgainstSchema(
 ) error {
 	// var obj map[string]interface{}
 	// if err := yaml.Unmarshal(yamlBytes, &obj); err != nil {
-		// return fmt.Errorf("failed to convert manifest to JSON: %w", err)
+	// return fmt.Errorf("failed to convert manifest to JSON: %w", err)
 	// }
 
 	// Load schema

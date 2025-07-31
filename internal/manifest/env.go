@@ -1,6 +1,8 @@
+// Package manifest provides functions for parsing and manipulating manifest files.
 package manifest
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"strings"
@@ -24,9 +26,9 @@ func parseEnvFile(path string, explicitlySet bool) (map[string]string, error) {
 	}
 
 	vars := make(map[string]string)
-	lines := strings.Split(string(data), "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
+	scanner := bufio.NewScanner(strings.NewReader(string(data)))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}

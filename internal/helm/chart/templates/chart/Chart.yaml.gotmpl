@@ -1,0 +1,16 @@
+apiVersion: v2
+name: {{ .Chart.Name | quote }}
+{{- if .Chart.Description -}}
+description: {{ .Chart.Description | quote }}
+{{- end -}}
+type: application
+version: {{ .Chart.Version | quote }}
+{{- if .Chart.AppVersion -}}
+appVersion: {{ .Chart.AppVersion | quote }}
+{{- end -}}
+dependencies:
+  - name: deployah
+    version: "~0.1.0-alpha.1"
+    repository: "file://charts/deployah"
+    import-values:
+      - defaults
