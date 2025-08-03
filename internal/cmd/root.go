@@ -19,11 +19,8 @@ import (
 	"context"
 	"errors"
 	"os"
-	"os/signal"
-	"time"
 
-	"github.com/fatih/color"
-	"github.com/rs/zerolog"
+	"github.com/charmbracelet/fang"
 	"github.com/spf13/cobra"
 )
 
@@ -54,11 +51,11 @@ func NewRootCommand() *cobra.Command {
 			cmd.SilenceErrors = quiet
 			cmd.SilenceUsage = true
 
-			return setupLogger(cmd, logLevel, noColor, quiet)
+			return setupCharmLogger(cmd, logLevel, noColor, quiet)
 		},
 	}
 
-	rootCmd.PersistentFlags().StringP("log-level", "l", zerolog.InfoLevel.String(), "Set the logging level (trace|debug|info|warn|error|fatal|panic)")
+	rootCmd.PersistentFlags().StringP("log-level", "l", "info", "Set the logging level (trace|debug|info|warn|error|fatal|panic)")
 	rootCmd.PersistentFlags().Bool("no-color", false, "If specified, output won't contain any color.")
 	rootCmd.PersistentFlags().BoolP("quiet", "q", false, "Quiet or silent mode. Do not show logs or error messages.")
 
@@ -74,46 +71,13 @@ func Execute() {
 		NewDeployCommand(),
 	)
 
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer cancel()
-
-	if err := rootCmd.ExecuteContext(ctx); err != nil {
+	if err := fang.Execute(context.Background(), rootCmd,
+		fang.WithNotifySignal(os.Interrupt),
+	); err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
 			os.Exit(ExitTimedOut)
 		}
 
 		os.Exit(ExitError)
 	}
-}
-
-// setupLogger configures the logger based on the provided command-line flags.
-func setupLogger(cmd *cobra.Command, logLevel string, noColor bool, quiet bool) error {
-	// If the "quiet" flag is set, this block disables the logger by creating a new
-	// zerolog.Logger with the zerolog.Disabled level. The disabled logger is then
-	// attached to the command's context, effectively silencing all log output.
-	if quiet {
-		logger := zerolog.New(nil).Level(zerolog.Disabled)
-		cmd.SetContext(logger.WithContext(cmd.Context()))
-		return nil
-	}
-
-	lvl, err := zerolog.ParseLevel(logLevel)
-	if err != nil {
-		return err
-	}
-
-	logger := zerolog.New(
-		zerolog.ConsoleWriter{
-			Out:        os.Stderr,
-			NoColor:    color.NoColor || noColor,
-			TimeFormat: time.RFC3339,
-		},
-	).Level(lvl).
-		With().
-		Timestamp().
-		Logger()
-
-	cmd.SetContext(logger.WithContext(cmd.Context()))
-
-	return nil
 }
