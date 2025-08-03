@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
 	"github.com/charmbracelet/log"
 
 	"sigs.k8s.io/yaml"
@@ -89,6 +90,34 @@ func resolveEnvFile(env *Environment) (string, bool, error) {
 func fileExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && !info.IsDir()
+}
+
+// Save writes the manifest to a YAML file at the specified path.
+func Save(manifest *Manifest, path string) error {
+	if path == "" {
+		path = DefaultManifestPath
+	}
+
+	// Marshal the manifest to YAML
+	data, err := yaml.Marshal(manifest)
+	if err != nil {
+		return fmt.Errorf("failed to marshal manifest to YAML: %w", err)
+	}
+
+	// Create the directory if it doesn't exist
+	dir := filepath.Dir(path)
+	if dir != "." && dir != "" {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("failed to create directory %s: %w", dir, err)
+		}
+	}
+
+	// Write the file
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return fmt.Errorf("failed to write manifest to %s: %w", path, err)
+	}
+
+	return nil
 }
 
 // Load reads and parses the manifest YAML file at the given path, resolves the environment
