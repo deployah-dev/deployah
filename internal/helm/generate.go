@@ -2,6 +2,7 @@ package helm
 
 import (
 	"embed"
+	"regexp"
 	"strings"
 
 	"github.com/deployah-dev/deployah/internal/manifest"
@@ -9,6 +10,61 @@ import (
 
 //go:embed chart/templates/chart/**
 var ChartTemplateFS embed.FS
+
+// parseContainerImage parses a container image reference and returns the image repository and tag/digest.
+// It handles various formats including:
+// - simple: nginx:1.21
+// - with registry port: registry.example.com:5000/nginx:1.21
+// - with digest: nginx@sha256:abc123...
+// - with registry port and digest: registry.example.com:5000/nginx@sha256:abc123...
+// - with registry port and tag: registry.example.com:5000/nginx:1.21
+func parseContainerImage(imageRef string) (repository, tag string) {
+	if imageRef == "" {
+		return "", ""
+	}
+
+	// Check if this is a digest reference (contains @)
+	if strings.Contains(imageRef, "@") {
+		parts := strings.SplitN(imageRef, "@", 2)
+		if len(parts) == 2 {
+			return parts[0], parts[1] // repository, digest
+		}
+	}
+
+	// For tag references, we need to be careful about registry ports
+	// We want to split on the last colon that's not part of a port number
+
+	// First, let's check if there's a tag separator
+	lastColonIndex := strings.LastIndex(imageRef, ":")
+	if lastColonIndex == -1 {
+		// No colon found, return the whole string as repository with no tag
+		return imageRef, ""
+	}
+
+	// Check if the part after the last colon looks like a port number or tag
+	// Port numbers are typically numeric and at the beginning of the path
+	// Tags can contain alphanumeric characters, dots, dashes, underscores
+	potentialTag := imageRef[lastColonIndex+1:]
+
+	// If the potential tag contains a slash, it's likely part of a registry port
+	// e.g., "registry.example.com:5000/nginx" - the "5000/nginx" part contains a slash
+	if strings.Contains(potentialTag, "/") {
+		// This is likely a registry port, not a tag
+		return imageRef, ""
+	}
+
+	// Check if it's a valid tag format (not just a port number)
+	// Tags typically contain letters, numbers, dots, dashes, underscores
+	// Port numbers are purely numeric
+	tagPattern := regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
+	if tagPattern.MatchString(potentialTag) && !regexp.MustCompile(`^\d+$`).MatchString(potentialTag) {
+		// This looks like a tag, not a port
+		return imageRef[:lastColonIndex], potentialTag
+	}
+
+	// If we get here, it's likely a registry with port but no tag
+	return imageRef, ""
+}
 
 // ChartData holds the values to substitute in the templates, including arbitrary values for values.yaml
 // .Values can be used in values.yaml.gotmpl for flexible templating
@@ -48,13 +104,9 @@ func MapManifestToChartValues(m *manifest.Manifest) (map[string]any, error) {
 		image := ""
 		tag := ""
 
-		// TODO: Implement support for image digests in addition to tags
+		// Parse container image reference (supports registry ports and digest references)
 		if component.Image != "" {
-			split := strings.Split(component.Image, ":")
-			if len(split) == 2 {
-				image = split[0]
-				tag = split[1]
-			}
+			image, tag = parseContainerImage(component.Image)
 		}
 
 		resources := map[string]any{}
