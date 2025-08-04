@@ -12,7 +12,7 @@ func NewValidateCommand() *cobra.Command {
 	validateCommand := &cobra.Command{
 		Use:   "validate [flags]",
 		Short: "Validate a Deployah manifest against the JSON schema",
-		RunE: runValidate,
+		RunE:  runValidate,
 	}
 
 	validateCommand.Flags().StringP("file", "f", ".deployah.yaml", "Path to the manifest file (YAML or JSON)")
@@ -22,6 +22,8 @@ func NewValidateCommand() *cobra.Command {
 }
 
 func runValidate(cmd *cobra.Command, args []string) error {
+	logger := GetLogger(cmd)
+
 	manifestPath, err := cmd.Flags().GetString("file")
 	if err != nil {
 		return fmt.Errorf("failed to get manifest file: %w", err)
@@ -37,8 +39,8 @@ func runValidate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load manifest: %w", err)
 	}
 
-	fmt.Printf("[INFO] Project: %s\n", m.Project)
-	fmt.Printf("[INFO] Manifest validated successfully\n")
+	logger.Info("Project found", "project", m.Project)
+	logger.Info("Manifest validated successfully")
 
 	return nil
 }
