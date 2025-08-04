@@ -24,14 +24,14 @@ func SubstituteVariables(data []byte, env *Environment) ([]byte, error) {
 	}
 
 	// Load env file (medium priority), if explicitly set
-	deployahVarsFromFile, err := parseEnvFile(env.EnvFile, env.EnvFile != "")
+	varsFromFile, err := parseEnvFile(env.EnvFile, env.EnvFile != "")
 	if err != nil {
 		return nil, err
 	}
 
 	// Filter variables, deployahVars (medium priority)
-	envVarsFromFile, _ := filterVariables(deployahVarsFromFile)
-	err = mergo.Merge(&variables, envVarsFromFile, mergo.WithOverride)
+	deployahVarsFromFile, _ := filterVariables(varsFromFile)
+	err = mergo.Merge(&variables, deployahVarsFromFile, mergo.WithOverride)
 	if err != nil {
 		return nil, fmt.Errorf("failed to merge env file variables: %w", err)
 	}
@@ -52,7 +52,10 @@ func SubstituteVariables(data []byte, env *Environment) ([]byte, error) {
 	}
 
 	content, err := envsubst.Eval(string(data), func(s string) (string, bool) {
-		return variables[s], true
+		if v, ok := variables[s]; ok {
+			return v, true
+		}
+		return "", false
 	})
 
 	if err != nil {
