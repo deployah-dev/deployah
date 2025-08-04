@@ -16,6 +16,7 @@ package cmd
 
 import (
 	"context"
+	"io"
 	"os"
 	"time"
 
@@ -28,8 +29,8 @@ import (
 func setupCharmLogger(cmd *cobra.Command, logLevel string, noColor bool, quiet bool) error {
 	// If the "quiet" flag is set, disable all logging
 	if quiet {
-		// Create a logger that writes to /dev/null
-		nullLogger := log.NewWithOptions(os.NewFile(0, os.DevNull), log.Options{
+		// Create a logger that writes to io.Discard
+		nullLogger := log.NewWithOptions(io.Discard, log.Options{
 			Level: log.FatalLevel, // Only fatal messages will be logged (which won't happen)
 		})
 		cmd.SetContext(contextWithLogger(cmd.Context(), nullLogger))
