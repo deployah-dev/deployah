@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -10,6 +9,7 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/deployah-dev/deployah/internal/manifest"
 	"github.com/spf13/cobra"
+	"sigs.k8s.io/yaml"
 )
 
 // Constants for default values and validation
@@ -30,14 +30,6 @@ const (
 	StepSummary      = "Step 4/4: Summary"
 )
 
-// Regular expressions for validation
-var (
-	projectNameRegex   = regexp.MustCompile("^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$")
-	envNameRegex       = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*(?:/\*)?$`)
-	envVarNameRegex    = regexp.MustCompile("^[A-Z0-9]+(?:_[A-Z0-9]+)*$")
-	componentNameRegex = regexp.MustCompile("^[a-z0-9]+(?:-[a-z0-9]+)*$")
-)
-
 // ProjectConfig holds the collected configuration data
 type ProjectConfig struct {
 	Name         string
@@ -46,26 +38,9 @@ type ProjectConfig struct {
 	OutputPath   string
 }
 
-// Validation functions
-func validateProjectName(name string) error {
-	if !projectNameRegex.MatchString(name) {
-		return fmt.Errorf("project name '%s' is invalid: must be lowercase alphanumeric characters or dashes (-) separated and cannot start or end with a dash (-)", name)
-	}
-	return nil
-}
-
-func validateEnvironmentName(name string) error {
-	if name == "" {
-		return fmt.Errorf("environment name cannot be empty")
-	}
-	if !envNameRegex.MatchString(name) {
-		return fmt.Errorf("environment name '%s' is invalid: must match pattern ^[a-z0-9]+(?:-[a-z0-9]+)*(?:/\\*)?$", name)
-	}
-	return nil
-}
-
+// validateEnvironmentNameUnique validates that the environment name is unique and valid
 func validateEnvironmentNameUnique(name string, existing []string) error {
-	if err := validateEnvironmentName(name); err != nil {
+	if err := manifest.ValidateEnvName(name); err != nil {
 		return err
 	}
 	if slices.Contains(existing, name) {
@@ -74,18 +49,9 @@ func validateEnvironmentNameUnique(name string, existing []string) error {
 	return nil
 }
 
-func validateComponentName(name string) error {
-	if name == "" {
-		return fmt.Errorf("component name cannot be empty")
-	}
-	if !componentNameRegex.MatchString(name) {
-		return fmt.Errorf("component name '%s' is invalid: must be lowercase letters, numbers, and dashes only", name)
-	}
-	return nil
-}
-
+// validateComponentNameUnique validates that the component name is unique and valid
 func validateComponentNameUnique(name string, existing map[string]manifest.Component) error {
-	if err := validateComponentName(name); err != nil {
+	if err := manifest.ValidateComponentName(name); err != nil {
 		return err
 	}
 	if _, exists := existing[name]; exists {
@@ -94,16 +60,7 @@ func validateComponentNameUnique(name string, existing map[string]manifest.Compo
 	return nil
 }
 
-func validateEnvVarName(name string) error {
-	if name == "" {
-		return fmt.Errorf("variable name cannot be empty")
-	}
-	if !envVarNameRegex.MatchString(name) {
-		return fmt.Errorf("variable name '%s' is invalid: must be uppercase letters, numbers, and underscores only", name)
-	}
-	return nil
-}
-
+// validatePortNumber validates that the port number is a valid number between 1 and 65535
 func validatePortNumber(portStr string) error {
 	if portStr == "" {
 		return fmt.Errorf("port cannot be empty")
@@ -118,6 +75,7 @@ func validatePortNumber(portStr string) error {
 	return nil
 }
 
+// validatePositiveInteger validates that the value is a positive integer
 func validatePositiveInteger(value string, fieldName string) error {
 	if value == "" {
 		return fmt.Errorf("%s cannot be empty", fieldName)
@@ -132,6 +90,7 @@ func validatePositiveInteger(value string, fieldName string) error {
 	return nil
 }
 
+// validateNonEmpty validates that the value is not empty
 func validateNonEmpty(value string, fieldName string) error {
 	if value == "" {
 		return fmt.Errorf("%s cannot be empty", fieldName)
@@ -139,6 +98,7 @@ func validateNonEmpty(value string, fieldName string) error {
 	return nil
 }
 
+// validateResourcePreset validates that the resource preset is valid
 func validateResourcePreset(preset manifest.ResourcePreset) error {
 	validPresets := []manifest.ResourcePreset{
 		manifest.ResourcePresetNano,
@@ -157,7 +117,7 @@ func validateResourcePreset(preset manifest.ResourcePreset) error {
 	return fmt.Errorf("invalid resource preset '%s': must be one of %v", preset, validPresets)
 }
 
-// Generic form collection helper to reduce code duplication
+// collectWithForm is a generic form collection helper to reduce code duplication
 func collectWithForm(form *huh.Form, errorMsg string) error {
 	if err := form.Run(); err != nil {
 		return fmt.Errorf("%s: %w", errorMsg, err)
@@ -165,7 +125,7 @@ func collectWithForm(form *huh.Form, errorMsg string) error {
 	return nil
 }
 
-// Form helper functions
+// createInputGroup creates an input group for a form
 func createInputGroup(title, placeholder, description string, validator func(string) error, value *string) *huh.Group {
 	input := huh.NewInput().
 		Title(title).
@@ -180,6 +140,7 @@ func createInputGroup(title, placeholder, description string, validator func(str
 	return huh.NewGroup(input)
 }
 
+// createConfirmGroup creates a confirm group for a form
 func createConfirmGroup(title, description, affirmative, negative string, value *bool) *huh.Group {
 	return huh.NewGroup(
 		huh.NewConfirm().
@@ -191,6 +152,7 @@ func createConfirmGroup(title, description, affirmative, negative string, value 
 	)
 }
 
+// createSelectGroup creates a select group for a form
 func createSelectGroup(title, description string, options []huh.Option[string], value *string) *huh.Group {
 	return huh.NewGroup(
 		huh.NewSelect[string]().
@@ -201,6 +163,7 @@ func createSelectGroup(title, description string, options []huh.Option[string], 
 	)
 }
 
+// createNoteGroup creates a note group for a form
 func createNoteGroup(title, description string) *huh.Group {
 	return huh.NewGroup(
 		huh.NewNote().
@@ -209,18 +172,22 @@ func createNoteGroup(title, description string) *huh.Group {
 	)
 }
 
+// createInputForm creates an input form
 func createInputForm(title, placeholder, description string, validator func(string) error, value *string) *huh.Form {
 	return huh.NewForm(createInputGroup(title, placeholder, description, validator, value))
 }
 
+// createConfirmForm creates a confirm form
 func createConfirmForm(title, description, affirmative, negative string, value *bool) *huh.Form {
 	return huh.NewForm(createConfirmGroup(title, description, affirmative, negative, value))
 }
 
+// createSelectForm creates a select form
 func createSelectForm(title, description string, options []huh.Option[string], value *string) *huh.Form {
 	return huh.NewForm(createSelectGroup(title, description, options, value))
 }
 
+// createMultiSelectForm creates a multi-select form
 func createMultiSelectForm(title, description string, options []huh.Option[string], value *[]string) *huh.Form {
 	return huh.NewForm(
 		huh.NewGroup(
@@ -233,6 +200,7 @@ func createMultiSelectForm(title, description string, options []huh.Option[strin
 	)
 }
 
+// createNoteForm creates a note form
 func createNoteForm(title, description string) *huh.Form {
 	return huh.NewForm(createNoteGroup(title, description))
 }
@@ -250,6 +218,7 @@ func NewInitCommand() *cobra.Command {
 	return initCommand
 }
 
+// runInit is the main function for the init command
 func runInit(cmd *cobra.Command, _ []string) error {
 	logger := GetLogger(cmd)
 	logger.Info("Starting project initialization", "cmd", "init")
@@ -293,7 +262,7 @@ func collectProjectName(config *ProjectConfig) error {
 		StepProjectName,
 		"my-awesome-project",
 		"What is the name of your project? Use lowercase letters, numbers, and dashes only.",
-		validateProjectName,
+		manifest.ValidateProjectName,
 		&config.Name,
 	)
 
@@ -418,7 +387,7 @@ func collectEnvironmentVariables() (map[string]string, error) {
 			Title("Variable Name").
 			Placeholder("APP_ENV").
 			Description("Environment variable name (uppercase with underscores)").
-			Validate(validateEnvVarName).
+			Validate(manifest.ValidateEnvVarName).
 			Value(&varName)
 
 		varValueInput := huh.NewInput().
@@ -1142,6 +1111,11 @@ func showSummaryAndSave(config *ProjectConfig) error {
 		return err
 	}
 
+	// Perform end-to-end validation before saving
+	if err := validateManifestAndEnvironments(config); err != nil {
+		return fmt.Errorf("configuration validation failed: %w", err)
+	}
+
 	// Create the manifest
 	manifestData := manifest.Manifest{
 		ApiVersion:   "v1-alpha.1",
@@ -1154,6 +1128,39 @@ func showSummaryAndSave(config *ProjectConfig) error {
 	if err := manifest.Save(&manifestData, config.OutputPath); err != nil {
 		return fmt.Errorf("failed to save manifest to %s: %w", config.OutputPath, err)
 	}
+
+	return nil
+}
+
+// validateManifestAndEnvironments performs end-to-end validation by building the manifest
+// and environments objects and validating them against the JSON schema
+func validateManifestAndEnvironments(config *ProjectConfig) error {
+	// Create the manifest object as it would be written to file
+	manifestData := manifest.Manifest{
+		ApiVersion:   "v1-alpha.1", // Use latest schema version
+		Project:      config.Name,
+		Environments: config.Environments,
+		Components:   config.Components,
+	}
+
+	// Convert to YAML and back to map[string]any for validation
+	manifestBytes, err := yaml.Marshal(&manifestData)
+	if err != nil {
+		return fmt.Errorf("failed to convert manifest to YAML: %w", err)
+	}
+
+	var manifestObj map[string]any
+	if err := yaml.Unmarshal(manifestBytes, &manifestObj); err != nil {
+		return fmt.Errorf("failed to parse manifest YAML: %w", err)
+	}
+
+	// Validate the manifest against the schema
+	if err := manifest.ValidateManifest(manifestObj, manifestData.ApiVersion); err != nil {
+		return fmt.Errorf("manifest validation failed: %w", err)
+	}
+
+	// Note: Environment validation would be done here if we had environment files
+	// For now, the environments are embedded in the manifest so they're already validated
 
 	return nil
 }
