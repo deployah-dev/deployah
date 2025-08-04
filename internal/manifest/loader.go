@@ -16,6 +16,21 @@ const (
 	DefaultManifestPath = ".deployah.yaml"
 )
 
+// sanitizeEnvName removes path separators and wildcards from environment names
+// to prevent them from interfering with file path construction.
+func sanitizeEnvName(name string) string {
+	// Remove wildcard suffix patterns like "/*"
+	sanitized := strings.TrimSuffix(name, "/*")
+
+	// Remove any remaining path separators or wildcards
+	sanitized = strings.ReplaceAll(sanitized, "/", "")
+	sanitized = strings.ReplaceAll(sanitized, "\\", "")
+	sanitized = strings.ReplaceAll(sanitized, "*", "")
+	sanitized = strings.ReplaceAll(sanitized, "?", "")
+
+	return sanitized
+}
+
 // ResolveEnvironment returns the environment by name, or the default if name is empty.
 // Returns an error if not found or if multiple environments are defined but none specified.
 func ResolveEnvironment(environments []Environment, desiredEnvironment string) (*Environment, error) {
@@ -73,9 +88,14 @@ func resolveEnvFile(env *Environment) (string, bool, error) {
 		}
 		return "", true, fmt.Errorf("explicit envFile %q does not exist", env.EnvFile)
 	}
+
+	// Sanitize the environment name to prevent path separators and wildcards
+	// from interfering with file path construction
+	sanitizedName := sanitizeEnvName(env.Name)
+
 	candidates := []string{
-		fmt.Sprintf(".env.%s", env.Name),
-		filepath.Join(".deployah", fmt.Sprintf(".env.%s", env.Name)),
+		fmt.Sprintf(".env.%s", sanitizedName),
+		filepath.Join(".deployah", fmt.Sprintf(".env.%s", sanitizedName)),
 		".env",
 		filepath.Join(".deployah", ".env"),
 	}
