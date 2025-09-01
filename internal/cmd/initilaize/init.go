@@ -1,4 +1,4 @@
-package cmd
+package initilaize
 
 import (
 	"fmt"
@@ -7,19 +7,26 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/huh"
+	"github.com/deployah-dev/deployah/internal/logging"
 	"github.com/deployah-dev/deployah/internal/manifest"
+	"github.com/deployah-dev/deployah/internal/ui"
+	"github.com/deployah-dev/deployah/internal/util"
 	"github.com/spf13/cobra"
 	"sigs.k8s.io/yaml"
 )
 
 // Constants for default values and validation
 const (
-	DefaultOutputFile   = ".deployah.yaml"
-	MinPortNumber       = 1
-	MaxPortNumber       = 65535
+	DefaultOutputFile   = "deployah.yaml"
 	DefaultCPUThreshold = 75
 	DefaultMinReplicas  = 2
 	DefaultMaxReplicas  = 5
+)
+
+// Dry-run mode constants
+const (
+	DryRunPreviewHeader = "=== DRY RUN MODE - PREVIEW OF GENERATED MANIFEST ===\n"
+	DryRunPreviewFooter = "\n=== END PREVIEW ===\n\nThis is a preview. Use --dry-run=false to actually save the configuration."
 )
 
 // Step progress indicators
@@ -30,18 +37,21 @@ const (
 	StepSummary      = "Step 4/4: Summary"
 )
 
+// Progress tracking moved to internal/ui
+
 // ProjectConfig holds the collected configuration data
 type ProjectConfig struct {
 	Name         string
 	Environments []manifest.Environment
 	Components   map[string]manifest.Component
 	OutputPath   string
+	DryRun       bool
 }
 
 // validateEnvironmentNameUnique validates that the environment name is unique and valid
 func validateEnvironmentNameUnique(name string, existing []string) error {
 	if err := manifest.ValidateEnvName(name); err != nil {
-		return err
+		return fmt.Errorf("failed to validate environment name: %w", err)
 	}
 	if slices.Contains(existing, name) {
 		return fmt.Errorf("environment '%s' already exists", name)
@@ -52,48 +62,10 @@ func validateEnvironmentNameUnique(name string, existing []string) error {
 // validateComponentNameUnique validates that the component name is unique and valid
 func validateComponentNameUnique(name string, existing map[string]manifest.Component) error {
 	if err := manifest.ValidateComponentName(name); err != nil {
-		return err
+		return fmt.Errorf("failed to validate component name: %w", err)
 	}
 	if _, exists := existing[name]; exists {
 		return fmt.Errorf("component '%s' already exists", name)
-	}
-	return nil
-}
-
-// validatePortNumber validates that the port number is a valid number between 1 and 65535
-func validatePortNumber(portStr string) error {
-	if portStr == "" {
-		return fmt.Errorf("port cannot be empty")
-	}
-	port, err := strconv.Atoi(portStr)
-	if err != nil {
-		return fmt.Errorf("port '%s' is invalid: must be a valid number", portStr)
-	}
-	if port < MinPortNumber || port > MaxPortNumber {
-		return fmt.Errorf("port %d is invalid: must be between %d and %d", port, MinPortNumber, MaxPortNumber)
-	}
-	return nil
-}
-
-// validatePositiveInteger validates that the value is a positive integer
-func validatePositiveInteger(value string, fieldName string) error {
-	if value == "" {
-		return fmt.Errorf("%s cannot be empty", fieldName)
-	}
-	val, err := strconv.Atoi(value)
-	if err != nil {
-		return fmt.Errorf("%s '%s' is invalid: must be a positive integer", fieldName, value)
-	}
-	if val < 1 {
-		return fmt.Errorf("%s %d is invalid: must be a positive integer", fieldName, val)
-	}
-	return nil
-}
-
-// validateNonEmpty validates that the value is not empty
-func validateNonEmpty(value string, fieldName string) error {
-	if value == "" {
-		return fmt.Errorf("%s cannot be empty", fieldName)
 	}
 	return nil
 }
@@ -125,21 +97,6 @@ func collectWithForm(form *huh.Form, errorMsg string) error {
 	return nil
 }
 
-// createInputGroup creates an input group for a form
-func createInputGroup(title, placeholder, description string, validator func(string) error, value *string) *huh.Group {
-	input := huh.NewInput().
-		Title(title).
-		Placeholder(placeholder).
-		Description(description).
-		Value(value)
-
-	if validator != nil {
-		input.Validate(validator)
-	}
-
-	return huh.NewGroup(input)
-}
-
 // createConfirmGroup creates a confirm group for a form
 func createConfirmGroup(title, description, affirmative, negative string, value *bool) *huh.Group {
 	return huh.NewGroup(
@@ -148,17 +105,6 @@ func createConfirmGroup(title, description, affirmative, negative string, value 
 			Description(description).
 			Affirmative(affirmative).
 			Negative(negative).
-			Value(value),
-	)
-}
-
-// createSelectGroup creates a select group for a form
-func createSelectGroup(title, description string, options []huh.Option[string], value *string) *huh.Group {
-	return huh.NewGroup(
-		huh.NewSelect[string]().
-			Title(title).
-			Description(description).
-			Options(options...).
 			Value(value),
 	)
 }
@@ -172,32 +118,9 @@ func createNoteGroup(title, description string) *huh.Group {
 	)
 }
 
-// createInputForm creates an input form
-func createInputForm(title, placeholder, description string, validator func(string) error, value *string) *huh.Form {
-	return huh.NewForm(createInputGroup(title, placeholder, description, validator, value))
-}
-
 // createConfirmForm creates a confirm form
 func createConfirmForm(title, description, affirmative, negative string, value *bool) *huh.Form {
 	return huh.NewForm(createConfirmGroup(title, description, affirmative, negative, value))
-}
-
-// createSelectForm creates a select form
-func createSelectForm(title, description string, options []huh.Option[string], value *string) *huh.Form {
-	return huh.NewForm(createSelectGroup(title, description, options, value))
-}
-
-// createMultiSelectForm creates a multi-select form
-func createMultiSelectForm(title, description string, options []huh.Option[string], value *[]string) *huh.Form {
-	return huh.NewForm(
-		huh.NewGroup(
-			huh.NewMultiSelect[string]().
-				Title(title).
-				Description(description).
-				Options(options...).
-				Value(value),
-		),
-	)
 }
 
 // createNoteForm creates a note form
@@ -205,72 +128,102 @@ func createNoteForm(title, description string) *huh.Form {
 	return huh.NewForm(createNoteGroup(title, description))
 }
 
-// NewInitCommand creates and returns a new cobra command for initializing Deployah configuration.
-func NewInitCommand() *cobra.Command {
+// New creates and returns a new cobra command for initializing Deployah configuration.
+func New() *cobra.Command {
 	initCommand := &cobra.Command{
-		Use:   "init [flags]",
-		Short: "Initialize Deployah configuration for a new project",
-		RunE:  runInit,
+		Use:     "init",
+		Aliases: []string{"initialize"},
+		Short:   "Initialize Deployah configuration for a new project",
+		Long:    `Initialize Deployah configuration for a new project`,
+		RunE:    runInit,
+		Example: `
+# Initialize a new project
+deployah init
+
+# Initialize a new project and save the configuration to a file
+deployah init --output deployah.yaml
+
+# Preview the generated manifest without saving it
+deployah init --dry-run
+		`,
 	}
 
 	initCommand.Flags().StringP("output", "o", DefaultOutputFile, "The output file path.")
+	initCommand.Flags().BoolP("dry-run", "d", false, "Preview the generated manifest without saving it")
 
 	return initCommand
 }
 
 // runInit is the main function for the init command
 func runInit(cmd *cobra.Command, _ []string) error {
-	logger := GetLogger(cmd)
+	logger := logging.GetLogger(cmd)
 	logger.Info("Starting project initialization", "cmd", "init")
 
-	// Get output file path from flags
+	// Get flags
 	outputPath, _ := cmd.Flags().GetString("output")
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
 
 	config := &ProjectConfig{
 		OutputPath: outputPath,
 		Components: make(map[string]manifest.Component),
+		DryRun:     dryRun,
 	}
 
-	// Collect project configuration step by step
-	if err := collectProjectName(config); err != nil {
-		return err
+	progress := ui.NewProgressTracker()
+
+	// Collect project configuration step by step with better error handling
+	if err := collectProjectName(config, progress); err != nil {
+		return fmt.Errorf("failed to collect project name: %w", err)
 	}
 
-	if err := collectEnvironments(config); err != nil {
-		return err
+	if err := collectEnvironments(config, progress); err != nil {
+		return fmt.Errorf("failed to collect environments: %w", err)
 	}
 
-	if err := collectComponents(config); err != nil {
-		return err
+	if err := collectComponents(config, progress); err != nil {
+		return fmt.Errorf("failed to collect components: %w", err)
 	}
 
-	if err := showSummaryAndSave(config); err != nil {
-		return err
+	if err := showSummaryAndSave(config, progress); err != nil {
+		return fmt.Errorf("failed to save configuration: %w", err)
 	}
 
-	logger.Info("Project initialization completed successfully",
-		"project", config.Name,
-		"environments", len(config.Environments),
-		"output", config.OutputPath)
+	if config.DryRun {
+		logger.Info("Project initialization completed (dry-run mode)",
+			"project", config.Name,
+			"environments", len(config.Environments),
+			"components", len(config.Components),
+			"output", config.OutputPath)
+	} else {
+		logger.Info("Project initialization completed successfully",
+			"project", config.Name,
+			"environments", len(config.Environments),
+			"components", len(config.Components),
+			"output", config.OutputPath)
+	}
 
 	return nil
 }
 
 // collectProjectName collects the project name from user input
-func collectProjectName(config *ProjectConfig) error {
-	form := createInputForm(
-		StepProjectName,
+func collectProjectName(config *ProjectConfig, progress *ui.ProgressTracker) error {
+	form := ui.CreateInputForm(
+		progress.GetCurrentStep(),
 		"my-awesome-project",
 		"What is the name of your project? Use lowercase letters, numbers, and dashes only.",
 		manifest.ValidateProjectName,
 		&config.Name,
 	)
 
-	return collectWithForm(form, "failed to get project details from user")
+	err := ui.CollectWithForm(form, "failed to get project details from user")
+	if err == nil {
+		progress.NextStep()
+	}
+	return err
 }
 
 // collectEnvironments collects environment configuration from user input
-func collectEnvironments(config *ProjectConfig) error {
+func collectEnvironments(config *ProjectConfig, progress *ui.ProgressTracker) error {
 	var selectedEnvironments []string
 	var continueAddingEnvironments bool = true
 
@@ -280,7 +233,7 @@ func collectEnvironments(config *ProjectConfig) error {
 		var addAnother bool
 
 		// Environment name form
-		envNameGroup := createInputGroup(
+		envNameGroup := ui.CreateInputGroup(
 			StepEnvironments,
 			"dev",
 			"Enter the name of an environment (e.g., development, staging, production, review/*)",
@@ -291,7 +244,7 @@ func collectEnvironments(config *ProjectConfig) error {
 		)
 
 		// Add another environment confirmation
-		continueGroup := createConfirmGroup(
+		continueGroup := ui.CreateConfirmGroup(
 			"Add another environment?",
 			"",
 			"Yes, add another",
@@ -305,8 +258,8 @@ func collectEnvironments(config *ProjectConfig) error {
 			continueGroup,
 		)
 
-		if err := collectWithForm(envForm, "failed to get environment name"); err != nil {
-			return err
+		if err := ui.CollectWithForm(envForm, "failed to get environment name"); err != nil {
+			return fmt.Errorf("failed to collect environment name: %w", err)
 		}
 
 		if envName != "" {
@@ -325,6 +278,7 @@ func collectEnvironments(config *ProjectConfig) error {
 		config.Environments = append(config.Environments, env)
 	}
 
+	progress.NextStep()
 	return nil
 }
 
@@ -359,7 +313,7 @@ func collectEnvironmentDetails(envName string) (manifest.Environment, error) {
 	)
 
 	if err := collectWithForm(combinedForm, fmt.Sprintf("failed to get environment details for %s", envName)); err != nil {
-		return env, err
+		return env, fmt.Errorf("failed to collect environment details: %w", err)
 	}
 
 	// Collect variables if requested
@@ -413,7 +367,7 @@ func collectEnvironmentVariables() (map[string]string, error) {
 		)
 
 		if err := collectWithForm(varForm, "failed to get variable details"); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to collect variable details: %w", err)
 		}
 
 		if varName != "" && varValue != "" {
@@ -425,7 +379,7 @@ func collectEnvironmentVariables() (map[string]string, error) {
 }
 
 // collectComponents collects component configuration from user input
-func collectComponents(config *ProjectConfig) error {
+func collectComponents(config *ProjectConfig, progress *ui.ProgressTracker) error {
 	var continueAddingComponents bool = true
 	selectedEnvironments := make([]string, len(config.Environments))
 	for i, env := range config.Environments {
@@ -437,7 +391,7 @@ func collectComponents(config *ProjectConfig) error {
 		var addAnotherComponent bool
 
 		// Component name form
-		compNameGroup := createInputGroup(
+		compNameGroup := ui.CreateInputGroup(
 			"Component Name",
 			"web",
 			"Enter the name of the component (e.g., web, api, worker, db)",
@@ -447,7 +401,7 @@ func collectComponents(config *ProjectConfig) error {
 			&componentName,
 		)
 
-		continueGroup := createConfirmGroup(
+		continueGroup := ui.CreateConfirmGroup(
 			"Add another component?",
 			"",
 			"Yes, add another",
@@ -461,8 +415,8 @@ func collectComponents(config *ProjectConfig) error {
 			continueGroup,
 		)
 
-		if err := collectWithForm(compForm, "failed to get component name"); err != nil {
-			return err
+		if err := ui.CollectWithForm(compForm, "failed to get component name"); err != nil {
+			return fmt.Errorf("failed to collect component name: %w", err)
 		}
 
 		if componentName != "" {
@@ -482,6 +436,7 @@ func collectComponents(config *ProjectConfig) error {
 		}
 	}
 
+	progress.NextStep()
 	return nil
 }
 
@@ -491,66 +446,66 @@ func collectComponentDetails(componentName string, availableEnvironments []strin
 
 	// Component role selection
 	if err := collectComponentRole(&component, componentName); err != nil {
-		return component, err
+		return component, fmt.Errorf("failed to collect component role: %w", err)
 	}
 
 	// Component kind selection
 	if err := collectComponentKind(&component, componentName); err != nil {
-		return component, err
+		return component, fmt.Errorf("failed to collect component kind: %w", err)
 	}
 
 	// Image configuration
 	if err := collectComponentImage(&component, componentName); err != nil {
-		return component, err
+		return component, fmt.Errorf("failed to collect component image: %w", err)
 	}
 
 	// Port configuration
 	if err := collectComponentPort(&component, componentName); err != nil {
-		return component, err
+		return component, fmt.Errorf("failed to collect component port: %w", err)
 	}
 
 	// Resource preset selection
 	if err := collectComponentResourcePreset(&component, componentName); err != nil {
-		return component, err
+		return component, fmt.Errorf("failed to collect component resource preset: %w", err)
 	}
 
 	// Component-specific configuration files
 	if err := collectComponentConfigFiles(&component, componentName); err != nil {
-		return component, err
+		return component, fmt.Errorf("failed to collect component config files: %w", err)
 	}
 
 	// Command and arguments
 	if err := collectComponentCommand(&component, componentName); err != nil {
-		return component, err
+		return component, fmt.Errorf("failed to collect component command: %w", err)
 	}
 
 	if err := collectComponentArgs(&component, componentName); err != nil {
-		return component, err
+		return component, fmt.Errorf("failed to collect component args: %w", err)
 	}
 
 	// Autoscaling configuration
 	if err := collectComponentAutoscaling(&component, componentName); err != nil {
-		return component, err
+		return component, fmt.Errorf("failed to collect component autoscaling: %w", err)
 	}
 
 	// Custom resources
 	if err := collectComponentCustomResources(&component, componentName); err != nil {
-		return component, err
+		return component, fmt.Errorf("failed to collect component custom resources: %w", err)
 	}
 
 	// Ingress configuration
 	if err := collectComponentIngress(&component, componentName); err != nil {
-		return component, err
+		return component, fmt.Errorf("failed to collect component ingress: %w", err)
 	}
 
 	// Component environment variables
 	if err := collectComponentEnvironmentVariables(&component, componentName); err != nil {
-		return component, err
+		return component, fmt.Errorf("failed to collect component environment variables: %w", err)
 	}
 
 	// Environment selection
 	if err := collectComponentEnvironments(&component, componentName, availableEnvironments); err != nil {
-		return component, err
+		return component, fmt.Errorf("failed to collect component environments: %w", err)
 	}
 
 	return component, nil
@@ -565,15 +520,15 @@ func collectComponentRole(component *manifest.Component, componentName string) e
 		huh.NewOption("Job - one-off tasks (migrations, batch processing)", string(manifest.ComponentRoleJob)),
 	}
 
-	roleForm := createSelectForm(
+	roleForm := ui.CreateSelectForm(
 		fmt.Sprintf("Role for %s", componentName),
 		"What role does this component play in your application?",
 		options,
 		&roleChoice,
 	)
 
-	if err := collectWithForm(roleForm, "failed to get component role"); err != nil {
-		return err
+	if err := ui.CollectWithForm(roleForm, "failed to get component role"); err != nil {
+		return fmt.Errorf("failed to collect component role: %w", err)
 	}
 
 	component.Role = manifest.ComponentRole(roleChoice)
@@ -588,15 +543,15 @@ func collectComponentKind(component *manifest.Component, componentName string) e
 		huh.NewOption("Stateful", string(manifest.ComponentKindStateful)),
 	}
 
-	kindForm := createSelectForm(
+	kindForm := ui.CreateSelectForm(
 		fmt.Sprintf("Kind for %s", componentName),
 		"What kind of component is this?",
 		options,
 		&kindChoice,
 	)
 
-	if err := collectWithForm(kindForm, "failed to get component kind"); err != nil {
-		return err
+	if err := ui.CollectWithForm(kindForm, "failed to get component kind"); err != nil {
+		return fmt.Errorf("failed to collect component kind: %w", err)
 	}
 
 	component.Kind = manifest.ComponentKind(kindChoice)
@@ -606,18 +561,18 @@ func collectComponentKind(component *manifest.Component, componentName string) e
 // collectComponentImage collects the component image
 func collectComponentImage(component *manifest.Component, componentName string) error {
 	var image string
-	imageForm := createInputForm(
+	imageForm := ui.CreateInputForm(
 		fmt.Sprintf("Image for %s", componentName),
 		"nginx:latest",
 		"Docker image to use for this component",
 		func(s string) error {
-			return validateNonEmpty(s, "image")
+			return util.ValidateNonEmpty(s, "image")
 		},
 		&image,
 	)
 
-	if err := collectWithForm(imageForm, "failed to get component image"); err != nil {
-		return err
+	if err := ui.CollectWithForm(imageForm, "failed to get component image"); err != nil {
+		return fmt.Errorf("failed to collect component image: %w", err)
 	}
 
 	component.Image = image
@@ -627,7 +582,7 @@ func collectComponentImage(component *manifest.Component, componentName string) 
 // collectComponentPort collects the component port configuration
 func collectComponentPort(component *manifest.Component, componentName string) error {
 	var addPort bool
-	portForm := createConfirmForm(
+	portForm := ui.CreateConfirmForm(
 		fmt.Sprintf("Add port for %s?", componentName),
 		"Does this component need to expose a port?",
 		"Yes",
@@ -635,22 +590,22 @@ func collectComponentPort(component *manifest.Component, componentName string) e
 		&addPort,
 	)
 
-	if err := collectWithForm(portForm, "failed to get port preference"); err != nil {
-		return err
+	if err := ui.CollectWithForm(portForm, "failed to get port preference"); err != nil {
+		return fmt.Errorf("failed to collect port preference: %w", err)
 	}
 
 	if addPort {
 		var portStr string
-		portInputForm := createInputForm(
+		portInputForm := ui.CreateInputForm(
 			fmt.Sprintf("Port for %s", componentName),
 			"8080",
-			"Port number to expose",
-			validatePortNumber,
+			"Port number to expose, must be between 1024 and 65535",
+			manifest.ValidatePort,
 			&portStr,
 		)
 
-		if err := collectWithForm(portInputForm, "failed to get port number"); err != nil {
-			return err
+		if err := ui.CollectWithForm(portInputForm, "failed to get port number"); err != nil {
+			return fmt.Errorf("failed to collect port number: %w", err)
 		}
 
 		port, _ := strconv.Atoi(portStr)
@@ -664,26 +619,26 @@ func collectComponentPort(component *manifest.Component, componentName string) e
 func collectComponentResourcePreset(component *manifest.Component, componentName string) error {
 	var resourcePreset string
 
-	// Step 1: Clean preset selection
+	// Step 1: Clean preset selection with detailed descriptions
 	options := []huh.Option[string]{
-		huh.NewOption("Nano - Minimal resources", string(manifest.ResourcePresetNano)),
-		huh.NewOption("Micro - Very light workloads", string(manifest.ResourcePresetMicro)),
-		huh.NewOption("Small - Light workloads", string(manifest.ResourcePresetSmall)),
-		huh.NewOption("Medium - Moderate workloads", string(manifest.ResourcePresetMedium)),
-		huh.NewOption("Large - Heavy workloads", string(manifest.ResourcePresetLarge)),
-		huh.NewOption("XLarge - Very heavy workloads", string(manifest.ResourcePresetXLarge)),
-		huh.NewOption("2XLarge - Extremely heavy workloads", string(manifest.ResourcePreset2XLarge)),
+		huh.NewOption("Nano    - Minimal resources (50m CPU, 64Mi RAM)", string(manifest.ResourcePresetNano)),
+		huh.NewOption("Micro   - Very light workloads (100m CPU, 128Mi RAM)", string(manifest.ResourcePresetMicro)),
+		huh.NewOption("Small   - Light workloads (250m CPU, 256Mi RAM)", string(manifest.ResourcePresetSmall)),
+		huh.NewOption("Medium  - Moderate workloads (500m CPU, 512Mi RAM)", string(manifest.ResourcePresetMedium)),
+		huh.NewOption("Large   - Heavy workloads (1000m CPU, 1Gi RAM)", string(manifest.ResourcePresetLarge)),
+		huh.NewOption("XLarge  - Very heavy workloads (2000m CPU, 2Gi RAM)", string(manifest.ResourcePresetXLarge)),
+		huh.NewOption("2XLarge - Extremely heavy workloads (4000m CPU, 4Gi RAM)", string(manifest.ResourcePreset2XLarge)),
 	}
 
-	resourceForm := createSelectForm(
+	resourceForm := ui.CreateSelectForm(
 		fmt.Sprintf("Resource Preset for %s", componentName),
 		"Select a resource preset for this component",
 		options,
 		&resourcePreset,
 	)
 
-	if err := collectWithForm(resourceForm, "failed to get resource preset"); err != nil {
-		return err
+	if err := ui.CollectWithForm(resourceForm, "failed to get resource preset"); err != nil {
+		return fmt.Errorf("failed to collect resource preset: %w", err)
 	}
 
 	preset := manifest.ResourcePreset(resourcePreset)
@@ -698,7 +653,7 @@ func collectComponentResourcePreset(component *manifest.Component, componentName
 // collectComponentConfigFiles collects component-specific configuration files
 func collectComponentConfigFiles(component *manifest.Component, componentName string) error {
 	var addConfigFiles bool
-	configFilesForm := createConfirmForm(
+	configFilesForm := ui.CreateConfirmForm(
 		fmt.Sprintf("Add component-specific config files for %s?", componentName),
 		"Would you like to specify custom environment and config files for this component?",
 		"Yes",
@@ -746,7 +701,7 @@ func collectComponentConfigFiles(component *manifest.Component, componentName st
 // collectComponentCommand collects the component command
 func collectComponentCommand(component *manifest.Component, componentName string) error {
 	var addCommand bool
-	commandForm := createConfirmForm(
+	commandForm := ui.CreateConfirmForm(
 		fmt.Sprintf("Add custom command for %s?", componentName),
 		"Would you like to override the container's default command?",
 		"Yes",
@@ -760,7 +715,7 @@ func collectComponentCommand(component *manifest.Component, componentName string
 
 	if addCommand {
 		var commandStr string
-		commandInputForm := createInputForm(
+		commandInputForm := ui.CreateInputForm(
 			fmt.Sprintf("Command for %s", componentName),
 			"python app.py",
 			"Command to run in the container (space-separated)",
@@ -783,7 +738,7 @@ func collectComponentCommand(component *manifest.Component, componentName string
 // collectComponentArgs collects the component arguments
 func collectComponentArgs(component *manifest.Component, componentName string) error {
 	var addArgs bool
-	argsForm := createConfirmForm(
+	argsForm := ui.CreateConfirmForm(
 		fmt.Sprintf("Add arguments for %s?", componentName),
 		"Would you like to add arguments to the command?",
 		"Yes",
@@ -797,7 +752,7 @@ func collectComponentArgs(component *manifest.Component, componentName string) e
 
 	if addArgs {
 		var argsStr string
-		argsInputForm := createInputForm(
+		argsInputForm := ui.CreateInputForm(
 			fmt.Sprintf("Arguments for %s", componentName),
 			"--port 8080 --debug",
 			"Arguments to pass to the command (space-separated)",
@@ -820,7 +775,7 @@ func collectComponentArgs(component *manifest.Component, componentName string) e
 // collectComponentAutoscaling collects the component autoscaling configuration
 func collectComponentAutoscaling(component *manifest.Component, componentName string) error {
 	var addAutoscaling bool
-	autoscalingForm := createConfirmForm(
+	autoscalingForm := ui.CreateConfirmForm(
 		fmt.Sprintf("Enable autoscaling for %s?", componentName),
 		"Would you like to enable automatic scaling based on resource usage?",
 		"Yes",
@@ -844,24 +799,25 @@ func collectComponentAutoscaling(component *manifest.Component, componentName st
 					Title(fmt.Sprintf("Minimum Replicas for %s", componentName)).
 					Placeholder(strconv.Itoa(DefaultMinReplicas)).
 					Description("Minimum number of replicas to maintain").
-					Validate(func(s string) error {
-						return validatePositiveInteger(s, "minimum replicas")
-					}).
+					Validate(func(s string) error { return util.ValidatePositiveInteger(s, "minimum replicas") }).
 					Value(&minReplicasStr),
 
 				huh.NewInput().
 					Title(fmt.Sprintf("Maximum Replicas for %s", componentName)).
 					Placeholder(strconv.Itoa(DefaultMaxReplicas)).
 					Description("Maximum number of replicas allowed").
-					Validate(func(s string) error {
-						return validatePositiveInteger(s, "maximum replicas")
-					}).
+					Validate(func(s string) error { return util.ValidatePositiveInteger(s, "maximum replicas") }).
 					Value(&maxReplicasStr),
 			),
 		)
 
 		if err := autoscalingConfigForm.Run(); err != nil {
 			return fmt.Errorf("failed to get autoscaling config: %w", err)
+		}
+
+		// Cross-field validation after both fields are collected
+		if err := util.ValidateMinMaxReplicas(minReplicasStr, maxReplicasStr); err != nil {
+			return fmt.Errorf("autoscaling configuration error: %w", err)
 		}
 
 		minReplicas, _ := strconv.Atoi(minReplicasStr)
@@ -906,18 +862,21 @@ func collectComponentCustomResources(component *manifest.Component, componentNam
 					Title(fmt.Sprintf("CPU for %s", componentName)).
 					Placeholder("500m").
 					Description("CPU resource (e.g., 500m, 1)").
+					Validate(func(s string) error { return util.ValidateResourceString(s, "CPU") }).
 					Value(&cpu),
 
 				huh.NewInput().
 					Title(fmt.Sprintf("Memory for %s", componentName)).
 					Placeholder("512Mi").
 					Description("Memory resource (e.g., 512Mi, 1Gi)").
+					Validate(func(s string) error { return util.ValidateResourceString(s, "Memory") }).
 					Value(&memory),
 
 				huh.NewInput().
 					Title(fmt.Sprintf("Ephemeral Storage for %s", componentName)).
 					Placeholder("1Gi").
 					Description("Ephemeral storage (e.g., 1Gi, 2Gi)").
+					Validate(func(s string) error { return util.ValidateResourceString(s, "EphemeralStorage") }).
 					Value(&ephemeralStorage),
 			),
 		)
@@ -928,13 +887,13 @@ func collectComponentCustomResources(component *manifest.Component, componentNam
 
 		resources := manifest.Resources{}
 		if cpu != "" {
-			resources.CPU = cpu
+			resources.CPU = &cpu
 		}
 		if memory != "" {
-			resources.Memory = memory
+			resources.Memory = &memory
 		}
 		if ephemeralStorage != "" {
-			resources.EphemeralStorage = ephemeralStorage
+			resources.EphemeralStorage = &ephemeralStorage
 		}
 
 		component.Resources = resources
@@ -946,7 +905,7 @@ func collectComponentCustomResources(component *manifest.Component, componentNam
 // collectComponentIngress collects the component ingress configuration
 func collectComponentIngress(component *manifest.Component, componentName string) error {
 	var addIngress bool
-	ingressForm := createConfirmForm(
+	ingressForm := ui.CreateConfirmForm(
 		fmt.Sprintf("Add ingress for %s?", componentName),
 		"Would you like to expose this component via HTTP/HTTPS?",
 		"Yes",
@@ -967,9 +926,7 @@ func collectComponentIngress(component *manifest.Component, componentName string
 					Title(fmt.Sprintf("Host for %s", componentName)).
 					Placeholder("api.example.com").
 					Description("Hostname for external access").
-					Validate(func(s string) error {
-						return validateNonEmpty(s, "host")
-					}).
+					Validate(manifest.ValidateHostname).
 					Value(&host),
 
 				huh.NewConfirm().
@@ -985,9 +942,12 @@ func collectComponentIngress(component *manifest.Component, componentName string
 			return fmt.Errorf("failed to get ingress config: %w", err)
 		}
 
-		component.Ingress = manifest.Ingress{
-			Host: host,
-			TLS:  tls,
+		// Only set ingress if host is provided
+		if host != "" {
+			component.Ingress = &manifest.Ingress{
+				Host: host,
+				TLS:  tls,
+			}
 		}
 	}
 
@@ -997,7 +957,7 @@ func collectComponentIngress(component *manifest.Component, componentName string
 // collectComponentEnvironmentVariables collects component-specific environment variables
 func collectComponentEnvironmentVariables(component *manifest.Component, componentName string) error {
 	var addComponentEnvVars bool
-	componentEnvForm := createConfirmForm(
+	componentEnvForm := ui.CreateConfirmForm(
 		fmt.Sprintf("Add environment variables for %s?", componentName),
 		"Would you like to add component-specific environment variables?",
 		"Yes",
@@ -1042,15 +1002,15 @@ func collectComponentEnvironments(component *manifest.Component, componentName s
 	}
 
 	// Create multi-select form
-	envForm := createMultiSelectForm(
+	envForm := ui.CreateMultiSelectForm(
 		fmt.Sprintf("Environment Selection for %s", componentName),
 		"Select one or more environments for this component",
 		options,
 		&selectedComponentEnvs,
 	)
 
-	if err := collectWithForm(envForm, "failed to get environment selection"); err != nil {
-		return err
+	if err := ui.CollectWithForm(envForm, "failed to get environment selection"); err != nil {
+		return fmt.Errorf("failed to collect environment selection: %w", err)
 	}
 
 	// Ensure at least one environment is selected
@@ -1063,7 +1023,7 @@ func collectComponentEnvironments(component *manifest.Component, componentName s
 }
 
 // showSummaryAndSave displays a simple summary and saves the manifest
-func showSummaryAndSave(config *ProjectConfig) error {
+func showSummaryAndSave(config *ProjectConfig, progress *ui.ProgressTracker) error {
 	// Build simple summary
 	var summary strings.Builder
 
@@ -1071,7 +1031,13 @@ func showSummaryAndSave(config *ProjectConfig) error {
 
 	// Project info
 	summary.WriteString(fmt.Sprintf("Project: %s\n", config.Name))
-	summary.WriteString(fmt.Sprintf("Output: %s\n\n", config.OutputPath))
+	summary.WriteString(fmt.Sprintf("Output: %s\n", config.OutputPath))
+	if config.DryRun {
+		summary.WriteString("Mode: DRY RUN (preview only)\n")
+	} else {
+		summary.WriteString("Mode: SAVE CONFIGURATION\n")
+	}
+	summary.WriteString("\n")
 
 	// Environments
 	summary.WriteString("Environments:\n")
@@ -1100,15 +1066,23 @@ func showSummaryAndSave(config *ProjectConfig) error {
 	summary.WriteString("\n")
 
 	// Next steps
-	summary.WriteString("Next steps:\n")
-	summary.WriteString("  1. Review: cat " + config.OutputPath + "\n")
-	summary.WriteString("  2. Validate: deployah validate\n")
-	summary.WriteString("  3. Deploy: deployah deploy\n")
+	if config.DryRun {
+		summary.WriteString("Next steps:\n")
+		summary.WriteString("  1. Review the preview below\n")
+		summary.WriteString("  2. Run without --dry-run to save the configuration\n")
+		summary.WriteString("  3. Validate: deployah validate\n")
+		summary.WriteString("  4. Deploy: deployah deploy\n")
+	} else {
+		summary.WriteString("Next steps:\n")
+		summary.WriteString("  1. Review: cat " + config.OutputPath + "\n")
+		summary.WriteString("  2. Validate: deployah validate\n")
+		summary.WriteString("  3. Deploy: deployah deploy\n")
+	}
 
-	summaryForm := createNoteForm(StepSummary, summary.String())
+	summaryForm := createNoteForm(progress.GetCurrentStep(), summary.String())
 
 	if err := collectWithForm(summaryForm, "failed to show summary"); err != nil {
-		return err
+		return fmt.Errorf("failed to show summary: %w", err)
 	}
 
 	// Perform end-to-end validation before saving
@@ -1116,7 +1090,7 @@ func showSummaryAndSave(config *ProjectConfig) error {
 		return fmt.Errorf("configuration validation failed: %w", err)
 	}
 
-	// Create the manifest
+	// Create the manifest with proper defaults
 	manifestData := manifest.Manifest{
 		ApiVersion:   "v1-alpha.1",
 		Project:      config.Name,
@@ -1124,9 +1098,19 @@ func showSummaryAndSave(config *ProjectConfig) error {
 		Components:   config.Components,
 	}
 
-	// Save the manifest to file
-	if err := manifest.Save(&manifestData, config.OutputPath); err != nil {
-		return fmt.Errorf("failed to save manifest to %s: %w", config.OutputPath, err)
+	// Apply defaults to the manifest
+	if err := manifest.FillManifestWithDefaults(&manifestData, manifestData.ApiVersion); err != nil {
+		return fmt.Errorf("failed to apply defaults to manifest: %w", err)
+	}
+
+	if config.DryRun {
+		// Show preview instead of saving
+		return showManifestPreview(&manifestData)
+	} else {
+		// Save the manifest to file
+		if err := manifest.Save(&manifestData, config.OutputPath); err != nil {
+			return fmt.Errorf("failed to save manifest to %s: %w", config.OutputPath, err)
+		}
 	}
 
 	return nil
@@ -1161,6 +1145,26 @@ func validateManifestAndEnvironments(config *ProjectConfig) error {
 
 	// Note: Environment validation would be done here if we had environment files
 	// For now, the environments are embedded in the manifest so they're already validated
+
+	return nil
+}
+
+// showManifestPreview displays a preview of the generated manifest in dry-run mode
+func showManifestPreview(manifestData *manifest.Manifest) error {
+	// Convert manifest to YAML for display
+	manifestYAML, err := yaml.Marshal(manifestData)
+	if err != nil {
+		return fmt.Errorf("failed to marshal manifest for preview: %w", err)
+	}
+
+	// Create preview content
+	var preview strings.Builder
+	preview.WriteString(DryRunPreviewHeader)
+	preview.WriteString(string(manifestYAML))
+	preview.WriteString(DryRunPreviewFooter)
+
+	// Display the preview
+	fmt.Println(preview.String())
 
 	return nil
 }
