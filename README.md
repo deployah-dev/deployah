@@ -6,6 +6,40 @@ Deployah is a CLI tool that makes deploying applications effortless by leveragin
 
 ---
 
+## Installation
+
+### Using Nix (Recommended)
+
+If you have [Nix](https://nixos.org/download.html) installed:
+
+```sh
+# Run directly without installation
+nix run github:deployah-dev/deployah
+
+# Or add to your flake.nix
+inputs.deployah.url = "github:deployah-dev/deployah";
+```
+
+### Install with Go
+
+```sh
+go install github.com/deployah-dev/deployah/cmd/deployah@latest
+```
+
+---
+
+## Prerequisites
+
+Before using Deployah, ensure you have:
+
+- **Kubernetes cluster access** (local or remote)
+- **kubectl** configured to access your cluster
+- **Helm** installed (Deployah uses Helm under the hood)
+
+For local development, you can use [kind](https://kind.sigs.k8s.io/) or [minikube](https://minikube.sigs.k8s.io/).
+
+---
+
 ## Quick Start
 
 1. **Create a `.deployah.yaml` manifest** in your project root.
@@ -72,7 +106,7 @@ Each phase has specific error handling and validation, ensuring deployments are 
 
 ### Under the Hood
 
-Deployah uses a **Helmet chart library** as its foundation, automatically generating the appropriate Kubernetes resources (Deployments, Services, Ingress, HPA) based on your component definitions. The tool handles all the Helm complexity while providing a clean, declarative interface.
+Deployah uses a **Helm chart library** as its foundation, automatically generating the appropriate Kubernetes resources (Deployments, Services, Ingress, HPA) based on your component definitions. The tool handles all the Helm complexity while providing a clean, declarative interface.
 
 ---
 
@@ -238,10 +272,88 @@ apiUrl: https://api.example.com
 
 ---
 
-## Help
+## Available Commands
+
+Deployah provides several commands for managing your deployments:
+
+```sh
+# Deploy to an environment
+deployah deploy <environment>
+
+# List available environments and components
+deployah list
+
+# Check deployment status
+deployah status
+
+# View application logs
+deployah logs
+
+# Validate your manifest
+deployah validate
+
+# Delete deployments
+deployah delete
+
+# Get help for any command
+deployah <command> --help
+```
+
+---
+
+## Troubleshooting
+
+### Common Issues
+
+#### Environment not found
+
+```sh
+Error: environment "production" not found
+```
+
+*Solution*: Check your `.deployah.yaml` file for the correct environment name, or list available environments with `deployah list`.
+
+#### Variable substitution failed
+
+```sh
+Error: variable ${IMAGE} not found
+```
+
+*Solution*: Ensure the variable is defined in your environment file (`.env` or `.env.<envName>`) with the `DPY_VAR_` prefix, or in your shell environment.
+
+#### Kubernetes connection failed
+
+```sh
+Error: unable to connect to Kubernetes cluster
+```
+
+*Solution*: Verify your `kubectl` configuration and cluster connectivity with `kubectl cluster-info`.
+
+#### Helm chart generation failed
+
+```sh
+Error: failed to generate Helm values
+```
+
+*Solution*: Check your manifest syntax and ensure all required fields are present. Run `deployah validate` to check for issues.
+
+### Getting Help
 
 For more details, see the documentation or run:
 
 ```sh
 deployah --help
+deployah <command> --help
 ```
+
+---
+
+## Schema Reference
+
+Deployah uses JSON Schema for validation. The schema defines the structure and validation rules for your `.deployah.yaml` manifest.
+
+- **Schema Version**: v1-alpha.1
+- **Schema Location**: `internal/manifest/schema/v1-alpha.1/manifest.json`
+- **Environment Schema**: `internal/manifest/schema/v1-alpha.1/environments.json`
+
+For the latest schema documentation and examples, see the [schema directory](internal/manifest/schema/) in the repository.
