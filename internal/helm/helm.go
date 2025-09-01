@@ -146,7 +146,7 @@ func (c *Client) InstallApp(ctx context.Context, manifest *manifest.Manifest, en
 		install.CreateNamespace = true
 		install.Timeout = c.timeout
 		install.WaitStrategy = kube.StatusWatcherStrategy
-		install.Atomic = true
+		install.RollbackOnFailure = true
 		install.DryRun = true
 		install.ClientOnly = true
 		install.DisableHooks = true
@@ -173,7 +173,7 @@ func (c *Client) InstallApp(ctx context.Context, manifest *manifest.Manifest, en
 		install.CreateNamespace = true
 		install.Timeout = c.timeout
 		install.WaitStrategy = kube.StatusWatcherStrategy
-		install.Atomic = true
+		install.RollbackOnFailure = true
 		install.Labels = labels
 
 		if _, err := install.RunWithContext(ctx, ch, values); err != nil {
@@ -186,7 +186,7 @@ func (c *Client) InstallApp(ctx context.Context, manifest *manifest.Manifest, en
 	upgrade := action.NewUpgrade(c.config)
 	upgrade.Namespace = c.settings.Namespace()
 	upgrade.Timeout = c.timeout
-	upgrade.Atomic = true
+	upgrade.RollbackOnFailure = true
 	upgrade.WaitStrategy = kube.StatusWatcherStrategy
 	upgrade.Labels = labels
 	_, err = upgrade.RunWithContext(ctx, GenerateReleaseName(manifest.Project, environment), ch, values)
