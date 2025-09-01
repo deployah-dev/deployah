@@ -104,3 +104,41 @@ func ValidateAPIVersion(manifestObj map[string]any) (string, error) {
 
 	return apiVersionStr, nil
 }
+
+// ValidateComponentResources validates that a component has valid resource configuration.
+// A component can have either:
+// 1. Explicit resources (resources field with actual values)
+// 2. Resource preset (resourcePreset field)
+// 3. Neither (will use defaults)
+// But it cannot have both resources and resourcePreset, and cannot have empty resources object.
+func ValidateComponentResources(component Component) error {
+	hasResources := (component.Resources.CPU != nil && *component.Resources.CPU != "") ||
+		(component.Resources.Memory != nil && *component.Resources.Memory != "") ||
+		(component.Resources.EphemeralStorage != nil && *component.Resources.EphemeralStorage != "")
+	hasPreset := component.ResourcePreset != ""
+
+	if hasResources && hasPreset {
+		return fmt.Errorf("component cannot have both 'resources' and 'resourcePreset' fields")
+	}
+
+	// Check if resources object is present but empty (resources: {})
+	// This happens when someone explicitly writes "resources: {}" in YAML
+	// With pointers, we can detect if the Resources struct was explicitly set
+	if !hasResources && (component.Resources.CPU != nil || component.Resources.Memory != nil || component.Resources.EphemeralStorage != nil) {
+		return fmt.Errorf("component cannot have empty 'resources' object - either specify actual resource values or remove the resources field entirely")
+	}
+
+	// Both empty is allowed (will use defaults)
+	// Either one is allowed
+	return nil
+}
+
+// ValidateManifestComponents validates all components in a manifest.
+func ValidateManifestComponents(manifest *Manifest) error {
+	for name, component := range manifest.Components {
+		if err := ValidateComponentResources(component); err != nil {
+			return fmt.Errorf("component %s: %w", name, err)
+		}
+	}
+	return nil
+}

@@ -44,6 +44,7 @@
 package manifest
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"reflect"
@@ -71,21 +72,9 @@ type DefaultValues map[string]any
 // These constants define the structure and patterns used for navigating
 // and applying defaults to nested manifest structures.
 const (
-	// Path prefixes for different manifest sections
-	componentsPrefix   = "components."   // Prefix for component paths: "components.web.port"
-	environmentsPrefix = "environments." // Prefix for environment paths: "environments.prod.envFile"
-
-	// Placeholder substitution
-	// Example: ".env.{name}" becomes ".env.production" for environment "production"
-	placeholderName = "{name}" // Placeholder replaced with actual names
-
 	// Computed lengths for efficient string operations
-	componentsPrefixLength   = len(componentsPrefix)   // 11 - avoids repeated len() calls
-	environmentsPrefixLength = len(environmentsPrefix) // 13 - avoids repeated len() calls
-
-	// Templates for constructing schema paths
-	arrayItemIndexTemplate = "[0]" // Template for first array item in schema paths
-	envFileSuffix          = "/*"  // Suffix to remove from environment names during cleanup
+	componentsPrefixLength   = len(ComponentsPrefix)   // 11 - avoids repeated len() calls
+	environmentsPrefixLength = len(EnvironmentsPrefix) // 13 - avoids repeated len() calls
 )
 
 // Global caches for schema compilation and pattern extraction.
@@ -174,13 +163,19 @@ func getCachedSchemaInfo(version string, schemaType schema.SchemaType) (*schemaI
 
 	// Compile schema using jsonschema library
 	compiler := jsonschema.NewCompiler()
-	schemaURL := fmt.Sprintf("internal://%s-%s.json", schemaType, version)
+	compiler.AssertFormat()
 
-	if err := compiler.AddResource(schemaURL, schemaObj); err != nil {
+	schemaID := fmt.Sprintf("internal://%s-%s.json", schemaType, version)
+	jsonSchema, err := jsonschema.UnmarshalJSON(bytes.NewReader(schemaBytes))
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse %s schema JSON for version %q: %w", schemaType, version, err)
+	}
+
+	if err := compiler.AddResource(schemaID, jsonSchema); err != nil {
 		return nil, fmt.Errorf("failed to add schema resource for %s version %q: %w", schemaType, version, err)
 	}
 
-	compiledSchema, err := compiler.Compile(schemaURL)
+	compiledSchema, err := compiler.Compile(schemaID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to compile %s schema for version %q: %w", schemaType, version, err)
 	}
@@ -396,6 +391,23 @@ func resolveResourcePresets(manifest *Manifest) error {
 					Memory:           presetResources["requests"].Memory,
 					EphemeralStorage: presetResources["requests"].EphemeralStorage,
 				}
+				// Preserve the resourcePreset field for traceability; precedence rules:
+				// explicit resources > preset. Since we only materialize when resources are empty,
+				// keeping resourcePreset is safe and documents original intent.
+				manifest.Components[componentName] = component
+				continue
+			}
+		}
+
+		// If neither explicit resources nor a preset is provided, apply a default preset at manifest layer
+		if component.ResourcePreset == "" && isZeroValue(component.Resources) {
+			if presetResources, exists := ResourcePresetMappings[ResourcePresetSmall]; exists {
+				component.ResourcePreset = ResourcePresetSmall
+				component.Resources = Resources{
+					CPU:              presetResources["requests"].CPU,
+					Memory:           presetResources["requests"].Memory,
+					EphemeralStorage: presetResources["requests"].EphemeralStorage,
+				}
 				manifest.Components[componentName] = component
 			}
 		}
@@ -514,7 +526,7 @@ func substitutePlaceholders(value any, envName string) any {
 	cleanEnvName := cleanEnvironmentName(envName)
 	str := cast.ToString(value)
 	if str != "" {
-		return strings.ReplaceAll(str, placeholderName, cleanEnvName)
+		return strings.ReplaceAll(str, PlaceholderName, cleanEnvName)
 	}
 	return value
 }
@@ -596,7 +608,7 @@ func applyFieldValue(field reflect.Value, defaultVal any, envName, fieldName, cu
 func tryAlternativeDefaultPaths(field reflect.Value, fieldName, currentPath string, defaults DefaultValues, version, envName string) error {
 	// Try index-based default for environments
 	if isEnvironmentPath(currentPath) {
-		idxPath := environmentsPrefix + arrayItemIndexTemplate + "." + fieldName
+		idxPath := EnvironmentsPrefix + ArrayItemIndexTemplate + "." + fieldName
 		if defaultVal, exists := defaults[idxPath]; exists {
 			return applyFieldValue(field, defaultVal, envName, fieldName, currentPath)
 		}
@@ -642,10 +654,12 @@ func processStructField(field reflect.Value, fieldType reflect.StructField, defa
 
 	switch field.Kind() {
 	case reflect.Ptr:
-		// Handle pointer fields (like *Autoscaling)
+		// Handle pointer fields (only recurse into pointers to structs, e.g., *Autoscaling)
 		if !field.IsNil() {
-			if err := applyDefaultsRecursively(field.Interface(), defaults, newPath, version); err != nil {
-				return fmt.Errorf("failed to apply defaults to pointer field %s at path %s: %w", fieldName, currentPath, err)
+			if field.Elem().Kind() == reflect.Struct {
+				if err := applyDefaultsRecursively(field.Interface(), defaults, newPath, version); err != nil {
+					return fmt.Errorf("failed to apply defaults to pointer field %s at path %s: %w", fieldName, currentPath, err)
+				}
 			}
 		}
 	case reflect.Struct:
@@ -653,11 +667,11 @@ func processStructField(field reflect.Value, fieldType reflect.StructField, defa
 			return fmt.Errorf("failed to apply defaults to struct field %s at path %s: %w", fieldName, currentPath, err)
 		}
 	case reflect.Map:
-		if err := applyDefaultsToMap(field, defaults, newPath); err != nil {
+		if err := applyDefaultsToMap(field, defaults, newPath, version); err != nil {
 			return fmt.Errorf("failed to apply defaults to map field %s at path %s: %w", fieldName, currentPath, err)
 		}
 	case reflect.Slice:
-		if err := applyDefaultsToSlice(field, defaults, newPath); err != nil {
+		if err := applyDefaultsToSlice(field, defaults, newPath, version); err != nil {
 			return fmt.Errorf("failed to apply defaults to slice field %s at path %s: %w", fieldName, currentPath, err)
 		}
 	}
@@ -688,12 +702,12 @@ func applyDefaultsRecursively(obj any, defaults DefaultValues, currentPath strin
 
 		// Apply defaults to zero-value fields
 		if err := applyDefaultsToField(field, fieldType, defaults, currentPath, version, envName); err != nil {
-			return err
+			return fmt.Errorf("failed to apply defaults to field: %w", err)
 		}
 
 		// Always process struct fields recursively
 		if err := processStructField(field, fieldType, defaults, currentPath, version); err != nil {
-			return err
+			return fmt.Errorf("failed to process struct field: %w", err)
 		}
 	}
 
@@ -711,7 +725,7 @@ func applyDefaultsRecursively(obj any, defaults DefaultValues, currentPath strin
 //	isComponentPath("environments.prod") -> false
 //	isComponentPath("project") -> false
 func isComponentPath(path string) bool {
-	return len(path) > componentsPrefixLength && path[:componentsPrefixLength] == componentsPrefix
+	return len(path) > componentsPrefixLength && path[:componentsPrefixLength] == ComponentsPrefix
 }
 
 // isEnvironmentPath checks if the current path is an environment path.
@@ -724,7 +738,7 @@ func isComponentPath(path string) bool {
 //	isEnvironmentPath("environments.staging.envFile") -> true
 //	isEnvironmentPath("components.web") -> false
 func isEnvironmentPath(path string) bool {
-	return strings.HasPrefix(path, environmentsPrefix)
+	return strings.HasPrefix(path, EnvironmentsPrefix)
 }
 
 // buildFieldPath constructs a field path by combining current path and field name.
@@ -791,8 +805,8 @@ func extractEnvironmentName(path string) string {
 //	cleanEnvironmentName("production/*") -> "production"
 //	cleanEnvironmentName("staging") -> "staging" (no change)
 func cleanEnvironmentName(envName string) string {
-	if strings.HasSuffix(envName, envFileSuffix) {
-		return strings.TrimSuffix(envName, envFileSuffix)
+	if strings.HasSuffix(envName, EnvFileSuffix) {
+		return strings.TrimSuffix(envName, EnvFileSuffix)
 	}
 	return envName
 }
@@ -839,7 +853,7 @@ func getJSONFieldName(field reflect.StructField) string {
 }
 
 // applyDefaultsToMap applies default values to a map (using reflect.Value)
-func applyDefaultsToMap(mapVal reflect.Value, defaults DefaultValues, currentPath string) error {
+func applyDefaultsToMap(mapVal reflect.Value, defaults DefaultValues, currentPath string, version string) error {
 	if mapVal.Kind() != reflect.Map {
 		return nil
 	}
@@ -849,15 +863,15 @@ func applyDefaultsToMap(mapVal reflect.Value, defaults DefaultValues, currentPat
 		newPath := buildFieldPath(currentPath, keyStr)
 		switch value.Kind() {
 		case reflect.Map:
-			if err := applyDefaultsToMap(value, defaults, newPath); err != nil {
+			if err := applyDefaultsToMap(value, defaults, newPath, version); err != nil {
 				return fmt.Errorf("failed to apply defaults to nested map at key %s in path %s: %w", keyStr, currentPath, err)
 			}
 		case reflect.Slice:
-			if err := applyDefaultsToSlice(value, defaults, newPath); err != nil {
+			if err := applyDefaultsToSlice(value, defaults, newPath, version); err != nil {
 				return fmt.Errorf("failed to apply defaults to slice at key %s in path %s: %w", keyStr, currentPath, err)
 			}
 		case reflect.Struct:
-			if err := applyDefaultsRecursively(value.Addr().Interface(), defaults, newPath, ""); err != nil {
+			if err := applyDefaultsRecursively(value.Addr().Interface(), defaults, newPath, version); err != nil {
 				return fmt.Errorf("failed to apply defaults to struct at key %s in path %s: %w", keyStr, currentPath, err)
 			}
 		}
@@ -866,7 +880,7 @@ func applyDefaultsToMap(mapVal reflect.Value, defaults DefaultValues, currentPat
 }
 
 // applyDefaultsToSlice applies default values to a slice (using reflect.Value)
-func applyDefaultsToSlice(sliceVal reflect.Value, defaults DefaultValues, currentPath string) error {
+func applyDefaultsToSlice(sliceVal reflect.Value, defaults DefaultValues, currentPath string, version string) error {
 	if sliceVal.Kind() != reflect.Slice {
 		return nil
 	}
@@ -875,15 +889,15 @@ func applyDefaultsToSlice(sliceVal reflect.Value, defaults DefaultValues, curren
 		itemPath := fmt.Sprintf("%s[%d]", currentPath, i)
 		switch item.Kind() {
 		case reflect.Map:
-			if err := applyDefaultsToMap(item, defaults, itemPath); err != nil {
+			if err := applyDefaultsToMap(item, defaults, itemPath, version); err != nil {
 				return fmt.Errorf("failed to apply defaults to map item at index %d in path %s: %w", i, currentPath, err)
 			}
 		case reflect.Slice:
-			if err := applyDefaultsToSlice(item, defaults, itemPath); err != nil {
+			if err := applyDefaultsToSlice(item, defaults, itemPath, version); err != nil {
 				return fmt.Errorf("failed to apply defaults to nested slice at index %d in path %s: %w", i, currentPath, err)
 			}
 		case reflect.Struct:
-			if err := applyDefaultsRecursively(item.Addr().Interface(), defaults, itemPath, ""); err != nil {
+			if err := applyDefaultsRecursively(item.Addr().Interface(), defaults, itemPath, version); err != nil {
 				return fmt.Errorf("failed to apply defaults to struct item at index %d in path %s: %w", i, currentPath, err)
 			}
 		}

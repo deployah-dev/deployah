@@ -66,8 +66,8 @@ func filterVariables(vars map[string]string) (map[string]string, map[string]stri
 	envVars := make(map[string]string)
 
 	for key, value := range vars {
-		if strings.HasPrefix(key, DEPLOYAH_VARIABLE_PREFIX) {
-			deployahVars[strings.TrimPrefix(key, DEPLOYAH_VARIABLE_PREFIX)] = value
+		if trimmed, found := strings.CutPrefix(key, EnvVarPrefix); found {
+			deployahVars[trimmed] = value
 		} else {
 			envVars[key] = value
 		}

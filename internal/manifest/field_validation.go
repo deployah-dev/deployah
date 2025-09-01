@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strconv"
 	"sync"
 
 	"github.com/deployah-dev/deployah/internal/manifest/schema"
@@ -106,7 +107,7 @@ func getValidators() (*fieldValidators, error) {
 		err = initValidators()
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to initialize validators: %w", err)
 	}
 	return validators, nil
 }
@@ -175,6 +176,43 @@ func ValidateEnvVarName(name string) error {
 
 	if !v.envVarNamePattern.MatchString(name) {
 		return fmt.Errorf("variable name '%s' is invalid: must be uppercase letters, numbers, and underscores only", name)
+	}
+	return nil
+}
+
+// ValidateHostname validates a hostname against the JSON schema pattern
+func ValidateHostname(hostname string) error {
+	if hostname == "" {
+		return fmt.Errorf("hostname cannot be empty")
+	}
+
+	// Hostname pattern: optionally starts with *. followed by domain parts
+	// Each domain part contains alphanumeric characters and hyphens
+	// Ends with a TLD of at least 2 characters
+	hostnamePattern := `^(\*\.)?([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$`
+	matched, err := regexp.MatchString(hostnamePattern, hostname)
+	if err != nil {
+		return fmt.Errorf("failed to validate hostname: %w", err)
+	}
+
+	if !matched {
+		return fmt.Errorf("hostname '%s' is invalid: must be a valid hostname (e.g., 'api.example.com' or '*.example.com')", hostname)
+	}
+
+	return nil
+}
+
+// ValidatePort validates that the port number is a valid number between 1024 and 65535
+func ValidatePort(portStr string) error {
+	if portStr == "" {
+		return fmt.Errorf("port cannot be empty")
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return fmt.Errorf("port '%s' is invalid: must be a valid number", portStr)
+	}
+	if port < 1024 || port > 65535 {
+		return fmt.Errorf("port %d is invalid: must be between 1024 and 65535", port)
 	}
 	return nil
 }

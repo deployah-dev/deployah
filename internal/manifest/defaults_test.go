@@ -380,7 +380,7 @@ func (s *DefaultsTestSuite) TestApplyDefaultsToMap() {
 		{
 			name: "apply defaults to map with slice values",
 			mapVal: reflect.ValueOf(map[string]*[]string{
-				"commands": &[]string{"echo", "hello"},
+				"commands": {"echo", "hello"},
 			}),
 			defaults: DefaultValues{},
 			path:     "test",
@@ -390,7 +390,7 @@ func (s *DefaultsTestSuite) TestApplyDefaultsToMap() {
 	for _, tt := range tests {
 		s.T().Run(tt.name, func(t *testing.T) {
 			// This test mainly ensures the function doesn't panic
-			applyDefaultsToMap(tt.mapVal, tt.defaults, tt.path)
+			applyDefaultsToMap(tt.mapVal, tt.defaults, tt.path, "v1-alpha.1")
 			// No specific assertions as this is mainly testing for panics
 		})
 	}
@@ -425,7 +425,7 @@ func (s *DefaultsTestSuite) TestApplyDefaultsToSlice() {
 	for _, tt := range tests {
 		s.T().Run(tt.name, func(t *testing.T) {
 			// This test mainly ensures the function doesn't panic
-			applyDefaultsToSlice(tt.sliceVal, tt.defaults, tt.path)
+			applyDefaultsToSlice(tt.sliceVal, tt.defaults, tt.path, "v1-alpha.1")
 			// No specific assertions as this is mainly testing for panics
 		})
 	}

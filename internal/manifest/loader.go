@@ -2,18 +2,15 @@
 package manifest
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/charmbracelet/log"
+	"github.com/deployah-dev/deployah/internal/logging"
 
 	"sigs.k8s.io/yaml"
-)
-
-const (
-	DefaultManifestPath = ".deployah.yaml"
 )
 
 // sanitizeEnvName removes path separators and wildcards from environment names
@@ -144,7 +141,7 @@ func Save(manifest *Manifest, path string) error {
 // (using the provided envName or default resolution rules), and substitutes variables
 // according to precedence (environment definition < env file < OS environment).
 // Returns the fully parsed Manifest struct or an error.
-func Load(path string, envName string) (*Manifest, error) {
+func Load(ctx context.Context, path string, envName string) (*Manifest, error) {
 	if path == "" {
 		path = DefaultManifestPath
 	}
@@ -164,7 +161,7 @@ func Load(path string, envName string) (*Manifest, error) {
 	// Validate API version.
 	version, err := ValidateAPIVersion(manifestObj)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to validate API version: %w", err)
 	}
 
 	// Validate the environments against the schema
@@ -185,20 +182,24 @@ func Load(path string, envName string) (*Manifest, error) {
 		return nil, fmt.Errorf("failed to select environment: %w", err)
 	}
 
-	log.Infof("Selected environment: %s", env.Name)
+	if logger := logging.From(ctx); logger != nil {
+		logger.Infof("Selected environment: %s", env.Name)
+	}
 
 	envFilePath, explicitlySet, err := resolveEnvFile(env)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to resolve environment file: %w", err)
 	}
-	if envFilePath != "" {
-		if explicitlySet {
-			log.Infof("Using explicily set env file: %s", envFilePath)
+	if logger := logging.From(ctx); logger != nil {
+		if envFilePath != "" {
+			if explicitlySet {
+				logger.Infof("Using explicily set env file: %s", envFilePath)
+			} else {
+				logger.Infof("Using resolved env file: %s", envFilePath)
+			}
 		} else {
-			log.Infof("Using resolved env file: %s", envFilePath)
+			logger.Infof("No env file found for environment '%s', proceeding without env file.", env.Name)
 		}
-	} else {
-		log.Infof("No env file found for environment '%s', proceeding without env file.", env.Name)
 	}
 
 	// Set the resolved env file path for substitution
@@ -227,7 +228,9 @@ func Load(path string, envName string) (*Manifest, error) {
 		return nil, fmt.Errorf("failed to parse manifest YAML: %w", err)
 	}
 
-	FillManifestWithDefaults(&finalManifest, version)
+	if err := FillManifestWithDefaults(&finalManifest, version); err != nil {
+		return nil, fmt.Errorf("failed to apply defaults: %w", err)
+	}
 
 	return &finalManifest, nil
 }

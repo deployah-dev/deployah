@@ -1,3 +1,17 @@
+// Copyright 2025 The Deployah Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 // Package manifest provides functions for parsing and manipulating manifest files.
 package manifest
 
@@ -11,6 +25,23 @@ type Manifest struct {
 	Environments []Environment `json:"environments,omitempty" yaml:"environments,omitempty"`
 	// Components is a map of component names to their configuration.
 	Components map[string]Component `json:"components" yaml:"components"`
+}
+
+// EnvironmentNames returns the list of environment names defined in the manifest.
+// Returns an empty slice if no environments are defined.
+func (m *Manifest) EnvironmentNames() []string {
+	if len(m.Environments) == 0 {
+		return []string{}
+	}
+
+	names := make([]string, 0, len(m.Environments))
+	for _, env := range m.Environments {
+		if env.Name != "" {
+			names = append(names, env.Name)
+		}
+	}
+
+	return names
 }
 
 // Environment defines the environment definition in the project.
@@ -35,7 +66,7 @@ type Component struct {
 	Autoscaling    *Autoscaling      `json:"autoscaling,omitempty" yaml:"autoscaling,omitempty"`
 	Resources      Resources         `json:"resources,omitempty" yaml:"resources,omitempty"`
 	ResourcePreset ResourcePreset    `json:"resourcePreset,omitempty" yaml:"resourcePreset,omitempty"`
-	Ingress        Ingress           `json:"ingress,omitempty" yaml:"ingress,omitempty"`
+	Ingress        *Ingress          `json:"ingress,omitempty" yaml:"ingress,omitempty"`
 	Env            map[string]string `json:"env,omitempty" yaml:"env,omitempty"`
 }
 
@@ -55,9 +86,9 @@ type Metric struct {
 
 // Resources defines the resource requests and limits for the component.
 type Resources struct {
-	CPU              string `json:"cpu,omitempty" yaml:"cpu,omitempty"`
-	Memory           string `json:"memory,omitempty" yaml:"memory,omitempty"`
-	EphemeralStorage string `json:"ephemeralStorage,omitempty" yaml:"ephemeralStorage,omitempty"`
+	CPU              *string `json:"cpu,omitempty" yaml:"cpu,omitempty"`
+	Memory           *string `json:"memory,omitempty" yaml:"memory,omitempty"`
+	EphemeralStorage *string `json:"ephemeralStorage,omitempty" yaml:"ephemeralStorage,omitempty"`
 }
 
 // Ingress specifies the ingress settings for exposing the component via HTTP/HTTPS.

@@ -26,7 +26,7 @@ func SubstituteVariables(data []byte, env *Environment) ([]byte, error) {
 	// Load env file (medium priority), if explicitly set
 	varsFromFile, err := parseEnvFile(env.EnvFile, env.EnvFile != "")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parse environment file: %w", err)
 	}
 
 	// Filter variables, deployahVars (medium priority)
@@ -39,7 +39,7 @@ func SubstituteVariables(data []byte, env *Environment) ([]byte, error) {
 	// Load OS environment variables (highest priority)
 	osEnvVars, err := parseOSVariables()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parse OS environment variables: %w", err)
 	}
 
 	// Filter variables, deployahVars (highest priority)
