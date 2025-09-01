@@ -33,8 +33,6 @@ go install github.com/deployah-dev/deployah/cmd/deployah@latest
 Before using Deployah, ensure you have:
 
 - **Kubernetes cluster access** (local or remote)
-- **kubectl** configured to access your cluster
-- **Helm** installed (Deployah uses Helm under the hood)
 
 For local development, you can use [kind](https://kind.sigs.k8s.io/) or [minikube](https://minikube.sigs.k8s.io/).
 
@@ -42,7 +40,7 @@ For local development, you can use [kind](https://kind.sigs.k8s.io/) or [minikub
 
 ## Quick Start
 
-1. **Create a `.deployah.yaml` manifest** in your project root.
+1. **Create a `deployah.yaml` manifest** in your project root.
 2. **(Optional) Add a `.env` or `.env.<envName>` file** for environment-specific variables.
 3. **Run Deployah:**
 
@@ -54,31 +52,75 @@ For local development, you can use [kind](https://kind.sigs.k8s.io/) or [minikub
 
 ## How It Works
 
-Deployah transforms your simple `.deployah.yaml` manifest into a complete Kubernetes deployment through an 8-phase pipeline:
+Deployah transforms your simple `deployah.yaml` manifest into a complete Kubernetes deployment through an 8-phase pipeline:
 
 ```mermaid
-graph LR
-    A["📄 YAML File"] --> B["🔍 Parse"]
-    B --> C["✅ Validate Schema"]
-    C --> D["🌍 Resolve Environment"]
-    D --> E["🔄 Substitute Variables"]
-    E --> F["⚙️ Apply Defaults"]
-    F --> G["📊 Generate Helm Values"]
-    G --> H["🚀 Deploy"]
+flowchart LR
+    %% Phase 1: Input Processing
+    subgraph phase1["🔵 Phase 1: Input Processing"]
+        direction TB
+        A["📄 YAML"] --> B["🔍 Parse"] --> C["✅ Validate"]
+    end
     
-    style A fill:#e3f2fd
-    style H fill:#c8e6c9
+    %% Phase 2: Configuration Resolution
+    subgraph phase2["🟣 Phase 2: Configuration Resolution"]
+        direction TB
+        D["🌍 Environment"] --> E["🔄 Variables"] --> F["⚙️ Defaults"]
+    end
+    
+    %% Phase 3: Deployment
+    subgraph phase3["🟢 Phase 3: Deployment"]
+        direction TB
+        G["📊 Helm Values"] --> H["🚀 Deploy"]
+    end
+    
+    %% Connect phases with animated edges
+    phase1 e1@--> phase2
+    phase2 e2@--> phase3  
+    
+    e1@{animate: true}
+    e2@{animate: true}
+    %% Enhanced styling with better colors and effects
+    style A fill:#e3f2fd,stroke:#1976d2,stroke-width:3px,color:#000
+    style B fill:#bbdefb,stroke:#1976d2,stroke-width:3px,color:#000
+    style C fill:#90caf9,stroke:#1976d2,stroke-width:3px,color:#000
+    
+    style D fill:#f3e5f5,stroke:#7b1fa2,stroke-width:3px,color:#000
+    style E fill:#e1bee7,stroke:#7b1fa2,stroke-width:3px,color:#000
+    style F fill:#ce93d8,stroke:#7b1fa2,stroke-width:3px,color:#000
+    
+    style G fill:#e8f5e8,stroke:#2e7d32,stroke-width:3px,color:#000
+    style H fill:#4caf50,stroke:#2e7d32,stroke-width:4px,color:#fff
+    
+    %% Subgraph styling with better borders and backgrounds
+    style phase1 fill:#f8f9ff,stroke:#1976d2,stroke-width:3px,stroke-dasharray: 8 4
+    style phase2 fill:#faf5ff,stroke:#7b1fa2,stroke-width:3px,stroke-dasharray: 8 4
+    style phase3 fill:#f0fff0,stroke:#2e7d32,stroke-width:3px,stroke-dasharray: 8 4
+    
+    %% Node styling with rounded corners and shadows
+    classDef pipelineNode fill-opacity:0.95,stroke-opacity:0.9,rx:8,ry:8
+    class A,B,C,D,E,F,G,H pipelineNode
 ```
 
 ### The Pipeline
 
+The deployment process is organized into three logical phases:
+
+#### 🔵 Phase 1: Input Processing
+
 1. **Parse** → Read and validate your YAML manifest structure
 2. **Validate** → Check against JSON Schema for correctness and type safety
-3. **Resolve Environment** → Select the right environment configuration based on CLI arguments and manifest definitions
-4. **Substitute Variables** → Replace `${VARIABLES}` with actual values using clear precedence rules
-5. **Apply Defaults** → Fill in sensible defaults from schema patterns and resource presets
-6. **Generate Helm Values** → Convert to Helm-compatible format with proper resource mappings
-7. **Deploy** → Use Helm to deploy to Kubernetes with monitoring and error handling
+
+#### 🟣 Phase 2: Configuration Resolution  
+
+1. **Resolve Environment** → Select the right environment configuration based on CLI arguments and manifest definitions
+2. **Substitute Variables** → Replace `${VARIABLES}` with actual values using clear precedence rules
+3. **Apply Defaults** → Fill in sensible defaults from schema patterns and resource presets
+
+#### 🟢 Phase 3: Deployment
+
+1. **Generate Helm Values** → Convert to Helm-compatible format with proper resource mappings
+2. **Deploy** → Use Helm to deploy to Kubernetes with monitoring and error handling
 
 Each phase has specific error handling and validation, ensuring deployments are safe and predictable.
 
@@ -155,14 +197,14 @@ components:
 deployah deploy production
 
 # Deploy to staging with an explicit manifest path
-deployah deploy staging -f .deployah.yaml
+deployah deploy staging -f ./path/to/deployah.yaml
 ```
 
 ---
 
 ## Variable Substitution Precedence
 
-When substituting variables in your `.deployah.yaml` manifest, Deployah uses the following precedence (lowest to highest):
+When substituting variables in your `deployah.yaml` manifest, Deployah uses the following precedence (lowest to highest):
 
 1. **Environment Definition Variables:**  
    Defined in the `variables` field of the selected environment in your manifest.
@@ -174,7 +216,7 @@ When substituting variables in your `.deployah.yaml` manifest, Deployah uses the
 **Example:**
 
 ```yaml
-# In .deployah.yaml
+# In deployah.yaml
 environments:
   - name: production
     variables:
@@ -193,7 +235,7 @@ export DPY_VAR_APP_ENV=osenv
 
 The value used for `${APP_ENV}` will be `osenv`.
 
-> **Note:** In `.deployah.yaml`, reference variables without the `DPY_VAR_` prefix (e.g., `${IMAGE}`).
+> **Note:** In `deployah.yaml`, reference variables without the `DPY_VAR_` prefix (e.g., `${IMAGE}`).
 
 ---
 
@@ -201,12 +243,12 @@ The value used for `${APP_ENV}` will be `osenv`.
 
 | File                      | Used by         | Purpose                                 |
 |---------------------------|-----------------|-----------------------------------------|
-| `.deployah.yaml`          | Deployah        | Main Deployah manifest/config           |
+| `deployah.yaml`          | Deployah        | Main Deployah manifest/config           |
 | `.env` / `.env.<envName>` | Deployah & App  | Variable substitution for both; Deployah only uses variables starting with `DPY_VAR_` |
 | `config.yaml`             | Application     | App-specific config, ignored by Deployah|
 | `config.<envName>.yaml`   | Application     | App-specific config for named environments, ignored by Deployah|
 
-- **Deployah only reads `.deployah.yaml` and `.env` files.**
+- **Deployah only reads `deployah.yaml` and `.env` files.**
 - **Deployah only uses variables from `.env` that start with `DPY_VAR_`.**
 - **Variables in `.env` (or `.env.<envName>`) that do NOT start with `DPY_VAR_` are available for your application, but are ignored by Deployah.**
 - **`config.yaml` and `config.<envName>.yaml` are ignored by Deployah** (they're for your app).
@@ -229,7 +271,7 @@ The value used for `${APP_ENV}` will be `osenv`.
 **Default:**
 
 ```yaml
-# .deployah.yaml
+# deployah.yaml
 components:
   my-app:
     image: my-image:${IMAGE}
@@ -311,7 +353,7 @@ deployah <command> --help
 Error: environment "production" not found
 ```
 
-*Solution*: Check your `.deployah.yaml` file for the correct environment name, or list available environments with `deployah list`.
+*Solution*: Check your `deployah.yaml` file for the correct environment name, or list available environments with `deployah list`.
 
 #### Variable substitution failed
 
@@ -350,7 +392,7 @@ deployah <command> --help
 
 ## Schema Reference
 
-Deployah uses JSON Schema for validation. The schema defines the structure and validation rules for your `.deployah.yaml` manifest.
+Deployah uses JSON Schema for validation. The schema defines the structure and validation rules for your `deployah.yaml` manifest.
 
 - **Schema Version**: v1-alpha.1
 - **Schema Location**: `internal/manifest/schema/v1-alpha.1/manifest.json`
