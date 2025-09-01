@@ -1,16 +1,19 @@
 apiVersion: v2
 name: {{ .Chart.Name | quote }}
-{{- if .Chart.Description -}}
+{{- if .Chart.Description }}
 description: {{ .Chart.Description | quote }}
-{{- end -}}
+{{- end }}
 type: application
 version: {{ .Chart.Version | quote }}
 {{- if .Chart.AppVersion -}}
 appVersion: {{ .Chart.AppVersion | quote }}
-{{- end -}}
+{{- end }}
 dependencies:
   - name: deployah
     version: "~0.1.0-alpha.1"
     repository: "file://charts/deployah"
     import-values:
-      - defaults
+{{- range $name, $component := .Manifest.Components }}
+      - child: exports.defaults
+        parent: {{ $name }}
+{{- end }}

@@ -80,7 +80,7 @@ exports:
     ## @param image.pullSecrets Image pull secrets
     ##
     image:
-      registry: docker.io
+      registry: ""
       repository: ""
       tag: latest
       digest: ""
