@@ -13,7 +13,7 @@ Deployah is a CLI tool that makes deploying applications effortless by leveragin
 3. **Run Deployah:**
 
    ```sh
-   deployah --env production
+   deployah deploy production
    ```
 
 ---
@@ -40,7 +40,7 @@ graph LR
 
 1. **Parse** → Read and validate your YAML manifest structure
 2. **Validate** → Check against JSON Schema for correctness and type safety
-3. **Resolve Environment** → Select the right environment configuration based on CLI flags and manifest definitions
+3. **Resolve Environment** → Select the right environment configuration based on CLI arguments and manifest definitions
 4. **Substitute Variables** → Replace `${VARIABLES}` with actual values using clear precedence rules
 5. **Apply Defaults** → Fill in sensible defaults from schema patterns and resource presets
 6. **Generate Helm Values** → Convert to Helm-compatible format with proper resource mappings
@@ -111,8 +111,18 @@ components:
 
 - If `environments` is omitted, Deployah uses a built-in `default` environment.
 - If only one environment is defined, it is used automatically.
-- If multiple environments are defined, you must specify `--env <name>`.
-- If you do not specify `--env` and multiple environments exist, Deployah will show an error listing available environments.
+- If multiple environments are defined, you must specify the environment argument: `deployah deploy <name>`.
+- If you do not specify an environment argument and multiple environments exist, Deployah will show an error listing available environments.
+
+### Examples
+
+```sh
+# Deploy to production using default manifest path
+deployah deploy production
+
+# Deploy to staging with an explicit manifest path
+deployah deploy staging -f .deployah.yaml
+```
 
 ---
 
