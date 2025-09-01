@@ -1,0 +1,15 @@
+apiVersion: v2
+name: umbrella
+description: An example Helm chart for an umbrella application
+type: application
+version: 0.1.0
+appVersion: 0.1.0
+dependencies:
+  - name: helmet
+    repository: file://charts/helmet
+    version: 0.1.0-alpha.1
+    import-values:
+      - child: exports.defaults
+        parent: web1
+      - child: exports.defaults
+        parent: web2
