@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 
-	"github.com/deployah-dev/deployah/internal/manifest/schema"
+	"deployah.dev/deployah/internal/manifest/schema"
 	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
 )
 

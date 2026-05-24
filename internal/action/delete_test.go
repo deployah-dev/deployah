@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/deployah-dev/deployah/internal/action"
-	"github.com/deployah-dev/deployah/internal/helm"
+	"deployah.dev/deployah/internal/action"
+	"deployah.dev/deployah/internal/helm"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	v1 "helm.sh/helm/v4/pkg/release/v1"

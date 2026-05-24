@@ -1,4 +1,4 @@
-module github.com/deployah-dev/deployah
+module deployah.dev/deployah
 
 go 1.26.2
 

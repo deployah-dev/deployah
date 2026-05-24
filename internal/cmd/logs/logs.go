@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/Masterminds/sprig/v3"
-	"github.com/deployah-dev/deployah/internal/k8s"
-	"github.com/deployah-dev/deployah/internal/runtime"
+	"deployah.dev/deployah/internal/k8s"
+	"deployah.dev/deployah/internal/runtime"
 	"github.com/fatih/color"
 	"github.com/stern/stern/stern"
 	"k8s.io/apimachinery/pkg/fields"

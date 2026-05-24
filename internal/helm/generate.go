@@ -17,7 +17,7 @@ import (
 	"k8s.io/utils/ptr"
 
 	sprig "github.com/Masterminds/sprig/v3"
-	"github.com/deployah-dev/deployah/internal/manifest"
+	"deployah.dev/deployah/internal/manifest"
 	"github.com/distribution/reference"
 )
 

@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/deployah-dev/deployah/internal/manifest"
+	"deployah.dev/deployah/internal/manifest"
 )
 
 // ChartCache represents a cached chart entry

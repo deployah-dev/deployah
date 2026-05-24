@@ -15,7 +15,7 @@
 // Package main is the entry point for the Deployah application.
 package main
 
-import "github.com/deployah-dev/deployah/internal/cmd"
+import "deployah.dev/deployah/internal/cmd"
 
 func main() {
 	cmd.Execute()

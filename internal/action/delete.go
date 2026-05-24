@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/deployah-dev/deployah/internal/helm"
+	"deployah.dev/deployah/internal/helm"
 	v1 "helm.sh/helm/v4/pkg/release/v1"
 )
 

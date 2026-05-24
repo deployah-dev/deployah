@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/deployah-dev/deployah/internal/manifest/schema"
+	"deployah.dev/deployah/internal/manifest/schema"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
 	"golang.org/x/exp/maps"

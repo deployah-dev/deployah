@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/deployah-dev/deployah/internal/cli"
-	"github.com/deployah-dev/deployah/internal/helm"
-	"github.com/deployah-dev/deployah/internal/runtime"
+	"deployah.dev/deployah/internal/cli"
+	"deployah.dev/deployah/internal/helm"
+	"deployah.dev/deployah/internal/runtime"
 	v1 "helm.sh/helm/v4/pkg/release/v1"
 	"nabat.dev/nabat"
 	"sigs.k8s.io/yaml"

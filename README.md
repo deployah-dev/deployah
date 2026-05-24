@@ -23,7 +23,7 @@ inputs.deployah.url = "github:deployah-dev/deployah";
 ### Install with Go
 
 ```sh
-go install github.com/deployah-dev/deployah/cmd/deployah@latest
+go install deployah.dev/deployah@latest
 ```
 
 ---

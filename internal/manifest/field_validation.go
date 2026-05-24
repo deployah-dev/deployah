@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/deployah-dev/deployah/internal/manifest/schema"
+	"deployah.dev/deployah/internal/manifest/schema"
 )
 
 // fieldValidators holds compiled regex patterns extracted from the JSON schema

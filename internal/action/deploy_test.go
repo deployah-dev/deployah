@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/deployah-dev/deployah/internal/action"
-	"github.com/deployah-dev/deployah/internal/manifest"
+	"deployah.dev/deployah/internal/action"
+	"deployah.dev/deployah/internal/manifest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

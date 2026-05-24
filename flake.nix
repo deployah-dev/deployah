@@ -64,12 +64,9 @@
         
         vendorHash = "sha256-ZIVqNqjqQFpSYwAHIKTgf3MEea/0ggdF/eQ2sMSm0i4=";
 
-        subPackages = [ "cmd/deployah" ];
-        
         ldflags = [
           "-s"
           "-w"
-          "-X main.version=${"0.1.0"}"
         ];
 
         # Disable tests during Nix build if they are not hermetic

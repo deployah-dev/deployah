@@ -52,7 +52,7 @@ import (
 	"sync"
 
 	"dario.cat/mergo"
-	"github.com/deployah-dev/deployah/internal/manifest/schema"
+	"deployah.dev/deployah/internal/manifest/schema"
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"github.com/spf13/cast"

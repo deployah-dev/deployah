@@ -3,9 +3,9 @@ package list
 import (
 	"fmt"
 
-	"github.com/deployah-dev/deployah/internal/cli"
-	"github.com/deployah-dev/deployah/internal/k8s"
-	"github.com/deployah-dev/deployah/internal/runtime"
+	"deployah.dev/deployah/internal/cli"
+	"deployah.dev/deployah/internal/k8s"
+	"deployah.dev/deployah/internal/runtime"
 	"nabat.dev/nabat"
 )
 

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/deployah-dev/deployah/internal/k8s"
+	"deployah.dev/deployah/internal/k8s"
 	v1 "helm.sh/helm/v4/pkg/release/v1"
 	"k8s.io/apimachinery/pkg/labels"
 )

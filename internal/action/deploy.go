@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/deployah-dev/deployah/internal/manifest"
+	"deployah.dev/deployah/internal/manifest"
 )
 
 // Deployer abstracts Helm install/upgrade operations.

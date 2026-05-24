@@ -19,7 +19,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/deployah-dev/deployah/internal/runtime"
+	"deployah.dev/deployah/internal/runtime"
 )
 
 // Client wraps Kubernetes operations for Deployah resources

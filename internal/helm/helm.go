@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/deployah-dev/deployah/internal/manifest"
+	"deployah.dev/deployah/internal/manifest"
 	"helm.sh/helm/v4/pkg/action"
 	"helm.sh/helm/v4/pkg/chart/v2/loader"
 	"helm.sh/helm/v4/pkg/cli"

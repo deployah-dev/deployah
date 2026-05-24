@@ -18,7 +18,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/deployah-dev/deployah/internal/manifest"
+	"deployah.dev/deployah/internal/manifest"
 	v1 "helm.sh/helm/v4/pkg/release/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"

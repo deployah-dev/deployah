@@ -18,7 +18,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/deployah-dev/deployah/internal/k8s"
+	"deployah.dev/deployah/internal/k8s"
 	"github.com/dustin/go-humanize"
 	v1 "helm.sh/helm/v4/pkg/release/v1"
 )

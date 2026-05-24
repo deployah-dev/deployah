@@ -3,7 +3,7 @@ package initialize
 import (
 	"fmt"
 
-	"github.com/deployah-dev/deployah/internal/manifest"
+	"deployah.dev/deployah/internal/manifest"
 	"nabat.dev/nabat"
 )
 

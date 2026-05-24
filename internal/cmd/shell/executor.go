@@ -10,8 +10,8 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/deployah-dev/deployah/internal/k8s"
-	"github.com/deployah-dev/deployah/internal/runtime"
+	"deployah.dev/deployah/internal/k8s"
+	"deployah.dev/deployah/internal/runtime"
 	"golang.org/x/term"
 	"nabat.dev/nabat"
 	corev1 "k8s.io/api/core/v1"

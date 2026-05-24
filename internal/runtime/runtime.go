@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/deployah-dev/deployah/internal/helm"
-	"github.com/deployah-dev/deployah/internal/manifest"
+	"deployah.dev/deployah/internal/helm"
+	"deployah.dev/deployah/internal/manifest"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"

@@ -3,7 +3,7 @@ package validate
 import (
 	"fmt"
 
-	"github.com/deployah-dev/deployah/internal/runtime"
+	"deployah.dev/deployah/internal/runtime"
 	"nabat.dev/nabat"
 )
 

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/deployah-dev/deployah/internal/manifest"
+	"deployah.dev/deployah/internal/manifest"
 	"nabat.dev/nabat"
 )
 

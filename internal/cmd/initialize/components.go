@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/deployah-dev/deployah/internal/manifest"
-	"github.com/deployah-dev/deployah/internal/util"
+	"deployah.dev/deployah/internal/manifest"
+	"deployah.dev/deployah/internal/util"
 	"nabat.dev/nabat"
 )
 
