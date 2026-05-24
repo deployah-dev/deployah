@@ -8,16 +8,18 @@ import (
 	"strings"
 	"time"
 
-	"deployah.dev/deployah/internal/manifest"
 	"helm.sh/helm/v4/pkg/action"
 	"helm.sh/helm/v4/pkg/chart/v2/loader"
 	"helm.sh/helm/v4/pkg/cli"
 	"helm.sh/helm/v4/pkg/kube"
 	"helm.sh/helm/v4/pkg/release"
-	v1 "helm.sh/helm/v4/pkg/release/v1"
 	"helm.sh/helm/v4/pkg/storage/driver"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/selection"
+
+	"deployah.dev/deployah/internal/manifest"
+
+	v1 "helm.sh/helm/v4/pkg/release/v1"
 )
 
 var (
@@ -29,6 +31,7 @@ var (
 	ErrReleasePending = errors.New("another operation is in progress")
 )
 
+// Client wraps Helm action configuration for Deployah operations.
 type Client struct {
 	settings      *cli.EnvSettings
 	config        *action.Configuration
@@ -125,7 +128,7 @@ func (c *Client) InstallApp(ctx context.Context, manifest *manifest.Manifest, en
 		"deployah.dev/project":     manifest.Project,
 		"deployah.dev/environment": environment,
 		"deployah.dev/managed-by":  "deployah",
-		"deployah.dev/version":     manifest.ApiVersion,
+		"deployah.dev/version":     manifest.APIVersion,
 	}
 
 	// Resolve chart path
@@ -136,7 +139,11 @@ func (c *Client) InstallApp(ctx context.Context, manifest *manifest.Manifest, en
 
 	// Cleanup temp directory unless explicitly kept
 	if !c.debug {
-		defer os.RemoveAll(chartPath)
+		defer func() {
+			if removeErr := os.RemoveAll(chartPath); removeErr != nil {
+				fmt.Printf("Warning: failed to cleanup chart temp dir %s: %v\n", chartPath, removeErr)
+			}
+		}()
 	}
 
 	// Values are empty for now, but will be populated later
@@ -162,8 +169,8 @@ func (c *Client) InstallApp(ctx context.Context, manifest *manifest.Manifest, en
 		install.DisableOpenAPIValidation = true
 		install.Labels = labels
 
-		if _, err := install.RunWithContext(ctx, ch, values); err != nil {
-			return c.wrapHelmError("install", GenerateReleaseName(manifest.Project, environment), err)
+		if _, runErr := install.RunWithContext(ctx, ch, values); runErr != nil {
+			return c.wrapHelmError("install", GenerateReleaseName(manifest.Project, environment), runErr)
 		}
 		return nil
 	}
@@ -185,8 +192,8 @@ func (c *Client) InstallApp(ctx context.Context, manifest *manifest.Manifest, en
 		install.RollbackOnFailure = true
 		install.Labels = labels
 
-		if _, err := install.RunWithContext(ctx, ch, values); err != nil {
-			return c.wrapHelmError("install", GenerateReleaseName(manifest.Project, environment), err)
+		if _, runErr := install.RunWithContext(ctx, ch, values); runErr != nil {
+			return c.wrapHelmError("install", GenerateReleaseName(manifest.Project, environment), runErr)
 		}
 		return nil
 	}
@@ -205,7 +212,7 @@ func (c *Client) InstallApp(ctx context.Context, manifest *manifest.Manifest, en
 	return nil
 }
 
-// ListReleases returns detailed information about releases in the current namespace.
+// ListReleases returns release details in the current namespace.
 func (c *Client) ListReleases(ctx context.Context, selector labels.Selector) ([]*v1.Release, error) {
 	req, err := labels.NewRequirement("deployah.dev/managed-by", selection.Equals, []string{"deployah"})
 	if err != nil {
@@ -226,6 +233,7 @@ func (c *Client) ListReleases(ctx context.Context, selector labels.Selector) ([]
 	return releaserListToV1(rels)
 }
 
+// GetRelease retrieves a release by project and environment.
 func (c *Client) GetRelease(ctx context.Context, project, environment string) (*v1.Release, error) {
 	releaseName := GenerateReleaseName(project, environment)
 	get := action.NewGet(c.config)
@@ -311,8 +319,6 @@ func releaserToV1(r release.Releaser) (*v1.Release, error) {
 		return rel, nil
 	case v1.Release:
 		return &rel, nil
-	case nil:
-		return nil, nil
 	default:
 		return nil, fmt.Errorf("unsupported helm release type %T", r)
 	}
@@ -324,6 +330,10 @@ func releaserToV1(r release.Releaser) (*v1.Release, error) {
 func releaserListToV1(rs []release.Releaser) ([]*v1.Release, error) {
 	out := make([]*v1.Release, 0, len(rs))
 	for _, r := range rs {
+		if r == nil {
+			out = append(out, nil)
+			continue
+		}
 		rel, err := releaserToV1(r)
 		if err != nil {
 			return nil, err

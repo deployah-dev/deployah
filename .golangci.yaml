@@ -1,0 +1,355 @@
+# Copyright 2026 The Deployah Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# golangci-lint configuration (HARD/REQUIRED checks)
+# This config contains only critical linters that must pass.
+version: "2"
+
+linters:
+  enable:
+    # === SECURITY ===
+    # bidichk: Detects dangerous Unicode bidirectional text (security)
+    # Prevents invisible characters that can hide malicious code
+    - bidichk
+
+    # gosec: Security vulnerability scanner
+    # Detects SQL injection, hardcoded creds, path traversal, bad TLS, etc.
+    - gosec
+
+    # === CRITICAL BUGS ===
+    # errcheck: Ensures errors are checked (critical bugs)
+    # BAD: file.Close()
+    # GOOD: if err := file.Close(); err != nil { return err }
+    - errcheck
+
+    # nilnesserr: Enhanced nilerr - catches complex nil/error mismatches
+    # BAD: if err != nil { return nil, differentErr }
+    # GOOD: if err != nil { return nil, err }
+    - nilnesserr
+
+    # nilnil: Catches returning nil error with nil/invalid value
+    # BAD: func GetUser(id int) (*User, error) { return nil, nil }
+    # GOOD: func GetUser(id int) (*User, error) { return nil, ErrNotFound }
+    - nilnil
+
+    # staticcheck: The gold standard Go linter (has autofix)
+    # Catches 100+ bug patterns, style issues, and simplifications
+    - staticcheck
+
+    # govet: Standard Go vet checks (extended)
+    # Catches printf errors, mutex copies, struct tag issues, shadowing, etc.
+    - govet
+
+    # bodyclose: Ensures HTTP response bodies are closed (resource leaks)
+    # BAD: resp, _ := http.Get(url); return resp.StatusCode
+    # GOOD: resp, _ := http.Get(url); defer resp.Body.Close()
+    - bodyclose
+
+    # forcetypeassert: Catches unsafe type assertions that can panic
+    # BAD: s := v.(string) // panics if v is not string
+    # GOOD: s, ok := v.(string); if !ok { return err }
+    - forcetypeassert
+
+    # === CORRECTNESS ===
+    # errorlint: Ensures proper Go 1.13+ error handling
+    # BAD: if err == ErrNotFound { } // breaks with wrapped errors
+    # GOOD: if errors.Is(err, ErrNotFound) { }
+    - errorlint
+
+    # contextcheck: Ensures context is properly propagated
+    # BAD: func Handle(ctx context.Context) { doWork(context.Background()) }
+    # GOOD: func Handle(ctx context.Context) { doWork(ctx) }
+    - contextcheck
+
+    # fatcontext: Detects nested contexts in loops (memory leak)
+    # BAD: for _, item := range items { ctx = context.WithValue(ctx, k, item) }
+    # GOOD: for _, item := range items { itemCtx := context.WithValue(ctx, k, item) }
+    - fatcontext
+
+    # spancheck: Validates OpenTelemetry span handling
+    # BAD: span := tracer.Start(ctx, "op"); /* no span.End() */
+    # GOOD: defer span.End(); span.RecordError(err); span.SetStatus(codes.Error)
+    - spancheck
+
+    # durationcheck: Catches duration * duration bugs
+    # BAD: timeout := time.Second * time.Second // nonsense: 1e18 ns!
+    # GOOD: timeout := 5 * time.Second
+    - durationcheck
+
+    # makezero: Catches slice initialization bugs
+    # BAD: s := make([]int, 5); s = append(s, 1) // s has 6 elements, not 1!
+    # GOOD: s := make([]int, 0, 5); s = append(s, 1)
+    - makezero
+
+    # reassign: Prevents reassignment of package-level variables
+    # BAD: io.EOF = errors.New("custom") // breaks all io.EOF checks!
+    # GOOD: Don't reassign package variables
+    - reassign
+
+    # revive: Style + API hygiene rules
+    # Used here for unexported return type checks on exported funcs.
+    - revive
+
+    # forbidigo: Forbid risky textual patterns
+    # Used here to block `any` in exported function signatures.
+    - forbidigo
+
+    # godoclint: Go doc comment practice (godoc-lint via golangci-lint).
+    # Rules that duplicate staticcheck ST1020–ST1022 are disabled below.
+    # Package comments are enforced by staticcheck ST1000 only (not revive).
+    - godoclint
+
+    # gocritic (go-critic): Extra bug/perf/style diagnostics beyond vet/staticcheck.
+    # Tags add checks on top of go-critic defaults; performance checks are off by default
+    # in go-critic unless explicitly enabled. Style tag omitted here (overlap with revive).
+    # https://go-critic.com/overview.html
+    - gocritic
+
+    # modernize: Suggest simplifications using modern Go/stdlib (golangci-lint ≥ v2.6.0).
+    # Disabled analyzers below align with forbidigo (`any`) and conservative API choices.
+    - modernize
+
+    # === HYGIENE / CONSISTENCY ===
+    # gomoddirectives: go.mod directive hygiene (replace, retract, toolchain, etc.).
+    - gomoddirectives
+
+    # nolintlint: Ill-formed //nolint directives; keeps suppressions specific and effective.
+    - nolintlint
+
+    # thelper: Test helpers should call t.Helper() so failures point at call sites.
+    - thelper
+
+    # paralleltest: Unsafe t.Parallel() patterns; ignore-missing avoids requiring Parallel everywhere.
+    - paralleltest
+
+    # loggercheck: slog (and optional libs) key/value pairing at call sites.
+    - loggercheck
+
+    # usestdlibvars: Prefer stdlib named constants (HTTP methods/status, time layouts, etc.).
+    - usestdlibvars
+
+    # mirror: Prefer bytes/strings stdlib helpers where appropriate (may overlap modernize).
+    - mirror
+
+    # misspell / dupword: Typos and duplicated words (comments-focused where configured below).
+    - misspell
+    - dupword
+
+  settings:
+    bidichk:
+      # All Unicode bidirectional overrides are dangerous - check all
+      left-to-right-embedding: true
+      right-to-left-embedding: true
+      pop-directional-formatting: true
+      left-to-right-override: true
+      right-to-left-override: true
+      left-to-right-isolate: true
+      right-to-left-isolate: true
+      first-strong-isolate: true
+      pop-directional-isolate: true
+
+    errcheck:
+      # Check type assertions: a := b.(Type) can panic if wrong
+      check-type-assertions: true
+      # Check blank assignments: _, _ = funcReturningError()
+      check-blank: true
+      # Don't exclude common functions - be thorough
+      disable-default-exclusions: false
+      exclude-functions: []
+      verbose: true
+
+    errorlint:
+      # Check fmt.Errorf uses %w for wrapping (preserves error chain)
+      errorf: true
+      # Check type assertions use errors.As instead of type assertion
+      asserts: true
+      # Check comparisons use errors.Is instead of ==
+      comparison: true
+
+    fatcontext:
+      # Check struct pointers for context accumulation
+      check-struct-pointers: false
+
+    gosec:
+      # Filter by severity (low, medium, high)
+      severity: medium
+      # Filter by confidence (low, medium, high)
+      confidence: medium
+
+    gomoddirectives:
+      replace-local: false
+      retract-allow-no-explanation: false
+      check-module-path: true
+
+    govet:
+      enable:
+        # Variable shadowing detection
+        - shadow
+        # Nil pointer dereference checks
+        - nilness
+        # Unused writes detection
+        - unusedwrite
+      settings:
+        shadow:
+          # Strict shadowing checks
+          strict: true
+
+    makezero:
+      # Strict mode: only allow make([]T, 0) or make([]T, 0, cap)
+      always: true
+
+    nilnil:
+      # Also catch: return validValue, someError (opposite problem)
+      detect-opposite: true
+
+    reassign:
+      # Check ALL package variables
+      patterns:
+        - ".*"
+
+    revive:
+      rules:
+        # Prevent exported functions/methods from returning unexported types.
+        # This catches patterns like: func WithStringPrompt(...) anUnexportedType
+        - name: unexported-return
+
+        # Enforce Go naming conventions for variables, parameters, and types
+        # (camelCase, common initialism casing like URL/HTTP/ID, no underscores).
+        - name: var-naming
+
+        # Note: revive's `exported` rule overlaps with staticcheck's ST1020/ST1021/ST1022
+        # (which are enabled by `staticcheck.checks: ["all"]` above). We rely on
+        # staticcheck for the "exported X must have a doc starting with X" check
+        # to avoid duplicate warnings.
+
+    forbidigo:
+      # Ban exported function signatures that use `any`.
+      # Keep internal use of `any` allowed.
+      forbid:
+        - pattern: "^func\\s+\\([^)]+\\)\\s+[A-Z][A-Za-z0-9_]*\\([^)]*\\bany\\b"
+        - pattern: "^func\\s+[A-Z][A-Za-z0-9_]*\\([^)]*\\bany\\b"
+
+    godoclint:
+      default: all
+      options:
+        max-len:
+          length: 80
+        disable:
+          # staticcheck ST1021/ST1022: comment should start with symbol name.
+          - start-with-name
+          # staticcheck ST1020: exported identifiers must have a doc comment.
+          - require-doc
+
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - performance
+      # Kubernetes API types are large by design; value receivers and range over
+      # spec slices are intentional for this codebase.
+      disabled-checks:
+        - hugeParam
+        - rangeValCopy
+
+    modernize:
+      # By default all analyzers run; these are opted out (see modernize docs).
+      disable:
+        - any # Conflicts with forbidigo on exported signatures; keep interface{} where used.
+
+    spancheck:
+      checks:
+        # Ensure span.End() is called (usually via defer)
+        - end
+        # Ensure span.RecordError(err) when returning error
+        - record-error
+        # Ensure span.SetStatus(codes.Error, msg) when returning error
+        - set-status
+
+    staticcheck:
+      # Enable all checks (SA*, S*, ST*, QF*)
+      checks: ["all"]
+
+    nolintlint:
+      # Fail unused //nolint and require naming the suppressed linter (no bare //nolint).
+      allow-unused: false
+      allow-no-explanation: []
+      require-explanation: false
+      require-specific: true
+
+    paralleltest:
+      # Only flag incorrect Parallel usage; do not require t.Parallel on every test/subtest.
+      ignore-missing: true
+      ignore-missing-subtests: true
+
+    loggercheck:
+      # Deployah uses log/slog; disable checks for loggers not used in-tree.
+      kitlog: false
+      klog: false
+      logr: false
+      slog: true
+      zap: false
+
+    misspell:
+      locale: US
+      mode: restricted
+      # Docs use British spellings and proper nouns; US locale otherwise.
+      ignore-rules:
+        - colour
+        - spectre
+
+    dupword:
+      comments-only: true
+
+    thelper:
+      # *testing.T / *testing.B: require t.Helper() at start of helpers.
+      # testing.TB: example helpers may accept nil tb; first stmt cannot be tb.Helper().
+      tb:
+        begin: false
+
+formatters:
+  enable:
+    # gofumpt: Stricter gofmt with additional consistency rules
+    - gofumpt
+
+    # gci: Import statement organization with granular control
+    - gci
+
+  settings:
+    gofumpt:
+      # Module path for determining local imports
+      module-path: deployah.dev/deployah
+      # Enable additional formatting rules beyond gofmt
+      extra-rules: true
+
+    gci:
+      # Import section order
+      sections:
+        - standard # Standard library packages
+        - default # Third-party packages
+        - prefix(deployah.dev/deployah) # All deployah.dev/deployah/* local modules
+        - blank # Blank imports (side effects)
+        - alias # Aliased imports
+      custom-order: true
+      no-inline-comments: true
+      no-prefix-comments: true
+
+issues:
+  # Report all critical issues
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  # Don't auto-fix by default (CI should detect, not modify)
+  fix: false
+
+run:
+  # Timeout for total work
+  timeout: 5m

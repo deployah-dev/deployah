@@ -12,27 +12,27 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/distribution/reference"
 	"gopkg.in/yaml.v3"
-
 	"k8s.io/utils/ptr"
 
-	sprig "github.com/Masterminds/sprig/v3"
 	"deployah.dev/deployah/internal/manifest"
-	"github.com/distribution/reference"
+
+	sprig "github.com/Masterminds/sprig/v3"
 )
 
-// Embed the embedded chart directory. We renamed underscore-prefixed templates
-// so they are included by directory embedding without explicit listing.
+// ChartTemplateFS embeds the chart directory. Underscore-prefixed templates
+// were renamed so directory embedding includes them without explicit listing.
 //
 //go:embed chart
 var ChartTemplateFS embed.FS
 
-// parseContainerImage parses a container image reference and returns the image repository and tag/digest.
-// It handles various formats including:
+// parseContainerImage parses a container image reference and returns the
+// repository and tag or digest. Supported formats include:
 // - simple: nginx:1.21
 // - with registry port: registry.example.com:5000/nginx:1.21
 // - with digest: nginx@sha256:abc123...
-// - with registry port and digest: registry.example.com:5000/nginx@sha256:abc123...
+// - registry port with digest: example.com:5000/nginx@sha256:abc...
 // - with registry port and tag: registry.example.com:5000/nginx:1.21
 func parseContainerImage(imageRef string) (repository, tagOrDigest string) {
 	if imageRef == "" {
@@ -58,9 +58,9 @@ func parseContainerImage(imageRef string) (repository, tagOrDigest string) {
 	return repo, ""
 }
 
-// ChartData holds the values to substitute in the templates, including arbitrary values for values.yaml
-// .Values can be used in values.yaml.gotmpl for flexible templating
-// You can add more fields for project, component, etc.
+// ChartData holds values substituted in templates, including arbitrary
+// values for values.yaml. .Values can be used in values.yaml.gotmpl for
+// flexible templating.
 type ChartData struct {
 	Chart struct {
 		Name        string
@@ -72,15 +72,16 @@ type ChartData struct {
 	Manifest *manifest.Manifest // Added for dynamic sub-charts
 }
 
-// GenerateReleaseName returns the Helm release name derived from project and environment.
-// Format: PROJECT_NAME-ENVIRONMENT_NAME
+// GenerateReleaseName returns the Helm release name for project and
+// environment. Format: PROJECT_NAME-ENVIRONMENT_NAME.
 func GenerateReleaseName(projectName, environmentName string) string {
 	return projectName + "-" + environmentName
 }
 
-// PrepareChart expands the embedded chart into a temporary directory, rendering any
-// files with the .gotmpl suffix using Go templates and Sprig functions. It returns the root
-// directory path of the prepared chart. Uses caching to avoid regenerating identical charts.
+// PrepareChart expands the embedded chart into a temporary directory,
+// rendering .gotmpl files with Go templates and Sprig functions. It returns
+// the prepared chart root directory. Uses caching to avoid regenerating
+// identical charts.
 func PrepareChart(ctx context.Context, manifest *manifest.Manifest, desiredEnvironment string) (string, error) {
 	// Generate comprehensive cache key based on both manifest and embedded chart templates
 	cacheKey, err := GenerateCacheKey(manifest)
@@ -132,7 +133,7 @@ func PrepareChart(ctx context.Context, manifest *manifest.Manifest, desiredEnvir
 		}
 		dstPath := filepath.Join(tmpDir, rel)
 		if d.IsDir() {
-			return os.MkdirAll(dstPath, 0o755)
+			return os.MkdirAll(dstPath, 0o750)
 		}
 
 		data, readErr := ChartTemplateFS.ReadFile(path)
@@ -150,7 +151,7 @@ func PrepareChart(ctx context.Context, manifest *manifest.Manifest, desiredEnvir
 				return fmt.Errorf("failed to render template %s: %w", path, execErr)
 			}
 			dstPath = strings.TrimSuffix(dstPath, ".gotmpl")
-			if writeErr := os.WriteFile(dstPath, buf.Bytes(), 0o644); writeErr != nil {
+			if writeErr := os.WriteFile(dstPath, buf.Bytes(), 0o600); writeErr != nil {
 				return fmt.Errorf("failed to write rendered template %s: %w", dstPath, writeErr)
 			}
 			return nil
@@ -170,7 +171,7 @@ func PrepareChart(ctx context.Context, manifest *manifest.Manifest, desiredEnvir
 			}
 		}
 
-		if writeErr := os.WriteFile(dstPath, data, 0o644); writeErr != nil {
+		if writeErr := os.WriteFile(dstPath, data, 0o600); writeErr != nil {
 			return fmt.Errorf("failed to write file %s: %w", dstPath, writeErr)
 		}
 		return nil
@@ -180,7 +181,7 @@ func PrepareChart(ctx context.Context, manifest *manifest.Manifest, desiredEnvir
 	}
 
 	// Create dynamic sub-charts for each component
-	if err := createComponentSubCharts(tmpDir, manifest); err != nil {
+	if err = createComponentSubCharts(tmpDir, manifest); err != nil {
 		return "", fmt.Errorf("failed to create component sub-charts: %w", err)
 	}
 
@@ -194,8 +195,8 @@ func PrepareChart(ctx context.Context, manifest *manifest.Manifest, desiredEnvir
 		return "", fmt.Errorf("failed to marshal values to YAML: %w", err)
 	}
 
-	if err := os.WriteFile(filepath.Join(tmpDir, "values.yaml"), valuesYAML, 0o644); err != nil {
-		return "", fmt.Errorf("failed to write values.yaml: %w", err)
+	if writeErr := os.WriteFile(filepath.Join(tmpDir, "values.yaml"), valuesYAML, 0o600); writeErr != nil {
+		return "", fmt.Errorf("failed to write values.yaml: %w", writeErr)
 	}
 
 	// Cache the generated chart for future use
@@ -207,13 +208,13 @@ func PrepareChart(ctx context.Context, manifest *manifest.Manifest, desiredEnvir
 // createComponentSubCharts creates sub-chart directories for each component
 func createComponentSubCharts(chartDir string, manifest *manifest.Manifest) error {
 	chartsDir := filepath.Join(chartDir, "charts")
-	if err := os.MkdirAll(chartsDir, 0o755); err != nil {
+	if err := os.MkdirAll(chartsDir, 0o750); err != nil {
 		return fmt.Errorf("failed to create charts directory: %w", err)
 	}
 
 	for componentName := range manifest.Components {
 		componentChartDir := filepath.Join(chartsDir, componentName)
-		if err := os.MkdirAll(componentChartDir, 0o755); err != nil {
+		if err := os.MkdirAll(componentChartDir, 0o750); err != nil {
 			return fmt.Errorf("failed to create component chart directory for %s: %w", componentName, err)
 		}
 
@@ -224,7 +225,7 @@ func createComponentSubCharts(chartDir string, manifest *manifest.Manifest) erro
 
 		// Create templates directory and app.yaml
 		templatesDir := filepath.Join(componentChartDir, "templates")
-		if err := os.MkdirAll(templatesDir, 0o755); err != nil {
+		if err := os.MkdirAll(templatesDir, 0o750); err != nil {
 			return fmt.Errorf("failed to create templates directory for component %s: %w", componentName, err)
 		}
 
@@ -244,16 +245,18 @@ type: application
 version: 0.1.0
 `, componentName)
 
-	return os.WriteFile(filepath.Join(chartDir, "Chart.yaml"), []byte(chartYAML), 0o644)
+	return os.WriteFile(filepath.Join(chartDir, "Chart.yaml"), []byte(chartYAML), 0o600)
 }
 
 // createComponentAppTemplate creates the app.yaml template file
 func createComponentAppTemplate(templatesDir string) error {
 	appTemplate := `{{- include "deployah.app" . -}}`
 
-	return os.WriteFile(filepath.Join(templatesDir, "app.yaml"), []byte(appTemplate), 0o644)
+	return os.WriteFile(filepath.Join(templatesDir, "app.yaml"), []byte(appTemplate), 0o600)
 }
 
+// MapManifestToChartValues converts a manifest into Helm chart values for the
+// given environment.
 func MapManifestToChartValues(m *manifest.Manifest, desiredEnvironment string) (map[string]any, error) {
 	values := make(map[string]any)
 
@@ -277,7 +280,7 @@ func MapManifestToChartValues(m *manifest.Manifest, desiredEnvironment string) (
 		}
 		// TODO: Implement handling for component envFile
 		//   Exclude Deployah-specific environment variables (those prefixed with DPY_VAR_) and provide the remaining variables to the component
-		
+
 		// TODO: Implement handling for component configFile
 		//   Use a deep merge to merge the component's configFile with the environment's configFile
 		//   Precedence:
@@ -285,7 +288,7 @@ func MapManifestToChartValues(m *manifest.Manifest, desiredEnvironment string) (
 		//   - config.production.yaml (environment-specific)
 		//   - config.api.yaml (component-specific)
 		//   - config.api.production.yaml (environment and component-specific)
-		
+
 		if component.Kind == manifest.ComponentKindStateful {
 			// TODO: Add support for stateful components
 			return nil, fmt.Errorf("stateful components are not supported yet")
@@ -352,7 +355,7 @@ func MapManifestToChartValues(m *manifest.Manifest, desiredEnvironment string) (
 
 		componentValues["image"] = imageValues
 
-		// 
+		//
 		if len(component.Command) > 0 {
 			componentValues["command"] = component.Command
 		}

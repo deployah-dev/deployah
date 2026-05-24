@@ -1,4 +1,5 @@
-// Package schema offers utilities for accessing and managing versioned schema files.
+// Package schema offers utilities for accessing and managing versioned schema
+// files.
 package schema
 
 import (
@@ -31,13 +32,15 @@ const (
 )
 
 var (
-	// versionRegex is a regular expression that matches version strings in the format "v1-alpha.1", "v1-beta.2", etc.
+	// versionRegex matches version strings such as "v1-alpha.1", "v1-beta.2",
+	// and similar pre-release formats.
 	versionRegex = regexp.MustCompile(`^v(\d+)(?:-(alpha|beta|rc)\.(\d+))?$`)
 	// preReleaseOrder is a map that defines the order of pre-release types.
 	preReleaseOrder = map[string]int{"alpha": 0, "beta": 1, "rc": 2, "": 3}
 )
 
-// GetManifestSchema retrieves the JSON schema for validating manifests at a specific version.
+// GetManifestSchema retrieves the JSON schema for validating manifests at a
+// specific version.
 // Version strings should follow the format "v1-alpha.1", "v1-beta.2", etc.
 // The schema file must be named "manifest.json" within the version directory.
 func GetManifestSchema(version string) ([]byte, error) {
@@ -72,9 +75,9 @@ func GetManifestSchemas() (map[string][]byte, error) {
 			continue
 		}
 		version := file.Name()
-		schema, err := GetManifestSchema(version)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read schema for version %s: %w", version, err)
+		schema, schemaErr := GetManifestSchema(version)
+		if schemaErr != nil {
+			return nil, fmt.Errorf("failed to read schema for version %s: %w", version, schemaErr)
 		}
 		schemas[version] = schema
 	}
@@ -99,7 +102,8 @@ func getSortedVersions() ([]string, error) {
 	return versions, nil
 }
 
-// GetLatestManifestSchema returns the latest manifest schema ([]byte) by version order.
+// GetLatestManifestSchema returns the latest manifest schema ([]byte) by
+// version order.
 func GetLatestManifestSchema() ([]byte, error) {
 	versions, err := getSortedVersions()
 	if err != nil {
@@ -123,6 +127,8 @@ func GetLatestManifestVersion() (string, error) {
 	return versions[len(versions)-1], nil
 }
 
+// GetValidManifestVersions returns all supported manifest schema versions in
+// ascending order.
 func GetValidManifestVersions() ([]string, error) {
 	versions, err := getSortedVersions()
 	if err != nil {
@@ -139,10 +145,16 @@ func compareSchemaVersions(a, b string) int {
 		if m == nil {
 			return 0, "", 0, false // fallback for invalid format
 		}
-		major, _ = strconv.Atoi(m[1])
+		major, err := strconv.Atoi(m[1])
+		if err != nil {
+			return 0, "", 0, false
+		}
 		pre = m[2]
 		if m[3] != "" {
-			preNum, _ = strconv.Atoi(m[3])
+			preNum, err = strconv.Atoi(m[3])
+			if err != nil {
+				return 0, "", 0, false
+			}
 		}
 		return major, pre, preNum, true
 	}
@@ -151,11 +163,12 @@ func compareSchemaVersions(a, b string) int {
 	majB, preB, numB, validB := parse(b)
 
 	// If either version is invalid, fall back to lexicographical order
-	if !validA && !validB {
+	switch {
+	case !validA && !validB:
 		return strings.Compare(a, b)
-	} else if !validA {
+	case !validA:
 		return 1 // invalid versions are considered greater (sorted last)
-	} else if !validB {
+	case !validB:
 		return -1
 	}
 

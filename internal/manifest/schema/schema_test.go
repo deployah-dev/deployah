@@ -1,4 +1,3 @@
-// Package schema offers utilities for accessing and managing versioned schema files.
 package schema
 
 import (
@@ -15,33 +14,39 @@ type SchemaTestSuite struct {
 	suite.Suite
 }
 
-// TestGetManifestSchema tests that the manifest schema is returned for the given version
+// TestGetManifestSchema verifies manifest schema retrieval for a version.
 func (s *SchemaTestSuite) TestGetManifestSchema() {
 	schema, err := GetManifestSchema("v1-alpha.1")
 	s.Require().NoError(err)
 	s.Require().NotNil(schema)
 }
 
+// TestGetManifestSchema_InvalidVersion verifies error handling for invalid
+// versions.
 func (s *SchemaTestSuite) TestGetManifestSchema_InvalidVersion() {
 	schema, err := GetManifestSchema("invalid")
 	s.Require().Error(err)
 	s.Require().Nil(schema)
 }
 
-// TestGetEnvironmentsSchema tests that the environments schema is returned for the given version
+// TestGetEnvironmentsSchema verifies environments schema retrieval for a
+// version.
 func (s *SchemaTestSuite) TestGetEnvironmentsSchema() {
 	schema, err := GetEnvironmentsSchema("v1-alpha.1")
 	s.Require().NoError(err)
 	s.Require().NotNil(schema)
 }
 
+// TestGetEnvironmentsSchema_InvalidVersion verifies error handling for
+// invalid versions.
 func (s *SchemaTestSuite) TestGetEnvironmentsSchema_InvalidVersion() {
 	schema, err := GetEnvironmentsSchema("invalid")
 	s.Require().Error(err)
 	s.Require().Nil(schema)
 }
 
-// TestCompareSchemaVersions tests the compareSchemaVersions function with table-driven subtests
+// TestCompareSchemaVersions tests compareSchemaVersions with table-driven
+// subtests.
 func (s *SchemaTestSuite) TestCompareSchemaVersions() {
 	cases := []struct {
 		a, b   string
@@ -74,18 +79,20 @@ func (s *SchemaTestSuite) TestCompareSchemaVersions() {
 		name := fmt.Sprintf("%s_vs_%s", c.a, c.b)
 		s.T().Run(name, func(t *testing.T) {
 			res := compareSchemaVersions(c.a, c.b)
-			if c.expect < 0 {
+			switch {
+			case c.expect < 0:
 				assert.Less(t, res, 0, "expected %s < %s", c.a, c.b)
-			} else if c.expect > 0 {
+			case c.expect > 0:
 				assert.Greater(t, res, 0, "expected %s > %s", c.a, c.b)
-			} else {
+			default:
 				assert.Equal(t, 0, res, "expected %s == %s", c.a, c.b)
 			}
 		})
 	}
 }
 
-// TestSortSchemaVersions tests sorting of schema version strings using compareSchemaVersions
+// TestSortSchemaVersions tests sorting schema version strings with
+// compareSchemaVersions.
 func (s *SchemaTestSuite) TestSortSchemaVersions() {
 	unsorted := []string{
 		"v1-beta.2",
@@ -101,15 +108,14 @@ func (s *SchemaTestSuite) TestSortSchemaVersions() {
 		"v1-rc.1",
 		"v1",
 	}
-	sorted := make([]string, len(unsorted))
-	copy(sorted, unsorted)
+	sorted := append([]string(nil), unsorted...)
 	sort.Slice(sorted, func(i, j int) bool {
 		return compareSchemaVersions(sorted[i], sorted[j]) < 0
 	})
 	assert.Equal(s.T(), expected, sorted, "schema versions should be sorted as expected")
 }
 
-// TestGetAllSchemas tests that the schemas are sorted according to compareSchemaVersions
+// TestGetAllSchemas verifies schemas are sorted with compareSchemaVersions.
 func (s *SchemaTestSuite) TestGetAllSchemas() {
 	schemas, err := GetManifestSchemas()
 	assert.NoError(s.T(), err)
@@ -127,7 +133,7 @@ func (s *SchemaTestSuite) TestGetAllSchemas() {
 	}
 }
 
-// TestGetLatestSchema tests that the latest schema is the last entry in the sorted schemas list
+// TestGetLatestSchema verifies the latest schema is the last sorted entry.
 func (s *SchemaTestSuite) TestGetLatestSchema() {
 	schemas, err := GetManifestSchemas()
 	assert.NoError(s.T(), err)

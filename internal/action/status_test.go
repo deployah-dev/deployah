@@ -4,12 +4,15 @@ import (
 	"context"
 	"testing"
 
-	"deployah.dev/deployah/internal/action"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"deployah.dev/deployah/internal/action"
+
 	v1 "helm.sh/helm/v4/pkg/release/v1"
 )
 
+// Run returns an error when no releases match the project.
 func TestStatus_Run_NotFound(t *testing.T) {
 	s := action.NewStatus(&mockLister{releases: nil})
 	_, err := s.Run(context.Background(), action.StatusParams{Project: "ghost"})
@@ -17,6 +20,7 @@ func TestStatus_Run_NotFound(t *testing.T) {
 	assert.Contains(t, err.Error(), "no releases found")
 }
 
+// Run returns releases sorted by name.
 func TestStatus_Run_FoundAndSorted(t *testing.T) {
 	rels := []*v1.Release{
 		{Name: "my-app-staging"},
@@ -30,6 +34,7 @@ func TestStatus_Run_FoundAndSorted(t *testing.T) {
 	assert.Equal(t, "my-app-staging", releases[1].Name)
 }
 
+// Run includes the environment in the not-found error message.
 func TestStatus_Run_WithEnvironmentFilter(t *testing.T) {
 	s := action.NewStatus(&mockLister{releases: nil})
 	_, err := s.Run(context.Background(), action.StatusParams{Project: "my-app", Environment: "prod"})

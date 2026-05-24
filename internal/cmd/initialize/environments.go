@@ -4,8 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"deployah.dev/deployah/internal/manifest"
 	"nabat.dev/nabat"
+
+	"deployah.dev/deployah/internal/manifest"
 )
 
 func collectEnvironments(c *nabat.Context, config *ProjectConfig) error {
@@ -81,9 +82,9 @@ func collectEnvironmentDetails(c *nabat.Context, envName string) (manifest.Envir
 	}
 
 	if addVariables {
-		variables, err := collectEnvironmentVariables(c)
-		if err != nil {
-			return env, fmt.Errorf("failed to collect variables for environment %s: %w", envName, err)
+		variables, varErr := collectEnvironmentVariables(c)
+		if varErr != nil {
+			return env, fmt.Errorf("failed to collect variables for environment %s: %w", envName, varErr)
 		}
 		env.Variables = variables
 	}

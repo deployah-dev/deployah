@@ -7,7 +7,7 @@ import (
 )
 
 // ValidatePositiveInteger ensures a string is a positive integer
-func ValidatePositiveInteger(value string, fieldName string) error {
+func ValidatePositiveInteger(value, fieldName string) error {
 	if value == "" {
 		return fmt.Errorf("%s cannot be empty", fieldName)
 	}
@@ -22,7 +22,7 @@ func ValidatePositiveInteger(value string, fieldName string) error {
 }
 
 // ValidateNonEmpty ensures a string is not empty or whitespace-only
-func ValidateNonEmpty(value string, fieldName string) error {
+func ValidateNonEmpty(value, fieldName string) error {
 	if strings.TrimSpace(value) == "" {
 		return fmt.Errorf("%s cannot be empty or contain only whitespace", fieldName)
 	}

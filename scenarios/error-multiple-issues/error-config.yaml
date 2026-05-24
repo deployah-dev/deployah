@@ -1,0 +1,3 @@
+expectedErrors:
+  - "component cannot have both 'resources' and 'resourcePreset' fields"
+  - "minReplicas cannot be greater than maxReplicas"

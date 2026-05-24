@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"testing"
 
-	"deployah.dev/deployah/internal/action"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	v1 "helm.sh/helm/v4/pkg/release/v1"
 	"k8s.io/apimachinery/pkg/labels"
+
+	"deployah.dev/deployah/internal/action"
+
+	v1 "helm.sh/helm/v4/pkg/release/v1"
 )
 
 type mockLister struct {
@@ -21,6 +23,7 @@ func (m *mockLister) ListReleases(_ context.Context, _ labels.Selector) ([]*v1.R
 	return m.releases, m.err
 }
 
+// Run returns an empty slice when no releases match.
 func TestList_Run_NoReleases(t *testing.T) {
 	l := action.NewList(&mockLister{releases: nil})
 	releases, err := l.Run(context.Background(), action.ListParams{Project: "missing"})
@@ -28,6 +31,7 @@ func TestList_Run_NoReleases(t *testing.T) {
 	assert.Empty(t, releases)
 }
 
+// Run filters nil entries from lister results.
 func TestList_Run_WithReleases(t *testing.T) {
 	rels := []*v1.Release{
 		{Name: "my-app-prod"},
@@ -40,6 +44,7 @@ func TestList_Run_WithReleases(t *testing.T) {
 	assert.Len(t, releases, 2)
 }
 
+// Run wraps lister errors.
 func TestList_Run_ListerError(t *testing.T) {
 	l := action.NewList(&mockLister{err: fmt.Errorf("k8s unavailable")})
 	_, err := l.Run(context.Background(), action.ListParams{})

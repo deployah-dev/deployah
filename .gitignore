@@ -1,5 +1,6 @@
 deployah.yaml
 .env.*
+.env
 
 # Go workspace file
 go.work
@@ -10,3 +11,10 @@ go.work.sum
 
 # Kind cluster config
 .kubeconfig
+
+# Coverage profiles
+coverage*.out
+coverage*.html
+
+# Pre-commit config
+.pre-commit-config.yaml

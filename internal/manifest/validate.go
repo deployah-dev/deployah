@@ -1,4 +1,3 @@
-// Package manifest provides functions for parsing and manipulating manifest files.
 package manifest
 
 import (
@@ -9,22 +8,18 @@ import (
 	"slices"
 
 	"deployah.dev/deployah/internal/manifest/schema"
+
 	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
 )
 
-// validateJSONAgainstSchema is a helper that validates JSON data against a JSON schema.
-// schemaLoader is a function that returns the schema bytes for a given version.
+// validateJSONAgainstSchema is a helper that validates JSON data against a
+// JSON schema. schemaLoader returns the schema bytes for a given version.
 func validateYAMLAgainstSchema(
 	obj map[string]any,
 	version string,
 	schemaLoader func(string) ([]byte, error),
 	schemaType schema.SchemaType, // e.g. schema.SchemaTypeManifest or schema.SchemaTypeEnvironments
 ) error {
-	// var obj map[string]interface{}
-	// if err := yaml.Unmarshal(yamlBytes, &obj); err != nil {
-	// return fmt.Errorf("failed to convert manifest to JSON: %w", err)
-	// }
-
 	// Load schema
 	schemaBytes, err := schemaLoader(version)
 	if err != nil {
@@ -41,7 +36,7 @@ func validateYAMLAgainstSchema(
 		return fmt.Errorf("invalid %s schema JSON for version %q: %w", schemaType, version, err)
 	}
 
-	if err := compiler.AddResource(schemaID, jsonSchema); err != nil {
+	if err = compiler.AddResource(schemaID, jsonSchema); err != nil {
 		return fmt.Errorf("failed to load %s schema version %q: %w", schemaType, version, err)
 	}
 
@@ -51,13 +46,13 @@ func validateYAMLAgainstSchema(
 	}
 
 	// Validate the manifest
-	if err := compiled.Validate(obj); err != nil {
+	if err = compiled.Validate(obj); err != nil {
 		return fmt.Errorf("%s validation failed for schema version %q: %w", schemaType, version, err)
 	}
 	return nil
 }
 
-// Validate validates the manifest YAML against the provided JSON schema file.
+// ValidateManifest validates manifest YAML against the provided JSON schema.
 // version should be the version of the schema (e.g., "v1-alpha.1").
 // This is a strict validation: unknown fields are not allowed.
 func ValidateManifest(manifestObj map[string]any, version string) error {
@@ -69,7 +64,8 @@ func ValidateManifest(manifestObj map[string]any, version string) error {
 	)
 }
 
-// ValidateEnvironments validates the environments YAML against the provided JSON schema file.
+// ValidateEnvironments validates environments YAML against the provided JSON
+// schema file.
 // version should be the version of the schema (e.g., "v1-alpha.1").
 // This is a strict validation: unknown fields are not allowed.
 func ValidateEnvironments(manifestObj map[string]any, version string) error {
@@ -81,7 +77,8 @@ func ValidateEnvironments(manifestObj map[string]any, version string) error {
 	)
 }
 
-// ValidateAPIVersion checks the manifest's apiVersion field for presence, type, and validity.
+// ValidateAPIVersion checks the manifest apiVersion field for presence, type,
+// and validity.
 // Returns the apiVersion string if valid, or an error otherwise.
 func ValidateAPIVersion(manifestObj map[string]any) (string, error) {
 	validVersions, err := schema.GetValidManifestVersions()
@@ -106,12 +103,13 @@ func ValidateAPIVersion(manifestObj map[string]any) (string, error) {
 	return apiVersionStr, nil
 }
 
-// ValidateComponentResources validates that a component has valid resource configuration.
+// ValidateComponentResources validates a component's resource configuration.
 // A component can have either:
 // 1. Explicit resources (resources field with actual values)
 // 2. Resource preset (resourcePreset field)
 // 3. Neither (will use defaults)
-// But it cannot have both resources and resourcePreset, and cannot have empty resources object.
+// It cannot have both resources and resourcePreset, or an empty resources
+// object.
 func ValidateComponentResources(component Component) error {
 	hasResources := (component.Resources.CPU != nil && *component.Resources.CPU != "") ||
 		(component.Resources.Memory != nil && *component.Resources.Memory != "") ||
@@ -134,7 +132,8 @@ func ValidateComponentResources(component Component) error {
 	return nil
 }
 
-// ValidateComponentAutoscaling validates that a component has valid autoscaling configuration.
+// ValidateComponentAutoscaling validates a component's autoscaling
+// configuration.
 func ValidateComponentAutoscaling(component Component) error {
 	if component.Autoscaling == nil || !component.Autoscaling.Enabled {
 		return nil // Autoscaling not enabled, no validation needed

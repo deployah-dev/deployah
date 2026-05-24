@@ -48,23 +48,27 @@ deployah logs [release-name] --fuzzy [flags]
 ### 2. Core Features
 
 #### 2.1 Basic Fuzzy Search
+
 - Real-time fuzzy matching on log content
 - Support for exact and fuzzy search modes
 - Case-insensitive search by default
 - Configurable search sensitivity
 
 #### 2.2 Memory Management
+
 - Use fzf's `--tail` option to limit memory usage
 - Configurable buffer size (default: 100,000 lines)
 - Automatic cleanup of old log entries
 
 #### 2.3 Enhanced Display
+
 - Preserve Stern's color-coded output with `--ansi` flag
 - Show newest logs at the top with `--tac` flag
 - Prevent line truncation with `--wrap` flag
 - Custom headers with usage instructions
 
 #### 2.4 Interactive Actions
+
 - **Enter**: Execute kubectl exec on selected pod
 - **Ctrl-O**: Open selected log entry in editor (vim/nano)
 - **Ctrl-R**: Refresh log stream
@@ -74,6 +78,7 @@ deployah logs [release-name] --fuzzy [flags]
 ### 3. Configuration Options
 
 #### 3.1 Search Configuration
+
 ```bash
 --fuzzy-search-mode string     Search mode: fuzzy, exact, regex (default "fuzzy")
 --fuzzy-case-sensitive         Enable case-sensitive search
@@ -81,6 +86,7 @@ deployah logs [release-name] --fuzzy [flags]
 ```
 
 #### 3.2 Display Configuration
+
 ```bash
 --fuzzy-buffer-size int        Maximum number of log lines to keep in memory (default 100000)
 --fuzzy-header string          Custom header text for the fuzzy finder
@@ -89,6 +95,7 @@ deployah logs [release-name] --fuzzy [flags]
 ```
 
 #### 3.3 Action Configuration
+
 ```bash
 --fuzzy-exec-action string     Action to execute on Enter key: exec, edit, copy (default "exec")
 --fuzzy-editor string          Editor to use for log viewing (default "vim")

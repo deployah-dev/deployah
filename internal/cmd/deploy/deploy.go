@@ -3,15 +3,18 @@ package deploy
 import (
 	"fmt"
 
-	"deployah.dev/deployah/internal/runtime"
 	"nabat.dev/nabat"
+
+	"deployah.dev/deployah/internal/runtime"
 )
 
+// Options holds command-line flags for deploy.
 type Options struct {
 	Environment string `nabat:"environment"`
 	DryRun      bool   `nabat:"dry-run"`
 }
 
+// Register adds the deploy command to app.
 func Register(app *nabat.App) {
 	app.MustCommand("deploy",
 		nabat.WithDescription("Deploy a project to a Kubernetes cluster on a given environment"),

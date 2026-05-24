@@ -1,4 +1,3 @@
-// Package manifest provides functions for parsing and manipulating manifest files.
 package manifest
 
 import (
@@ -33,7 +32,7 @@ func initValidators() error {
 	}
 
 	var schemaData map[string]any
-	if err := json.Unmarshal(schemaBytes, &schemaData); err != nil {
+	if err = json.Unmarshal(schemaBytes, &schemaData); err != nil {
 		return fmt.Errorf("failed to parse manifest schema: %w", err)
 	}
 
@@ -71,7 +70,8 @@ func initValidators() error {
 	return nil
 }
 
-// extractPattern navigates through nested map structure to extract a pattern string
+// extractPattern navigates a nested map structure to extract a pattern
+// string.
 func extractPattern(data map[string]any, path []string) (string, error) {
 	current := data
 	for i, key := range path {
@@ -163,7 +163,8 @@ func ValidateEnvName(name string) error {
 	return nil
 }
 
-// ValidateEnvVarName validates an environment variable name against the JSON schema pattern
+// ValidateEnvVarName validates an environment variable name against the JSON
+// schema pattern.
 func ValidateEnvVarName(name string) error {
 	if name == "" {
 		return fmt.Errorf("variable name cannot be empty")
@@ -202,7 +203,7 @@ func ValidateHostname(hostname string) error {
 	return nil
 }
 
-// ValidatePort validates that the port number is a valid number between 1024 and 65535
+// ValidatePort validates that the port is a number between 1024 and 65535.
 func ValidatePort(portStr string) error {
 	if portStr == "" {
 		return fmt.Errorf("port cannot be empty")

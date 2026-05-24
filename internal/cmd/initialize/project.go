@@ -4,8 +4,9 @@ import (
 	"fmt"
 	"slices"
 
-	"deployah.dev/deployah/internal/manifest"
 	"nabat.dev/nabat"
+
+	"deployah.dev/deployah/internal/manifest"
 )
 
 func collectProjectName(c *nabat.Context, config *ProjectConfig) error {

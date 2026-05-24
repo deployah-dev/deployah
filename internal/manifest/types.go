@@ -12,13 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package manifest provides functions for parsing and manipulating manifest files.
 package manifest
 
 // Manifest defines the structure of the project manifest.
 type Manifest struct {
-	// ApiVersion is the schema version of the manifest (e.g., "v1-alpha.1").
-	ApiVersion string `json:"apiVersion,omitempty" yaml:"apiVersion,omitempty"`
+	// APIVersion is the schema version of the manifest (e.g., "v1-alpha.1").
+	APIVersion string `json:"apiVersion,omitempty" yaml:"apiVersion,omitempty"`
 	// Project is the project name.
 	Project string `json:"project" yaml:"project"`
 	// Environments is a list of environment definitions.
@@ -91,34 +90,42 @@ type Resources struct {
 	EphemeralStorage *string `json:"ephemeralStorage,omitempty" yaml:"ephemeralStorage,omitempty"`
 }
 
-// Ingress specifies the ingress settings for exposing the component via HTTP/HTTPS.
+// Ingress specifies ingress settings for exposing the component via HTTP/HTTPS.
 type Ingress struct {
 	Host string `json:"host" yaml:"host"`
 	TLS  bool   `json:"tls" yaml:"tls"`
 }
 
-// ComponentRole defines the role of the component within the application and determines the default deployment strategy.
+// ComponentRole defines the role of a component and its default deployment
+// strategy.
 type ComponentRole string
 
 const (
+	// ComponentRoleService runs a long-lived HTTP or network service.
 	ComponentRoleService ComponentRole = "service"
-	ComponentRoleWorker  ComponentRole = "worker"
-	ComponentRoleJob     ComponentRole = "job"
+	// ComponentRoleWorker runs background or queue-processing workloads.
+	ComponentRoleWorker ComponentRole = "worker"
+	// ComponentRoleJob runs a finite batch or one-off task.
+	ComponentRoleJob ComponentRole = "job"
 )
 
 // ComponentKind specifies the kind of the component.
 type ComponentKind string
 
 const (
+	// ComponentKindStateless runs replicas that do not require stable storage.
 	ComponentKindStateless ComponentKind = "stateless"
-	ComponentKindStateful  ComponentKind = "stateful"
+	// ComponentKindStateful runs replicas that require stable storage.
+	ComponentKindStateful ComponentKind = "stateful"
 )
 
 // MetricType specifies the type of metric to monitor.
 type MetricType string
 
 const (
-	MetricTypeCPU    MetricType = "cpu"
+	// MetricTypeCPU scales on CPU utilization.
+	MetricTypeCPU MetricType = "cpu"
+	// MetricTypeMemory scales on memory utilization.
 	MetricTypeMemory MetricType = "memory"
 )
 
@@ -126,11 +133,18 @@ const (
 type ResourcePreset string
 
 const (
-	ResourcePresetNano    ResourcePreset = "nano"
-	ResourcePresetMicro   ResourcePreset = "micro"
-	ResourcePresetSmall   ResourcePreset = "small"
-	ResourcePresetMedium  ResourcePreset = "medium"
-	ResourcePresetLarge   ResourcePreset = "large"
-	ResourcePresetXLarge  ResourcePreset = "xlarge"
+	// ResourcePresetNano is the smallest resource preset.
+	ResourcePresetNano ResourcePreset = "nano"
+	// ResourcePresetMicro is a very small resource preset.
+	ResourcePresetMicro ResourcePreset = "micro"
+	// ResourcePresetSmall is a small resource preset.
+	ResourcePresetSmall ResourcePreset = "small"
+	// ResourcePresetMedium is a medium resource preset.
+	ResourcePresetMedium ResourcePreset = "medium"
+	// ResourcePresetLarge is a large resource preset.
+	ResourcePresetLarge ResourcePreset = "large"
+	// ResourcePresetXLarge is an extra-large resource preset.
+	ResourcePresetXLarge ResourcePreset = "xlarge"
+	// ResourcePreset2XLarge is a double extra-large resource preset.
 	ResourcePreset2XLarge ResourcePreset = "2xlarge"
 )

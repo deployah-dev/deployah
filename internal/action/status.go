@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"sort"
 
-	"deployah.dev/deployah/internal/k8s"
-	v1 "helm.sh/helm/v4/pkg/release/v1"
 	"k8s.io/apimachinery/pkg/labels"
+
+	"deployah.dev/deployah/internal/k8s"
+
+	v1 "helm.sh/helm/v4/pkg/release/v1"
 )
 
 // ReleaseGetter abstracts fetching releases by project/environment.
@@ -27,11 +29,13 @@ type Status struct {
 	getter ReleaseGetter
 }
 
+// NewStatus constructs a Status with the given release getter.
 func NewStatus(getter ReleaseGetter) *Status {
 	return &Status{getter: getter}
 }
 
-// Run returns sorted releases for the given project. Returns an error if none found.
+// Run returns sorted releases for the given project.
+// Returns an error if none found.
 func (s *Status) Run(ctx context.Context, params StatusParams) ([]*v1.Release, error) {
 	selector, err := k8s.BuildLabelSelector(params.Project, params.Environment)
 	if err != nil {

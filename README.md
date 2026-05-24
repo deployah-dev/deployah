@@ -28,6 +28,51 @@ go install deployah.dev/deployah@latest
 
 ---
 
+## Development
+
+The flake is the canonical dev and CI interface. With [direnv](https://direnv.net/) (`.envrc` uses `use flake`), tools load automatically when you enter the repo.
+
+```sh
+nix develop
+```
+
+### Format, lint, and tidy
+
+```sh
+nix run .#fmt       # format Go (gofumpt + gci)
+nix run .#lint      # golangci-lint
+nix run .#lint-md   # markdownlint
+nix run .#tidy      # go mod tidy
+```
+
+### Tests
+
+Unit and integration tests are split by build tag. Plain `go test ./...` skips integration tests.
+
+```sh
+nix run .#test-unit          # unit tests with race detector
+nix run .#test-integration   # scenario tests in internal/testing
+```
+
+Coverage profiles are written to `coverage-unit.out` and `coverage-integration.out`.
+
+### Build and run
+
+```sh
+nix build              # build the deployah binary
+nix run . -- --help    # run without installing
+```
+
+### CI
+
+```sh
+nix flake check   # runs pre-commit hooks (lint, markdownlint, go-mod-tidy, nixfmt)
+```
+
+Format Nix files with `nix fmt`.
+
+---
+
 ## Prerequisites
 
 Before using Deployah, ensure you have:

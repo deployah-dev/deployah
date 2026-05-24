@@ -23,16 +23,18 @@ type Deploy struct {
 	loader   ManifestLoader
 }
 
+// NewDeploy constructs a Deploy with the given deployer and loader.
 func NewDeploy(deployer Deployer, loader ManifestLoader) *Deploy {
 	return &Deploy{deployer: deployer, loader: loader}
 }
 
+// Run loads the manifest and installs or upgrades the Helm release.
 func (d *Deploy) Run(ctx context.Context, environment string, dryRun bool) (*manifest.Manifest, error) {
 	m, err := d.loader.Manifest(ctx, environment)
 	if err != nil {
 		return nil, fmt.Errorf("load manifest: %w", err)
 	}
-	if err := d.deployer.InstallApp(ctx, m, environment, dryRun); err != nil {
+	if err = d.deployer.InstallApp(ctx, m, environment, dryRun); err != nil {
 		return nil, fmt.Errorf("install: %w", err)
 	}
 	return m, nil

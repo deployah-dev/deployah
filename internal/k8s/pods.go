@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package k8s provides functions to interact with Kubernetes pods.
 package k8s
 
 import (
@@ -22,7 +21,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// GetRunningPods gets running pods for the specified project, component, and environment
+// GetRunningPods lists running pods for a project, component, and environment.
 func (c *Client) GetRunningPods(ctx context.Context, project, component, environment string) ([]PodInfo, error) {
 	selector, err := BuildSelector(project, component, environment)
 	if err != nil {

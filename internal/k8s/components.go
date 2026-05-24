@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package k8s provides functions to interact with Kubernetes components.
 package k8s
 
 import (
@@ -22,7 +21,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// GetAvailableComponents gets all available components from running pods for a specific project
+// GetAvailableComponents lists component names from running pods for a project.
 func (c *Client) GetAvailableComponents(ctx context.Context, projectName string) ([]string, error) {
 	selector, err := BuildProjectSelector(projectName)
 	if err != nil {
@@ -55,7 +54,7 @@ func (c *Client) GetAvailableComponents(ctx context.Context, projectName string)
 	return components, nil
 }
 
-// ValidateComponentExists checks if a component exists and has running pods for the given project
+// ValidateComponentExists reports whether a component has running pods.
 func (c *Client) ValidateComponentExists(ctx context.Context, projectName, componentName string) error {
 	pods, err := c.GetRunningPods(ctx, projectName, componentName, "")
 	if err != nil {
@@ -98,8 +97,8 @@ func (c *Client) GetProjectComponents(ctx context.Context, projectName string) (
 
 	componentInfos := make([]ComponentInfo, 0, len(components))
 	for _, componentName := range components {
-		info, err := c.GetComponentInfo(ctx, projectName, componentName)
-		if err != nil {
+		info, infoErr := c.GetComponentInfo(ctx, projectName, componentName)
+		if infoErr != nil {
 			// Log error but continue with other components
 			continue
 		}
@@ -109,7 +108,8 @@ func (c *Client) GetProjectComponents(ctx context.Context, projectName string) (
 	return componentInfos, nil
 }
 
-// GetAvailableEnvironments gets all available environments from running pods for a specific project and component
+// GetAvailableEnvironments lists environment names from running pods for a
+// project and component.
 func (c *Client) GetAvailableEnvironments(ctx context.Context, projectName, componentName string) ([]string, error) {
 	selector, err := BuildComponentSelector(projectName, componentName)
 	if err != nil {

@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package k8s provides functions to interact with Kubernetes types.
 package k8s
 
 // PodInfo contains information about a pod

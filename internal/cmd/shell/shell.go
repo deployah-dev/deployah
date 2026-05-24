@@ -3,10 +3,12 @@ package shell
 import (
 	"fmt"
 
-	"deployah.dev/deployah/internal/runtime"
 	"nabat.dev/nabat"
+
+	"deployah.dev/deployah/internal/runtime"
 )
 
+// Options holds command-line flags for shell.
 type Options struct {
 	Project     string `nabat:"project"`
 	Component   string `nabat:"component"`
@@ -17,6 +19,7 @@ type Options struct {
 	Environment string `nabat:"environment"`
 }
 
+// Register adds the shell command to app.
 func Register(app *nabat.App) {
 	app.MustCommand("shell",
 		nabat.WithDescription("Connect to a shell in a container"),

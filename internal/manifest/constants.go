@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package manifest provides functions for parsing and manipulating manifest files.
 package manifest
 
 // File and Path Constants
@@ -215,11 +214,4 @@ var ResourcePresetMappings = map[ResourcePreset]map[string]Resources{
 			EphemeralStorage: new("2Gi"),
 		},
 	},
-}
-
-// stringPtr is a helper function to create string pointers
-//
-//go:fix inline
-func stringPtr(s string) *string {
-	return new(s)
 }

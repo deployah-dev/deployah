@@ -3,14 +3,17 @@ package validate
 import (
 	"fmt"
 
-	"deployah.dev/deployah/internal/runtime"
 	"nabat.dev/nabat"
+
+	"deployah.dev/deployah/internal/runtime"
 )
 
+// Options holds command-line flags for validate.
 type Options struct {
 	Environment string `nabat:"environment"`
 }
 
+// Register adds the validate command to app.
 func Register(app *nabat.App) {
 	app.MustCommand("validate",
 		nabat.WithDescription("Validate a Deployah manifest for a specific environment"),

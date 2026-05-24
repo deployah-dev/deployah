@@ -18,8 +18,10 @@ import (
 	"context"
 	"time"
 
-	"deployah.dev/deployah/internal/k8s"
 	"github.com/dustin/go-humanize"
+
+	"deployah.dev/deployah/internal/k8s"
+
 	v1 "helm.sh/helm/v4/pkg/release/v1"
 )
 
@@ -105,7 +107,8 @@ func ReleaseToViewModel(rel *v1.Release) ReleaseViewModel {
 	return vm
 }
 
-// ReleaseToViewModelWithPods converts a Helm release to a view model with pod information
+// ReleaseToViewModelWithPods converts a Helm release to a view model with
+// pod information.
 func ReleaseToViewModelWithPods(ctx context.Context, k8sClient *k8s.Client, rel *v1.Release) ReleaseViewModel {
 	vm := ReleaseToViewModel(rel)
 

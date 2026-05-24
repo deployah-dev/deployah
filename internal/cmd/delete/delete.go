@@ -5,14 +5,17 @@ import (
 	"fmt"
 	"strings"
 
+	"nabat.dev/nabat"
+	"sigs.k8s.io/yaml"
+
 	"deployah.dev/deployah/internal/cli"
 	"deployah.dev/deployah/internal/helm"
 	"deployah.dev/deployah/internal/runtime"
+
 	v1 "helm.sh/helm/v4/pkg/release/v1"
-	"nabat.dev/nabat"
-	"sigs.k8s.io/yaml"
 )
 
+// Options holds command-line flags for delete.
 type Options struct {
 	Project       string `nabat:"project"`
 	Environment   string `nabat:"environment"`
@@ -22,7 +25,8 @@ type Options struct {
 	Output        string `nabat:"output"`
 }
 
-// ResourceInfo holds parsed metadata about a single Kubernetes resource from the Helm manifest.
+// ResourceInfo holds parsed metadata about a single Kubernetes resource
+// from the Helm manifest.
 type ResourceInfo struct {
 	APIVersion string `json:"apiVersion" yaml:"apiVersion"`
 	Kind       string `json:"kind" yaml:"kind"`
@@ -43,6 +47,7 @@ type DeletePreview struct {
 	Resources    []ResourceInfo `json:"resources,omitempty" yaml:"resources,omitempty"`
 }
 
+// Register adds the delete command to app.
 func Register(app *nabat.App) {
 	app.MustCommand("delete",
 		nabat.WithDescription("Delete a deployed project in an environment"),
@@ -157,11 +162,11 @@ func renderDryRunPreview(c *nabat.Context, project, environment string, release 
 
 func buildPreview(project, environment string, release *v1.Release, showResources bool) *DeletePreview {
 	p := &DeletePreview{
-		Project:     project,
-		Environment: environment,
-		Release:     release.Name,
-		Namespace:   release.Namespace,
-		Status:      "unknown",
+		Project:      project,
+		Environment:  environment,
+		Release:      release.Name,
+		Namespace:    release.Namespace,
+		Status:       "unknown",
 		LastDeployed: "unknown",
 	}
 	if release.Info != nil {
@@ -247,7 +252,7 @@ func buildResourceNodes(resources []ResourceInfo) nabat.TreeNode {
 // extracts kind-specific detail for each resource.
 func parseResources(manifest string) []ResourceInfo {
 	var resources []ResourceInfo
-	for _, doc := range strings.Split(manifest, "---") {
+	for doc := range strings.SplitSeq(manifest, "---") {
 		doc = strings.TrimSpace(doc)
 		if doc == "" {
 			continue

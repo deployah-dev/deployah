@@ -26,7 +26,9 @@ dependency on what we call the `Helmet` library.
 - Helm 3.9.0+
 
 ## Getting started
+
 1. Add the Helmet as a dependency to your chart.
+
 ```yaml
 # file: Chart.yaml
 
@@ -38,19 +40,22 @@ dependencies:
       - defaults
 ```
 
-2. Update the Helm dependencies:
+1. Update the Helm dependencies:
+
 ```shell
-$ helm dependency update
+helm dependency update
 ```
 
-3. Include the app template:
+1. Include the app template:
+
 ```yaml
 # file: templates/app.yaml
 
 {{ include "helmet.app" . }}
 ```
 
-4. Configure your chart
+1. Configure your chart
+
 ```yaml
 # file: values.yaml
 
@@ -66,9 +71,10 @@ ingress:
   enabled: true
 ```
 
-5. Install the chart:
+1. Install the chart:
+
 ```shell
-$ helm install nginx .
+helm install nginx .
 ```
 
 ## Parameters
@@ -80,7 +86,6 @@ $ helm install nginx .
 | `global.imageRegistry`    | Global Docker image registry                    | `""`  |
 | `global.imagePullSecrets` | Global Docker registry secret names as an array | `[]`  |
 | `global.storageClass`     | Global StorageClass for Persistent Volume(s)    | `""`  |
-
 
 ### Common parameters
 
@@ -94,7 +99,6 @@ $ helm install nginx .
 | `commonLabels`      | Labels to be added to all deployed resources                                                               | `{}`              |
 | `commonAnnotations` | Annotations to be added to all deployed resources                                                          | `{}`              |
 
-
 ### Image parameters
 
 | Name                | Description                                                                                                  | Value       |
@@ -105,7 +109,6 @@ $ helm install nginx .
 | `image.digest`      | Image digest in the way sha256:aa.... Please note this parameter, if set, will override the tag              | `""`        |
 | `image.pullPolicy`  | Image pull policy, Defaults to 'Always' if image tag is 'latest', else set to 'IfNotPresent'                 | `Always`    |
 | `image.pullSecrets` | Image pull secrets, specify an array of imagePullSecrets (secrets must be manually created in the namespace) | `[]`        |
-
 
 ### Deployment/Statefulset parameters
 
@@ -153,7 +156,6 @@ $ helm install nginx .
 | `envVarsConfigMap`                      | ConfigMap with environment variables                                                                                     | `""`                                                             |
 | `envVarsSecret`                         | Secret with environment variables                                                                                        | `""`                                                             |
 
-
 ### Autoscaling parameters
 
 | Name                       | Description                                                                                        | Value   |
@@ -164,7 +166,6 @@ $ helm install nginx .
 | `autoscaling.targetCPU`    | Define the CPU target to trigger the scaling actions (utilization percentage)                      | `80`    |
 | `autoscaling.targetMemory` | Define the memory target to trigger the scaling actions (utilization percentage)                   | `80`    |
 | `autoscaling.metrics`      | Metrics to use when deciding to scale the deployment (evaluated as a template)                     | `[]`    |
-
 
 ### ConfigMap parameters
 
@@ -177,7 +178,6 @@ $ helm install nginx .
 | `configMap.annotations` | Additional custom annotations for the ConfigMap | `{}`          |
 | `configMap.labels`      | Additional custom labels for the ConfigMap      | `{}`          |
 
-
 ### Secret parameters
 
 | Name                 | Description                                                             | Value    |
@@ -187,7 +187,6 @@ $ helm install nginx .
 | `secret.stringData`  | Store data in key-value pairs                                           | `{}`     |
 | `secret.annotations` | Additional custom annotations for the Secret                            | `{}`     |
 | `secret.labels`      | Additional custom labels for the Secret                                 | `{}`     |
-
 
 ### Traffic Exposure (Ingress) parameters
 
@@ -209,7 +208,6 @@ $ helm install nginx .
 | `ingress.existingSecret`   | It is you own the certificate as secret                                                       | `""`                     |
 | `ingress.extraRules`       | Additional rules to be covered with this ingress record                                       | `[]`                     |
 
-
 ### Traffic Exposure (Service) parameters
 
 | Name                               | Description                                                      | Value                                                                     |
@@ -222,7 +220,6 @@ $ helm install nginx .
 | `service.loadBalancerSourceRanges` | APP service Load Balancer sources                                | `[]`                                                                      |
 | `service.externalTrafficPolicy`    | APP service external traffic policy                              | `Cluster`                                                                 |
 | `service.annotations`              | Additional custom annotations for APP service                    | `{}`                                                                      |
-
 
 ### Prometheus Operator ServiceMonitor parameters
 
@@ -272,11 +269,10 @@ $ helm install nginx .
 | `serviceAccount.annotations`                  | Additional custom annotations for the ServiceAccount                   | `{}`    |
 | `serviceAccount.labels`                       | Additional custom labels for the ServiceAccount                        | `{}`    |
 
-
 Specify each parameter using the `--set key=value[,key=value]` argument to `helm install`. For example,
 
 ```shell
-$ helm install my-release --set ingress.hostname=example.com,serviceMonitor.enabled=true company/app
+helm install my-release --set ingress.hostname=example.com,serviceMonitor.enabled=true company/app
 ```
 
 The above command sets the APP Ingress hostname to `example.com` and enabled the ServiceMonitor.
@@ -284,7 +280,7 @@ The above command sets the APP Ingress hostname to `example.com` and enabled the
 Alternatively, a YAML file that specifies the values for the above parameters can be provided while installing the chart. For example,
 
 ```console
-$ helm install my-release -f values.yaml company/app
+helm install my-release -f values.yaml company/app
 ```
 
 > **Tip**: You can use the default [values.yaml](values.yaml) just by [`import-values`](#Getting started)
@@ -318,7 +314,7 @@ In the first two cases, one will need a certificate and a key.  We would expect 
 
 - certificate files should look like (and there can be more than one certificate if there is a certificate chain)
 
-```
+```text
 -----BEGIN CERTIFICATE-----
 MIID6TCCAtGgAwIBAgIJAIaCwivkeB5EMA0GCSqGSIb3DQEBCwUAMFYxCzAJBgNV
 ...
@@ -328,7 +324,7 @@ jScrvkiBO65F46KioCL9h5tDvomdU1aqpI/CBzhvZn1c0ZTf87tGQR8NK7v7
 
 - keys should look like:
 
-```
+```text
 -----BEGIN RSA PRIVATE KEY-----
 MIIEogIBAAKCAQEAvLYcyu8f3skuRyUgeeNpeDvYBCDcgq+LsWap6zbX5f8oLqp4
 ...

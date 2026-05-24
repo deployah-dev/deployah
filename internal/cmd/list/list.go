@@ -3,18 +3,21 @@ package list
 import (
 	"fmt"
 
+	"nabat.dev/nabat"
+
 	"deployah.dev/deployah/internal/cli"
 	"deployah.dev/deployah/internal/k8s"
 	"deployah.dev/deployah/internal/runtime"
-	"nabat.dev/nabat"
 )
 
+// Options holds command-line flags for list.
 type Options struct {
 	OutputFormat string `nabat:"output"`
 	Project      string `nabat:"project"`
 	Environment  string `nabat:"environment"`
 }
 
+// Register adds the list command to app.
 func Register(app *nabat.App) {
 	app.MustCommand("list",
 		nabat.WithDescription("List deployed projects"),

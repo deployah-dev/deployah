@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"sort"
 
+	"nabat.dev/nabat"
+
 	"deployah.dev/deployah/internal/cli"
 	"deployah.dev/deployah/internal/k8s"
 	"deployah.dev/deployah/internal/runtime"
-	"nabat.dev/nabat"
 )
 
+// Options holds command-line flags for status.
 type Options struct {
 	Project      string `nabat:"project"`
 	OutputFormat string `nabat:"output"`
@@ -18,6 +20,7 @@ type Options struct {
 	Detailed     bool   `nabat:"detailed"`
 }
 
+// Register adds the status command to app.
 func Register(app *nabat.App) {
 	app.MustCommand("status",
 		nabat.WithDescription("Display the status of a project"),

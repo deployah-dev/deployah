@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"deployah.dev/deployah/internal/helm"
+
 	v1 "helm.sh/helm/v4/pkg/release/v1"
 )
 
@@ -34,6 +35,7 @@ type Delete struct {
 	deleter ReleaseDeleter
 }
 
+// NewDelete constructs a Delete with the given release deleter.
 func NewDelete(deleter ReleaseDeleter) *Delete {
 	return &Delete{deleter: deleter}
 }

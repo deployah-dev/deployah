@@ -2,13 +2,15 @@ package manifest
 
 import (
 	"encoding/json"
+	"maps"
 	"reflect"
 	"testing"
 
-	"deployah.dev/deployah/internal/manifest/schema"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
-	"golang.org/x/exp/maps"
+
+	"deployah.dev/deployah/internal/manifest/schema"
 )
 
 // DefaultsTestSuite is a test suite for the defaults package
@@ -16,7 +18,7 @@ type DefaultsTestSuite struct {
 	suite.Suite
 }
 
-// TestExtractDefaultsFromSchemaData tests the extractDefaultsFromSchemaData function
+// TestExtractDefaultsFromSchemaData tests extractDefaultsFromSchemaData.
 func (s *DefaultsTestSuite) TestExtractDefaultsFromSchemaData() {
 	tests := []struct {
 		name     string
@@ -169,7 +171,7 @@ func (s *DefaultsTestSuite) TestFillManifestWithDefaults() {
 		{
 			name: "valid manifest with components",
 			manifest: &Manifest{
-				ApiVersion: "v1-alpha.1",
+				APIVersion: "v1-alpha.1",
 				Project:    "test-project",
 				Components: map[string]Component{
 					"web": {
@@ -183,7 +185,7 @@ func (s *DefaultsTestSuite) TestFillManifestWithDefaults() {
 		{
 			name: "manifest with nil components",
 			manifest: &Manifest{
-				ApiVersion: "v1-alpha.1",
+				APIVersion: "v1-alpha.1",
 				Project:    "test-project",
 				Components: nil,
 			},
@@ -193,7 +195,7 @@ func (s *DefaultsTestSuite) TestFillManifestWithDefaults() {
 		{
 			name: "manifest with environments",
 			manifest: &Manifest{
-				ApiVersion: "v1-alpha.1",
+				APIVersion: "v1-alpha.1",
 				Project:    "test-project",
 				Components: map[string]Component{},
 				Environments: []Environment{
@@ -206,7 +208,7 @@ func (s *DefaultsTestSuite) TestFillManifestWithDefaults() {
 		{
 			name: "invalid version",
 			manifest: &Manifest{
-				ApiVersion: "v1-alpha.1",
+				APIVersion: "v1-alpha.1",
 				Project:    "test-project",
 				Components: map[string]Component{},
 			},
@@ -352,7 +354,7 @@ func (s *DefaultsTestSuite) TestApplyDefaultsRecursively() {
 
 	for _, tt := range tests {
 		s.T().Run(tt.name, func(t *testing.T) {
-			applyDefaultsRecursively(tt.obj, tt.defaults, tt.path, "v1-alpha.1")
+			require.NoError(t, applyDefaultsRecursively(tt.obj, tt.defaults, tt.path, "v1-alpha.1"))
 			assert.Equal(t, tt.expected, tt.obj)
 		})
 	}
@@ -390,7 +392,7 @@ func (s *DefaultsTestSuite) TestApplyDefaultsToMap() {
 	for _, tt := range tests {
 		s.T().Run(tt.name, func(t *testing.T) {
 			// This test mainly ensures the function doesn't panic
-			applyDefaultsToMap(tt.mapVal, tt.defaults, tt.path, "v1-alpha.1")
+			require.NoError(t, applyDefaultsToMap(tt.mapVal, tt.defaults, tt.path, "v1-alpha.1"))
 			// No specific assertions as this is mainly testing for panics
 		})
 	}
@@ -425,13 +427,13 @@ func (s *DefaultsTestSuite) TestApplyDefaultsToSlice() {
 	for _, tt := range tests {
 		s.T().Run(tt.name, func(t *testing.T) {
 			// This test mainly ensures the function doesn't panic
-			applyDefaultsToSlice(tt.sliceVal, tt.defaults, tt.path, "v1-alpha.1")
+			require.NoError(t, applyDefaultsToSlice(tt.sliceVal, tt.defaults, tt.path, "v1-alpha.1"))
 			// No specific assertions as this is mainly testing for panics
 		})
 	}
 }
 
-// Fix for TestSetFieldValue: use reflect.New to get a settable value for primitive types
+// TestSetFieldValue uses [reflect.New] to get settable values for primitives.
 func (s *DefaultsTestSuite) TestSetFieldValue() {
 	tests := []struct {
 		name     string
@@ -484,7 +486,7 @@ func (s *DefaultsTestSuite) TestSetFieldValue() {
 	}
 	for _, tt := range tests {
 		s.T().Run(tt.name, func(t *testing.T) {
-			setFieldValue(tt.field, tt.value)
+			require.NoError(t, setFieldValue(tt.field, tt.value))
 			assert.Equal(t, tt.expected, tt.field.Interface())
 		})
 	}
@@ -630,7 +632,7 @@ func (s *DefaultsTestSuite) TestCreateManifestWithDefaults() {
 				assert.NoError(t, err)
 				assert.NotNil(t, manifest)
 				assert.Equal(t, tt.projectName, manifest.Project)
-				assert.Equal(t, tt.version, manifest.ApiVersion)
+				assert.Equal(t, tt.version, manifest.APIVersion)
 				assert.NotNil(t, manifest.Components)
 			}
 		})
@@ -744,7 +746,7 @@ func (s *DefaultsTestSuite) TestIntegration() {
 
 	s.T().Run("verify autoscaling defaults", func(t *testing.T) {
 		manifest := &Manifest{
-			ApiVersion: "v1-alpha.1",
+			APIVersion: "v1-alpha.1",
 			Project:    "test-project",
 			Components: map[string]Component{
 				"api": {
@@ -770,7 +772,7 @@ func (s *DefaultsTestSuite) TestIntegration() {
 
 	s.T().Run("verify environment defaults", func(t *testing.T) {
 		manifest := &Manifest{
-			ApiVersion: "v1-alpha.1",
+			APIVersion: "v1-alpha.1",
 			Project:    "test-project",
 			Components: map[string]Component{},
 			Environments: []Environment{
@@ -834,7 +836,7 @@ func (s *DefaultsTestSuite) TestDefaultValuesCopy() {
 		"key3": true,
 	}
 
-	// Test using maps.Copy
+	// Test using maps.Copy for independent map copies.
 	copied := make(DefaultValues)
 	maps.Copy(copied, original)
 	assert.Equal(s.T(), original, copied)

@@ -1,14 +1,12 @@
-// Package manifest provides functions for parsing and manipulating manifest files.
 package manifest
 
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
-
-	"log/slog"
 
 	"sigs.k8s.io/yaml"
 )
@@ -28,14 +26,15 @@ func sanitizeEnvName(name string) string {
 	return sanitized
 }
 
-// ResolveEnvironment returns the environment by name, or the default if name is empty.
-// Returns an error if not found or if multiple environments are defined but none specified.
+// ResolveEnvironment returns the environment by name, or the default if name
+// is empty. Returns an error if not found or if multiple environments are
+// defined but none specified.
 func ResolveEnvironment(environments []Environment, desiredEnvironment string) (*Environment, error) {
 	// Helper function to format environment names for error messages
 	formatEnvNames := func(envs []Environment) string {
-		names := make([]string, len(envs))
-		for i, env := range envs {
-			names[i] = fmt.Sprintf("%q", env.Name)
+		names := make([]string, 0, len(envs))
+		for _, env := range envs {
+			names = append(names, fmt.Sprintf("%q", env.Name))
 		}
 		return strings.Join(names, ", ")
 	}
@@ -76,8 +75,9 @@ func ResolveEnvironment(environments []Environment, desiredEnvironment string) (
 	)
 }
 
-// resolveEnvFile determines which env file to use for the given environment, following Deployah's resolution order.
-// Returns the path, whether it was explicitly set, and an error if explicitly set but missing.
+// resolveEnvFile determines which env file to use for the given environment,
+// following Deployah's resolution order. Returns the path, whether it was
+// explicitly set, and an error if explicitly set but missing.
 func resolveEnvFile(env *Environment) (string, bool, error) {
 	if env.EnvFile != "" {
 		if fileExists(env.EnvFile) {
@@ -124,37 +124,37 @@ func Save(manifest *Manifest, path string) error {
 	// Create the directory if it doesn't exist
 	dir := filepath.Dir(path)
 	if dir != "." && dir != "" {
-		if err := os.MkdirAll(dir, 0755); err != nil {
+		if err = os.MkdirAll(dir, 0o750); err != nil {
 			return fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}
 	}
 
 	// Write the file
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err = os.WriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("failed to write manifest to %s: %w", path, err)
 	}
 
 	return nil
 }
 
-// Load reads and parses the manifest YAML file at the given path, resolves the environment
-// (using the provided envName or default resolution rules), and substitutes variables
-// according to precedence (environment definition < env file < OS environment).
-// Returns the fully parsed Manifest struct or an error.
-func Load(ctx context.Context, path string, envName string) (*Manifest, error) {
+// Load reads and parses the manifest YAML file at the given path, resolves
+// the environment (using the provided envName or default resolution rules),
+// and substitutes variables according to precedence (environment definition,
+// env file, then OS environment). Returns the parsed [Manifest] or an error.
+func Load(ctx context.Context, path, envName string) (*Manifest, error) {
 	if path == "" {
 		path = DefaultManifestPath
 	}
 
 	// Read the manifest file
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- manifest path from CLI or default
 	if err != nil {
 		return nil, fmt.Errorf("failed to read manifest: %w", err)
 	}
 
 	// Unmarshal into map[string]any for validation.
 	var manifestObj map[string]any
-	if err := yaml.Unmarshal(data, &manifestObj); err != nil {
+	if err = yaml.Unmarshal(data, &manifestObj); err != nil {
 		return nil, fmt.Errorf("failed to parse manifest YAML: %w", err)
 	}
 
@@ -165,14 +165,14 @@ func Load(ctx context.Context, path string, envName string) (*Manifest, error) {
 	}
 
 	// Validate the environments against the schema
-	if err := ValidateEnvironments(manifestObj, version); err != nil {
+	if err = ValidateEnvironments(manifestObj, version); err != nil {
 		return nil, fmt.Errorf("environments validation failed: %w", err)
 	}
 
 	var tmp struct {
 		Environments []Environment `yaml:"environments"`
 	}
-	if err := yaml.Unmarshal(data, &tmp); err != nil {
+	if err = yaml.Unmarshal(data, &tmp); err != nil {
 		return nil, fmt.Errorf("failed to parse manifest YAML: %w", err)
 	}
 
@@ -182,7 +182,7 @@ func Load(ctx context.Context, path string, envName string) (*Manifest, error) {
 		return nil, fmt.Errorf("failed to select environment: %w", err)
 	}
 
-		slog.Info("Selected environment", "environment", env.Name)
+	slog.Info("Selected environment", "environment", env.Name)
 
 	envFilePath, explicitlySet, err := resolveEnvFile(env)
 	if err != nil {
@@ -209,22 +209,26 @@ func Load(ctx context.Context, path string, envName string) (*Manifest, error) {
 
 	// Unmarshal substituted manifest for final validation
 	var substitutedObj map[string]any
-	if err := yaml.Unmarshal([]byte(substituted), &substitutedObj); err != nil {
+	if err = yaml.Unmarshal([]byte(substituted), &substitutedObj); err != nil {
 		return nil, fmt.Errorf("failed to parse substituted manifest YAML: %w", err)
 	}
 
 	// Validate the manifest against the schema
-	if err := ValidateManifest(substitutedObj, version); err != nil {
+	if err = ValidateManifest(substitutedObj, version); err != nil {
 		return nil, fmt.Errorf("manifest validation failed: %w", err)
 	}
 
 	// Unmarshal into the Manifest struct
 	var finalManifest Manifest
-	if err := yaml.Unmarshal([]byte(substituted), &finalManifest); err != nil {
+	if err = yaml.Unmarshal([]byte(substituted), &finalManifest); err != nil {
 		return nil, fmt.Errorf("failed to parse manifest YAML: %w", err)
 	}
 
-	if err := FillManifestWithDefaults(&finalManifest, version); err != nil {
+	if err = ValidateManifestComponents(&finalManifest); err != nil {
+		return nil, fmt.Errorf("validation failed: %w", err)
+	}
+
+	if err = FillManifestWithDefaults(&finalManifest, version); err != nil {
 		return nil, fmt.Errorf("failed to apply defaults: %w", err)
 	}
 

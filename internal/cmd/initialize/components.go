@@ -6,9 +6,10 @@ import (
 	"strconv"
 	"strings"
 
+	"nabat.dev/nabat"
+
 	"deployah.dev/deployah/internal/manifest"
 	"deployah.dev/deployah/internal/util"
-	"nabat.dev/nabat"
 )
 
 func validateComponentNameUnique(name string, existing map[string]manifest.Component) error {
@@ -41,9 +42,9 @@ func validateResourcePreset(preset manifest.ResourcePreset) error {
 
 func collectComponents(c *nabat.Context, config *ProjectConfig) error {
 	continueAdding := true
-	selectedEnvironments := make([]string, len(config.Environments))
-	for i, env := range config.Environments {
-		selectedEnvironments[i] = env.Name
+	selectedEnvironments := make([]string, 0, len(config.Environments))
+	for _, env := range config.Environments {
+		selectedEnvironments = append(selectedEnvironments, env.Name)
 	}
 
 	for continueAdding {
@@ -69,7 +70,8 @@ func collectComponents(c *nabat.Context, config *ProjectConfig) error {
 		}
 
 		if componentName != "" {
-			component, err := collectComponentDetails(c, componentName, selectedEnvironments)
+			var component manifest.Component
+			component, err = collectComponentDetails(c, componentName, selectedEnvironments)
 			if err != nil {
 				return fmt.Errorf("failed to collect details for component %s: %w", componentName, err)
 			}
@@ -215,7 +217,7 @@ func collectComponentPort(c *nabat.Context, component *manifest.Component, compo
 
 	if addPort {
 		var portStr string
-		err := c.Form(
+		err = c.Form(
 			nabat.WithFormField(&portStr, fmt.Sprintf("Port for %s", componentName),
 				"Port number to expose, must be between 1024 and 65535",
 				nabat.WithHint("8080"),
@@ -226,7 +228,11 @@ func collectComponentPort(c *nabat.Context, component *manifest.Component, compo
 			return fmt.Errorf("failed to collect port number: %w", err)
 		}
 
-		port, _ := strconv.Atoi(portStr)
+		var port int
+		port, err = strconv.Atoi(portStr)
+		if err != nil {
+			return fmt.Errorf("invalid port number: %w", err)
+		}
 		component.Port = port
 	}
 
@@ -254,7 +260,7 @@ func collectComponentResourcePreset(c *nabat.Context, component *manifest.Compon
 	}
 
 	preset := manifest.ResourcePreset(resourcePreset)
-	if err := validateResourcePreset(preset); err != nil {
+	if err = validateResourcePreset(preset); err != nil {
 		return fmt.Errorf("invalid resource preset selected: %w", err)
 	}
 
@@ -274,7 +280,7 @@ func collectComponentConfigFiles(c *nabat.Context, component *manifest.Component
 
 	if addConfigFiles {
 		var envFile, configFile string
-		err := c.Form(
+		err = c.Form(
 			nabat.WithFormField(&envFile, fmt.Sprintf("Environment File for %s", componentName),
 				"Component-specific environment file (optional)",
 				nabat.WithHint(fmt.Sprintf(".env.%s", componentName)),
@@ -310,12 +316,12 @@ func collectComponentCommand(c *nabat.Context, component *manifest.Component, co
 	}
 
 	if addCommand {
-		commandStr, err := c.Input(
+		commandStr, inputErr := c.Input(
 			fmt.Sprintf("Command for %s — Command to run in the container (space-separated)", componentName),
 			nabat.WithHint("python app.py"),
 		)
-		if err != nil {
-			return fmt.Errorf("failed to get command: %w", err)
+		if inputErr != nil {
+			return fmt.Errorf("failed to get command: %w", inputErr)
 		}
 
 		if commandStr != "" {
@@ -337,12 +343,12 @@ func collectComponentArgs(c *nabat.Context, component *manifest.Component, compo
 	}
 
 	if addArgs {
-		argsStr, err := c.Input(
+		argsStr, inputErr := c.Input(
 			fmt.Sprintf("Arguments for %s — Arguments to pass to the command (space-separated)", componentName),
 			nabat.WithHint("--port 8080 --debug"),
 		)
-		if err != nil {
-			return fmt.Errorf("failed to get arguments: %w", err)
+		if inputErr != nil {
+			return fmt.Errorf("failed to get arguments: %w", inputErr)
 		}
 
 		if argsStr != "" {
@@ -369,7 +375,7 @@ func collectComponentAutoscaling(c *nabat.Context, component *manifest.Component
 		}
 
 		var minReplicasStr, maxReplicasStr string
-		err := c.Form(
+		err = c.Form(
 			nabat.WithFormTitle(fmt.Sprintf("Autoscaling Configuration for %s", componentName)),
 			nabat.WithFormField(&minReplicasStr, "Minimum Replicas",
 				"Minimum number of replicas to maintain",
@@ -386,12 +392,19 @@ func collectComponentAutoscaling(c *nabat.Context, component *manifest.Component
 			return fmt.Errorf("failed to get autoscaling config: %w", err)
 		}
 
-		if err := util.ValidateMinMaxReplicas(minReplicasStr, maxReplicasStr); err != nil {
+		if err = util.ValidateMinMaxReplicas(minReplicasStr, maxReplicasStr); err != nil {
 			return fmt.Errorf("autoscaling configuration error: %w", err)
 		}
 
-		minReplicas, _ := strconv.Atoi(minReplicasStr)
-		maxReplicas, _ := strconv.Atoi(maxReplicasStr)
+		var minReplicas, maxReplicas int
+		minReplicas, err = strconv.Atoi(minReplicasStr)
+		if err != nil {
+			return fmt.Errorf("invalid min replicas: %w", err)
+		}
+		maxReplicas, err = strconv.Atoi(maxReplicasStr)
+		if err != nil {
+			return fmt.Errorf("invalid max replicas: %w", err)
+		}
 		autoscaling.MinReplicas = minReplicas
 		autoscaling.MaxReplicas = maxReplicas
 
@@ -420,7 +433,7 @@ func collectComponentCustomResources(c *nabat.Context, component *manifest.Compo
 
 	if addCustomResources {
 		var cpu, memory, ephemeralStorage string
-		err := c.Form(
+		err = c.Form(
 			nabat.WithFormTitle(fmt.Sprintf("Custom Resources for %s", componentName)),
 			nabat.WithFormField(&cpu, "CPU",
 				"CPU resource (e.g., 500m, 1)",
@@ -472,7 +485,7 @@ func collectComponentIngress(c *nabat.Context, component *manifest.Component, co
 	if addIngress {
 		var host string
 		var tls bool
-		err := c.Form(
+		err = c.Form(
 			nabat.WithFormField(&host, fmt.Sprintf("Host for %s", componentName),
 				"Hostname for external access",
 				nabat.WithHint("api.example.com"),
@@ -510,9 +523,9 @@ func collectComponentEnvironmentVariables(c *nabat.Context, component *manifest.
 	}
 
 	if addComponentEnvVars {
-		envVars, err := collectEnvironmentVariables(c)
-		if err != nil {
-			return fmt.Errorf("failed to collect component environment variables: %w", err)
+		envVars, envErr := collectEnvironmentVariables(c)
+		if envErr != nil {
+			return fmt.Errorf("failed to collect component environment variables: %w", envErr)
 		}
 		component.Env = envVars
 	}

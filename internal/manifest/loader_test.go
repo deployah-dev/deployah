@@ -9,6 +9,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestSanitizeEnvName verifies sanitizeEnvName removes path separators and
+// wildcards from environment names.
 func TestSanitizeEnvName(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -70,18 +72,9 @@ func TestSanitizeEnvName(t *testing.T) {
 	}
 }
 
+// TestResolveEnvFileWithSanitization verifies env file resolution for names
+// containing wildcards and path separators.
 func TestResolveEnvFileWithSanitization(t *testing.T) {
-	// Create a temporary directory for testing
-	tmpDir := t.TempDir()
-	oldWd, err := os.Getwd()
-	require.NoError(t, err)
-	defer func() {
-		err := os.Chdir(oldWd)
-		require.NoError(t, err)
-	}()
-	err = os.Chdir(tmpDir)
-	require.NoError(t, err)
-
 	tests := []struct {
 		name             string
 		envName          string
@@ -136,61 +129,37 @@ func TestResolveEnvFileWithSanitization(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Clean up any previous test files
-			cleanupFiles := []string{
-				".env", ".env.review", ".env.featurebranch", ".env.devtestenv",
-				filepath.Join(".deployah", ".env"), filepath.Join(".deployah", ".env.review"),
-				filepath.Join(".deployah", ".env.featurebranch"), filepath.Join(".deployah", ".env.devtestenv"),
-			}
-			for _, file := range cleanupFiles {
-				os.Remove(file)
-			}
-			os.RemoveAll(".deployah")
+			t.Chdir(t.TempDir())
 
-			// Setup test files
 			for _, file := range tt.setupFiles {
 				dir := filepath.Dir(file)
 				if dir != "." && dir != "" {
-					err := os.MkdirAll(dir, 0755)
-					require.NoError(t, err)
+					mkdirErr := os.MkdirAll(dir, 0o750)
+					require.NoError(t, mkdirErr)
 				}
-				err := os.WriteFile(file, []byte("TEST_VAR=test"), 0644)
-				require.NoError(t, err)
+				writeErr := os.WriteFile(file, []byte("TEST_VAR=test"), 0o600)
+				require.NoError(t, writeErr)
 			}
 
 			env := &Environment{
 				Name: tt.envName,
 			}
 
-			path, explicit, err := resolveEnvFile(env)
-			require.NoError(t, err)
+			path, explicit, resolveErr := resolveEnvFile(env)
+			require.NoError(t, resolveErr)
 			assert.Equal(t, tt.expectedPath, path)
 			assert.Equal(t, tt.expectedExplicit, explicit)
-
-			// Clean up
-			for _, file := range tt.setupFiles {
-				os.Remove(file)
-			}
-			os.RemoveAll(".deployah")
 		})
 	}
 }
 
+// TestResolveEnvFileExplicitWithWildcard verifies explicit env files work
+// when the environment name contains wildcards.
 func TestResolveEnvFileExplicitWithWildcard(t *testing.T) {
-	// Test that explicit env files work even with wildcard names
-	tmpDir := t.TempDir()
-	oldWd, err := os.Getwd()
-	require.NoError(t, err)
-	defer func() {
-		err := os.Chdir(oldWd)
-		require.NoError(t, err)
-	}()
-	err = os.Chdir(tmpDir)
-	require.NoError(t, err)
+	t.Chdir(t.TempDir())
 
-	// Create an explicit env file
 	explicitFile := "custom.env"
-	err = os.WriteFile(explicitFile, []byte("EXPLICIT_VAR=explicit"), 0644)
+	err := os.WriteFile(explicitFile, []byte("EXPLICIT_VAR=explicit"), 0o600)
 	require.NoError(t, err)
 
 	env := &Environment{
@@ -202,7 +171,4 @@ func TestResolveEnvFileExplicitWithWildcard(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, explicitFile, path)
 	assert.True(t, explicit)
-
-	// Clean up
-	os.Remove(explicitFile)
 }

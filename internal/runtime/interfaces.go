@@ -18,10 +18,12 @@ import (
 	"context"
 	"time"
 
-	"deployah.dev/deployah/internal/manifest"
-	v1 "helm.sh/helm/v4/pkg/release/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
+
+	"deployah.dev/deployah/internal/manifest"
+
+	v1 "helm.sh/helm/v4/pkg/release/v1"
 )
 
 // RuntimeProvider defines the interface for runtime dependency management.
@@ -45,7 +47,7 @@ type RuntimeProvider interface {
 }
 
 // HelmClient defines the interface for Helm operations.
-// This abstraction allows for easier testing and potential alternative implementations.
+// This abstraction allows for easier testing and alternative implementations.
 type HelmClient interface {
 	// InstallApp installs or upgrades an application using Helm
 	InstallApp(ctx context.Context, manifest *manifest.Manifest, environment string, dryRun bool) error
@@ -73,10 +75,10 @@ type KubernetesClient interface {
 }
 
 // ManifestLoader defines the interface for manifest loading operations.
-// This enables testing with mock manifest loaders and different loading strategies.
+// This enables testing with mock loaders and different loading strategies.
 type ManifestLoader interface {
 	// Load reads and parses a manifest file
-	Load(ctx context.Context, path string, envName string) (*manifest.Manifest, error)
+	Load(ctx context.Context, path, envName string) (*manifest.Manifest, error)
 
 	// Save writes a manifest to a file
 	Save(manifest *manifest.Manifest, path string) error

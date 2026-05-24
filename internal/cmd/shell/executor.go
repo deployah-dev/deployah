@@ -10,13 +10,15 @@ import (
 	"strings"
 	"syscall"
 
-	"deployah.dev/deployah/internal/k8s"
-	"deployah.dev/deployah/internal/runtime"
 	"golang.org/x/term"
-	"nabat.dev/nabat"
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/remotecommand"
+	"nabat.dev/nabat"
+
+	"deployah.dev/deployah/internal/k8s"
+	"deployah.dev/deployah/internal/runtime"
+
+	corev1 "k8s.io/api/core/v1"
 )
 
 // terminalSizeQueue implements remotecommand.TerminalSizeQueue
@@ -30,6 +32,21 @@ func (q *terminalSizeQueue) Next() *remotecommand.TerminalSize {
 		return nil
 	}
 	return &sz
+}
+
+func terminalSizeFromWH(w, h int) remotecommand.TerminalSize {
+	const maxDim = int(^uint16(0))
+	if w < 0 {
+		w = 0
+	} else if w > maxDim {
+		w = maxDim
+	}
+	if h < 0 {
+		h = 0
+	} else if h > maxDim {
+		h = maxDim
+	}
+	return remotecommand.TerminalSize{Width: uint16(w), Height: uint16(h)}
 }
 
 // ExecuteOptions contains all the options for shell execution
@@ -102,7 +119,9 @@ func (e *ShellExecutor) Execute(opts ExecuteOptions) error {
 	if opts.Shell != "" {
 		selectedShell = opts.Shell
 		if len(availableShells) > 0 && !slices.Contains(availableShells, opts.Shell) {
-			fmt.Fprintf(e.ctx.IO().ErrOut, "Warning: Preferred shell '%s' not detected, but will try it anyway\n", opts.Shell)
+			if _, warnErr := fmt.Fprintf(e.ctx.IO().ErrOut, "Warning: Preferred shell '%s' not detected, but will try it anyway\n", opts.Shell); warnErr != nil {
+				return fmt.Errorf("write shell warning: %w", warnErr)
+			}
 		}
 	} else {
 		if len(availableShells) == 0 {
@@ -277,7 +296,11 @@ func (e *ShellExecutor) execInContainer(podName, containerName string, cmd []str
 		if err != nil {
 			return fmt.Errorf("failed to set terminal to raw mode: %w", err)
 		}
-		defer func() { _ = term.Restore(fd, oldState) }()
+		defer func() {
+			if restoreErr := term.Restore(fd, oldState); restoreErr != nil {
+				_, _ = fmt.Fprintf(os.Stderr, "failed to restore terminal: %v\n", restoreErr)
+			}
+		}()
 	}
 
 	var sizeQueue remotecommand.TerminalSizeQueue
@@ -287,16 +310,16 @@ func (e *ShellExecutor) execInContainer(podName, containerName string, cmd []str
 		q = &terminalSizeQueue{ch: make(chan remotecommand.TerminalSize, 1)}
 		sizeQueue = q
 
-		if w, h, err := term.GetSize(fd); err == nil {
-			q.ch <- remotecommand.TerminalSize{Width: uint16(w), Height: uint16(h)}
+		if w, h, sizeErr := term.GetSize(fd); sizeErr == nil {
+			q.ch <- terminalSizeFromWH(w, h)
 		}
 
 		resizeCh = make(chan os.Signal, 1)
 		signal.Notify(resizeCh, syscall.SIGWINCH)
 		go func() {
 			for range resizeCh {
-				if w, h, err := term.GetSize(fd); err == nil {
-					q.ch <- remotecommand.TerminalSize{Width: uint16(w), Height: uint16(h)}
+				if w, h, sizeErr := term.GetSize(fd); sizeErr == nil {
+					q.ch <- terminalSizeFromWH(w, h)
 				}
 			}
 		}()
@@ -333,7 +356,6 @@ func (e *ShellExecutor) execInContainer(podName, containerName string, cmd []str
 		Tty:               true,
 		TerminalSizeQueue: sizeQueue,
 	})
-
 	if err != nil {
 		if errors.Is(err, io.EOF) {
 			return nil

@@ -6,11 +6,12 @@ import (
 	"sync"
 	"time"
 
-	"deployah.dev/deployah/internal/helm"
-	"deployah.dev/deployah/internal/manifest"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+
+	"deployah.dev/deployah/internal/helm"
+	"deployah.dev/deployah/internal/manifest"
 )
 
 // runtimeKey is a private context key for storing the Runtime in context
@@ -217,7 +218,8 @@ func (r *Runtime) Kubernetes() (KubernetesClient, error) {
 	return r.k8s, nil
 }
 
-// Manifest loads and memoizes the manifest for the configured path and environment.
+// Manifest loads and memoizes the manifest for the configured path and
+// environment.
 func (r *Runtime) Manifest(ctx context.Context, environment string) (*manifest.Manifest, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -264,7 +266,8 @@ func (r *Runtime) Namespace() string {
 	return DefaultNamespace
 }
 
-// RESTConfig returns a Kubernetes REST config using the same logic as the runtime's K8s client.
+// RESTConfig returns a Kubernetes REST config using the same logic as the
+// runtime Kubernetes client.
 func (r *Runtime) RESTConfig() (*rest.Config, error) {
 	// Try in-cluster config first
 	cfg, err := rest.InClusterConfig()

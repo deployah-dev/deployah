@@ -1,46 +1,3 @@
-// Package manifest provides functions for parsing and manipulating manifest files.
-// This package includes functionality for applying default values from JSON schemas
-// to manifest structures, with support for caching and type conversion.
-//
-// The package uses github.com/go-viper/mapstructure for robust type conversion
-// between map[string]any (from JSON/YAML) and strongly-typed Go structs, which
-// provides better error handling, type safety, and maintainability compared to
-// manual reflection-based conversion.
-//
-// # Default Value Application
-//
-// The package supports sophisticated default value application including:
-//   - Schema-based defaults from JSON Schema definitions
-//   - Pattern-based defaults for dynamic component names
-//   - Environment-specific placeholder substitution
-//   - Resource preset resolution
-//
-// # Usage Examples
-//
-// Basic manifest creation with defaults:
-//
-//	manifest, err := CreateManifestWithDefaults("my-project", "v1-alpha.1")
-//	if err != nil {
-//		log.Fatal(err)
-//	}
-//
-// Applying defaults to existing manifest:
-//
-//	manifest := &Manifest{
-//		ApiVersion: "v1-alpha.1",
-//		Project:    "my-project",
-//		Components: map[string]Component{
-//			"web": {Image: "nginx:latest"},
-//		},
-//	}
-//	err := FillManifestWithDefaults(manifest, "v1-alpha.1")
-//	// web component now has default role="service", kind="stateless", port=8080
-//
-// Extracting schema defaults:
-//
-//	defaults, err := GetDefaultValues("v1-alpha.1", schema.SchemaTypeManifest)
-//	// defaults["components.[^[a-zA-Z0-9_-]+$].role"] = "service"
-//	// defaults["components.[^[a-zA-Z0-9_-]+$].port"] = 8080
 package manifest
 
 import (
@@ -52,20 +9,24 @@ import (
 	"sync"
 
 	"dario.cat/mergo"
-	"deployah.dev/deployah/internal/manifest/schema"
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"github.com/spf13/cast"
+
+	"deployah.dev/deployah/internal/manifest/schema"
 )
 
-// DefaultValues represents the default values extracted from a JSON schema.
-// The map keys are dot-notation paths to fields, and values are the default values to apply.
+// DefaultValues represents default values extracted from a JSON schema.
+// Map keys are dot-notation paths to fields; values are defaults to apply.
 //
 // Examples of keys:
-//   - "components.[^[a-zA-Z0-9_-]+$].role" -> "service" (pattern-based component default)
+//   - "components.[^[a-zA-Z0-9_-]+$].role" -> "service"
+//     (pattern-based component default)
 //   - "components.web.port" -> 8080 (specific component default)
-//   - "environments.[0].envFile" -> ".env.{name}" (environment template with placeholder)
-//   - "environments.production.configFile" -> "config.production.yaml" (specific environment)
+//   - "environments.[0].envFile" -> ".env.{name}"
+//     (environment template with placeholder)
+//   - "environments.production.configFile" -> "config.production.yaml"
+//     (specific environment)
 type DefaultValues map[string]any
 
 // Constants for path construction and validation.
@@ -110,11 +71,12 @@ type schemaInfo struct {
 }
 
 // getCachedSchemaInfo retrieves cached schema info or loads and compiles it.
-// This function implements a thread-safe cache for compiled JSON schemas to improve performance.
+// This function implements a thread-safe cache for compiled JSON schemas.
 //
 // Parameters:
 //   - version: Schema version (e.g., "v1-alpha.1")
-//   - schemaType: Type of schema (schema.SchemaTypeManifest or schema.SchemaTypeEnvironments)
+//   - schemaType: Type of schema ([schema.SchemaTypeManifest] or
+//     [schema.SchemaTypeEnvironments])
 //
 // Returns:
 //   - *schemaInfo: Contains both compiled schema and raw data
@@ -157,7 +119,7 @@ func getCachedSchemaInfo(version string, schemaType schema.SchemaType) (*schemaI
 
 	// Parse schema JSON
 	var schemaObj map[string]any
-	if err := json.Unmarshal(schemaBytes, &schemaObj); err != nil {
+	if err = json.Unmarshal(schemaBytes, &schemaObj); err != nil {
 		return nil, fmt.Errorf("failed to parse %s schema JSON for version %q: %w", schemaType, version, err)
 	}
 
@@ -171,7 +133,7 @@ func getCachedSchemaInfo(version string, schemaType schema.SchemaType) (*schemaI
 		return nil, fmt.Errorf("failed to parse %s schema JSON for version %q: %w", schemaType, version, err)
 	}
 
-	if err := compiler.AddResource(schemaID, jsonSchema); err != nil {
+	if err = compiler.AddResource(schemaID, jsonSchema); err != nil {
 		return nil, fmt.Errorf("failed to add schema resource for %s version %q: %w", schemaType, version, err)
 	}
 
@@ -208,8 +170,9 @@ func ClearSchemaCache() {
 	patternCache = make(map[string]string)
 }
 
-// extractDefaultsFromSchemaInfo recursively extracts default values from schema info.
-// This function walks through the schema structure and builds a map of paths to default values.
+// extractDefaultsFromSchemaInfo recursively extracts default values from
+// schema info. It walks the schema structure and builds a map of paths to
+// default values.
 //
 // Parameters:
 //   - schemaInfo: Contains compiled schema and raw schema data
@@ -237,8 +200,9 @@ func extractDefaultsFromSchemaInfo(schemaInfo *schemaInfo, path string) DefaultV
 	return defaults
 }
 
-// extractDefaultsFromSchemaData is a helper function that recursively processes schema data.
-// It traverses JSON Schema structures to find "default" properties and builds path-to-value mappings.
+// extractDefaultsFromSchemaData recursively processes schema data.
+// It traverses JSON Schema structures to find "default" properties and builds
+// path-to-value mappings.
 //
 // Parameters:
 //   - schemaData: Raw schema data (typically map[string]any from JSON)
@@ -318,7 +282,8 @@ func extractDefaultsFromSchemaData(schemaData any, path string, defaults Default
 }
 
 // GetDefaultValues extracts all default values from a JSON schema.
-// This is the main entry point for retrieving schema-based defaults for a specific version and type.
+// This is the main entry point for schema-based defaults for a version and
+// type.
 //
 // Parameters:
 //   - version: Schema version identifier (e.g., "v1-alpha.1")
@@ -355,8 +320,9 @@ func GetDefaultValues(version string, schemaType schema.SchemaType) (DefaultValu
 // This function converts high-level resource presets (like "small", "medium") into
 // concrete CPU and memory specifications.
 //
-// Note: Currently only applies "requests" values from presets to maintain backward compatibility.
-// The "limits" values from ResourcePresetMappings are not used in this implementation.
+// Note: Currently only applies "requests" values from presets to maintain
+// backward compatibility. The "limits" values from ResourcePresetMappings are
+// not used in this implementation.
 // This is by design to keep the Resources struct simple, but users should be aware
 // that preset limits are not automatically applied.
 //
@@ -418,9 +384,9 @@ func resolveResourcePresets(manifest *Manifest) error {
 	return nil
 }
 
-// FillManifestWithDefaults fills a Manifest struct with default values from JSON schemas.
-// This function applies defaults from both manifest and environment schemas, handles resource
-// preset resolution, and supports environment-specific placeholder substitution.
+// FillManifestWithDefaults fills a [Manifest] with defaults from JSON
+// schemas. It applies manifest and environment schema defaults, resolves
+// resource presets, and supports environment-specific placeholder substitution.
 //
 // The function processes defaults in this order:
 //  1. Apply manifest schema defaults to components
@@ -438,7 +404,7 @@ func resolveResourcePresets(manifest *Manifest) error {
 // Example:
 //
 //	manifest := &Manifest{
-//		ApiVersion: "v1-alpha.1",
+//		APIVersion: "v1-alpha.1",
 //		Project:    "my-app",
 //		Components: map[string]Component{
 //			"web": {Image: "nginx:latest"}, // Only image specified
@@ -477,31 +443,31 @@ func FillManifestWithDefaults(manifest *Manifest, version string) error {
 	}
 
 	for componentName, component := range manifest.Components {
-		if err := applyDefaultsRecursively(&component, manifestDefaults, "components."+componentName, version); err != nil {
+		if err = applyDefaultsRecursively(&component, manifestDefaults, "components."+componentName, version); err != nil {
 			return fmt.Errorf("failed to apply defaults to component %s: %w", componentName, err)
 		}
 		manifest.Components[componentName] = component
 	}
 
 	// Resolve resource presets after applying schema defaults
-	if err := resolveResourcePresets(manifest); err != nil {
+	if err = resolveResourcePresets(manifest); err != nil {
 		return fmt.Errorf("failed to resolve resource presets: %w", err)
 	}
 
 	// Merge manifest and environment defaults for environments
 	mergedDefaults := make(DefaultValues)
 	// Copy manifest defaults first
-	if err := mergo.Merge(&mergedDefaults, manifestDefaults); err != nil {
+	if err = mergo.Merge(&mergedDefaults, manifestDefaults); err != nil {
 		return fmt.Errorf("failed to merge manifest defaults: %w", err)
 	}
 	// Merge environment defaults with override to allow env defaults to take precedence
-	if err := mergo.Merge(&mergedDefaults, envDefaults, mergo.WithOverride); err != nil {
+	if err = mergo.Merge(&mergedDefaults, envDefaults, mergo.WithOverride); err != nil {
 		return fmt.Errorf("failed to merge environment defaults: %w", err)
 	}
 
 	// Apply environment defaults
 	for i := range manifest.Environments {
-		if err := applyDefaultsRecursively(&manifest.Environments[i], mergedDefaults, "environments."+manifest.Environments[i].Name, version); err != nil {
+		if err = applyDefaultsRecursively(&manifest.Environments[i], mergedDefaults, "environments."+manifest.Environments[i].Name, version); err != nil {
 			return fmt.Errorf("failed to apply defaults to environment %s: %w", manifest.Environments[i].Name, err)
 		}
 	}
@@ -509,9 +475,9 @@ func FillManifestWithDefaults(manifest *Manifest, version string) error {
 	return nil
 }
 
-// substitutePlaceholders replaces placeholders in string values with actual environment names.
-// This function enables environment-specific configuration by replacing {name} placeholders
-// with the actual environment name, after cleaning any suffix patterns.
+// substitutePlaceholders replaces placeholders in string values with actual
+// environment names. It enables environment-specific configuration by
+// replacing {name} placeholders with the actual environment name.
 //
 // Parameters:
 //   - value: Value to process (typically a string with placeholders)
@@ -535,8 +501,8 @@ func substitutePlaceholders(value any, envName string) any {
 }
 
 // applyDefaultsToField applies default values to a single struct field.
-// This function checks if a field needs defaults (is zero-value and settable) and attempts
-// to find appropriate defaults using multiple fallback strategies.
+// It checks whether a field needs defaults (zero-value and settable) and
+// attempts to find appropriate defaults using multiple fallback strategies.
 //
 // Parameters:
 //   - field: Reflection value of the field to set
@@ -559,7 +525,7 @@ func substitutePlaceholders(value any, envName string) any {
 //	// Field: web component's Port field (currently 0)
 //	// Path: "components.web"
 //	// Result: Sets Port to 8080 from schema defaults
-func applyDefaultsToField(field reflect.Value, fieldType reflect.StructField, defaults DefaultValues, currentPath string, version string, envName string) error {
+func applyDefaultsToField(field reflect.Value, fieldType reflect.StructField, defaults DefaultValues, currentPath, version, envName string) error {
 	if !field.CanSet() || !isZeroValue(field.Interface()) {
 		return nil // Skip non-settable or non-zero fields
 	}
@@ -580,7 +546,8 @@ func applyDefaultsToField(field reflect.Value, fieldType reflect.StructField, de
 	return nil
 }
 
-// applyFieldValue applies a default value to a field with placeholder substitution.
+// applyFieldValue applies a default value to a field with placeholder
+// substitution.
 // This function processes the default value for environment-specific placeholders
 // and then sets the field using type-safe conversion.
 //
@@ -651,7 +618,7 @@ func tryComponentPatternPath(field reflect.Value, fieldName, currentPath string,
 }
 
 // processStructField handles recursive processing of struct fields
-func processStructField(field reflect.Value, fieldType reflect.StructField, defaults DefaultValues, currentPath string, version string) error {
+func processStructField(field reflect.Value, fieldType reflect.StructField, defaults DefaultValues, currentPath, version string) error {
 	fieldName := getJSONFieldName(fieldType)
 	newPath := buildFieldPath(currentPath, fieldName)
 
@@ -683,7 +650,7 @@ func processStructField(field reflect.Value, fieldType reflect.StructField, defa
 }
 
 // applyDefaultsRecursively applies default values to a struct recursively
-func applyDefaultsRecursively(obj any, defaults DefaultValues, currentPath string, version string) error {
+func applyDefaultsRecursively(obj any, defaults DefaultValues, currentPath, version string) error {
 	if obj == nil {
 		return fmt.Errorf("cannot apply defaults to nil object at path %s", currentPath)
 	}
@@ -815,8 +782,8 @@ func cleanEnvironmentName(envName string) string {
 }
 
 // buildComponentPatternPath constructs a pattern-based path for components.
-// This function builds schema paths that use pattern properties for dynamic
-// component names, enabling defaults to apply to any component name matching the pattern.
+// It builds schema paths that use pattern properties for dynamic component
+// names, enabling defaults for any component name matching the pattern.
 //
 // Parameters:
 //   - pattern: Regular expression pattern from schema (e.g., "^[a-zA-Z0-9_-]+$")
@@ -855,8 +822,8 @@ func getJSONFieldName(field reflect.StructField) string {
 	return jsonTag
 }
 
-// applyDefaultsToMap applies default values to a map (using reflect.Value)
-func applyDefaultsToMap(mapVal reflect.Value, defaults DefaultValues, currentPath string, version string) error {
+// applyDefaultsToMap applies default values to a map (using [reflect.Value]).
+func applyDefaultsToMap(mapVal reflect.Value, defaults DefaultValues, currentPath, version string) error {
 	if mapVal.Kind() != reflect.Map {
 		return nil
 	}
@@ -882,8 +849,8 @@ func applyDefaultsToMap(mapVal reflect.Value, defaults DefaultValues, currentPat
 	return nil
 }
 
-// applyDefaultsToSlice applies default values to a slice (using reflect.Value)
-func applyDefaultsToSlice(sliceVal reflect.Value, defaults DefaultValues, currentPath string, version string) error {
+// applyDefaultsToSlice applies default values to a slice (using [reflect.Value]).
+func applyDefaultsToSlice(sliceVal reflect.Value, defaults DefaultValues, currentPath, version string) error {
 	if sliceVal.Kind() != reflect.Slice {
 		return nil
 	}
@@ -908,9 +875,9 @@ func applyDefaultsToSlice(sliceVal reflect.Value, defaults DefaultValues, curren
 	return nil
 }
 
-// setFieldValue sets a reflect.Value to a value, converting types if needed.
-// This function provides robust type conversion between schema values (typically from JSON)
-// and Go struct fields, handling both simple types and complex structures.
+// setFieldValue sets a [reflect.Value] to a value, converting types if needed.
+// It provides robust type conversion between schema values (typically from
+// JSON) and Go struct fields.
 //
 // The function attempts conversion in this order:
 //  1. Direct assignment if types are compatible
@@ -971,7 +938,7 @@ func setFieldValue(field reflect.Value, value any) error {
 		WeaklyTypedInput: true,
 		DecodeHook: mapstructure.ComposeDecodeHookFunc(
 			// Custom hook for string-based enums
-			func(f reflect.Type, t reflect.Type, data any) (any, error) {
+			func(f, t reflect.Type, data any) (any, error) {
 				if f.Kind() == reflect.String && t.Kind() == reflect.String {
 					// Handle custom string types like ComponentRole, ComponentKind, etc.
 					if t.String() == "manifest.ComponentRole" ||
@@ -991,7 +958,7 @@ func setFieldValue(field reflect.Value, value any) error {
 		return fmt.Errorf("failed to create decoder: %w", err)
 	}
 
-	if err := decoder.Decode(value); err != nil {
+	if err = decoder.Decode(value); err != nil {
 		return fmt.Errorf("failed to decode value %v (type %T) to target type %v: %w", value, value, field.Type(), err)
 	}
 
@@ -1082,7 +1049,7 @@ func isZeroValue(val any) bool {
 //	manifest, err := CreateManifestWithDefaults("my-app", "v1-alpha.1")
 //	// Returns:
 //	// &Manifest{
-//	//     ApiVersion: "v1-alpha.1",
+//	//     APIVersion: "v1-alpha.1",
 //	//     Project:    "my-app",
 //	//     Components: map[string]Component{}, // Empty but initialized
 //	// }
@@ -1096,7 +1063,7 @@ func CreateManifestWithDefaults(projectName, version string) (*Manifest, error) 
 	}
 
 	manifest := &Manifest{
-		ApiVersion: version,
+		APIVersion: version,
 		Project:    projectName,
 		Components: make(map[string]Component),
 	}
@@ -1108,7 +1075,8 @@ func CreateManifestWithDefaults(projectName, version string) (*Manifest, error) 
 	return manifest, nil
 }
 
-// extractComponentPattern extracts the component name pattern from the manifest schema.
+// extractComponentPattern extracts the component name pattern from the manifest
+// schema.
 // This function retrieves the regular expression pattern used in patternProperties
 // for component definitions, enabling dynamic component name matching.
 //

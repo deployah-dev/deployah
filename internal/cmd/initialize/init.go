@@ -3,29 +3,41 @@ package initialize
 import (
 	"fmt"
 
-	"deployah.dev/deployah/internal/manifest"
 	"nabat.dev/nabat"
+
+	"deployah.dev/deployah/internal/manifest"
 )
 
 const (
-	DefaultOutputFile   = "deployah.yaml"
+	// DefaultOutputFile is the default manifest path written by init.
+	DefaultOutputFile = "deployah.yaml"
+	// DefaultCPUThreshold is the default HPA CPU target percentage.
 	DefaultCPUThreshold = 75
-	DefaultMinReplicas  = 2
-	DefaultMaxReplicas  = 5
+	// DefaultMinReplicas is the default minimum replica count for HPA.
+	DefaultMinReplicas = 2
+	// DefaultMaxReplicas is the default maximum replica count for HPA.
+	DefaultMaxReplicas = 5
 )
 
 const (
+	// DryRunPreviewHeader prefixes the dry-run manifest preview output.
 	DryRunPreviewHeader = "=== DRY RUN MODE - PREVIEW OF GENERATED MANIFEST ===\n"
+	// DryRunPreviewFooter suffixes the dry-run manifest preview output.
 	DryRunPreviewFooter = "\n=== END PREVIEW ===\n\nThis is a preview. Use --dry-run=false to actually save the configuration."
 )
 
 const (
-	StepProjectName  = "Step 1/4: Project Name"
+	// StepProjectName is the prompt title for the project name step.
+	StepProjectName = "Step 1/4: Project Name"
+	// StepEnvironments is the prompt title for the environments step.
 	StepEnvironments = "Step 2/4: Environments"
-	StepComponents   = "Step 3/4: Components"
-	StepSummary      = "Step 4/4: Summary"
+	// StepComponents is the prompt title for the components step.
+	StepComponents = "Step 3/4: Components"
+	// StepSummary is the prompt title for the final summary step.
+	StepSummary = "Step 4/4: Summary"
 )
 
+// Options holds command-line flags for init.
 type Options struct {
 	Output string `nabat:"output"`
 	DryRun bool   `nabat:"dry-run"`
@@ -40,6 +52,7 @@ type ProjectConfig struct {
 	DryRun       bool
 }
 
+// Register adds the init command to app.
 func Register(app *nabat.App) {
 	app.MustCommand("init",
 		nabat.WithDescription("Initialize Deployah configuration for a new project"),

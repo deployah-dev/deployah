@@ -39,7 +39,8 @@ var (
 	chartHashOnce     sync.Once       // Ensure embedded chart hash is computed only once
 )
 
-// GenerateCacheKey creates a comprehensive cache key that includes both manifest and chart template hashes
+// GenerateCacheKey creates a cache key from manifest and chart template
+// hashes.
 func GenerateCacheKey(manifest *manifest.Manifest) (string, error) {
 	// Create a deterministic representation of the manifest for hashing
 	manifestBytes, err := json.Marshal(manifest)
@@ -249,27 +250,37 @@ func CreateChartCopy(sourcePath string) (string, error) {
 		}
 
 		// Copy file
-		sourceFile, err := os.Open(path)
+		sourceFile, err := os.Open(path) // #nosec G304,G122 -- path from filepath.Walk within source tree
 		if err != nil {
 			return fmt.Errorf("failed to open source file %s: %w", path, err)
 		}
-		defer sourceFile.Close()
 
-		destFile, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode())
+		destFile, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode()) // #nosec G304 -- dest under controlled tmpDir
 		if err != nil {
+			if closeErr := sourceFile.Close(); closeErr != nil {
+				return fmt.Errorf("failed to create destination file %s: %w", destPath, errors.Join(err, closeErr))
+			}
 			return fmt.Errorf("failed to create destination file %s: %w", destPath, err)
 		}
-		defer destFile.Close()
 
-		_, err = destFile.ReadFrom(sourceFile)
-		if err != nil {
-			return fmt.Errorf("failed to copy file from %s to %s: %w", path, destPath, err)
+		_, copyErr := destFile.ReadFrom(sourceFile)
+		srcCloseErr := sourceFile.Close()
+		dstCloseErr := destFile.Close()
+		if copyErr != nil {
+			return fmt.Errorf("failed to copy file from %s to %s: %w", path, destPath, copyErr)
+		}
+		if srcCloseErr != nil {
+			return fmt.Errorf("failed to close source file %s: %w", path, srcCloseErr)
+		}
+		if dstCloseErr != nil {
+			return fmt.Errorf("failed to close destination file %s: %w", destPath, dstCloseErr)
 		}
 		return nil
 	})
-
 	if err != nil {
-		os.RemoveAll(tmpDir) // Cleanup on error
+		if removeErr := os.RemoveAll(tmpDir); removeErr != nil {
+			return "", fmt.Errorf("failed to copy cached chart: %w", errors.Join(err, removeErr))
+		}
 		return "", fmt.Errorf("failed to copy cached chart: %w", err)
 	}
 

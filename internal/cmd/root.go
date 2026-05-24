@@ -20,6 +20,9 @@ import (
 	"fmt"
 	"os"
 
+	"nabat.dev/logging"
+	"nabat.dev/nabat"
+
 	"deployah.dev/deployah/internal/cmd/common"
 	"deployah.dev/deployah/internal/cmd/delete"
 	"deployah.dev/deployah/internal/cmd/deploy"
@@ -31,8 +34,6 @@ import (
 	"deployah.dev/deployah/internal/cmd/validate"
 	"deployah.dev/deployah/internal/manifest"
 	"deployah.dev/deployah/internal/runtime"
-	"nabat.dev/logging"
-	"nabat.dev/nabat"
 )
 
 // NewApp creates a new Nabat application with all subcommands registered.

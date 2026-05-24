@@ -1,4 +1,3 @@
-// Package manifest provides functions for parsing and manipulating manifest files.
 package manifest
 
 import (
@@ -12,16 +11,17 @@ import (
 
 // parseEnvFile parses .env files.
 //
-// If explicitlySet is true, the function will return an error if the file does not exist.
-// If explicitlySet is false, the function will return nil if the file does not exist.
+// If explicitlySet is true, the function returns an error when the file does
+// not exist. If explicitlySet is false, the function returns nil when the
+// file does not exist.
 func parseEnvFile(path string, explicitlySet bool) (map[string]string, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- env file path from manifest or CLI
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			if explicitlySet {
 				return nil, fmt.Errorf("failed to read %s file: %w", path, err)
 			}
-			return nil, nil
+			return map[string]string{}, nil
 		}
 		return nil, fmt.Errorf("failed to read %s file: %w", path, err)
 	}
@@ -40,14 +40,15 @@ func parseEnvFile(path string, explicitlySet bool) (map[string]string, error) {
 		}
 	}
 
-	if err := scanner.Err(); err != nil {
+	if err = scanner.Err(); err != nil {
 		return nil, fmt.Errorf("error reading %s: %w", path, err)
 	}
 
 	return vars, nil
 }
 
-// parseOSVariables parses the current OS environment variables directly from os.Environ().
+// parseOSVariables parses the current OS environment variables from
+// [os.Environ].
 func parseOSVariables() (map[string]string, error) {
 	env := os.Environ()
 	vars := make(map[string]string)

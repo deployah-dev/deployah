@@ -5,10 +5,11 @@ import (
 	"fmt"
 	"testing"
 
-	"deployah.dev/deployah/internal/action"
-	"deployah.dev/deployah/internal/manifest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"deployah.dev/deployah/internal/action"
+	"deployah.dev/deployah/internal/manifest"
 )
 
 type mockDeployer struct {
@@ -25,14 +26,18 @@ type mockManifestLoader struct {
 }
 
 func (m *mockManifestLoader) Manifest(_ context.Context, _ string) (*manifest.Manifest, error) {
-	return m.m, m.err
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.m, nil
 }
 
 var testManifest = &manifest.Manifest{
-	ApiVersion: "v1-alpha.1",
+	APIVersion: "v1-alpha.1",
 	Project:    "my-app",
 }
 
+// Run loads the manifest and delegates to the deployer.
 func TestDeploy_Run(t *testing.T) {
 	t.Run("succeeds when deployer and loader succeed", func(t *testing.T) {
 		d := action.NewDeploy(&mockDeployer{}, &mockManifestLoader{m: testManifest})

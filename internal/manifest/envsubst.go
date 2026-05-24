@@ -1,4 +1,3 @@
-// Package manifest provides functions for parsing and manipulating manifest files.
 package manifest
 
 import (
@@ -8,7 +7,8 @@ import (
 	"github.com/fluxcd/pkg/envsubst"
 )
 
-// SubstituteVariables substitutes variables in the manifest data using the environment variables.
+// SubstituteVariables substitutes variables in manifest data using the
+// provided environment variables.
 // The variables are substituted in the following order:
 // 1. Variables from the environment definition (lowest priority)
 // 2. Variables from the env file (medium priority)
@@ -57,7 +57,6 @@ func SubstituteVariables(data []byte, env *Environment) ([]byte, error) {
 		}
 		return "", false
 	})
-
 	if err != nil {
 		return nil, fmt.Errorf("failed to substitute variables: %w", err)
 	}

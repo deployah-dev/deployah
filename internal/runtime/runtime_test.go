@@ -17,15 +17,18 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
-	"deployah.dev/deployah/internal/manifest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
-	v1 "helm.sh/helm/v4/pkg/release/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
+
+	"deployah.dev/deployah/internal/manifest"
+
+	v1 "helm.sh/helm/v4/pkg/release/v1"
 )
 
 // MockHelmClient is a mock implementation of HelmClient for testing
@@ -33,31 +36,67 @@ type MockHelmClient struct {
 	mock.Mock
 }
 
+// InstallApp records a mock call for InstallApp.
 func (m *MockHelmClient) InstallApp(ctx context.Context, manifest *manifest.Manifest, environment string, dryRun bool) error {
 	args := m.Called(ctx, manifest, environment, dryRun)
 	return args.Error(0)
 }
 
+// DeleteRelease records a mock call for DeleteRelease.
 func (m *MockHelmClient) DeleteRelease(ctx context.Context, project, environment string) error {
 	args := m.Called(ctx, project, environment)
 	return args.Error(0)
 }
 
+// GetRelease records a mock call for GetRelease.
 func (m *MockHelmClient) GetRelease(ctx context.Context, project, environment string) (*v1.Release, error) {
 	args := m.Called(ctx, project, environment)
-	return args.Get(0).(*v1.Release), args.Error(1)
+	if err := args.Error(1); err != nil {
+		return nil, err
+	}
+	if args.Get(0) == nil {
+		return nil, errors.New("mock: release not set")
+	}
+	rel, ok := args.Get(0).(*v1.Release)
+	if !ok {
+		return nil, fmt.Errorf("unexpected mock return type %T", args.Get(0))
+	}
+	return rel, nil
 }
 
+// ListReleases records a mock call for ListReleases.
 func (m *MockHelmClient) ListReleases(ctx context.Context, selector labels.Selector) ([]*v1.Release, error) {
 	args := m.Called(ctx, selector)
-	return args.Get(0).([]*v1.Release), args.Error(1)
+	if err := args.Error(1); err != nil {
+		return nil, err
+	}
+	if args.Get(0) == nil {
+		return nil, errors.New("mock: releases not set")
+	}
+	rels, ok := args.Get(0).([]*v1.Release)
+	if !ok {
+		return nil, fmt.Errorf("unexpected mock return type %T", args.Get(0))
+	}
+	return rels, nil
 }
 
+// GetReleaseHistory records a mock call for GetReleaseHistory.
 func (m *MockHelmClient) GetReleaseHistory(ctx context.Context, project, environment string) ([]*v1.Release, error) {
 	args := m.Called(ctx, project, environment)
-	return args.Get(0).([]*v1.Release), args.Error(1)
+	if err := args.Error(1); err != nil {
+		return nil, err
+	}
+	if args.Get(0) == nil {
+		return nil, errors.New("mock: releases not set")
+	}
+	rels, ok := args.Get(0).([]*v1.Release)
+	if !ok {
+		return nil, fmt.Errorf("unexpected mock return type %T", args.Get(0))
+	}
+	return rels, nil
 }
 
+// RollbackRelease records a mock call for RollbackRelease.
 func (m *MockHelmClient) RollbackRelease(ctx context.Context, releaseName string, revision int, timeout time.Duration) error {
 	args := m.Called(ctx, releaseName, revision, timeout)
 	return args.Error(0)
@@ -75,46 +114,62 @@ type MockLoggerProvider struct {
 	logs []LogEntry
 }
 
+// LogEntry captures a single log message recorded by MockLoggerProvider.
 type LogEntry struct {
 	Level   string
 	Message string
 	KeyVals []any
 }
 
+// Debug records a debug-level log entry.
 func (m *MockLoggerProvider) Debug(msg string, keyvals ...any) {
 	m.logs = append(m.logs, LogEntry{Level: "debug", Message: msg, KeyVals: keyvals})
 	m.Called(msg, keyvals)
 }
 
+// Info records an info-level log entry.
 func (m *MockLoggerProvider) Info(msg string, keyvals ...any) {
 	m.logs = append(m.logs, LogEntry{Level: "info", Message: msg, KeyVals: keyvals})
 	m.Called(msg, keyvals)
 }
 
+// Warn records a warning-level log entry.
 func (m *MockLoggerProvider) Warn(msg string, keyvals ...any) {
 	m.logs = append(m.logs, LogEntry{Level: "warn", Message: msg, KeyVals: keyvals})
 	m.Called(msg, keyvals)
 }
 
+// Error records an error-level log entry.
 func (m *MockLoggerProvider) Error(msg string, keyvals ...any) {
 	m.logs = append(m.logs, LogEntry{Level: "error", Message: msg, KeyVals: keyvals})
 	m.Called(msg, keyvals)
 }
 
+// Fatal records a fatal-level log entry.
 func (m *MockLoggerProvider) Fatal(msg string, keyvals ...any) {
 	m.logs = append(m.logs, LogEntry{Level: "fatal", Message: msg, KeyVals: keyvals})
 	m.Called(msg, keyvals)
 }
 
+// With records a mock call for With and returns the configured logger.
 func (m *MockLoggerProvider) With(keyvals ...any) LoggerProvider {
 	args := m.Called(keyvals)
-	return args.Get(0).(LoggerProvider)
+	if args.Get(0) == nil {
+		return m
+	}
+	provider, ok := args.Get(0).(LoggerProvider)
+	if !ok {
+		return m
+	}
+	return provider
 }
 
+// GetLogs returns all log entries recorded by the mock.
 func (m *MockLoggerProvider) GetLogs() []LogEntry {
 	return m.logs
 }
 
+// TestRuntimeWithDependencyInjection verifies runtime dependency injection.
 func TestRuntimeWithDependencyInjection(t *testing.T) {
 	t.Run("should use injected dependencies", func(t *testing.T) {
 		// Arrange
@@ -216,6 +271,7 @@ func TestRuntimeWithDependencyInjection(t *testing.T) {
 	})
 }
 
+// TestConfigurationValidation verifies runtime configuration validators.
 func TestConfigurationValidation(t *testing.T) {
 	t.Run("should validate timeout bounds", func(t *testing.T) {
 		tests := []struct {
@@ -259,6 +315,7 @@ func TestConfigurationValidation(t *testing.T) {
 	})
 }
 
+// TestRuntimeProvider verifies RuntimeProvider interface compliance.
 func TestRuntimeProvider(t *testing.T) {
 	t.Run("should implement RuntimeProvider interface", func(t *testing.T) {
 		// Arrange
@@ -298,6 +355,7 @@ func TestRuntimeProvider(t *testing.T) {
 	})
 }
 
+// TestIntegrationWithMocks demonstrates a full workflow using mock clients.
 func TestIntegrationWithMocks(t *testing.T) {
 	t.Run("should demonstrate full workflow with mocks", func(t *testing.T) {
 		// Arrange

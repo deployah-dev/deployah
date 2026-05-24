@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 
-	"deployah.dev/deployah/internal/k8s"
-	v1 "helm.sh/helm/v4/pkg/release/v1"
 	"k8s.io/apimachinery/pkg/labels"
+
+	"deployah.dev/deployah/internal/k8s"
+
+	v1 "helm.sh/helm/v4/pkg/release/v1"
 )
 
 // ReleaseLister abstracts Helm list operations.
@@ -25,11 +27,13 @@ type List struct {
 	lister ReleaseLister
 }
 
+// NewList constructs a List with the given release lister.
 func NewList(lister ReleaseLister) *List {
 	return &List{lister: lister}
 }
 
-// Run returns non-nil releases matching the filters. Returns an empty slice (not an error) if none found.
+// Run returns non-nil releases matching the filters.
+// Returns an empty slice (not an error) if none found.
 func (l *List) Run(ctx context.Context, params ListParams) ([]*v1.Release, error) {
 	selector, err := k8s.BuildLabelSelector(params.Project, params.Environment)
 	if err != nil {

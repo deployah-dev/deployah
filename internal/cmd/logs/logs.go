@@ -9,15 +9,17 @@ import (
 	"time"
 
 	"github.com/Masterminds/sprig/v3"
-	"deployah.dev/deployah/internal/k8s"
-	"deployah.dev/deployah/internal/runtime"
 	"github.com/fatih/color"
 	"github.com/stern/stern/stern"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
 	"nabat.dev/nabat"
+
+	"deployah.dev/deployah/internal/k8s"
+	"deployah.dev/deployah/internal/runtime"
 )
 
+// Options holds command-line flags for logs.
 type Options struct {
 	Project      string        `nabat:"project"`
 	NoFollow     bool          `nabat:"no-follow"`
@@ -34,6 +36,7 @@ type Options struct {
 	Timezone     string        `nabat:"timezone"`
 }
 
+// Register adds the logs command to app.
 func Register(app *nabat.App) {
 	app.MustCommand("logs",
 		nabat.WithDescription("View logs for a deployed project"),
@@ -119,15 +122,16 @@ func runLogs(c *nabat.Context) error {
 	}
 
 	var templateString string
-	if opts.TemplateFile != "" {
-		templateBytes, err := os.ReadFile(opts.TemplateFile)
-		if err != nil {
-			return fmt.Errorf("read template file %q: %w", opts.TemplateFile, err)
+	switch {
+	case opts.TemplateFile != "":
+		templateBytes, readErr := os.ReadFile(opts.TemplateFile)
+		if readErr != nil {
+			return fmt.Errorf("read template file %q: %w", opts.TemplateFile, readErr)
 		}
 		templateString = string(templateBytes)
-	} else if opts.Template != "" {
+	case opts.Template != "":
 		templateString = opts.Template
-	} else {
+	default:
 		templateString = "{{color .PodColor (printf \"%s/%s\" (index .Labels \"deployah.dev/component\") (index .Labels \"deployah.dev/environment\"))}} [{{trunc -5 .PodName}}] {{.Message}}\n"
 	}
 
@@ -169,9 +173,9 @@ func runLogs(c *nabat.Context) error {
 	}
 
 	if opts.Container != "" {
-		rx, err := regexp.Compile("^" + regexp.QuoteMeta(opts.Container) + "$")
-		if err != nil {
-			return fmt.Errorf("invalid container name '%s': %w", opts.Container, err)
+		rx, compileErr := regexp.Compile("^" + regexp.QuoteMeta(opts.Container) + "$")
+		if compileErr != nil {
+			return fmt.Errorf("invalid container name '%s': %w", opts.Container, compileErr)
 		}
 		cfg.ContainerQuery = rx
 	} else {
@@ -180,7 +184,7 @@ func runLogs(c *nabat.Context) error {
 
 	cfg.PodQuery = regexp.MustCompile(".*")
 
-	if err := stern.Run(c, k8sClient.GetKubernetesClient(), cfg); err != nil {
+	if err = stern.Run(c, k8sClient.GetKubernetesClient(), cfg); err != nil {
 		return fmt.Errorf("stream logs for project %s: %w", opts.Project, err)
 	}
 	return nil

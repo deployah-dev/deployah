@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package k8s provides functions to interact with Kubernetes selectors.
 package k8s
 
 import (
@@ -81,7 +80,7 @@ func (sb *SelectorBuilder) Build() string {
 	return sb.selector.String()
 }
 
-// BuildSelector is a convenience function to build a selector with multiple criteria
+// BuildSelector builds a label selector from project, component, and environment.
 func BuildSelector(project, component, environment string) (string, error) {
 	builder := NewSelectorBuilder()
 
@@ -114,7 +113,8 @@ func BuildComponentSelector(project, component string) (string, error) {
 	return BuildSelector(project, component, "")
 }
 
-// BuildLabelSelector returns a labels.Selector for filtering by project and/or environment.
+// BuildLabelSelector returns a labels.Selector for project and/or
+// environment filters.
 func BuildLabelSelector(project, environment string) (labels.Selector, error) {
 	selector := labels.NewSelector()
 	if project != "" {

@@ -4,17 +4,18 @@ import (
 	"fmt"
 	"strings"
 
-	"deployah.dev/deployah/internal/manifest"
 	"nabat.dev/nabat"
 	"sigs.k8s.io/yaml"
+
+	"deployah.dev/deployah/internal/manifest"
 )
 
 func showSummaryAndSave(c *nabat.Context, config *ProjectConfig) error {
 	var summary strings.Builder
 
 	summary.WriteString("Configuration Summary:\n\n")
-	summary.WriteString(fmt.Sprintf("Project: %s\n", config.Name))
-	summary.WriteString(fmt.Sprintf("Output: %s\n", config.OutputPath))
+	fmt.Fprintf(&summary, "Project: %s\n", config.Name)
+	fmt.Fprintf(&summary, "Output: %s\n", config.OutputPath)
 	if config.DryRun {
 		summary.WriteString("Mode: DRY RUN (preview only)\n")
 	} else {
@@ -27,7 +28,7 @@ func showSummaryAndSave(c *nabat.Context, config *ProjectConfig) error {
 		summary.WriteString("  (none)\n")
 	} else {
 		for _, env := range config.Environments {
-			summary.WriteString(fmt.Sprintf("  - %s\n", env.Name))
+			fmt.Fprintf(&summary, "  - %s\n", env.Name)
 		}
 	}
 	summary.WriteString("\n")
@@ -41,7 +42,7 @@ func showSummaryAndSave(c *nabat.Context, config *ProjectConfig) error {
 			if envList == "" {
 				envList = "none"
 			}
-			summary.WriteString(fmt.Sprintf("  - %s (%s) -> %s\n", name, comp.Role, envList))
+			fmt.Fprintf(&summary, "  - %s (%s) -> %s\n", name, comp.Role, envList)
 		}
 	}
 	summary.WriteString("\n")
@@ -66,18 +67,18 @@ func showSummaryAndSave(c *nabat.Context, config *ProjectConfig) error {
 		return fmt.Errorf("failed to show summary: %w", err)
 	}
 
-	if err := validateManifestAndEnvironments(config); err != nil {
+	if err = validateManifestAndEnvironments(config); err != nil {
 		return fmt.Errorf("configuration validation failed: %w", err)
 	}
 
 	manifestData := manifest.Manifest{
-		ApiVersion:   "v1-alpha.1",
+		APIVersion:   "v1-alpha.1",
 		Project:      config.Name,
 		Environments: config.Environments,
 		Components:   config.Components,
 	}
 
-	if err := manifest.FillManifestWithDefaults(&manifestData, manifestData.ApiVersion); err != nil {
+	if err = manifest.FillManifestWithDefaults(&manifestData, manifestData.APIVersion); err != nil {
 		return fmt.Errorf("failed to apply defaults to manifest: %w", err)
 	}
 
@@ -85,7 +86,7 @@ func showSummaryAndSave(c *nabat.Context, config *ProjectConfig) error {
 		return showManifestPreview(c, &manifestData)
 	}
 
-	if err := manifest.Save(&manifestData, config.OutputPath); err != nil {
+	if err = manifest.Save(&manifestData, config.OutputPath); err != nil {
 		return fmt.Errorf("failed to save manifest to %s: %w", config.OutputPath, err)
 	}
 
@@ -94,7 +95,7 @@ func showSummaryAndSave(c *nabat.Context, config *ProjectConfig) error {
 
 func validateManifestAndEnvironments(config *ProjectConfig) error {
 	manifestData := manifest.Manifest{
-		ApiVersion:   "v1-alpha.1",
+		APIVersion:   "v1-alpha.1",
 		Project:      config.Name,
 		Environments: config.Environments,
 		Components:   config.Components,
@@ -106,11 +107,11 @@ func validateManifestAndEnvironments(config *ProjectConfig) error {
 	}
 
 	var manifestObj map[string]any
-	if err := yaml.Unmarshal(manifestBytes, &manifestObj); err != nil {
+	if err = yaml.Unmarshal(manifestBytes, &manifestObj); err != nil {
 		return fmt.Errorf("failed to parse manifest YAML: %w", err)
 	}
 
-	if err := manifest.ValidateManifest(manifestObj, manifestData.ApiVersion); err != nil {
+	if err = manifest.ValidateManifest(manifestObj, manifestData.APIVersion); err != nil {
 		return fmt.Errorf("manifest validation failed: %w", err)
 	}
 
@@ -125,7 +126,9 @@ func showManifestPreview(c *nabat.Context, manifestData *manifest.Manifest) erro
 
 	var preview strings.Builder
 	preview.WriteString(DryRunPreviewHeader)
-	preview.WriteString(string(manifestYAML))
+	if _, writeErr := preview.Write(manifestYAML); writeErr != nil {
+		return fmt.Errorf("failed to write manifest preview: %w", writeErr)
+	}
 	preview.WriteString(DryRunPreviewFooter)
 
 	c.Println(preview.String())

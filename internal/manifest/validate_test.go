@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// TestValidateComponentResources verifies ValidateComponentResources rules.
 func TestValidateComponentResources(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -76,6 +77,8 @@ func TestValidateComponentResources(t *testing.T) {
 	}
 }
 
+// TestValidateManifestComponents verifies ValidateManifestComponents across
+// manifest component configurations.
 func TestValidateManifestComponents(t *testing.T) {
 	tests := []struct {
 		name      string
