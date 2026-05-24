@@ -391,9 +391,9 @@ func resolveResourcePresets(manifest *Manifest) error {
 					Memory:           presetResources["requests"].Memory,
 					EphemeralStorage: presetResources["requests"].EphemeralStorage,
 				}
-				// Preserve the resourcePreset field for traceability; precedence rules:
-				// explicit resources > preset. Since we only materialize when resources are empty,
-				// keeping resourcePreset is safe and documents original intent.
+				// Clear the resourcePreset field after converting to resources
+				// to avoid validation conflicts
+				component.ResourcePreset = ""
 				manifest.Components[componentName] = component
 				continue
 			}
@@ -408,6 +408,9 @@ func resolveResourcePresets(manifest *Manifest) error {
 					Memory:           presetResources["requests"].Memory,
 					EphemeralStorage: presetResources["requests"].EphemeralStorage,
 				}
+				// Clear the resourcePreset field after converting to resources
+				// to avoid validation conflicts
+				component.ResourcePreset = ""
 				manifest.Components[componentName] = component
 			}
 		}
@@ -653,7 +656,7 @@ func processStructField(field reflect.Value, fieldType reflect.StructField, defa
 	newPath := buildFieldPath(currentPath, fieldName)
 
 	switch field.Kind() {
-	case reflect.Ptr:
+	case reflect.Pointer:
 		// Handle pointer fields (only recurse into pointers to structs, e.g., *Autoscaling)
 		if !field.IsNil() {
 			if field.Elem().Kind() == reflect.Struct {
@@ -686,7 +689,7 @@ func applyDefaultsRecursively(obj any, defaults DefaultValues, currentPath strin
 	}
 
 	val := reflect.ValueOf(obj)
-	if val.Kind() != reflect.Ptr {
+	if val.Kind() != reflect.Pointer {
 		return fmt.Errorf("object must be a pointer to apply defaults at path %s", currentPath)
 	}
 
@@ -805,8 +808,8 @@ func extractEnvironmentName(path string) string {
 //	cleanEnvironmentName("production/*") -> "production"
 //	cleanEnvironmentName("staging") -> "staging" (no change)
 func cleanEnvironmentName(envName string) string {
-	if strings.HasSuffix(envName, EnvFileSuffix) {
-		return strings.TrimSuffix(envName, EnvFileSuffix)
+	if before, ok := strings.CutSuffix(envName, EnvFileSuffix); ok {
+		return before
 	}
 	return envName
 }
@@ -1029,7 +1032,7 @@ func isZeroValue(val any) bool {
 	v := reflect.ValueOf(val)
 
 	// Handle pointers
-	if v.Kind() == reflect.Ptr {
+	if v.Kind() == reflect.Pointer {
 		return v.IsNil()
 	}
 
@@ -1051,8 +1054,8 @@ func isZeroValue(val any) bool {
 		return v.Len() == 0
 	case reflect.Struct:
 		// For structs, check if all fields are zero values
-		for i := 0; i < v.NumField(); i++ {
-			if !isZeroValue(v.Field(i).Interface()) {
+		for _, field := range v.Fields() {
+			if !isZeroValue(field.Interface()) {
 				return false
 			}
 		}

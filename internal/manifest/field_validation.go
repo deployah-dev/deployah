@@ -32,7 +32,7 @@ func initValidators() error {
 		return fmt.Errorf("failed to get latest manifest schema: %w", err)
 	}
 
-	var schemaData map[string]interface{}
+	var schemaData map[string]any
 	if err := json.Unmarshal(schemaBytes, &schemaData); err != nil {
 		return fmt.Errorf("failed to parse manifest schema: %w", err)
 	}
@@ -72,7 +72,7 @@ func initValidators() error {
 }
 
 // extractPattern navigates through nested map structure to extract a pattern string
-func extractPattern(data map[string]interface{}, path []string) (string, error) {
+func extractPattern(data map[string]any, path []string) (string, error) {
 	current := data
 	for i, key := range path {
 		value, exists := current[key]
@@ -90,7 +90,7 @@ func extractPattern(data map[string]interface{}, path []string) (string, error) 
 		}
 
 		// Continue navigating
-		nextMap, ok := value.(map[string]interface{})
+		nextMap, ok := value.(map[string]any)
 		if !ok {
 			return "", fmt.Errorf("value at path %v is not a map", path[:i+1])
 		}

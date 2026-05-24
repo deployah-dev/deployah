@@ -64,7 +64,7 @@ type Component struct {
 	Args           []string          `json:"args,omitempty" yaml:"args,omitempty"`
 	Port           int               `json:"port,omitempty" yaml:"port,omitempty"`
 	Autoscaling    *Autoscaling      `json:"autoscaling,omitempty" yaml:"autoscaling,omitempty"`
-	Resources      Resources         `json:"resources,omitempty" yaml:"resources,omitempty"`
+	Resources      Resources         `json:"resources" yaml:"resources,omitempty"`
 	ResourcePreset ResourcePreset    `json:"resourcePreset,omitempty" yaml:"resourcePreset,omitempty"`
 	Ingress        *Ingress          `json:"ingress,omitempty" yaml:"ingress,omitempty"`
 	Env            map[string]string `json:"env,omitempty" yaml:"env,omitempty"`

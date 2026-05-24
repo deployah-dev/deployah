@@ -3,7 +3,9 @@ package manifest
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"strings"
 )
@@ -15,8 +17,7 @@ import (
 func parseEnvFile(path string, explicitlySet bool) (map[string]string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		// Use os.IsNotExist to check for file existence (Go best practice)
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			if explicitlySet {
 				return nil, fmt.Errorf("failed to read %s file: %w", path, err)
 			}
@@ -32,11 +33,15 @@ func parseEnvFile(path string, explicitlySet bool) (map[string]string, error) {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		if idx := strings.Index(line, "="); idx != -1 {
-			key := strings.TrimSpace(line[:idx])
-			val := strings.TrimSpace(line[idx+1:])
+		if before, after, ok := strings.Cut(line, "="); ok {
+			key := strings.TrimSpace(before)
+			val := strings.TrimSpace(after)
 			vars[key] = val
 		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("error reading %s: %w", path, err)
 	}
 
 	return vars, nil
@@ -47,9 +52,9 @@ func parseOSVariables() (map[string]string, error) {
 	env := os.Environ()
 	vars := make(map[string]string)
 	for _, e := range env {
-		if idx := strings.Index(e, "="); idx != -1 {
-			key := e[:idx]
-			val := e[idx+1:]
+		if before, after, ok := strings.Cut(e, "="); ok {
+			key := before
+			val := after
 			vars[key] = val
 		}
 	}

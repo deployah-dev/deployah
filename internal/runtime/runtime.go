@@ -169,13 +169,13 @@ func New(options ...Option) *Runtime {
 	return r
 }
 
-// WithRuntime returns a new context carrying the provided runtime.
-func WithRuntime(ctx context.Context, rt *Runtime) context.Context {
+// WithContext returns a new context carrying the provided runtime.
+func WithContext(ctx context.Context, rt *Runtime) context.Context {
 	return context.WithValue(ctx, runtimeKey{}, rt)
 }
 
-// FromRuntime extracts a Runtime from the command context, or nil if absent.
-func FromRuntime(ctx context.Context) *Runtime {
+// FromContext extracts a Runtime from the command context, or nil if absent.
+func FromContext(ctx context.Context) *Runtime {
 	if v := ctx.Value(runtimeKey{}); v != nil {
 		if rt, ok := v.(*Runtime); ok {
 			return rt

@@ -133,91 +133,93 @@ const (
 var ResourcePresetMappings = map[ResourcePreset]map[string]Resources{
 	ResourcePresetNano: {
 		"requests": {
-			CPU:              stringPtr("100m"),
-			Memory:           stringPtr("128Mi"),
-			EphemeralStorage: stringPtr("50Mi"),
+			CPU:              new("100m"),
+			Memory:           new("128Mi"),
+			EphemeralStorage: new("50Mi"),
 		},
 		"limits": {
-			CPU:              stringPtr("150m"),
-			Memory:           stringPtr("192Mi"),
-			EphemeralStorage: stringPtr("2Gi"),
+			CPU:              new("150m"),
+			Memory:           new("192Mi"),
+			EphemeralStorage: new("2Gi"),
 		},
 	},
 	ResourcePresetMicro: {
 		"requests": {
-			CPU:              stringPtr("250m"),
-			Memory:           stringPtr("256Mi"),
-			EphemeralStorage: stringPtr("50Mi"),
+			CPU:              new("250m"),
+			Memory:           new("256Mi"),
+			EphemeralStorage: new("50Mi"),
 		},
 		"limits": {
-			CPU:              stringPtr("375m"),
-			Memory:           stringPtr("384Mi"),
-			EphemeralStorage: stringPtr("2Gi"),
+			CPU:              new("375m"),
+			Memory:           new("384Mi"),
+			EphemeralStorage: new("2Gi"),
 		},
 	},
 	ResourcePresetSmall: {
 		"requests": {
-			CPU:              stringPtr("500m"),
-			Memory:           stringPtr("512Mi"),
-			EphemeralStorage: stringPtr("50Mi"),
+			CPU:              new("500m"),
+			Memory:           new("512Mi"),
+			EphemeralStorage: new("50Mi"),
 		},
 		"limits": {
-			CPU:              stringPtr("750m"),
-			Memory:           stringPtr("768Mi"),
-			EphemeralStorage: stringPtr("2Gi"),
+			CPU:              new("750m"),
+			Memory:           new("768Mi"),
+			EphemeralStorage: new("2Gi"),
 		},
 	},
 	ResourcePresetMedium: {
 		"requests": {
-			CPU:              stringPtr("500m"),
-			Memory:           stringPtr("1024Mi"),
-			EphemeralStorage: stringPtr("50Mi"),
+			CPU:              new("500m"),
+			Memory:           new("1024Mi"),
+			EphemeralStorage: new("50Mi"),
 		},
 		"limits": {
-			CPU:              stringPtr("750m"),
-			Memory:           stringPtr("1536Mi"),
-			EphemeralStorage: stringPtr("2Gi"),
+			CPU:              new("750m"),
+			Memory:           new("1536Mi"),
+			EphemeralStorage: new("2Gi"),
 		},
 	},
 	ResourcePresetLarge: {
 		"requests": {
-			CPU:              stringPtr("1000m"),
-			Memory:           stringPtr("2048Mi"),
-			EphemeralStorage: stringPtr("50Mi"),
+			CPU:              new("1000m"),
+			Memory:           new("2048Mi"),
+			EphemeralStorage: new("50Mi"),
 		},
 		"limits": {
-			CPU:              stringPtr("1500m"),
-			Memory:           stringPtr("3072Mi"),
-			EphemeralStorage: stringPtr("2Gi"),
+			CPU:              new("1500m"),
+			Memory:           new("3072Mi"),
+			EphemeralStorage: new("2Gi"),
 		},
 	},
 	ResourcePresetXLarge: {
 		"requests": {
-			CPU:              stringPtr("1000m"),
-			Memory:           stringPtr("3072Mi"),
-			EphemeralStorage: stringPtr("50Mi"),
+			CPU:              new("1000m"),
+			Memory:           new("3072Mi"),
+			EphemeralStorage: new("50Mi"),
 		},
 		"limits": {
-			CPU:              stringPtr("3000m"),
-			Memory:           stringPtr("6144Mi"),
-			EphemeralStorage: stringPtr("2Gi"),
+			CPU:              new("3000m"),
+			Memory:           new("6144Mi"),
+			EphemeralStorage: new("2Gi"),
 		},
 	},
 	ResourcePreset2XLarge: {
 		"requests": {
-			CPU:              stringPtr("1000m"),
-			Memory:           stringPtr("3072Mi"),
-			EphemeralStorage: stringPtr("50Mi"),
+			CPU:              new("1000m"),
+			Memory:           new("3072Mi"),
+			EphemeralStorage: new("50Mi"),
 		},
 		"limits": {
-			CPU:              stringPtr("6000m"),
-			Memory:           stringPtr("12288Mi"),
-			EphemeralStorage: stringPtr("2Gi"),
+			CPU:              new("6000m"),
+			Memory:           new("12288Mi"),
+			EphemeralStorage: new("2Gi"),
 		},
 	},
 }
 
 // stringPtr is a helper function to create string pointers
+//
+//go:fix inline
 func stringPtr(s string) *string {
-	return &s
+	return new(s)
 }

@@ -12,7 +12,40 @@
     flake-utils,
   }:
     flake-utils.lib.eachDefaultSystem (system: let
-      pkgs = nixpkgs.legacyPackages.${system};
+      helmOverlay = final: prev: {
+        kubernetes-helm = prev.kubernetes-helm.overrideAttrs (_old: rec {
+          version = "4.2.0";
+          src = prev.fetchFromGitHub {
+            owner = "helm";
+            repo = "helm";
+            rev = "v${version}";
+            sha256 = "sha256-Wyihzf7KpnVuIdp5lmjhB7uLAGgtmI0TXYl29uaVC5Y=";
+          };
+          vendorHash = "sha256-QTDC0v0BPE3FoK9AAq1n2jWxOE9gB9OsoY2wnpcCDUQ=";
+          ldflags = [
+            "-w"
+            "-s"
+            "-X helm.sh/helm/v4/internal/version.version=v${version}"
+            "-X helm.sh/helm/v4/internal/version.gitCommit=v${version}"
+          ];
+          preBuild = ''
+            K8S_MODULES_VER="$(go list -f '{{.Version}}' -m k8s.io/client-go)"
+            K8S_MODULES_MAJOR_VER="$(($(cut -d. -f1 <<<"$K8S_MODULES_VER") + 1))"
+            K8S_MODULES_MINOR_VER="$(cut -d. -f2 <<<"$K8S_MODULES_VER")"
+            old_ldflags="''${ldflags}"
+            ldflags="''${ldflags} -X helm.sh/helm/v4/pkg/lint/rules.k8sVersionMajor=''${K8S_MODULES_MAJOR_VER}"
+            ldflags="''${ldflags} -X helm.sh/helm/v4/pkg/lint/rules.k8sVersionMinor=''${K8S_MODULES_MINOR_VER}"
+            ldflags="''${ldflags} -X helm.sh/helm/v4/pkg/chartutil.k8sVersionMajor=''${K8S_MODULES_MAJOR_VER}"
+            ldflags="''${ldflags} -X helm.sh/helm/v4/pkg/chartutil.k8sVersionMinor=''${K8S_MODULES_MINOR_VER}"
+          '';
+          doCheck = false;
+        });
+      };
+
+      pkgs = import nixpkgs {
+        inherit system;
+        overlays = [ helmOverlay ];
+      };
       lib = nixpkgs.lib;
       packageName = "deployah";
 
@@ -88,31 +121,31 @@
           set -euo pipefail
           echo "Welcome to ${packageName} development environment!"
 
-          alias kubectl="kubecolor"
+          # alias kubectl="kubecolor"
 
-          # Check and create kind cluster if not exists
-          if ! kind get clusters | grep -q ${clusterName}; then
-            kind create cluster --name ${clusterName} --wait 60s --kubeconfig ${kubeConfigPath}
-          fi
+          # # Check and create kind cluster if not exists
+          # if ! kind get clusters | grep -q ${clusterName}; then
+          #   kind create cluster --name ${clusterName} --wait 60s --kubeconfig ${kubeConfigPath}
+          # fi
 
-          export KUBECONFIG=${kubeConfigPath}
-          export HELM_KUBECONTEXT=${kindContext}
+          # export KUBECONFIG=${kubeConfigPath}
+          # export HELM_KUBECONTEXT=${kindContext}
 
-          # Only prompt/cleanup if interactive
-          if [ -t 0 ]; then
-            cleanup() {
-              echo "Cleaning up ${packageName} development environment..."
+          # # Only prompt/cleanup if interactive
+          # if [ -t 0 ]; then
+          #   cleanup() {
+          #     echo "Cleaning up ${packageName} development environment..."
 
-              read -p "Do you want to delete the kind cluster? (y/n): " choice
-              case $choice in
-                [Yy]*)
-                  kind delete cluster --name ${clusterName} --kubeconfig ${kubeConfigPath}
-                  rm -rf ${kubeConfigPath}
-                  ;;
-              esac
-            }
-            trap cleanup EXIT
-          fi
+          #     read -p "Do you want to delete the kind cluster? (y/n): " choice
+          #     case $choice in
+          #       [Yy]*)
+          #         kind delete cluster --name ${clusterName} --kubeconfig ${kubeConfigPath}
+          #         rm -rf ${kubeConfigPath}
+          #         ;;
+          #     esac
+          #   }
+          #   trap cleanup EXIT
+          # fi
         '';
       };
     });

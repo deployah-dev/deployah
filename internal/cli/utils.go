@@ -16,17 +16,9 @@ package cli
 
 import (
 	"context"
-	"fmt"
-	"strings"
 	"time"
 
-	"github.com/alecthomas/chroma/v2/formatters"
-	"github.com/alecthomas/chroma/v2/lexers"
-	"github.com/alecthomas/chroma/v2/styles"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/deployah-dev/deployah/internal/k8s"
-	"github.com/deployah-dev/deployah/internal/runtime"
-	"github.com/deployah-dev/deployah/internal/ui"
 	"github.com/dustin/go-humanize"
 	v1 "helm.sh/helm/v4/pkg/release/v1"
 )
@@ -100,7 +92,7 @@ func ReleaseToViewModel(rel *v1.Release) ReleaseViewModel {
 		vm.Status = rel.Info.Status.String()
 		if !rel.Info.LastDeployed.IsZero() {
 			vm.LastDeployed = rel.Info.LastDeployed.Format(time.RFC3339)
-			vm.Age = humanize.Time(rel.Info.LastDeployed.Time)
+			vm.Age = humanize.Time(rel.Info.LastDeployed)
 		}
 		vm.Description = rel.Info.Description
 		vm.Notes = rel.Info.Notes
@@ -124,146 +116,4 @@ func ReleaseToViewModelWithPods(ctx context.Context, k8sClient *k8s.Client, rel 
 	vm.PodStatus = podStatus
 
 	return vm
-}
-
-// GetTableColumns returns the detailed column configuration (with pod information)
-func GetTableColumns(detailed bool) []ui.Column {
-	return []ui.Column{
-		{
-			Title:    "PROJECT",
-			Key:      "project",
-			MinWidth: 10,
-			MaxWidth: 20,
-			StyleFunc: func(value string) lipgloss.Style {
-				return lipgloss.NewStyle().Foreground(lipgloss.Color(ui.ColorBrightWhite))
-			},
-			Condition: true,
-		},
-		{
-			Title:    "ENV",
-			Key:      "environment",
-			MinWidth: 6,
-			MaxWidth: 12,
-			StyleFunc: func(value string) lipgloss.Style {
-				return ui.GetEnvironmentStyle(value)
-			},
-			Condition: true,
-		},
-		{
-			Title:    "STATUS",
-			Key:      "status",
-			MinWidth: 10,
-			MaxWidth: 16,
-			StyleFunc: func(value string) lipgloss.Style {
-				return ui.GetStatusStyle(value)
-			},
-			Condition: true,
-		},
-		{
-			Title:    "PODS",
-			Key:      "pods",
-			MinWidth: 8,
-			MaxWidth: 12,
-			StyleFunc: func(value string) lipgloss.Style {
-				return lipgloss.NewStyle().Foreground(lipgloss.Color(ui.ColorBrightCyan))
-			},
-			Condition: detailed,
-		},
-		{
-			Title:    "READY",
-			Key:      "ready",
-			MinWidth: 8,
-			MaxWidth: 15,
-			StyleFunc: func(value string) lipgloss.Style {
-				return lipgloss.NewStyle().Foreground(lipgloss.Color(ui.ColorGreen))
-			},
-			Condition: detailed,
-		},
-		{
-			Title: "REV",
-			Key:   "revision",
-			Width: 4,
-			StyleFunc: func(value string) lipgloss.Style {
-				return lipgloss.NewStyle().Foreground(lipgloss.Color(ui.ColorGray))
-			},
-			Condition: true,
-		},
-		{
-			Title:    "AGE",
-			Key:      "age",
-			MinWidth: 8,
-			MaxWidth: 20,
-			StyleFunc: func(value string) lipgloss.Style {
-				return lipgloss.NewStyle().Foreground(lipgloss.Color(ui.ColorGray))
-			},
-			Condition: true,
-		},
-		{
-			Title:    "NAMESPACE",
-			Key:      "namespace",
-			MinWidth: 10,
-			MaxWidth: 15,
-			StyleFunc: func(value string) lipgloss.Style {
-				return lipgloss.NewStyle().Foreground(lipgloss.Color(ui.ColorGray))
-			},
-			Condition: true,
-		},
-	}
-}
-
-// ColorizeJSONWithChroma applies syntax highlighting to JSON using chroma
-func ColorizeJSONWithChroma(data []byte) (string, error) {
-	// Check if we're outputting to a terminal that supports colors
-	if !ui.IsTerminal() {
-		return string(data), nil
-	}
-
-	// Use JSON lexer for syntax highlighting
-	lexer := lexers.Get("json")
-	if lexer == nil {
-		lexer = lexers.Fallback
-	}
-
-	// Use a terminal-friendly style
-	style := styles.Get("github")
-	if style == nil {
-		style = styles.Fallback
-	}
-
-	// Create a terminal formatter
-	formatter := formatters.Get("terminal")
-	if formatter == nil {
-		formatter = formatters.Fallback
-	}
-
-	// Tokenize the JSON
-	iterator, err := lexer.Tokenise(nil, string(data))
-	if err != nil {
-		return "", fmt.Errorf("failed to tokenize JSON: %w", err)
-	}
-
-	// Format with colors
-	var result strings.Builder
-	err = formatter.Format(&result, style, iterator)
-	if err != nil {
-		return "", fmt.Errorf("failed to format JSON: %w", err)
-	}
-
-	return result.String(), nil
-}
-
-// GetHelmClient initializes and returns a Helm client from the runtime context.
-// This is a common utility function used across multiple commands.
-func GetHelmClient(ctx context.Context) (runtime.HelmClient, error) {
-	rt := runtime.FromRuntime(ctx)
-	if rt == nil {
-		return nil, fmt.Errorf("runtime not initialized")
-	}
-
-	helmClient, err := rt.Helm()
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize helm client: %w", err)
-	}
-
-	return helmClient, nil
 }

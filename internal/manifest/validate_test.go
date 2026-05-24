@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"k8s.io/utils/ptr"
 )
 
 func TestValidateComponentResources(t *testing.T) {
@@ -18,8 +17,8 @@ func TestValidateComponentResources(t *testing.T) {
 			name: "valid with resources only",
 			component: Component{
 				Resources: Resources{
-					CPU:    ptr.To("500m"),
-					Memory: ptr.To("512Mi"),
+					CPU:    new("500m"),
+					Memory: new("512Mi"),
 				},
 			},
 			expectErr: false,
@@ -43,7 +42,7 @@ func TestValidateComponentResources(t *testing.T) {
 			component: Component{
 				Image: "nginx:latest",
 				Resources: Resources{
-					CPU: ptr.To(""), // Explicitly empty string
+					CPU: new(""), // Explicitly empty string
 				},
 			},
 			expectErr: true,
@@ -53,7 +52,7 @@ func TestValidateComponentResources(t *testing.T) {
 			name: "invalid with both resources and resourcePreset",
 			component: Component{
 				Resources: Resources{
-					CPU: ptr.To("500m"),
+					CPU: new("500m"),
 				},
 				ResourcePreset: "small",
 			},
@@ -90,7 +89,7 @@ func TestValidateManifestComponents(t *testing.T) {
 				Components: map[string]Component{
 					"web": {
 						Resources: Resources{
-							CPU: ptr.To("500m"),
+							CPU: new("500m"),
 						},
 					},
 				},
@@ -103,7 +102,7 @@ func TestValidateManifestComponents(t *testing.T) {
 				Components: map[string]Component{
 					"web": {
 						Resources: Resources{
-							CPU: ptr.To("500m"),
+							CPU: new("500m"),
 						},
 						ResourcePreset: "small",
 					},
@@ -118,7 +117,7 @@ func TestValidateManifestComponents(t *testing.T) {
 				Components: map[string]Component{
 					"web": {
 						Resources: Resources{
-							CPU: ptr.To("500m"),
+							CPU: new("500m"),
 						},
 					},
 					"api": {
@@ -138,7 +137,7 @@ func TestValidateManifestComponents(t *testing.T) {
 					"web": {
 						Image: "nginx:latest",
 						Resources: Resources{
-							CPU: ptr.To(""), // Explicitly empty string
+							CPU: new(""), // Explicitly empty string
 						},
 					},
 				},

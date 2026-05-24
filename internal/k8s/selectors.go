@@ -113,3 +113,23 @@ func BuildProjectSelector(project string) (string, error) {
 func BuildComponentSelector(project, component string) (string, error) {
 	return BuildSelector(project, component, "")
 }
+
+// BuildLabelSelector returns a labels.Selector for filtering by project and/or environment.
+func BuildLabelSelector(project, environment string) (labels.Selector, error) {
+	selector := labels.NewSelector()
+	if project != "" {
+		req, err := labels.NewRequirement(ProjectLabel, selection.Equals, []string{project})
+		if err != nil {
+			return nil, fmt.Errorf("project label: %w", err)
+		}
+		selector = selector.Add(*req)
+	}
+	if environment != "" {
+		req, err := labels.NewRequirement(EnvironmentLabel, selection.Equals, []string{environment})
+		if err != nil {
+			return nil, fmt.Errorf("environment label: %w", err)
+		}
+		selector = selector.Add(*req)
+	}
+	return selector, nil
+}

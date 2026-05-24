@@ -3,6 +3,7 @@ package manifest
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -133,12 +134,35 @@ func ValidateComponentResources(component Component) error {
 	return nil
 }
 
+// ValidateComponentAutoscaling validates that a component has valid autoscaling configuration.
+func ValidateComponentAutoscaling(component Component) error {
+	if component.Autoscaling == nil || !component.Autoscaling.Enabled {
+		return nil // Autoscaling not enabled, no validation needed
+	}
+
+	if component.Autoscaling.MinReplicas > component.Autoscaling.MaxReplicas {
+		return fmt.Errorf("minReplicas cannot be greater than maxReplicas")
+	}
+
+	return nil
+}
+
 // ValidateManifestComponents validates all components in a manifest.
 func ValidateManifestComponents(manifest *Manifest) error {
+	var errs []error
+
 	for name, component := range manifest.Components {
 		if err := ValidateComponentResources(component); err != nil {
-			return fmt.Errorf("component %s: %w", name, err)
+			errs = append(errs, fmt.Errorf("component %s: %w", name, err))
+		}
+		if err := ValidateComponentAutoscaling(component); err != nil {
+			errs = append(errs, fmt.Errorf("component %s: %w", name, err))
 		}
 	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("component validation failed: %w", errors.Join(errs...))
+	}
+
 	return nil
 }

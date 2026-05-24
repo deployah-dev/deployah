@@ -33,7 +33,16 @@ const (
 
 	// OutputFormatJSON formats output as JSON
 	OutputFormatJSON = "json"
+
+	// OutputFormatYAML formats output as YAML
+	OutputFormatYAML = "yaml"
 )
 
+// OutputFormatTree formats output as a tree
+const OutputFormatTree = "tree"
+
 // OutputFormats contains all valid output formats
-var OutputFormats = []string{OutputFormatTable, OutputFormatJSON}
+var OutputFormats = []string{OutputFormatTable, OutputFormatJSON, OutputFormatYAML}
+
+// DeleteOutputFormats contains valid output formats for the delete dry-run preview
+var DeleteOutputFormats = []string{OutputFormatTree, OutputFormatJSON, OutputFormatYAML}

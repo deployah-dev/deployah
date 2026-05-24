@@ -4,11 +4,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -126,7 +126,7 @@ func GetCachedChart(cacheKey string) (string, bool) {
 	}
 
 	// Verify the cached directory still exists
-	if _, err := os.Stat(cache.Path); os.IsNotExist(err) {
+	if _, err := os.Stat(cache.Path); errors.Is(err, fs.ErrNotExist) {
 		return "", false
 	}
 
@@ -167,16 +167,16 @@ func ClearChartCache() error {
 	chartCacheMutex.Lock()
 	defer chartCacheMutex.Unlock()
 
-	var errors []string
+	var errs []error
 	for key, cache := range chartCache {
 		if err := os.RemoveAll(cache.Path); err != nil {
-			errors = append(errors, fmt.Sprintf("failed to remove %s: %v", cache.Path, err))
+			errs = append(errs, fmt.Errorf("failed to remove %s: %w", cache.Path, err))
 		}
 		delete(chartCache, key)
 	}
 
-	if len(errors) > 0 {
-		return fmt.Errorf("errors during cache cleanup: %s", strings.Join(errors, "; "))
+	if len(errs) > 0 {
+		return fmt.Errorf("errors during cache cleanup: %w", errors.Join(errs...))
 	}
 
 	return nil

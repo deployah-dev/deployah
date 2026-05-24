@@ -17,141 +17,76 @@ package cmd
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
-	"strings"
 
-	"github.com/charmbracelet/fang"
-	"github.com/charmbracelet/log"
-	"github.com/deployah-dev/deployah/internal/cli"
+	"github.com/deployah-dev/deployah/internal/cmd/common"
 	"github.com/deployah-dev/deployah/internal/cmd/delete"
 	"github.com/deployah-dev/deployah/internal/cmd/deploy"
-	"github.com/deployah-dev/deployah/internal/cmd/initilaize"
+	"github.com/deployah-dev/deployah/internal/cmd/initialize"
 	"github.com/deployah-dev/deployah/internal/cmd/list"
 	"github.com/deployah-dev/deployah/internal/cmd/logs"
 	"github.com/deployah-dev/deployah/internal/cmd/shell"
 	"github.com/deployah-dev/deployah/internal/cmd/status"
 	"github.com/deployah-dev/deployah/internal/cmd/validate"
-	"github.com/deployah-dev/deployah/internal/logging"
 	"github.com/deployah-dev/deployah/internal/manifest"
 	"github.com/deployah-dev/deployah/internal/runtime"
-	"github.com/spf13/cobra"
+	"nabat.dev/logging"
+	"nabat.dev/nabat"
 )
 
-// NewRootCommand creates a new root command for the Deployah application. The root command is the main entry point for the application.
-func NewRootCommand() *cobra.Command {
-	rootCmd := &cobra.Command{
-		Use:   "deployah",
-		Short: "Deployah is a simple deployment tool",
-		Long:  "Deployah is a simple deployment tool that can be used to deploy applications to Kubernetes clusters.",
-		CompletionOptions: cobra.CompletionOptions{
-			HiddenDefaultCmd: true,
-		},
-		PersistentPreRunE: func(cmd *cobra.Command, args []string) (err error) {
-			debug, err := cmd.Flags().GetBool("debug")
-			if err != nil {
-				return fmt.Errorf("failed to get debug flag: %w", err)
-			}
+// NewApp creates a new Nabat application with all subcommands registered.
+func NewApp() *nabat.App {
+	app := nabat.MustNew("deployah",
+		nabat.WithTheme("gruvbox"),
+		nabat.WithVersion("0.1.0"),
+		nabat.WithDescription("Deployah is a tool for deploying applications to Kubernetes"),
+		nabat.WithLongDescription("Deployah is a simple deployment tool that can be used to deploy applications to Kubernetes clusters."),
+		nabat.WithCompletion(nabat.WithCompletionHidden()),
+		nabat.WithFlag("debug", false, nabat.WithShort('d'), nabat.WithUsage("Enable debug mode (verbose logging and keep temporary files)"), nabat.WithPersistent()),
+		nabat.WithFlag("config", manifest.DefaultManifestPath, nabat.WithShort('c'), nabat.WithUsage("Path to Deployah configuration file (YAML or JSON)"), nabat.WithPersistent()),
+		nabat.WithFlag("namespace", "", nabat.WithShort('n'), nabat.WithUsage("Kubernetes namespace to use for Deployah operations (defaults to current context namespace)"), nabat.WithPersistent()),
+		nabat.WithFlag("kubeconfig", "", nabat.WithShort('k'), nabat.WithUsage("Path to the kubeconfig file to use (defaults to standard kubeconfig resolution)"), nabat.WithPersistent()),
+		nabat.WithFlag("timeout", runtime.DefaultTimeout, nabat.WithShort('t'), nabat.WithUsage("Timeout for Deployah operations (install/upgrade, list, status, logs, delete)"), nabat.WithPersistent()),
+		nabat.WithExtension(logging.New(logging.WithVerboseFlag("debug"))),
+	)
 
-			noColor, err := cmd.Flags().GetBool("no-color")
-			if err != nil {
-				return fmt.Errorf("failed to get no-color flag: %w", err)
-			}
-
-			quiet, err := cmd.Flags().GetBool("quiet")
-			if err != nil {
-				return fmt.Errorf("failed to get quiet flag: %w", err)
-			}
-
-			// Set log level based on debug flag
-			var logLevel log.Level = log.InfoLevel
-			if debug {
-				logLevel = log.DebugLevel
-			}
-
-			// SilenceErrors sets whether to silence errors from the command.
-			// When quiet is true, SilenceErrors is set to true to prevent showing usage when a subcommand returns an error.
-			cmd.SilenceErrors = quiet
-			cmd.SilenceUsage = true
-
-			if err := logging.SetupCharmLogger(cmd, logLevel.String(), noColor, quiet); err != nil {
-				return fmt.Errorf("failed to setup logger: %w", err)
-			}
-
-			// Extract flag values and create runtime with options
-			namespace, err := cmd.Flags().GetString("namespace")
-			if err != nil {
-				return fmt.Errorf("failed to get namespace: %w", err)
-			}
-			kubeconfig, err := cmd.Flags().GetString("kubeconfig")
-			if err != nil {
-				return fmt.Errorf("failed to get kubeconfig: %w", err)
-			}
-			manifestPath, err := cmd.Flags().GetString("config")
-			if err != nil {
-				return fmt.Errorf("failed to get config: %w", err)
-			}
-			storageDriver, err := cmd.Flags().GetString("storage-driver")
-			if err != nil {
-				return fmt.Errorf("failed to get storage driver: %w", err)
-			}
-			timeout, err := cmd.Flags().GetDuration("timeout")
-			if err != nil {
-				return fmt.Errorf("failed to get timeout: %w", err)
-			}
-
-			// Get logger and create adapter for runtime
-			logger := logging.GetLogger(cmd)
-			loggerAdapter := runtime.NewLoggerAdapter(logger)
-
-			rt := runtime.New(
-				runtime.WithNamespace(namespace),
-				runtime.WithKubeconfig(kubeconfig),
-				runtime.WithManifestPath(manifestPath),
-				runtime.WithStorageDriver(storageDriver),
-				runtime.WithDebug(debug), // Use debug flag directly
-				runtime.WithTimeout(timeout),
-				runtime.WithLogger(loggerAdapter),
-			)
-			cmd.SetContext(runtime.WithRuntime(cmd.Context(), rt))
-			return nil
-		},
+	// Build runtime once from global flags and store in context for all commands.
+	if err := app.OnPreRun(func(c *nabat.Context) error {
+		var opts common.GlobalOptions
+		if err := c.Bind(&opts); err != nil {
+			return fmt.Errorf("binding global options: %w", err)
+		}
+		rt := runtime.New(
+			runtime.WithNamespace(opts.Namespace),
+			runtime.WithKubeconfig(opts.Kubeconfig),
+			runtime.WithManifestPath(opts.Config),
+			runtime.WithDebug(opts.Debug),
+			runtime.WithTimeout(opts.Timeout),
+		)
+		c.SetContext(runtime.WithContext(c.Context(), rt))
+		return nil
+	}); err != nil {
+		panic(fmt.Sprintf("failed to register OnPreRun hook: %v", err))
 	}
 
-	rootCmd.PersistentFlags().Bool("debug", false, "Enable debug mode (verbose logging and keep temporary files)")
-	rootCmd.PersistentFlags().Bool("no-color", false, "If specified, output won't contain any color.")
-	rootCmd.PersistentFlags().BoolP("quiet", "q", false, "Quiet or silent mode. Do not show logs or error messages.")
-	rootCmd.PersistentFlags().StringP("config", "c", manifest.DefaultManifestPath, "Path to Deployah configuration file (YAML or JSON)")
-	rootCmd.PersistentFlags().String("namespace", "", "Kubernetes namespace to use for Deployah operations (defaults to current context namespace)")
-	rootCmd.PersistentFlags().String("kubeconfig", "", "Path to the kubeconfig file to use (defaults to standard kubeconfig resolution)")
-	rootCmd.PersistentFlags().String("storage-driver", runtime.DefaultStorageDriver, fmt.Sprintf("Storage driver to use (%s) for Deployah releases", strings.Join(runtime.GetValidStorageDrivers(), "|")))
-	rootCmd.PersistentFlags().Duration("timeout", runtime.DefaultTimeout, "Timeout for Deployah operations (install/upgrade, list, status, logs, delete)")
+	// Subcommands (alphabetical)
+	delete.Register(app)
+	deploy.Register(app)
+	initialize.Register(app)
+	list.Register(app)
+	logs.Register(app)
+	shell.Register(app)
+	status.Register(app)
+	validate.Register(app)
 
-	return rootCmd
+	return app
 }
 
 // Execute is the main entry point for the Deployah application.
 func Execute() {
-	rootCmd := NewRootCommand()
-	rootCmd.AddCommand(
-		initilaize.New(),
-		validate.New(),
-		deploy.New(),
-		list.New(),
-		delete.New(),
-		status.New(),
-		logs.New(),
-		shell.New(),
-	)
-
-	if err := fang.Execute(context.Background(), rootCmd,
-		fang.WithNotifySignal(os.Interrupt),
-	); err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			os.Exit(cli.ExitTimedOut)
-		}
-
-		os.Exit(cli.ExitError)
+	app := NewApp()
+	if err := app.Run(context.Background()); err != nil {
+		os.Exit(1)
 	}
 }

@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/deployah-dev/deployah/internal/logging"
+	"log/slog"
 
 	"sigs.k8s.io/yaml"
 )
@@ -182,24 +182,20 @@ func Load(ctx context.Context, path string, envName string) (*Manifest, error) {
 		return nil, fmt.Errorf("failed to select environment: %w", err)
 	}
 
-	if logger := logging.From(ctx); logger != nil {
-		logger.Infof("Selected environment: %s", env.Name)
-	}
+		slog.Info("Selected environment", "environment", env.Name)
 
 	envFilePath, explicitlySet, err := resolveEnvFile(env)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve environment file: %w", err)
 	}
-	if logger := logging.From(ctx); logger != nil {
-		if envFilePath != "" {
-			if explicitlySet {
-				logger.Infof("Using explicily set env file: %s", envFilePath)
-			} else {
-				logger.Infof("Using resolved env file: %s", envFilePath)
-			}
+	if envFilePath != "" {
+		if explicitlySet {
+			slog.Info("Using explicily set env file", "envFile", envFilePath)
 		} else {
-			logger.Infof("No env file found for environment '%s', proceeding without env file.", env.Name)
+			slog.Info("Using resolved env file", "envFile", envFilePath)
 		}
+	} else {
+		slog.Info("No env file found for environment", "environment", env.Name)
 	}
 
 	// Set the resolved env file path for substitution

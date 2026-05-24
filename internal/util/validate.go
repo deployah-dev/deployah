@@ -62,8 +62,8 @@ func ValidateResourceString(value, fieldName string) error {
 	case "CPU":
 		v := strings.TrimSpace(value)
 		// Allow millicores like 500m (Kubernetes convention)
-		if strings.HasSuffix(v, "m") {
-			num := strings.TrimSuffix(v, "m")
+		if before, ok := strings.CutSuffix(v, "m"); ok {
+			num := before
 			if num == "" {
 				return fmt.Errorf("CPU '%s' is invalid: missing number before 'm' (e.g., 500m)", value)
 			}

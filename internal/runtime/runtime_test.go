@@ -78,35 +78,35 @@ type MockLoggerProvider struct {
 type LogEntry struct {
 	Level   string
 	Message string
-	KeyVals []interface{}
+	KeyVals []any
 }
 
-func (m *MockLoggerProvider) Debug(msg string, keyvals ...interface{}) {
+func (m *MockLoggerProvider) Debug(msg string, keyvals ...any) {
 	m.logs = append(m.logs, LogEntry{Level: "debug", Message: msg, KeyVals: keyvals})
 	m.Called(msg, keyvals)
 }
 
-func (m *MockLoggerProvider) Info(msg string, keyvals ...interface{}) {
+func (m *MockLoggerProvider) Info(msg string, keyvals ...any) {
 	m.logs = append(m.logs, LogEntry{Level: "info", Message: msg, KeyVals: keyvals})
 	m.Called(msg, keyvals)
 }
 
-func (m *MockLoggerProvider) Warn(msg string, keyvals ...interface{}) {
+func (m *MockLoggerProvider) Warn(msg string, keyvals ...any) {
 	m.logs = append(m.logs, LogEntry{Level: "warn", Message: msg, KeyVals: keyvals})
 	m.Called(msg, keyvals)
 }
 
-func (m *MockLoggerProvider) Error(msg string, keyvals ...interface{}) {
+func (m *MockLoggerProvider) Error(msg string, keyvals ...any) {
 	m.logs = append(m.logs, LogEntry{Level: "error", Message: msg, KeyVals: keyvals})
 	m.Called(msg, keyvals)
 }
 
-func (m *MockLoggerProvider) Fatal(msg string, keyvals ...interface{}) {
+func (m *MockLoggerProvider) Fatal(msg string, keyvals ...any) {
 	m.logs = append(m.logs, LogEntry{Level: "fatal", Message: msg, KeyVals: keyvals})
 	m.Called(msg, keyvals)
 }
 
-func (m *MockLoggerProvider) With(keyvals ...interface{}) LoggerProvider {
+func (m *MockLoggerProvider) With(keyvals ...any) LoggerProvider {
 	args := m.Called(keyvals)
 	return args.Get(0).(LoggerProvider)
 }
@@ -279,8 +279,8 @@ func TestRuntimeProvider(t *testing.T) {
 		ctx := context.Background()
 
 		// Act
-		ctxWithRuntime := WithRuntime(ctx, runtime)
-		retrievedRuntime := FromRuntime(ctxWithRuntime)
+		ctxWithRuntime := WithContext(ctx, runtime)
+		retrievedRuntime := FromContext(ctxWithRuntime)
 
 		// Assert
 		assert.Equal(t, runtime, retrievedRuntime)
@@ -291,7 +291,7 @@ func TestRuntimeProvider(t *testing.T) {
 		ctx := context.Background()
 
 		// Act
-		retrievedRuntime := FromRuntime(ctx)
+		retrievedRuntime := FromContext(ctx)
 
 		// Assert
 		assert.Nil(t, retrievedRuntime)

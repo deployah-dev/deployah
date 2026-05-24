@@ -89,20 +89,20 @@ type ManifestLoader interface {
 // This enables structured logging with different implementations and levels.
 type LoggerProvider interface {
 	// Debug logs a debug-level message
-	Debug(msg string, keyvals ...interface{})
+	Debug(msg string, keyvals ...any)
 
 	// Info logs an info-level message
-	Info(msg string, keyvals ...interface{})
+	Info(msg string, keyvals ...any)
 
 	// Warn logs a warning-level message
-	Warn(msg string, keyvals ...interface{})
+	Warn(msg string, keyvals ...any)
 
 	// Error logs an error-level message
-	Error(msg string, keyvals ...interface{})
+	Error(msg string, keyvals ...any)
 
 	// Fatal logs a fatal-level message and exits
-	Fatal(msg string, keyvals ...interface{})
+	Fatal(msg string, keyvals ...any)
 
 	// With returns a new logger with the given key-value pairs
-	With(keyvals ...interface{}) LoggerProvider
+	With(keyvals ...any) LoggerProvider
 }

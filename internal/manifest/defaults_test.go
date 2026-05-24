@@ -441,43 +441,43 @@ func (s *DefaultsTestSuite) TestSetFieldValue() {
 	}{
 		{
 			name:     "set string field",
-			field:    reflect.New(reflect.TypeOf("")).Elem(),
+			field:    reflect.New(reflect.TypeFor[string]()).Elem(),
 			value:    "test-string",
 			expected: "test-string",
 		},
 		{
 			name:     "set int field",
-			field:    reflect.New(reflect.TypeOf(0)).Elem(),
+			field:    reflect.New(reflect.TypeFor[int]()).Elem(),
 			value:    42,
 			expected: 42,
 		},
 		{
 			name:     "set bool field",
-			field:    reflect.New(reflect.TypeOf(false)).Elem(),
+			field:    reflect.New(reflect.TypeFor[bool]()).Elem(),
 			value:    true,
 			expected: true,
 		},
 		{
 			name:     "set float64 field from float64",
-			field:    reflect.New(reflect.TypeOf(0.0)).Elem(),
+			field:    reflect.New(reflect.TypeFor[float64]()).Elem(),
 			value:    3.14,
 			expected: 3.14,
 		},
 		{
 			name:     "set int field from float64",
-			field:    reflect.New(reflect.TypeOf(0)).Elem(),
+			field:    reflect.New(reflect.TypeFor[int]()).Elem(),
 			value:    42.0,
 			expected: 42,
 		},
 		{
 			name:     "set uint field from float64",
-			field:    reflect.New(reflect.TypeOf(uint(0))).Elem(),
+			field:    reflect.New(reflect.TypeFor[uint]()).Elem(),
 			value:    42.0,
 			expected: uint(42),
 		},
 		{
 			name:     "set slice field from []any",
-			field:    reflect.New(reflect.TypeOf([]string{})).Elem(),
+			field:    reflect.New(reflect.TypeFor[[]string]()).Elem(),
 			value:    []any{"item1", "item2"},
 			expected: []string{"item1", "item2"}, // mapstructure correctly converts []any to []string
 		},

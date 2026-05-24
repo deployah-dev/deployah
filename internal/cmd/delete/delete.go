@@ -1,261 +1,343 @@
-// Package delete provides the CLI commands for the Deployah application.
 package delete
 
 import (
-	"context"
+	"errors"
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/huh"
-	"github.com/charmbracelet/huh/spinner"
-	"github.com/charmbracelet/log"
 	"github.com/deployah-dev/deployah/internal/cli"
-	"github.com/deployah-dev/deployah/internal/logging"
-	"github.com/spf13/cobra"
+	"github.com/deployah-dev/deployah/internal/helm"
+	"github.com/deployah-dev/deployah/internal/runtime"
 	v1 "helm.sh/helm/v4/pkg/release/v1"
+	"nabat.dev/nabat"
+	"sigs.k8s.io/yaml"
 )
 
-// New creates the delete sub-command for the CLI.
-// It returns a new Cobra command for deleting Deployah projects.
-func New() *cobra.Command {
-	deleteCommand := &cobra.Command{
-		Use:     "delete <project> <environment>",
-		Aliases: []string{"uninstall", "remove"},
-		Short:   "Delete a deployed project in an environment",
-		Long:    `Delete (uninstall) a deployed project in an environment from the Kubernetes cluster.`,
-		Args: func(cmd *cobra.Command, args []string) error {
-			if len(args) != 2 {
-				return fmt.Errorf("project and environment are required, eg. 'deployah delete project1 production'")
-			}
-			return nil
-		},
-		RunE: runDelete,
-	}
-
-	deleteCommand.Flags().Bool("force", false, "Force deletion without confirmation")
-	deleteCommand.Flags().Bool("dry-run", false, "Simulate the deletion without actually removing the project")
-	deleteCommand.Flags().Bool("show-resources", false, "Show detailed resources that would be deleted (implies --dry-run)")
-
-	return deleteCommand
+type Options struct {
+	Project       string `nabat:"project"`
+	Environment   string `nabat:"environment"`
+	Force         bool   `nabat:"force"`
+	DryRun        bool   `nabat:"dry-run"`
+	ShowResources bool   `nabat:"show-resources"`
+	Output        string `nabat:"output"`
 }
 
-// runDelete is the main function for the delete command.
-// It deletes a Helm project in an environment from the Kubernetes cluster.
-func runDelete(cmd *cobra.Command, args []string) error {
-	logger := logging.GetLogger(cmd)
+// ResourceInfo holds parsed metadata about a single Kubernetes resource from the Helm manifest.
+type ResourceInfo struct {
+	APIVersion string `json:"apiVersion" yaml:"apiVersion"`
+	Kind       string `json:"kind" yaml:"kind"`
+	Name       string `json:"name" yaml:"name"`
+	Detail     string `json:"detail,omitempty" yaml:"detail,omitempty"`
+}
 
-	project := args[0]
-	environment := args[1]
+// DeletePreview is the structured representation of a dry-run delete operation,
+// used for JSON/YAML output formats.
+type DeletePreview struct {
+	Project      string         `json:"project" yaml:"project"`
+	Environment  string         `json:"environment" yaml:"environment"`
+	Release      string         `json:"release" yaml:"release"`
+	Namespace    string         `json:"namespace" yaml:"namespace"`
+	Status       string         `json:"status" yaml:"status"`
+	Revision     int            `json:"revision" yaml:"revision"`
+	LastDeployed string         `json:"lastDeployed" yaml:"lastDeployed"`
+	Resources    []ResourceInfo `json:"resources,omitempty" yaml:"resources,omitempty"`
+}
 
-	logger.Infof("Starting delete process for project '%s' in environment '%s'", project, environment)
+func Register(app *nabat.App) {
+	app.MustCommand("delete",
+		nabat.WithDescription("Delete a deployed project in an environment"),
+		nabat.WithLongDescription("Delete (uninstall) a deployed project in an environment from the Kubernetes cluster."),
+		nabat.WithAliases("uninstall", "remove"),
+		nabat.WithArg("project", "", nabat.WithRequired(), nabat.WithUsage("Project name to delete"), nabat.WithPrompt("Project name", "", nabat.WithHint("e.g. my-app"))),
+		nabat.WithArg("environment", "", nabat.WithRequired(), nabat.WithUsage("Environment to delete from"), nabat.WithPrompt("Environment", "", nabat.WithHint("e.g. production"))),
+		nabat.WithFlag("force", false, nabat.WithUsage("Force deletion without confirmation")),
+		nabat.WithFlag("dry-run", false, nabat.WithUsage("Simulate the deletion without actually removing the project")),
+		nabat.WithFlag("show-resources", false, nabat.WithUsage("Show detailed resources that would be deleted (implies --dry-run)")),
+		nabat.WithSelectFlag("output", cli.OutputFormatTree, cli.DeleteOutputFormats, nabat.WithShort('o'), nabat.WithUsage("Output format for dry-run preview")),
+		nabat.WithExample(`
+# Delete a project in an environment
+deployah delete my-app production
 
-	force, _ := cmd.Flags().GetBool("force")
-	dryRun, _ := cmd.Flags().GetBool("dry-run")
-	showResources, _ := cmd.Flags().GetBool("show-resources")
+# Force deletion without confirmation
+deployah delete my-app production --force
+
+# Dry run to see what would be deleted
+deployah delete my-app production --dry-run
+
+# Show detailed resources that would be deleted
+deployah delete my-app production --show-resources
+
+# Output dry-run preview as JSON
+deployah delete my-app production --dry-run --output json`),
+		nabat.WithRun(runDelete),
+	)
+}
+
+func runDelete(c *nabat.Context) error {
+	opts := &Options{}
+	if err := c.Bind(opts); err != nil {
+		return fmt.Errorf("binding options: %w", err)
+	}
 
 	// show-resources implies dry-run
-	if showResources {
-		dryRun = true
+	if opts.ShowResources {
+		opts.DryRun = true
 	}
 
-	// Initialize Helm client from runtime
-	helmClient, err := cli.GetHelmClient(cmd.Context())
+	rt := runtime.FromContext(c)
+	helmClient, err := rt.Helm()
 	if err != nil {
-		return fmt.Errorf("failed to initialize helm client: %w", err)
+		return fmt.Errorf("helm client: %w", err)
 	}
 
-	// Check if release exists before proceeding
-	logger.Infof("Checking project '%s' in environment '%s' status", project, environment)
-	release, err := helmClient.GetRelease(cmd.Context(), project, environment)
+	c.Logger().Debug("checking project status", "project", opts.Project, "environment", opts.Environment)
+	release, err := helmClient.GetRelease(c, opts.Project, opts.Environment)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			logger.Warnf("Project '%s' in environment '%s' not found", project, environment)
-			if !force {
-				return fmt.Errorf("project '%s' in environment '%s' not found - use --force to ignore", project, environment)
+		if errors.Is(err, helm.ErrReleaseNotFound) {
+			c.Warn("Project not found", "project", opts.Project, "environment", opts.Environment)
+			if !opts.Force {
+				return fmt.Errorf("project '%s' in environment '%s': %w — use --force to ignore", opts.Project, opts.Environment, helm.ErrReleaseNotFound)
 			}
-			logger.Infof("Continuing with --force flag despite missing project '%s' in environment '%s'", project, environment)
+			c.Info("Continuing with --force despite missing project", "project", opts.Project)
 		} else {
-			return fmt.Errorf("failed to check project status: %w", err)
+			return fmt.Errorf("check project status: %w", err)
 		}
-	} else {
-		logger.Infof("Project '%s' in environment '%s' found, proceeding with deletion", project, environment)
 	}
 
-	// Enhanced dry-run output
-	if dryRun {
-		return showDryRunOutput(project, environment, release, showResources, logger)
+	if opts.DryRun {
+		return renderDryRunPreview(c, opts.Project, opts.Environment, release, opts.ShowResources, opts.Output)
 	}
 
-	// Show confirmation unless force flag is used
-	if !force {
-		var confirmed bool
-		confirmForm := huh.NewForm(
-			huh.NewGroup(
-				huh.NewConfirm().
-					Title(fmt.Sprintf("Delete project '%s' in environment '%s'?", project, environment)).
-					Description(fmt.Sprintf("This will permanently remove project '%s' in environment '%s' and all its resources from the cluster.", project, environment)).
-					Affirmative("Yes, delete it").
-					Negative("No, cancel").
-					Value(&confirmed),
-			),
+	if !opts.Force {
+		confirmed, confirmErr := c.Confirm(
+			fmt.Sprintf("Delete project '%s' in environment '%s'?", opts.Project, opts.Environment),
+			nabat.WithAffirmative("Yes, delete it"),
+			nabat.WithNegative("No, cancel"),
 		)
-
-		if err := confirmForm.Run(); err != nil {
-			logger.Debugf("failed to get confirmation: %v", err)
-			return fmt.Errorf("failed to get confirmation")
+		if confirmErr != nil {
+			return fmt.Errorf("confirmation: %w", confirmErr)
 		}
-
 		if !confirmed {
-			logger.Infof("Delete operation for project '%s' in environment '%s' cancelled by user", project, environment)
+			c.Info("Delete cancelled")
 			return nil
 		}
 	}
 
-	err = spinner.New().
-		Title(fmt.Sprintf("Deleting project '%s' in environment '%s'...", project, environment)).
-		Context(cmd.Context()).
-		ActionWithErr(func(ctx context.Context) error {
-			return helmClient.DeleteRelease(ctx, project, environment)
-		}).
-		Run()
+	err = c.Spinner(
+		fmt.Sprintf("Deleting '%s' in '%s'...", opts.Project, opts.Environment),
+		func() error {
+			return helmClient.DeleteRelease(c, opts.Project, opts.Environment)
+		},
+	)
 	if err != nil {
-		return fmt.Errorf("failed to delete release: %w", err)
+		return fmt.Errorf("delete release: %w", err)
 	}
 
-	logger.Infof("Project '%s' in environment '%s' deleted successfully", project, environment)
-
+	c.Success("Deleted", "project", opts.Project, "environment", opts.Environment)
 	return nil
 }
 
-// showDryRunOutput displays detailed information about what would be deleted
-func showDryRunOutput(project, environment string, release *v1.Release, showResources bool, logger *log.Logger) error {
+func renderDryRunPreview(c *nabat.Context, project, environment string, release *v1.Release, showResources bool, format string) error {
 	if release == nil {
-		logger.Infof("🔍 DRY RUN: Project '%s' in environment '%s' not found - nothing to delete", project, environment)
+		c.Warn("DRY RUN: Project not found — nothing to delete", "project", project, "environment", environment)
 		return nil
 	}
 
-	// Extract release information
-	releaseName := release.Name
-	namespace := release.Namespace
-	status := "unknown"
-	revision := 0
-	lastDeployed := "unknown"
+	preview := buildPreview(project, environment, release, showResources)
 
+	switch format {
+	case cli.OutputFormatJSON:
+		return c.JSON(preview)
+	case cli.OutputFormatYAML:
+		return c.YAML(preview)
+	default:
+		return renderTree(c, project, environment, preview)
+	}
+}
+
+func buildPreview(project, environment string, release *v1.Release, showResources bool) *DeletePreview {
+	p := &DeletePreview{
+		Project:     project,
+		Environment: environment,
+		Release:     release.Name,
+		Namespace:   release.Namespace,
+		Status:      "unknown",
+		LastDeployed: "unknown",
+	}
 	if release.Info != nil {
-		status = release.Info.Status.String()
+		p.Status = release.Info.Status.String()
 		if !release.Info.LastDeployed.IsZero() {
-			lastDeployed = release.Info.LastDeployed.Format("2006-01-02 15:04:05 MST")
+			p.LastDeployed = release.Info.LastDeployed.Format("2006-01-02 15:04:05 MST")
 		}
 	}
 	if release.Version > 0 {
-		revision = int(release.Version)
+		p.Revision = int(release.Version)
 	}
-
-	// Display basic release information
-	logger.Infof("🔍 DRY RUN: Would delete the following release:")
-	logger.Infof("  📦 Project: %s", project)
-	logger.Infof("  🌍 Environment: %s", environment)
-	logger.Infof("  🏷️  Release Name: %s", releaseName)
-	logger.Infof("  📂 Namespace: %s", namespace)
-	logger.Infof("  📊 Status: %s", status)
-	logger.Infof("  🔢 Revision: %d", revision)
-	logger.Infof("  📅 Last Deployed: %s", lastDeployed)
-
-	if release.Info != nil && release.Info.Description != "" {
-		logger.Infof("  📝 Description: %s", release.Info.Description)
-	}
-
-	// Show manifest resources if requested or if it's available
 	if showResources && release.Manifest != "" {
-		logger.Infof("\n📋 Resources that would be deleted:")
-		if err := displayResourcesSummary(release.Manifest, logger); err != nil {
-			logger.Warnf("Could not parse manifest resources: %v", err)
-		}
+		p.Resources = parseResources(release.Manifest)
+	}
+	return p
+}
+
+func renderTree(c *nabat.Context, project, environment string, preview *DeletePreview) error {
+	c.Warn("DRY RUN — no changes will be made")
+
+	children := []nabat.TreeNode{
+		{Value: fmt.Sprintf("Release: %s", preview.Release)},
+		{Value: fmt.Sprintf("Namespace: %s", preview.Namespace)},
+		{Value: fmt.Sprintf("Status: %s", preview.Status)},
+		{Value: fmt.Sprintf("Revision: %d", preview.Revision)},
+		{Value: fmt.Sprintf("Last Deployed: %s", preview.LastDeployed)},
 	}
 
-	// Show configuration if available
-	if len(release.Config) > 0 {
-		logger.Infof("\n⚙️  Configuration values would be lost:")
-		displayConfigSummary(release.Config, logger)
+	if len(preview.Resources) > 0 {
+		children = append(children, buildResourceNodes(preview.Resources))
 	}
 
-	// Show notes if available
-	if release.Info != nil && release.Info.Notes != "" {
-		logger.Infof("\n📜 Release notes:")
-		logger.Infof("%s", release.Info.Notes)
-	}
+	root := fmt.Sprintf("%s (%s)", project, environment)
+	c.Tree(root, children, nabat.WithTreeEnumerator(nabat.TreeRoundedEnumerator()))
 
-	// Show warning for data loss
-	logger.Infof("\n⚠️  WARNING: This operation will:")
-	logger.Infof("  • Permanently delete all Kubernetes resources")
-	logger.Infof("  • Remove the Helm release history")
-	logger.Infof("  • Delete any persistent data (PVCs, ConfigMaps, Secrets)")
-	logger.Infof("  • Cannot be undone without backups")
-
-	logger.Infof("\n💡 To perform the actual deletion, run without --dry-run:")
-	logger.Infof("  deployah delete %s %s", project, environment)
-
+	c.Warn("This permanently deletes all resources and Helm release history")
+	c.Info("To perform the actual deletion, run without --dry-run",
+		"command", fmt.Sprintf("deployah delete %s %s", project, environment),
+	)
 	return nil
 }
 
-// displayResourcesSummary parses and displays a summary of Kubernetes resources
-func displayResourcesSummary(manifest string, logger *log.Logger) error {
-	if manifest == "" {
-		logger.Infof("  (No manifest data available)")
-		return nil
+func buildResourceNodes(resources []ResourceInfo) nabat.TreeNode {
+	// Group by kind, preserving the order of first appearance.
+	type kindGroup struct {
+		kind  string
+		items []ResourceInfo
+	}
+	var order []string
+	grouped := make(map[string]*kindGroup)
+	for _, r := range resources {
+		if _, seen := grouped[r.Kind]; !seen {
+			order = append(order, r.Kind)
+			grouped[r.Kind] = &kindGroup{kind: r.Kind}
+		}
+		grouped[r.Kind].items = append(grouped[r.Kind].items, r)
 	}
 
-	// Simple manifest parsing to count resource types
-	resourceCounts := make(map[string]int)
-	lines := strings.Split(manifest, "\n")
+	kindNodes := make([]nabat.TreeNode, 0, len(order))
+	for _, kind := range order {
+		group := grouped[kind]
+		nameLeaves := make([]nabat.TreeNode, 0, len(group.items))
+		for _, r := range group.items {
+			label := r.Name
+			if r.Detail != "" {
+				label = fmt.Sprintf("%s (%s)", r.Name, r.Detail)
+			}
+			nameLeaves = append(nameLeaves, nabat.TreeNode{Value: label})
+		}
+		kindNodes = append(kindNodes, nabat.TreeNode{
+			Value:    kind,
+			Children: nameLeaves,
+		})
+	}
 
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "kind:") {
-			kind := strings.TrimSpace(strings.TrimPrefix(line, "kind:"))
-			if kind != "" {
-				resourceCounts[kind]++
+	return nabat.TreeNode{
+		Value:    fmt.Sprintf("Resources (%d)", len(resources)),
+		Children: kindNodes,
+	}
+}
+
+// parseResources splits a Helm manifest into individual YAML documents and
+// extracts kind-specific detail for each resource.
+func parseResources(manifest string) []ResourceInfo {
+	var resources []ResourceInfo
+	for _, doc := range strings.Split(manifest, "---") {
+		doc = strings.TrimSpace(doc)
+		if doc == "" {
+			continue
+		}
+
+		var base struct {
+			APIVersion string `yaml:"apiVersion"`
+			Kind       string `yaml:"kind"`
+			Metadata   struct {
+				Name string `yaml:"name"`
+			} `yaml:"metadata"`
+		}
+		if err := yaml.Unmarshal([]byte(doc), &base); err != nil || base.Kind == "" {
+			continue
+		}
+
+		resources = append(resources, ResourceInfo{
+			APIVersion: base.APIVersion,
+			Kind:       base.Kind,
+			Name:       base.Metadata.Name,
+			Detail:     extractDetail(base.Kind, doc),
+		})
+	}
+	return resources
+}
+
+// extractDetail returns a short human-readable attribute string for well-known
+// Kubernetes resource kinds. Returns an empty string for unknown kinds.
+func extractDetail(kind, doc string) string {
+	switch kind {
+	case "Deployment", "StatefulSet", "DaemonSet", "ReplicaSet":
+		var obj struct {
+			Spec struct {
+				Replicas *int `yaml:"replicas"`
+			} `yaml:"spec"`
+		}
+		if err := yaml.Unmarshal([]byte(doc), &obj); err == nil && obj.Spec.Replicas != nil {
+			return fmt.Sprintf("replicas: %d", *obj.Spec.Replicas)
+		}
+	case "Service":
+		var obj struct {
+			Spec struct {
+				Type  string `yaml:"type"`
+				Ports []struct {
+					Port int `yaml:"port"`
+				} `yaml:"ports"`
+			} `yaml:"spec"`
+		}
+		if err := yaml.Unmarshal([]byte(doc), &obj); err == nil {
+			svcType := obj.Spec.Type
+			if svcType == "" {
+				svcType = "ClusterIP"
+			}
+			if len(obj.Spec.Ports) > 0 {
+				return fmt.Sprintf("%s, port: %d", svcType, obj.Spec.Ports[0].Port)
+			}
+			return svcType
+		}
+	case "Ingress":
+		var obj struct {
+			Spec struct {
+				Rules []struct {
+					Host string `yaml:"host"`
+				} `yaml:"rules"`
+			} `yaml:"spec"`
+		}
+		if err := yaml.Unmarshal([]byte(doc), &obj); err == nil && len(obj.Spec.Rules) > 0 && obj.Spec.Rules[0].Host != "" {
+			return fmt.Sprintf("host: %s", obj.Spec.Rules[0].Host)
+		}
+	case "Secret":
+		var obj struct {
+			Type string `yaml:"type"`
+		}
+		if err := yaml.Unmarshal([]byte(doc), &obj); err == nil && obj.Type != "" {
+			return obj.Type
+		}
+		return "Opaque"
+	case "PersistentVolumeClaim":
+		var obj struct {
+			Spec struct {
+				Resources struct {
+					Requests map[string]string `yaml:"requests"`
+				} `yaml:"resources"`
+			} `yaml:"spec"`
+		}
+		if err := yaml.Unmarshal([]byte(doc), &obj); err == nil {
+			if storage, ok := obj.Spec.Resources.Requests["storage"]; ok {
+				return fmt.Sprintf("storage: %s", storage)
 			}
 		}
 	}
-
-	if len(resourceCounts) == 0 {
-		logger.Infof("  (Could not parse resource information)")
-		return nil
-	}
-
-	for kind, count := range resourceCounts {
-		if count == 1 {
-			logger.Infof("  • %s", kind)
-		} else {
-			logger.Infof("  • %s (%d instances)", kind, count)
-		}
-	}
-
-	return nil
-}
-
-// displayConfigSummary shows a summary of the configuration values
-func displayConfigSummary(config map[string]any, logger *log.Logger) {
-	if len(config) == 0 {
-		logger.Infof("  (No configuration values)")
-		return
-	}
-
-	count := 0
-	for key, value := range config {
-		if count >= 5 { // Limit to first 5 keys to avoid spam
-			logger.Infof("  ... and %d more configuration keys", len(config)-5)
-			break
-		}
-
-		// Show a preview of the value
-		valueStr := fmt.Sprintf("%v", value)
-		if len(valueStr) > 50 {
-			valueStr = valueStr[:47] + "..."
-		}
-
-		logger.Infof("  • %s: %s", key, valueStr)
-		count++
-	}
+	return ""
 }

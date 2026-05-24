@@ -43,7 +43,7 @@ var (
 func GetManifestSchema(version string) ([]byte, error) {
 	fileName := version + "/manifest.json"
 	if _, err := fs.Open(fileName); err != nil {
-		return nil, fmt.Errorf("manifest schema not found for version %s", version)
+		return nil, fmt.Errorf("manifest schema not found for version %s: %w", version, err)
 	}
 	return fs.ReadFile(fileName)
 }
@@ -54,7 +54,7 @@ func GetManifestSchema(version string) ([]byte, error) {
 func GetEnvironmentsSchema(version string) ([]byte, error) {
 	fileName := version + "/environments.json"
 	if _, err := fs.Open(fileName); err != nil {
-		return nil, fmt.Errorf("environments schema not found for version %s", version)
+		return nil, fmt.Errorf("environments schema not found for version %s: %w", version, err)
 	}
 	return fs.ReadFile(fileName)
 }
