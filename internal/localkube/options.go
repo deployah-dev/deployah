@@ -155,6 +155,12 @@ func WithAttachWriter(w io.Writer) CloudProviderOption {
 	return func(c *cloudProviderConfig) { c.attachWriter = w }
 }
 
+// WithClusterName sets the Kind cluster name so that [Manager.StopCloudProvider]
+// also removes gateway sidecar containers spawned by cloud-provider-kind.
+func WithClusterName(name string) CloudProviderOption {
+	return func(c *cloudProviderConfig) { c.clusterName = name }
+}
+
 // DeleteOption configures a single [Manager.Delete] call.
 type DeleteOption func(*deleteConfig)
 

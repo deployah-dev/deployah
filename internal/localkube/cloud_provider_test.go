@@ -88,6 +88,14 @@ func TestCloudProviderOptions(t *testing.T) {
 				assert.Equal(t, "/run/custom.sock", cfg.socketPath)
 			},
 		},
+		{
+			name: "WithClusterName",
+			opt:  WithClusterName("mycluster"),
+			verify: func(t *testing.T, cfg *cloudProviderConfig) {
+				t.Helper()
+				assert.Equal(t, "mycluster", cfg.clusterName)
+			},
+		},
 	}
 
 	for _, tc := range cases {
@@ -115,6 +123,7 @@ func TestToControllerConfig(t *testing.T) {
 		gatewayChannel: GatewayExperimental,
 		ingressDefault: false,
 		socketPath:     "/run/docker.sock",
+		clusterName:    "mycluster",
 	}
 	got := cfg.toControllerConfig()
 
@@ -123,6 +132,7 @@ func TestToControllerConfig(t *testing.T) {
 	assert.Equal(t, "experimental", got.GatewayChannel)
 	assert.False(t, got.IngressDefault)
 	assert.Equal(t, "/run/docker.sock", got.SocketPath)
+	assert.Equal(t, "mycluster", got.ClusterName)
 }
 
 // TestStartCloudProvider_ErrUnsupported verifies that a Manager with no engine

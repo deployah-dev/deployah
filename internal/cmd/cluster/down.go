@@ -80,7 +80,7 @@ func runDown(c *nabat.Context) error {
 
 	// Stop the cloud provider container first; ignore ErrUnsupported (engine mismatch).
 	if spinErr := c.Spinner("Stopping cloud provider...", func(_ *nabat.Spinner) error {
-		stopErr := m.StopCloudProvider(c)
+		stopErr := m.StopCloudProvider(c, localkube.WithClusterName(clusterName))
 		if stopErr != nil && !errors.Is(stopErr, localkube.ErrUnsupported) {
 			return stopErr
 		}

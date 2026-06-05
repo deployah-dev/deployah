@@ -341,11 +341,14 @@ func (m *Manager) StartCloudProvider(ctx context.Context, opts ...CloudProviderO
 	return nil
 }
 
-// StopCloudProvider removes the cloud-provider-kind container.
+// StopCloudProvider removes the cloud-provider-kind container and any gateway
+// sidecar containers it spawned.
 //
-// It is idempotent: calling it when no container is running returns nil.
-func (m *Manager) StopCloudProvider(ctx context.Context) error {
-	ctrl, err := m.cloudProviderController()
+// Pass [WithClusterName] to also remove gateway envoy proxies created by
+// cloud-provider-kind for the given cluster. It is idempotent: calling it
+// when no container is running returns nil.
+func (m *Manager) StopCloudProvider(ctx context.Context, opts ...CloudProviderOption) error {
+	ctrl, err := m.cloudProviderController(opts...)
 	if err != nil {
 		return err
 	}

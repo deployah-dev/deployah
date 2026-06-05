@@ -35,6 +35,10 @@ const (
 	// ownerLabel and ownerValue mark containers managed by this package.
 	ownerLabel = "deployah.dev/cloud-provider"
 	ownerValue = "true"
+
+	// gatewayClusterLabel is set by cloud-provider-kind on gateway sidecar
+	// containers (envoy proxies). The value is the Kind cluster name.
+	gatewayClusterLabel = "io.x-k8s.cloud-provider-kind.cluster"
 )
 
 // ErrUnsupported is returned by Start/Stop/Running when the underlying engine
@@ -63,6 +67,11 @@ type Config struct {
 	// SocketPath is the host-side docker socket to bind-mount into the
 	// container. If empty, it is derived from eng.Endpoint().Host.
 	SocketPath string
+
+	// ClusterName is the Kind cluster name. When set, Stop also removes
+	// gateway sidecar containers (envoy proxies) spawned by
+	// cloud-provider-kind for this cluster.
+	ClusterName string
 }
 
 func (c *Config) image() string {
@@ -154,18 +163,23 @@ func (c *Controller) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop removes the cloud-provider-kind container. It is idempotent: if the
-// container is not running, Stop returns nil.
+// Stop removes the cloud-provider-kind container and any gateway sidecar
+// containers it spawned. It is idempotent: if no containers are found, Stop
+// returns nil.
 func (c *Controller) Stop(ctx context.Context) error {
 	existing, err := c.findContainer(ctx)
-	if err != nil {
-		if errors.Is(err, errContainerNotFound) {
-			return nil // already gone
-		}
+	if err != nil && !errors.Is(err, errContainerNotFound) {
 		return fmt.Errorf("cloud provider: find container: %w", err)
 	}
-	if removeErr := c.eng.RemoveContainer(ctx, existing.ID, currus.RemoveContainerOpts{Force: true}); removeErr != nil {
-		return fmt.Errorf("cloud provider: remove container: %w", removeErr)
+	if existing != nil {
+		if removeErr := c.eng.RemoveContainer(ctx, existing.ID, currus.RemoveContainerOpts{Force: true}); removeErr != nil {
+			return fmt.Errorf("cloud provider: remove container: %w", removeErr)
+		}
+	}
+	if c.cfg.ClusterName != "" {
+		if gwErr := c.removeGatewayContainers(ctx); gwErr != nil {
+			return fmt.Errorf("cloud provider: remove gateway containers: %w", gwErr)
+		}
 	}
 	return nil
 }
@@ -217,6 +231,23 @@ func (c *Controller) Attach(ctx context.Context, out io.Writer) error {
 		return nil // normal cancellation
 	}
 	return copyErr
+}
+
+// removeGatewayContainers finds and removes all gateway sidecar containers
+// (envoy proxies) spawned by cloud-provider-kind for the configured cluster.
+func (c *Controller) removeGatewayContainers(ctx context.Context) error {
+	all, err := c.eng.ListContainers(ctx, currus.ListContainersOpts{All: true})
+	if err != nil {
+		return err
+	}
+	for i := range all {
+		if all[i].Labels[gatewayClusterLabel] == c.cfg.ClusterName {
+			if removeErr := c.eng.RemoveContainer(ctx, all[i].ID, currus.RemoveContainerOpts{Force: true}); removeErr != nil {
+				return removeErr
+			}
+		}
+	}
+	return nil
 }
 
 // findContainer returns the cloud-provider-kind container if it exists,

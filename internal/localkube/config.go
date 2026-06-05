@@ -65,6 +65,7 @@ type cloudProviderConfig struct {
 	ingressDefault bool           // default: true
 	socketPath     string         // host socket override; empty → auto-detect
 	attachWriter   io.Writer      // destination for AttachCloudProvider log stream; nil → os.Stderr
+	clusterName    string         // Kind cluster name; enables gateway container cleanup on Stop
 }
 
 // defaultCloudProviderConfig returns a ready-to-use cloud provider config.
@@ -86,6 +87,7 @@ func (c *cloudProviderConfig) toControllerConfig() cloudprovider.Config {
 		GatewayChannel: string(c.gatewayChannel),
 		IngressDefault: c.ingressDefault,
 		SocketPath:     c.socketPath,
+		ClusterName:    c.clusterName,
 	}
 }
 
