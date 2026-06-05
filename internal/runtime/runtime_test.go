@@ -36,6 +36,12 @@ type MockHelmClient struct {
 	mock.Mock
 }
 
+// IsReachable records a mock call for IsReachable.
+func (m *MockHelmClient) IsReachable() error {
+	args := m.Called()
+	return args.Error(0)
+}
+
 // InstallApp records a mock call for InstallApp.
 func (m *MockHelmClient) InstallApp(ctx context.Context, manifest *manifest.Manifest, environment string, dryRun bool) error {
 	args := m.Called(ctx, manifest, environment, dryRun)

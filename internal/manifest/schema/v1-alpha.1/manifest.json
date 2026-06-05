@@ -153,9 +153,9 @@
                         "port": {
                             "type": "integer",
                             "title": "Port",
-                            "description": "Specifies the port on which the component listens. Defaults to 8080 if not specified. Ports below 1024 are restricted.",
+                            "description": "Specifies the port on which the component listens. Defaults to 8080 if not specified. Ports between 1 and 65535 are allowed.",
                             "default": 8080,
-                            "minimum": 1024,
+                            "minimum": 1,
                             "maximum": 65535,
                             "examples": [
                                 8181,
@@ -428,6 +428,16 @@
                         "default": "config.{name}.yaml",
                         "examples": [
                             "config.staging.yaml"
+                        ]
+                    },
+                    "context": {
+                        "type": "string",
+                        "title": "Kubernetes Context",
+                        "description": "Optional Kubernetes context to target when deploying to this environment. When set, it is used unless overridden by the global --context flag. For a local cluster created with 'deployah cluster up', use 'kind-deployah'.",
+                        "minLength": 1,
+                        "examples": [
+                            "kind-deployah",
+                            "my-cluster"
                         ]
                     },
                     "variables": {

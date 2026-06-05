@@ -48,6 +48,16 @@
                             "config.staging.yaml"
                         ]
                     },
+                    "context": {
+                        "type": "string",
+                        "title": "Kubernetes Context",
+                        "description": "Optional Kubernetes context to target when deploying to this environment. When set, it is used unless overridden by the global --context flag. For a local cluster created with 'deployah cluster up', use 'kind-deployah'.",
+                        "minLength": 1,
+                        "examples": [
+                            "kind-deployah",
+                            "my-cluster"
+                        ]
+                    },
                     "variables": {
                         "type": "object",
                         "title": "Template Variables",

@@ -49,6 +49,9 @@ type RuntimeProvider interface {
 // HelmClient defines the interface for Helm operations.
 // This abstraction allows for easier testing and alternative implementations.
 type HelmClient interface {
+	// IsReachable checks whether the configured Kubernetes cluster is reachable.
+	IsReachable() error
+
 	// InstallApp installs or upgrades an application using Helm
 	InstallApp(ctx context.Context, manifest *manifest.Manifest, environment string, dryRun bool) error
 

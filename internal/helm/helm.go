@@ -23,6 +23,8 @@ import (
 )
 
 var (
+	// ErrClusterUnreachable is returned when the Kubernetes cluster cannot be reached.
+	ErrClusterUnreachable = errors.New("kubernetes cluster unreachable")
 	// ErrReleaseNotFound is returned when a Helm release does not exist.
 	ErrReleaseNotFound = errors.New("release not found")
 	// ErrReleaseAlreadyExists is returned when a Helm release already exists.
@@ -33,13 +35,15 @@ var (
 
 // Client wraps Helm action configuration for Deployah operations.
 type Client struct {
-	settings      *cli.EnvSettings
-	config        *action.Configuration
-	timeout       time.Duration
-	namespace     string
-	kubeconfig    string
-	storageDriver string
-	debug         bool
+	settings             *cli.EnvSettings
+	config               *action.Configuration
+	timeout              time.Duration
+	namespace            string
+	kubeconfig           string
+	kubeContext          string
+	extraKubeconfigPaths []string
+	storageDriver        string
+	debug                bool
 }
 
 // Option is a functional option for configuring the Helm client
@@ -56,6 +60,24 @@ func WithNamespace(namespace string) Option {
 func WithKubeconfig(kubeconfig string) Option {
 	return func(c *Client) {
 		c.kubeconfig = kubeconfig
+	}
+}
+
+// WithKubeContext sets the Kubernetes context to use, overriding the
+// kubeconfig's current context.
+func WithKubeContext(kubeContext string) Option {
+	return func(c *Client) {
+		c.kubeContext = kubeContext
+	}
+}
+
+// WithExtraKubeconfigPaths appends additional kubeconfig file paths so their
+// contexts are available alongside the default kubeconfig. This is ignored
+// when WithKubeconfig is also set, because an explicit path takes full
+// precedence and makes extra paths redundant.
+func WithExtraKubeconfigPaths(paths ...string) Option {
+	return func(c *Client) {
+		c.extraKubeconfigPaths = append(c.extraKubeconfigPaths, paths...)
 	}
 }
 
@@ -97,9 +119,26 @@ func NewClient(opts ...Option) (*Client, error) {
 
 	settings := cli.New()
 
-	// Apply configuration overrides
+	// An explicit kubeconfig takes full precedence; extra paths are ignored,
+	// matching client-go's ExplicitPath semantics. Otherwise append the extra
+	// paths to whatever KUBECONFIG env already contributed so their contexts
+	// are available without touching the user's default kubeconfig.
 	if c.kubeconfig != "" {
 		settings.KubeConfig = c.kubeconfig
+	} else if len(c.extraKubeconfigPaths) > 0 {
+		all := append([]string{settings.KubeConfig}, c.extraKubeconfigPaths...)
+		var parts []string
+		for _, p := range all {
+			if p != "" {
+				parts = append(parts, p)
+			}
+		}
+		if len(parts) > 0 {
+			settings.KubeConfig = strings.Join(parts, string(os.PathListSeparator))
+		}
+	}
+	if c.kubeContext != "" {
+		settings.KubeContext = c.kubeContext
 	}
 	if c.namespace != "" {
 		settings.SetNamespace(c.namespace)
@@ -119,6 +158,19 @@ func NewClient(opts ...Option) (*Client, error) {
 	c.settings = settings
 
 	return c, nil
+}
+
+// IsReachable reports whether the configured Kubernetes cluster is reachable.
+//
+// NOTE: this is also a workaround for helm/helm#32183. Helm v4.2.0 panics on
+// the second IsReachable call when the first one fails (typed-nil cached in
+// getKubeClient). Calling this once before InstallApp prevents InstallApp from
+// ever hitting the second call against a poisoned client.
+func (c *Client) IsReachable() error {
+	if err := c.config.KubeClient.IsReachable(); err != nil {
+		return fmt.Errorf("%w: %w", ErrClusterUnreachable, err)
+	}
+	return nil
 }
 
 // InstallApp installs or upgrades the app using the embedded chart.

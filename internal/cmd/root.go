@@ -23,6 +23,7 @@ import (
 	"nabat.dev/logging"
 	"nabat.dev/nabat"
 
+	"deployah.dev/deployah/internal/cmd/cluster"
 	"deployah.dev/deployah/internal/cmd/common"
 	"deployah.dev/deployah/internal/cmd/delete"
 	"deployah.dev/deployah/internal/cmd/deploy"
@@ -48,6 +49,7 @@ func NewApp() *nabat.App {
 		nabat.WithFlag("config", manifest.DefaultManifestPath, nabat.WithShort('c'), nabat.WithUsage("Path to Deployah configuration file (YAML or JSON)"), nabat.WithPersistent()),
 		nabat.WithFlag("namespace", "", nabat.WithShort('n'), nabat.WithUsage("Kubernetes namespace to use for Deployah operations (defaults to current context namespace)"), nabat.WithPersistent()),
 		nabat.WithFlag("kubeconfig", "", nabat.WithShort('k'), nabat.WithUsage("Path to the kubeconfig file to use (defaults to standard kubeconfig resolution)"), nabat.WithPersistent()),
+		nabat.WithFlag("context", "", nabat.WithUsage("Kubernetes context to use (overrides the current context and any environment 'context' field)"), nabat.WithPersistent()),
 		nabat.WithFlag("timeout", runtime.DefaultTimeout, nabat.WithShort('t'), nabat.WithUsage("Timeout for Deployah operations (install/upgrade, list, status, logs, delete)"), nabat.WithPersistent()),
 		nabat.WithExtension(logging.New(logging.WithVerboseFlag("debug"))),
 	)
@@ -58,13 +60,27 @@ func NewApp() *nabat.App {
 		if err := c.Bind(&opts); err != nil {
 			return fmt.Errorf("binding global options: %w", err)
 		}
-		rt := runtime.New(
+
+		// Make the local cluster's kubeconfig discoverable without polluting
+		// ~/.kube/config. Missing file is silently skipped by client-go.
+		localKubeconfig, err := cluster.LocalKubeconfigPath()
+		if err != nil {
+			localKubeconfig = ""
+		}
+
+		rtOpts := []runtime.Option{
 			runtime.WithNamespace(opts.Namespace),
 			runtime.WithKubeconfig(opts.Kubeconfig),
+			runtime.WithKubeContext(opts.Context),
 			runtime.WithManifestPath(opts.Config),
 			runtime.WithDebug(opts.Debug),
 			runtime.WithTimeout(opts.Timeout),
-		)
+		}
+		if localKubeconfig != "" {
+			rtOpts = append(rtOpts, runtime.WithExtraKubeconfigPaths(localKubeconfig))
+		}
+
+		rt := runtime.New(rtOpts...)
 		c.SetContext(runtime.WithContext(c.Context(), rt))
 		return nil
 	}); err != nil {
@@ -72,6 +88,7 @@ func NewApp() *nabat.App {
 	}
 
 	// Subcommands (alphabetical)
+	cluster.Register(app)
 	delete.Register(app)
 	deploy.Register(app)
 	initialize.Register(app)

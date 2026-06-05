@@ -130,7 +130,7 @@ func runDelete(c *nabat.Context) error {
 
 	err = c.Spinner(
 		fmt.Sprintf("Deleting '%s' in '%s'...", opts.Project, opts.Environment),
-		func() error {
+		func(_ *nabat.Spinner) error {
 			return helmClient.DeleteRelease(c, opts.Project, opts.Environment)
 		},
 	)

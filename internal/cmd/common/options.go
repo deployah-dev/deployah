@@ -7,6 +7,7 @@ import "time"
 type GlobalOptions struct {
 	Namespace  string        `nabat:"namespace"`
 	Kubeconfig string        `nabat:"kubeconfig"`
+	Context    string        `nabat:"context"`
 	Config     string        `nabat:"config"`
 	Debug      bool          `nabat:"debug"`
 	Timeout    time.Duration `nabat:"timeout"`

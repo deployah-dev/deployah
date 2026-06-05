@@ -48,6 +48,7 @@ type Environment struct {
 	Name       string            `json:"name" yaml:"name"`
 	EnvFile    string            `json:"envFile,omitempty" yaml:"envFile,omitempty"`
 	ConfigFile string            `json:"configFile,omitempty" yaml:"configFile,omitempty"`
+	Context    string            `json:"context,omitempty" yaml:"context,omitempty"`
 	Variables  map[string]string `json:"variables,omitempty" yaml:"variables,omitempty"`
 }
 

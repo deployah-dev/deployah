@@ -20,9 +20,11 @@ type runtimeKey struct{}
 // Runtime holds per-invocation state and lazily initialized clients/resources.
 // It implements the RuntimeProvider interface for dependency injection.
 type Runtime struct {
-	namespace    string
-	kubeconfig   string
-	manifestPath string
+	namespace            string
+	kubeconfig           string
+	kubeContext          string
+	extraKubeconfigPaths []string
+	manifestPath         string
 
 	// Options for client configuration
 	storageDriver string
@@ -54,6 +56,26 @@ func WithNamespace(namespace string) Option {
 func WithKubeconfig(kubeconfig string) Option {
 	return func(r *Runtime) {
 		r.kubeconfig = kubeconfig
+	}
+}
+
+// WithKubeContext sets the Kubernetes context to use, overriding the
+// kubeconfig's current context. An empty value leaves the current context in
+// effect.
+func WithKubeContext(kubeContext string) Option {
+	return func(r *Runtime) {
+		r.kubeContext = kubeContext
+	}
+}
+
+// WithExtraKubeconfigPaths appends additional kubeconfig file paths to the
+// clientcmd loading-rules Precedence list. This makes contexts from those files
+// available without polluting the user's default kubeconfig. Missing files are
+// silently skipped by client-go. An explicit --kubeconfig flag still takes
+// priority because it sets ExplicitPath, which causes Precedence to be ignored.
+func WithExtraKubeconfigPaths(paths ...string) Option {
+	return func(r *Runtime) {
+		r.extraKubeconfigPaths = append(r.extraKubeconfigPaths, paths...)
 	}
 }
 
@@ -115,6 +137,12 @@ func defaultHelmFactory(r *Runtime) (HelmClient, error) {
 	if r.kubeconfig != "" {
 		opts = append(opts, helm.WithKubeconfig(r.kubeconfig))
 	}
+	if r.kubeContext != "" {
+		opts = append(opts, helm.WithKubeContext(r.kubeContext))
+	}
+	if len(r.extraKubeconfigPaths) > 0 {
+		opts = append(opts, helm.WithExtraKubeconfigPaths(r.extraKubeconfigPaths...))
+	}
 	if r.storageDriver != "" {
 		opts = append(opts, helm.WithStorageDriver(r.storageDriver))
 	}
@@ -133,16 +161,9 @@ func defaultKubernetesFactory(r *Runtime) (KubernetesClient, error) {
 	// Try in-cluster config first
 	cfg, err := rest.InClusterConfig()
 	if err != nil {
-		// Fall back to kubeconfig resolution
-		if r.kubeconfig != "" {
-			// Use explicit kubeconfig path
-			cfg, err = clientcmd.BuildConfigFromFlags("", r.kubeconfig)
-		} else {
-			// Use default loading rules (KUBECONFIG or ~/.kube/config)
-			loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
-			overrides := &clientcmd.ConfigOverrides{}
-			cfg, err = clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, overrides).ClientConfig()
-		}
+		// Fall back to kubeconfig resolution (honoring an explicit path and/or
+		// a context override).
+		cfg, err = r.kubeconfigRESTConfig()
 		if err != nil {
 			return nil, fmt.Errorf("failed to build kubernetes config: %w (provide --kubeconfig or ensure KUBECONFIG/~/.kube/config is set)", err)
 		}
@@ -237,6 +258,25 @@ func (r *Runtime) Manifest(ctx context.Context, environment string) (*manifest.M
 	return m, nil
 }
 
+// SetKubeContext sets the Kubernetes context to target and invalidates any
+// memoized clients so they are rebuilt with the new context on next use.
+//
+// It is intended to be called after the manifest is loaded (so an
+// environment's "context" field can be applied) but before the Helm or
+// Kubernetes clients are first built. A non-empty context set here takes
+// effect; callers enforce precedence (flag over environment field) by only
+// passing the resolved value.
+func (r *Runtime) SetKubeContext(kubeContext string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.kubeContext == kubeContext {
+		return
+	}
+	r.kubeContext = kubeContext
+	r.helm = nil
+	r.k8s = nil
+}
+
 // Close performs cleanup of resources held by the runtime.
 // It's safe to call multiple times.
 func (r *Runtime) Close() error {
@@ -272,19 +312,34 @@ func (r *Runtime) RESTConfig() (*rest.Config, error) {
 	// Try in-cluster config first
 	cfg, err := rest.InClusterConfig()
 	if err != nil {
-		// Fall back to kubeconfig resolution
-		if r.kubeconfig != "" {
-			// Use explicit kubeconfig path
-			cfg, err = clientcmd.BuildConfigFromFlags("", r.kubeconfig)
-		} else {
-			// Use default loading rules (KUBECONFIG or ~/.kube/config)
-			loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
-			overrides := &clientcmd.ConfigOverrides{}
-			cfg, err = clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, overrides).ClientConfig()
-		}
+		// Fall back to kubeconfig resolution (honoring an explicit path and/or
+		// a context override).
+		cfg, err = r.kubeconfigRESTConfig()
 		if err != nil {
 			return nil, fmt.Errorf("failed to build kubernetes config: %w (provide --kubeconfig or ensure KUBECONFIG/~/.kube/config is set)", err)
 		}
 	}
 	return cfg, nil
+}
+
+// kubeconfigRESTConfig builds a REST config from kubeconfig resolution rules,
+// honoring an explicit kubeconfig path (r.kubeconfig) and/or a context
+// override (r.kubeContext). When neither is set it behaves like the default
+// KUBECONFIG/~/.kube/config resolution with the current context.
+func (r *Runtime) kubeconfigRESTConfig() (*rest.Config, error) {
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	if r.kubeconfig != "" {
+		loadingRules.ExplicitPath = r.kubeconfig
+	} else if len(r.extraKubeconfigPaths) > 0 {
+		// Append deployah-managed kubeconfig files so their contexts are
+		// available without touching the user's default kubeconfig. ExplicitPath
+		// takes full precedence when --kubeconfig is given, so we only extend
+		// Precedence when no explicit path was provided.
+		loadingRules.Precedence = append(loadingRules.Precedence, r.extraKubeconfigPaths...)
+	}
+	overrides := &clientcmd.ConfigOverrides{}
+	if r.kubeContext != "" {
+		overrides.CurrentContext = r.kubeContext
+	}
+	return clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, overrides).ClientConfig()
 }

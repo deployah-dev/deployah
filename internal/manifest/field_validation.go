@@ -212,8 +212,8 @@ func ValidatePort(portStr string) error {
 	if err != nil {
 		return fmt.Errorf("port '%s' is invalid: must be a valid number", portStr)
 	}
-	if port < 1024 || port > 65535 {
-		return fmt.Errorf("port %d is invalid: must be between 1024 and 65535", port)
+	if port < 1 || port > 65535 {
+		return fmt.Errorf("port %d is invalid: must be between 1 and 65535", port)
 	}
 	return nil
 }
