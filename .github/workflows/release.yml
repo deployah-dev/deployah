@@ -86,6 +86,7 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: deployah/deployah
           short-description: ${{ github.event.repository.description }}
 
       - name: GitHub Release
