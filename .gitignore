@@ -12,6 +12,9 @@ go.work.sum
 # Kind cluster config
 .kubeconfig
 
+# Docker Buildx artifact output
+/dist
+
 # Coverage profiles
 coverage*.out
 coverage*.html

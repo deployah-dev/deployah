@@ -1,0 +1,12 @@
+.git
+.github
+.cursor
+.direnv
+.envrc
+.env*
+*.out
+result
+dist
+scenarios
+examples
+docs
