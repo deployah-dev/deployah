@@ -95,9 +95,9 @@ jobs:
         with:
           draft: true
           generate_release_notes: true
+          # TODO: add dist/*.zip once windows targets are enabled.
           files: |
             dist/*.tar.gz
-            dist/*.zip
             dist/*.sha256sum
             dist/SHA256SUMS
         env:

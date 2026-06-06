@@ -5,7 +5,7 @@ FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS base
 ENV GO111MODULE=on
 ENV CGO_ENABLED=0
 COPY --from=xx / /
-RUN apk add --update --no-cache build-base coreutils git zip
+RUN apk add --update --no-cache build-base coreutils git
 WORKDIR /src
 
 FROM base AS build
@@ -28,13 +28,9 @@ RUN --mount=from=binary,target=/build \
     --mount=type=bind,target=/src \
     mkdir -p /out \
     && cp /build/deployah /src/README.md /src/LICENSE . \
-    && if [ "$TARGETOS" = "windows" ]; then \
-         zip -q "/out/deployah-${TARGETOS}-${TARGETARCH}${TARGETVARIANT}.zip" \
-           deployah README.md LICENSE; \
-       else \
-         tar -czvf "/out/deployah-${TARGETOS}-${TARGETARCH}${TARGETVARIANT}.tar.gz" \
-           deployah README.md LICENSE; \
-       fi \
+    # TODO: add zip packaging once windows targets are enabled.
+    && tar -czvf "/out/deployah-${TARGETOS}-${TARGETARCH}${TARGETVARIANT}.tar.gz" \
+         deployah README.md LICENSE \
     && cd /out \
     && sha256sum "deployah-${TARGETOS}-${TARGETARCH}${TARGETVARIANT}."* \
          > "deployah-${TARGETOS}-${TARGETARCH}${TARGETVARIANT}.sha256sum" \
@@ -47,4 +43,4 @@ FROM alpine:3.22
 RUN apk add --update --no-cache ca-certificates tzdata
 COPY --from=binary /deployah /usr/bin/deployah
 ENTRYPOINT ["deployah"]
-CMD ["help"]
+CMD ["--help"]
