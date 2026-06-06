@@ -59,7 +59,7 @@ func Register(app *nabat.App) {
 		nabat.WithLongDescription("Initialize Deployah configuration for a new project"),
 		nabat.WithAliases("initialize"),
 		nabat.WithFlag("output", DefaultOutputFile, nabat.WithShort('o'), nabat.WithUsage("The output file path.")),
-		nabat.WithFlag("dry-run", false, nabat.WithShort('d'), nabat.WithUsage("Preview the generated manifest without saving it")),
+		nabat.WithFlag("dry-run", false, nabat.WithUsage("Preview the generated manifest without saving it")),
 		nabat.WithExample(`
 # Initialize a new project
 deployah init
