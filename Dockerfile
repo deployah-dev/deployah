@@ -27,7 +27,7 @@ WORKDIR /work
 RUN --mount=from=binary,target=/build \
     --mount=type=bind,target=/src \
     mkdir -p /out \
-    && cp /build/deployah README.md LICENSE . \
+    && cp /build/deployah /src/README.md /src/LICENSE . \
     && if [ "$TARGETOS" = "windows" ]; then \
          zip -q "/out/deployah-${TARGETOS}-${TARGETARCH}${TARGETVARIANT}.zip" \
            deployah README.md LICENSE; \
