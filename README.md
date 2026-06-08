@@ -8,6 +8,12 @@ Deployah is a CLI tool that makes deploying applications effortless by leveragin
 
 ## Installation
 
+### Homebrew
+
+```sh
+brew install deployah-dev/tap/deployah
+```
+
 ### Using Nix (Recommended)
 
 If you have [Nix](https://nixos.org/download.html) installed:

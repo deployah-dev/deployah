@@ -37,11 +37,13 @@ import (
 	"deployah.dev/deployah/internal/runtime"
 )
 
+var version = "dev"
+
 // NewApp creates a new Nabat application with all subcommands registered.
 func NewApp() *nabat.App {
 	app := nabat.MustNew("deployah",
 		nabat.WithTheme("gruvbox"),
-		nabat.WithVersion("0.1.0"),
+		nabat.WithVersion(version),
 		nabat.WithDescription("Deployah is a tool for deploying applications to Kubernetes"),
 		nabat.WithLongDescription("Deployah is a simple deployment tool that can be used to deploy applications to Kubernetes clusters."),
 		nabat.WithCompletion(nabat.WithCompletionHidden()),

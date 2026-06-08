@@ -56,13 +56,14 @@
         };
         lib = nixpkgs.lib;
         packageName = "deployah";
+        deployahVersion = "dev";
         go = pkgs.go;
 
         buildGoModule' = pkgs.buildGoModule.override { inherit go; };
 
         deployah = buildGoModule' {
           pname = packageName;
-          version = "0.1.0";
+          version = deployahVersion;
           src = ./.;
 
           vendorHash = "sha256-2v/ic+v0yLDH1yhnYpG6y0w6pjg+Pn8kEZpsUdPd4Lk=";
@@ -70,6 +71,7 @@
           ldflags = [
             "-s"
             "-w"
+            "-X deployah.dev/deployah/internal/cmd.version=${deployahVersion}"
           ];
 
           doCheck = false;

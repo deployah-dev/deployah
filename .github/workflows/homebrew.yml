@@ -1,0 +1,20 @@
+name: Homebrew
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  dispatch:
+    name: Trigger tap update
+    runs-on: ubuntu-latest
+    if: ${{ !github.event.release.prerelease }}
+    steps:
+      - name: Trigger formula update
+        env:
+          GH_TOKEN: ${{ secrets.TAP_DISPATCH_TOKEN }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          gh workflow run update-formula.yml \
+            -R deployah-dev/homebrew-tap \
+            -f version="${TAG#v}"

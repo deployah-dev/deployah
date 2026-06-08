@@ -10,10 +10,11 @@ WORKDIR /src
 
 FROM base AS build
 ARG TARGETPLATFORM
+ARG VERSION=dev
 RUN --mount=type=bind,target=/src,rw \
     --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/go/pkg/mod \
-    xx-go build -trimpath -ldflags="-s -w" -o /usr/bin/deployah . \
+    xx-go build -trimpath -ldflags="-s -w -X deployah.dev/deployah/internal/cmd.version=${VERSION}" -o /usr/bin/deployah . \
     && xx-verify --static /usr/bin/deployah
 
 FROM scratch AS binary
