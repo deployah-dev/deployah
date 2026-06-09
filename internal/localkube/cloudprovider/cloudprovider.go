@@ -128,6 +128,10 @@ func (c *Controller) Start(ctx context.Context) error {
 		}
 	}
 
+	if pullErr := c.eng.PullImage(ctx, c.cfg.image(), currus.PullImageOpts{}); pullErr != nil {
+		return fmt.Errorf("cloud provider: pull image: %w", pullErr)
+	}
+
 	socketPath, err := c.socketPath()
 	if err != nil {
 		return err
