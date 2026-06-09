@@ -19,7 +19,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
 
 	"gopherly.dev/currus"
 )
@@ -265,22 +264,17 @@ func (c *Controller) findContainer(ctx context.Context) (*currus.Container, erro
 	return nil, errContainerNotFound
 }
 
-// socketPath derives the host engine socket path from the engine endpoint.
-// It falls back to the well-known Docker socket when the endpoint cannot be
-// determined or when SocketPath is explicitly set in config.
+// socketPath returns the bind-mountable daemon socket path. It uses
+// Endpoint.DaemonSocket which currus auto-resolves for VM-based setups
+// (Lima, Colima, Docker Desktop, OrbStack). SocketPath in config overrides
+// auto-detection as an escape hatch.
 func (c *Controller) socketPath() (string, error) {
 	if c.cfg.SocketPath != "" {
 		return c.cfg.SocketPath, nil
 	}
 	if er, ok := c.eng.(currus.EndpointReporter); ok {
-		host := er.Endpoint().Host
-		// Strip the unix:// scheme to get a bare socket path.
-		if p, found := strings.CutPrefix(host, "unix://"); found {
-			return p, nil
-		}
-		// bare path (containerd style)
-		if strings.HasPrefix(host, "/") {
-			return host, nil
+		if sock := er.Endpoint().DaemonSocket; sock != "" {
+			return sock, nil
 		}
 	}
 	// Default to the standard Docker socket.
