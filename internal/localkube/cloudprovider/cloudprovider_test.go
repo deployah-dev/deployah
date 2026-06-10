@@ -43,6 +43,23 @@ func TestStart_RunsAsRoot(t *testing.T) {
 	assert.Equal(t, "0", info.Security.User)
 }
 
+// TestStart_RejectsRootless verifies that Start returns ErrRootlessUnsupported
+// when the engine is running in rootless mode, and that no containers are
+// created before the check.
+func TestStart_RejectsRootless(t *testing.T) {
+	eng := currustest.New(currustest.WithCaps(currus.Caps{Rootless: true}))
+	ctx := context.Background()
+
+	ctrl := New(eng, Config{})
+	err := ctrl.Start(ctx)
+
+	require.ErrorIs(t, err, ErrRootlessUnsupported)
+
+	containers, listErr := eng.ListContainers(ctx, currus.ListContainersOpts{All: true})
+	require.NoError(t, listErr)
+	assert.Empty(t, containers)
+}
+
 // TestStop_RemovesGatewayContainers verifies that Stop removes both the main
 // cloud-provider container and gateway sidecar containers for the cluster.
 func TestStop_RemovesGatewayContainers(t *testing.T) {

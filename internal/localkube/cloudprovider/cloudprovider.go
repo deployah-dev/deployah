@@ -44,6 +44,13 @@ const (
 // does not support the Docker Engine API (e.g. plain containerd).
 var ErrUnsupported = errors.New("cloud provider requires Docker or Podman")
 
+// ErrRootlessUnsupported is returned by Start when the container engine is
+// running in rootless mode. cloud-provider-kind bind-mounts the Docker daemon
+// socket into a sidecar container, which does not work with rootless Docker or
+// Podman due to user namespace isolation.
+var ErrRootlessUnsupported = errors.New("cloud provider: rootless container engine detected; " +
+	"LoadBalancer, Ingress, and Gateway API require a rootful daemon")
+
 // errContainerNotFound is returned by findContainer when no managed
 // container exists.
 var errContainerNotFound = errors.New("container not found")
@@ -114,6 +121,10 @@ func New(eng currus.Engine, cfg Config) *Controller {
 // Start ensures the cloud-provider-kind container is running. It is idempotent:
 // if the container is already running, Start returns nil.
 func (c *Controller) Start(ctx context.Context) error {
+	if c.eng.Capabilities().Rootless {
+		return ErrRootlessUnsupported
+	}
+
 	existing, err := c.findContainer(ctx)
 	if err != nil && !errors.Is(err, errContainerNotFound) {
 		return fmt.Errorf("cloud provider: find container: %w", err)

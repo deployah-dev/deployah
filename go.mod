@@ -19,7 +19,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/sync v0.21.0
 	golang.org/x/term v0.44.0
-	gopherly.dev/currus v0.5.0
+	gopherly.dev/currus v0.6.1
 	gopkg.in/yaml.v3 v3.0.1
 	helm.sh/helm/v4 v4.2.0
 	k8s.io/api v0.36.1
