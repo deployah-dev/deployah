@@ -56,6 +56,9 @@ jobs:
         with:
           targets: artifact
           provenance: false
+          set: |
+            artifact.cache-from=type=gha,scope=artifact
+            artifact.cache-to=type=gha,mode=max,scope=artifact
 
       - name: Move artifacts
         if: startsWith(github.ref, 'refs/tags/')
@@ -83,6 +86,9 @@ jobs:
           files: |
             ./docker-bake.hcl
             cwd://${{ steps.meta.outputs.bake-file }}
+          set: |
+            image.cache-from=type=gha,scope=image
+            image.cache-to=type=gha,mode=max,scope=image
 
       - name: Sync Docker Hub description
         uses: peter-evans/dockerhub-description@v5
