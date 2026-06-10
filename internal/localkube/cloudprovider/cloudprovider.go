@@ -152,6 +152,10 @@ func (c *Controller) Start(ctx context.Context) error {
 		},
 		Networks: []currus.NetworkAttachment{{Name: c.cfg.network()}},
 		Args:     c.cfg.buildArgs(),
+		// Run as root so the container can access the Docker socket regardless
+		// of how the host socket is mounted (e.g. via Lima's file sharing layer,
+		// which loses the original socket ownership and makes it nobody:nobody).
+		Security: currus.Security{User: "0"},
 	}
 
 	id, err := c.eng.CreateContainer(ctx, spec)

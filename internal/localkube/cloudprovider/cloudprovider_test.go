@@ -24,6 +24,25 @@ import (
 	"gopherly.dev/currus/currustest"
 )
 
+// TestStart_RunsAsRoot verifies that the cloud-provider-kind container is
+// created with User "0" so it can access the Docker socket even when the
+// socket is mounted via a file-sharing layer (e.g. Lima) that loses ownership.
+func TestStart_RunsAsRoot(t *testing.T) {
+	eng := currustest.New()
+	ctx := context.Background()
+
+	ctrl := New(eng, Config{})
+	require.NoError(t, ctrl.Start(ctx))
+
+	containers, err := eng.ListContainers(ctx, currus.ListContainersOpts{All: true})
+	require.NoError(t, err)
+	require.Len(t, containers, 1)
+
+	info, err := eng.Inspect(ctx, containers[0].ID)
+	require.NoError(t, err)
+	assert.Equal(t, "0", info.Security.User)
+}
+
 // TestStop_RemovesGatewayContainers verifies that Stop removes both the main
 // cloud-provider container and gateway sidecar containers for the cluster.
 func TestStop_RemovesGatewayContainers(t *testing.T) {
