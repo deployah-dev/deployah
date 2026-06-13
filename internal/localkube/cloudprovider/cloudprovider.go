@@ -152,8 +152,9 @@ func (c *Controller) Start(ctx context.Context) error {
 	}
 
 	spec := currus.ContainerSpec{
-		Image: c.cfg.image(),
-		Name:  containerName,
+		Image:   c.cfg.image(),
+		Name:    containerName,
+		Restart: currus.RestartPolicy{Mode: currus.RestartUnlessStopped},
 		Labels: map[string]string{
 			ownerLabel: ownerValue,
 		},

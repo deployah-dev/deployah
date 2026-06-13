@@ -440,7 +440,7 @@ deployah <command> --help
 
 ## Troubleshooting
 
-### Common Issues
+### Manifest & Deployment
 
 #### Environment not found
 
@@ -448,7 +448,8 @@ deployah <command> --help
 Error: environment "production" not found
 ```
 
-*Solution*: Check your `deployah.yaml` file for the correct environment name, or list available environments with `deployah list`.
+Check your `deployah.yaml` for the correct environment name, or run
+`deployah list` to see what is available.
 
 #### Variable substitution failed
 
@@ -456,7 +457,8 @@ Error: environment "production" not found
 Error: variable ${IMAGE} not found
 ```
 
-*Solution*: Ensure the variable is defined in your environment file (`.env` or `.env.<envName>`) with the `DPY_VAR_` prefix, or in your shell environment.
+Make sure the variable is defined in your environment file (`.env` or
+`.env.<envName>`) with the `DPY_VAR_` prefix, or set it in your shell.
 
 #### Kubernetes connection failed
 
@@ -464,7 +466,7 @@ Error: variable ${IMAGE} not found
 Error: unable to connect to Kubernetes cluster
 ```
 
-*Solution*: Verify your `kubectl` configuration and cluster connectivity with `kubectl cluster-info`.
+Verify your cluster is reachable with `kubectl cluster-info`.
 
 #### Helm chart generation failed
 
@@ -472,11 +474,68 @@ Error: unable to connect to Kubernetes cluster
 Error: failed to generate Helm values
 ```
 
-*Solution*: Check your manifest syntax and ensure all required fields are present. Run `deployah validate` to check for issues.
+Check your manifest syntax and make sure all required fields are present.
+Run `deployah validate` to find issues.
+
+### Local Cluster Networking
+
+#### Services return "Empty reply from server" on macOS (Lima)
+
+Lima's VZ driver uses a usernet-based port forwarder by default. This
+forwarder has a known issue with custom Docker networks like the one Kind
+creates, causing connections to silently fail.
+
+To fix it, edit your Lima instance config:
+
+```sh
+limactl stop <instance>
+limactl edit <instance>
+```
+
+Make sure both settings are present at the top level of the YAML:
+
+```yaml
+ssh:
+  overVsock: false
+
+portForwards:
+  - guestIPMustBeZero: true
+    guestPortRange: [1, 65535]
+    hostIP: 127.0.0.1
+  - guestSocket: "/var/run/docker.sock"
+    hostSocket: "{{.Dir}}/sock/docker.sock"
+```
+
+`ssh.overVsock: false` switches Lima to the standard SSH port forwarder.
+The `portForwards` rule tells Lima to forward all guest ports to the host,
+which is needed for the dynamically assigned Docker ports.
+
+Then restart:
+
+```sh
+limactl start <instance>
+```
+
+#### "permission denied" in cloud-provider-kind logs
+
+The cloud provider sidecar needs a rootful Docker daemon. Rootless Docker
+cannot bind-mount the Docker socket into the sidecar container.
+
+If you use Lima, create a rootful instance:
+
+```sh
+limactl start template:docker-rootful
+```
+
+#### Firewall blocks gateway ports
+
+Gateway ports are bound on all interfaces (`0.0.0.0`). On Linux, make sure
+your firewall allows the mapped ports. On macOS, the Application Firewall
+may ask for permission -- allow it when prompted.
 
 ### Getting Help
 
-For more details, see the documentation or run:
+For more details, run:
 
 ```sh
 deployah --help
