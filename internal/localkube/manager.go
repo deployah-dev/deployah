@@ -372,6 +372,19 @@ func (m *Manager) CloudProviderRunning(ctx context.Context) bool {
 	return ctrl.Running(ctx)
 }
 
+// GatewayPorts returns the published host ports from the envoy gateway
+// containers spawned by cloud-provider-kind for the named cluster.
+// The map keys are container ports (e.g. 80); the values are the
+// corresponding host ports assigned by Docker (e.g. 32769). Returns nil
+// when no gateway containers are running or the engine is unavailable.
+func (m *Manager) GatewayPorts(ctx context.Context, clusterName string) map[uint16]uint16 {
+	ctrl, err := m.cloudProviderController(WithClusterName(clusterName))
+	if err != nil {
+		return nil
+	}
+	return ctrl.GatewayPorts(ctx)
+}
+
 // AttachCloudProvider starts the cloud-provider-kind container (if not already
 // running) and streams its logs until ctx is canceled, then stops the container.
 //
@@ -512,4 +525,40 @@ func backendInfoToCluster(name, backendName string, info *backendInfo) *Cluster 
 		c.CreatedAt = info.CreatedAt
 	}
 	return c
+}
+
+// SyncRegistryAuth reads the host's container registry credentials via the
+// [currus.CredentialProvider] capability and writes them as a Kubernetes
+// dockerconfigjson [Secret] named "deployah-registry-auth" into the given
+// namespace of the named cluster. It also patches the "default"
+// ServiceAccount in that namespace to reference the Secret via
+// imagePullSecrets, so that all pods pull private images automatically.
+//
+// SyncRegistryAuth is idempotent: calling it multiple times is safe and
+// always overwrites the Secret with the freshest credentials (short-lived
+// tokens from credential helpers are refreshed on each call).
+//
+// The call is a no-op (returns nil) when:
+//   - no Docker or Podman engine was found at Manager construction time
+//   - the engine does not implement [currus.CredentialProvider]
+//   - the host has no stored credentials
+//
+// Example:
+//
+//	if err := m.SyncRegistryAuth(ctx, clusterName, "default"); err != nil {
+//	    log.Warn("registry auth sync failed", "err", err)
+//	}
+func (m *Manager) SyncRegistryAuth(ctx context.Context, name, namespace string) error {
+	if err := safeClusterName(name); err != nil {
+		return err
+	}
+	ctx, cancel := contextWithBudget(ctx, m.cfg.timeout)
+	defer cancel()
+
+	kc, err := m.KubeConfig(ctx, name)
+	if err != nil {
+		return fmt.Errorf("localkube: sync registry auth: get kubeconfig: %w", err)
+	}
+
+	return syncRegistryAuth(ctx, m.cfg.logger, m.eng, kc.Bytes(), namespace)
 }

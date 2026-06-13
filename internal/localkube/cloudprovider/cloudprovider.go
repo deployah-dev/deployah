@@ -96,7 +96,10 @@ func (c *Config) network() string {
 
 // buildArgs converts the config fields into container command-line arguments.
 func (c *Config) buildArgs() []string {
-	var args []string
+	// --enable-lb-port-mapping publishes service ports from the envoy gateway
+	// container to the host, making services reachable via localhost:<port> on
+	// both Linux and macOS (including Docker-in-VM setups like Lima).
+	args := []string{"--enable-lb-port-mapping"}
 	if c.GatewayChannel != "" && c.GatewayChannel != "standard" {
 		args = append(args, "--gateway-api-channel="+c.GatewayChannel)
 	}
@@ -266,6 +269,44 @@ func (c *Controller) removeGatewayContainers(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// GatewayPorts returns the published host ports from gateway envoy containers
+// for the configured cluster. The map keys are container ports (e.g. 80); the
+// values are the corresponding host ports assigned by Docker (e.g. 32769).
+// Returns nil when ClusterName is empty, no gateway containers are found, or
+// the engine does not support container inspection.
+func (c *Controller) GatewayPorts(ctx context.Context) map[uint16]uint16 {
+	if c.cfg.ClusterName == "" {
+		return nil
+	}
+	ins, ok := c.eng.(currus.Inspector)
+	if !ok {
+		return nil
+	}
+	all, err := c.eng.ListContainers(ctx, currus.ListContainersOpts{All: true})
+	if err != nil {
+		return nil
+	}
+	ports := make(map[uint16]uint16)
+	for i := range all {
+		if all[i].Labels[gatewayClusterLabel] != c.cfg.ClusterName {
+			continue
+		}
+		info, inspectErr := ins.Inspect(ctx, all[i].ID)
+		if inspectErr != nil {
+			continue
+		}
+		for _, p := range info.Ports {
+			if p.Host != 0 {
+				ports[p.Container] = p.Host
+			}
+		}
+	}
+	if len(ports) == 0 {
+		return nil
+	}
+	return ports
 }
 
 // findContainer returns the cloud-provider-kind container if it exists,

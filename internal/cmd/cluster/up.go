@@ -31,6 +31,7 @@ type upOptions struct {
 	Attach            bool   `nabat:"attach"`
 	KubernetesVersion string `nabat:"kubernetes-version"`
 	Runtime           string `nabat:"runtime"`
+	SyncRegistryAuth  bool   `nabat:"sync-registry-auth"`
 }
 
 // runtimeOptions are the accepted values for the --runtime flag.
@@ -50,6 +51,7 @@ func registerUp(group *nabat.Command) {
 		nabat.WithFlag("attach", false, nabat.WithUsage("Stay in the foreground and stream cloud provider logs (Ctrl-C stops the container)")),
 		nabat.WithFlag("kubernetes-version", "", nabat.WithUsage("Kubernetes version for the cluster (e.g. 1.31 or v1.31.2)")),
 		nabat.WithSelectFlag("runtime", "auto", runtimeOptions, nabat.WithUsage("Host container engine to use")),
+		nabat.WithFlag("sync-registry-auth", false, nabat.WithUsage("Copy host registry credentials into the cluster as a Kubernetes Secret and patch the default ServiceAccount to use them")),
 		nabat.WithExample(`
 # Bring up the local cluster with cloud provider in the background
 deployah cluster up
@@ -117,6 +119,16 @@ func runUp(c *nabat.Context) error {
 	kc, err := m.KubeConfig(c, clusterName)
 	if err != nil {
 		return fmt.Errorf("write kubeconfig: %w", err)
+	}
+
+	if opts.SyncRegistryAuth {
+		if syncErr := m.SyncRegistryAuth(c, clusterName, "default"); syncErr != nil {
+			// Non-fatal: warn and continue so the rest of cluster up succeeds.
+			c.Logger().Warn("registry auth sync failed", "err", syncErr)
+		} else {
+			c.Logger().Debug("registry credentials synced to cluster",
+				"secret", "deployah-registry-auth", "namespace", "default")
+		}
 	}
 
 	ctxName := m.ContextName(clusterName)

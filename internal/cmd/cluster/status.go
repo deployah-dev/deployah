@@ -134,7 +134,8 @@ func runStatus(c *nabat.Context, th theme.ResolvedTheme) error {
 	// are best-effort: a stopped cluster still reports its lifecycle status.
 	if kc, kcErr := m.KubeConfig(c, clusterName); kcErr == nil {
 		view.Kubeconfig = kc.Path()
-		view.Access = gatherAccess(c, kc.Bytes())
+		gwPorts := m.GatewayPorts(c, clusterName)
+		view.Access = gatherAccess(c, kc.Bytes(), gwPorts)
 	} else {
 		c.Logger().Debug("kubeconfig unavailable", "err", kcErr)
 	}
@@ -151,9 +152,11 @@ func runStatus(c *nabat.Context, th theme.ResolvedTheme) error {
 }
 
 // gatherAccess lists LoadBalancer Services and Ingresses in the cluster and
-// builds the externally reachable endpoints. Errors are non-fatal: an empty
-// slice means nothing reachable (or the cluster is unreachable).
-func gatherAccess(c *nabat.Context, kubeconfig []byte) []accessEntry {
+// builds the externally reachable endpoints. gwPorts maps container port ->
+// host port from the envoy gateway; when set, URLs use 127.0.0.1:<hostPort>
+// instead of the container IP. Errors are non-fatal: an empty slice means
+// nothing reachable (or the cluster is unreachable).
+func gatherAccess(c *nabat.Context, kubeconfig []byte, gwPorts map[uint16]uint16) []accessEntry {
 	restCfg, err := clientcmd.RESTConfigFromKubeConfig(kubeconfig)
 	if err != nil {
 		c.Logger().Debug("parse kubeconfig for access info", "err", err)
@@ -187,7 +190,13 @@ func gatherAccess(c *nabat.Context, kubeconfig []byte) []accessEntry {
 				Address:   addr,
 			}
 			if len(svc.Spec.Ports) > 0 {
-				entry.URL = fmt.Sprintf("http://%s:%d", addr, svc.Spec.Ports[0].Port)
+				svcPort := uint16(svc.Spec.Ports[0].Port) //nolint:gosec // port number is always in [0,65535]
+				if hostPort, ok := gwPorts[svcPort]; ok {
+					entry.Address = fmt.Sprintf("127.0.0.1:%d", hostPort)
+					entry.URL = fmt.Sprintf("http://127.0.0.1:%d", hostPort)
+				} else {
+					entry.URL = fmt.Sprintf("http://%s:%d", addr, svc.Spec.Ports[0].Port)
+				}
 			}
 			entries = append(entries, entry)
 		}
@@ -205,6 +214,14 @@ func gatherAccess(c *nabat.Context, kubeconfig []byte) []accessEntry {
 				if rule.Host == "" {
 					continue
 				}
+				scheme := "http"
+				if tls {
+					scheme = "https"
+				}
+				containerPort := uint16(80)
+				if tls {
+					containerPort = 443
+				}
 				entry := accessEntry{
 					Kind:      "Ingress",
 					Namespace: ing.Namespace,
@@ -212,14 +229,16 @@ func gatherAccess(c *nabat.Context, kubeconfig []byte) []accessEntry {
 					Host:      rule.Host,
 					Address:   addr,
 				}
-				scheme := "http"
-				if tls {
-					scheme = "https"
-				}
-				entry.URL = scheme + "://" + rule.Host
-				if addr != "" {
-					entry.HostsLine = addr + " " + rule.Host
-					entry.Curl = ingressCurl(scheme, rule.Host, addr)
+				if hostPort, ok := gwPorts[containerPort]; ok {
+					entry.Address = fmt.Sprintf("127.0.0.1:%d", hostPort)
+					entry.URL = fmt.Sprintf("%s://127.0.0.1:%d", scheme, hostPort)
+					entry.Curl = fmt.Sprintf("curl -H 'Host: %s' %s://127.0.0.1:%d", rule.Host, scheme, hostPort)
+				} else {
+					entry.URL = scheme + "://" + rule.Host
+					if addr != "" {
+						entry.HostsLine = addr + " " + rule.Host
+						entry.Curl = ingressCurl(scheme, rule.Host, addr)
+					}
 				}
 				entries = append(entries, entry)
 			}
@@ -284,6 +303,17 @@ func isIPAddress(s string) bool {
 	return net.ParseIP(s) != nil
 }
 
+// hasPortMappedAccess reports whether any access entry uses a loopback port
+// mapping (i.e. the gateway is forwarding ports to the host).
+func hasPortMappedAccess(entries []accessEntry) bool {
+	for i := range entries {
+		if strings.HasPrefix(entries[i].Address, "127.0.0.1:") {
+			return true
+		}
+	}
+	return false
+}
+
 // renderStatusSummary prints the cluster status and access info as human-readable
 // output: a compact key/value summary (themed) followed by the access table.
 func renderStatusSummary(c *nabat.Context, th theme.ResolvedTheme, view clusterStatusView) {
@@ -344,6 +374,12 @@ func renderStatusSummary(c *nabat.Context, th theme.ResolvedTheme, view clusterS
 		c.Println("")
 		c.Printf("%s\n", th.Style(theme.TextMuted).Render("Or test without editing /etc/hosts:"))
 		c.Println("  " + strings.Join(curlLines, "\n  "))
+	}
+
+	if hasPortMappedAccess(view.Access) {
+		c.Println("")
+		c.Printf("%s\n", th.Style(theme.TextMuted).Render(
+			"Note: gateway ports are bound on all interfaces (0.0.0.0); your firewall may prompt for access."))
 	}
 }
 

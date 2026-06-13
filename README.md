@@ -89,6 +89,50 @@ For local development, you can use [kind](https://kind.sigs.k8s.io/) or [minikub
 
 ---
 
+## Local Cluster Networking
+
+Deployah's local cluster runs [Kind](https://kind.sigs.k8s.io/) (Kubernetes in
+Docker) with [cloud-provider-kind](https://github.com/kubernetes-sigs/cloud-provider-kind)
+for LoadBalancer, Ingress, and Gateway API support.
+
+### How traffic reaches your services
+
+On both Linux and macOS, services are accessible via `localhost` through Docker
+port mapping. The networking chain is:
+
+```text
+localhost:<port>
+  -> Docker port mapping
+    -> Envoy gateway container
+      -> Kind cluster pod
+```
+
+On macOS (and other Docker-in-VM setups like Lima, Colima, Docker Desktop,
+OrbStack), there is an additional transparent layer:
+
+```text
+macOS localhost:<port>
+  -> VM port forwarding (automatic)
+    -> Docker port mapping
+      -> Envoy gateway container
+        -> Kind cluster pod
+```
+
+The VM port forwarding is handled automatically by your Docker runtime and
+requires no configuration.
+
+> **Note:** LoadBalancer, Ingress, and Gateway API require a rootful Docker
+> daemon. Rootless Docker cannot bind-mount the Docker socket into the
+> `cloud-provider-kind` sidecar container, which prevents it from managing
+> LoadBalancer resources.
+
+### Checking access
+
+Run `deployah cluster status` to see the assigned ports and ready-to-use URLs
+for all Ingress and LoadBalancer resources in the cluster.
+
+---
+
 ## Quick Start
 
 1. **Create a `deployah.yaml` manifest** in your project root.

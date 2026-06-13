@@ -154,6 +154,87 @@ func TestStop_NoClusterName_SkipsGatewayCleanup(t *testing.T) {
 	assert.Len(t, remaining, 1)
 }
 
+// TestBuildArgs_IncludesLBPortMapping verifies that --enable-lb-port-mapping is
+// always present in the command-line arguments, regardless of other options.
+func TestBuildArgs_IncludesLBPortMapping(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  Config
+	}{
+		{"defaults", Config{}},
+		{"with gateway channel", Config{GatewayChannel: "experimental"}},
+		{"ingress disabled", Config{IngressDefault: false}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			args := tc.cfg.buildArgs()
+			assert.Contains(t, args, "--enable-lb-port-mapping")
+		})
+	}
+}
+
+// TestGatewayPorts returns the published host ports from envoy gateway
+// containers, keyed by container port.
+func TestGatewayPorts(t *testing.T) {
+	eng := currustest.New()
+	ctx := context.Background()
+
+	// Gateway container for the cluster with published HTTP and HTTPS ports.
+	gwID, err := eng.CreateContainer(ctx, currus.ContainerSpec{
+		Image: "envoyproxy/envoy:v1.33.2",
+		Name:  "kindccm-gw-abc123",
+		Labels: map[string]string{
+			gatewayClusterLabel: "mycluster",
+		},
+		Ports: []currus.Port{
+			{Container: 80, Host: 0},  // ephemeral host port
+			{Container: 443, Host: 0}, // ephemeral host port
+		},
+	})
+	require.NoError(t, err)
+	require.NoError(t, eng.StartContainer(ctx, gwID))
+
+	ctrl := New(eng, Config{ClusterName: "mycluster"})
+	ports := ctrl.GatewayPorts(ctx)
+
+	require.NotNil(t, ports)
+	assert.Contains(t, ports, uint16(80))
+	assert.Contains(t, ports, uint16(443))
+	// Ephemeral ports are non-zero.
+	assert.NotZero(t, ports[80])
+	assert.NotZero(t, ports[443])
+}
+
+// TestGatewayPorts_WrongCluster verifies that containers for other clusters
+// are not included in the port map.
+func TestGatewayPorts_WrongCluster(t *testing.T) {
+	eng := currustest.New()
+	ctx := context.Background()
+
+	_, err := eng.CreateContainer(ctx, currus.ContainerSpec{
+		Image: "envoyproxy/envoy:v1.33.2",
+		Name:  "kindccm-gw-other",
+		Labels: map[string]string{
+			gatewayClusterLabel: "other-cluster",
+		},
+		Ports: []currus.Port{{Container: 80, Host: 0}},
+	})
+	require.NoError(t, err)
+
+	ctrl := New(eng, Config{ClusterName: "mycluster"})
+	ports := ctrl.GatewayPorts(ctx)
+
+	assert.Nil(t, ports)
+}
+
+// TestGatewayPorts_NoClusterName verifies that GatewayPorts returns nil when
+// no cluster name is configured.
+func TestGatewayPorts_NoClusterName(t *testing.T) {
+	eng := currustest.New()
+	ctrl := New(eng, Config{})
+	assert.Nil(t, ctrl.GatewayPorts(context.Background()))
+}
+
 // TestStop_MultipleGatewayContainers verifies that Stop removes all gateway
 // containers for the cluster, not just the first one found.
 func TestStop_MultipleGatewayContainers(t *testing.T) {
