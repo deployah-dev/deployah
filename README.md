@@ -48,7 +48,8 @@ nix develop
 nix run .#fmt       # format Go (gofumpt + gci)
 nix run .#lint      # golangci-lint
 nix run .#lint-md   # markdownlint
-nix run .#tidy      # go mod tidy
+nix run .#tidy                  # go mod tidy
+nix run .#update-vendor-hash   # refresh vendorHash after go.sum changes
 ```
 
 ### Tests

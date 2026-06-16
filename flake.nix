@@ -54,37 +54,80 @@
           inherit system;
           overlays = [ helmOverlay ];
         };
-        lib = nixpkgs.lib;
         packageName = "deployah";
         deployahVersion = "dev";
         go = pkgs.go;
 
         buildGoModule' = pkgs.buildGoModule.override { inherit go; };
 
-        deployah = buildGoModule' {
-          pname = packageName;
-          version = deployahVersion;
+        deployahVendorHash = "sha256-dqeijkQqkumMH4Z8/79WCUBMsDo1VH+hJW0WR+SZyx8=";
+
+        deployah = import ./nix/deployah.nix {
+          buildGoModule = buildGoModule';
+          inherit deployahVersion;
+          vendorHash = deployahVendorHash;
           src = ./.;
+          lib = nixpkgs.lib;
+        };
 
-          vendorHash = "sha256-2v/ic+v0yLDH1yhnYpG6y0w6pjg+Pn8kEZpsUdPd4Lk=";
-
-          ldflags = [
-            "-s"
-            "-w"
-            "-X deployah.dev/deployah/internal/cmd.version=${deployahVersion}"
+        vendorHashCheck = pkgs.writeShellApplication {
+          name = "vendor-hash-check";
+          runtimeInputs = with pkgs; [
+            git
+            gnused
           ];
+          text = ''
+            if git diff --cached --quiet -- go.sum; then
+              exit 0
+            fi
+            STAGED=$(git show :flake.nix 2>/dev/null | grep 'deployahVendorHash' | sed -n 's/.*"\(sha256-[^"]*\)".*/\1/p')
+            HEAD=$(git show HEAD:flake.nix 2>/dev/null | grep 'deployahVendorHash' | sed -n 's/.*"\(sha256-[^"]*\)".*/\1/p')
+            if [ "$STAGED" != "$HEAD" ]; then
+              exit 0
+            fi
+            echo "go.sum changed but deployahVendorHash in flake.nix is unchanged" >&2
+            echo "Run: nix run .#update-vendor-hash" >&2
+            exit 1
+          '';
+        };
 
-          doCheck = false;
+        updateVendorHash = pkgs.writeShellApplication {
+          name = "update-vendor-hash";
+          runtimeInputs = with pkgs; [
+            nix-prefetch
+            gnused
+          ];
+          text = ''
+            set -euo pipefail
 
-          env.CGO_ENABLED = "0";
-          GOWORK = "off";
+            if [ ! -f flake.nix ]; then
+              echo "run from repo root" >&2
+              exit 1
+            fi
 
-          meta = {
-            mainProgram = "deployah";
-            description = "Deployah - A CLI tool for deploying applications to Kubernetes";
-            homepage = "https://github.com/deployah-dev/deployah";
-            license = lib.licenses.asl20;
-          };
+            echo "Prefetching goModules hash..."
+            NEW_HASH=$(
+              nix-prefetch \
+                --option extra-experimental-features 'nix-command flakes' \
+                -E "{ sha256 }: (builtins.getFlake \"$(pwd)\").packages.${system}.default.goModules.overrideAttrs (_: { outputHash = sha256; outputHashAlgo = \"sha256\"; })"
+            )
+
+            OLD_HASH=$(
+              grep 'deployahVendorHash' flake.nix \
+                | sed -n 's/.*"\(sha256-[^"]*\)".*/\1/p'
+            )
+
+            if [ "$OLD_HASH" = "$NEW_HASH" ]; then
+              echo "deployahVendorHash unchanged: $NEW_HASH"
+              exit 0
+            fi
+
+            sed -i "s|deployahVendorHash = \"sha256-[^\"]*\";|deployahVendorHash = \"$NEW_HASH\";|" flake.nix
+            echo "Updated deployahVendorHash:"
+            echo "  old: $OLD_HASH"
+            echo "  new: $NEW_HASH"
+            echo "Commit flake.nix"
+          '';
         };
 
         devTools = with pkgs; [
@@ -175,6 +218,14 @@
               files = "(\\.go|go\\.mod|go\\.sum)$";
               pass_filenames = false;
             };
+            vendor-hash-check = {
+              enable = true;
+              name = "vendor-hash-check";
+              entry = "${vendorHashCheck}/bin/vendor-hash-check";
+              files = "^go\\.(mod|sum)$";
+              language = "system";
+              pass_filenames = false;
+            };
             nixfmt.enable = true;
           };
         };
@@ -211,6 +262,15 @@
             script = ''
               exec ${go}/bin/go mod tidy
             '';
+          };
+
+          update-vendor-hash = {
+            type = "app";
+            program = "${updateVendorHash}/bin/update-vendor-hash";
+            meta = {
+              mainProgram = "update-vendor-hash";
+              description = "Recompute deployahVendorHash in flake.nix via nix-prefetch goModules";
+            };
           };
 
           lint = mkApp {
