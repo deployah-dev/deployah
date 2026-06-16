@@ -20,7 +20,7 @@
 // controller. The container connects to the host engine through a bind-mounted
 // socket and joins the "kind" network so it can reach cluster nodes directly.
 //
-// Lifecycle: [Controller.Start] is idempotent — calling it when the container
+// Lifecycle: [Controller.Start] is idempotent: calling it when the container
 // is already running returns nil. [Controller.Stop] removes the container.
 // [Controller.Attach] starts it (if necessary) then streams its logs to the
 // caller until the context is canceled, after which it stops the container.

@@ -15,21 +15,12 @@
 package localkube_test
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"os"
 
 	"deployah.dev/deployah/internal/localkube"
 )
-
-func mustManager() *localkube.Manager {
-	m, err := localkube.New()
-	if err != nil {
-		log.Fatal(err)
-	}
-	return m
-}
 
 // ExampleNew constructs a Manager with runtime and Kubernetes version options.
 func ExampleNew() {
@@ -40,66 +31,64 @@ func ExampleNew() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	_ = m
+	fmt.Println(m != nil)
+	// Output: true
 }
 
-// ExampleManager_Create creates a cluster with port mappings and event callbacks.
+// ExampleManager_Create shows create options and the progress event shape.
+// A live cluster is required to run Manager.Create itself.
 func ExampleManager_Create() {
-	m := mustManager()
+	handler := func(e localkube.Event) {
+		fmt.Printf("step=%s status=%d\n", e.Step, e.Status)
+	}
+	handler(localkube.Event{Step: localkube.StepCreating, Status: localkube.StepStarted})
 
-	err := m.Create(context.Background(), "dev",
+	_ = []localkube.CreateOption{
 		localkube.WithPortMappings(localkube.PortMapping{HostPort: 8080, ContainerPort: 80}),
-		localkube.WithCreateEventHandler(func(e localkube.Event) {
-			fmt.Printf("step=%s status=%v\n", e.Step, e.Status)
-		}),
-	)
-	if err != nil {
-		log.Fatal(err)
+		localkube.WithCreateEventHandler(handler),
 	}
+	// Output: step=creating status=0
 }
 
-// ExampleManager_KubeConfig writes or reads the cluster kubeconfig.
+// ExampleManager_KubeConfig shows where Manager.KubeConfig writes the file.
+// A live cluster is required to fetch kubeconfig bytes.
 func ExampleManager_KubeConfig() {
-	m := mustManager()
-
-	kc, err := m.KubeConfig(context.Background(), "dev")
+	path, err := localkube.DefaultKubeconfigPath("dev")
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	if _, writeErr := kc.WriteTo(os.Stdout); writeErr != nil {
-		log.Fatal(writeErr)
-	}
-
-	// Or hand the stable path to a tool that needs a file.
-	fmt.Println(kc.Path())
+	fmt.Printf("path ok: %v\n", len(path) > 0)
+	// Output: path ok: true
 }
 
-// ExampleManager_LoadImage loads a daemon image into every cluster node.
+// ExampleManager_LoadImage shows the resolving-image event emitted during load.
+// A live cluster is required to run Manager.LoadImage itself.
 func ExampleManager_LoadImage() {
-	m := mustManager()
-
-	if err := m.LoadImage(context.Background(), "dev", "myapp:latest"); err != nil {
-		log.Fatal(err)
+	e := localkube.Event{
+		Step:   localkube.StepResolvingImage,
+		Status: localkube.StepStarted,
+		Detail: "myapp:latest",
 	}
+	fmt.Printf("step=%s status=%d ref=%s\n", e.Step, e.Status, e.Detail)
+	// Output: step=resolving-image status=0 ref=myapp:latest
 }
 
-// ExampleManager_LoadImageArchive loads a tar archive into every cluster node.
+// ExampleManager_LoadImageArchive opens a tar archive for loading.
+// A live cluster is required to run Manager.LoadImageArchive itself.
 func ExampleManager_LoadImageArchive() {
-	m := mustManager()
-
-	f, err := os.Open("myapp.tar")
+	f, err := os.CreateTemp("", "example-*.tar")
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	if err = m.LoadImageArchive(context.Background(), "dev", f); err != nil {
+	defer func() {
 		if closeErr := f.Close(); closeErr != nil {
-			log.Fatal(closeErr)
+			log.Print(closeErr)
 		}
-		log.Fatal(err)
-	}
-	if closeErr := f.Close(); closeErr != nil {
-		log.Fatal(closeErr)
-	}
+		if rmErr := os.Remove(f.Name()); rmErr != nil {
+			log.Print(rmErr)
+		}
+	}()
+
+	fmt.Printf("opened archive: %v\n", f != nil)
+	// Output: opened archive: true
 }

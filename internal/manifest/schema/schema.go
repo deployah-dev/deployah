@@ -1,5 +1,5 @@
-// Package schema offers utilities for accessing and managing versioned schema
-// files.
+// Package schema embeds versioned JSON schemas for manifest and environment
+// validation.
 package schema
 
 import (

@@ -26,7 +26,7 @@ type SelectorBuilder struct {
 	selector labels.Selector
 }
 
-// NewSelectorBuilder creates a new selector builder
+// NewSelectorBuilder constructs an empty [SelectorBuilder].
 func NewSelectorBuilder() *SelectorBuilder {
 	return &SelectorBuilder{
 		selector: labels.NewSelector(),
@@ -75,7 +75,7 @@ func (sb *SelectorBuilder) WithEnvironment(environment string) (*SelectorBuilder
 	return sb, nil
 }
 
-// Build returns the final label selector string
+// Build returns the final label selector string.
 func (sb *SelectorBuilder) Build() string {
 	return sb.selector.String()
 }

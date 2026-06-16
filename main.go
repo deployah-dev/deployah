@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package main is the entry point for the Deployah application.
+// Command deployah is the Deployah CLI entry point.
 package main
 
 import "deployah.dev/deployah/internal/cmd"

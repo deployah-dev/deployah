@@ -44,5 +44,5 @@ const OutputFormatTree = "tree"
 // OutputFormats contains all valid output formats
 var OutputFormats = []string{OutputFormatTable, OutputFormatJSON, OutputFormatYAML}
 
-// DeleteOutputFormats contains valid output formats for the delete dry-run preview
+// DeleteOutputFormats lists valid output formats for delete dry-run preview.
 var DeleteOutputFormats = []string{OutputFormatTree, OutputFormatJSON, OutputFormatYAML}

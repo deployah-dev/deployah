@@ -18,15 +18,21 @@ type ReleaseDeleter interface {
 
 // DeleteParams holds the parameters for a delete operation.
 type DeleteParams struct {
-	Project     string
+	// Project is the Deployah project name.
+	Project string
+	// Environment is the target environment name.
 	Environment string
-	Force       bool
-	DryRun      bool
+	// Force skips the not-found check and proceeds with deletion.
+	Force bool
+	// DryRun previews deletion without mutating the cluster.
+	DryRun bool
 }
 
 // DeleteResult contains the outcome of a delete check.
 type DeleteResult struct {
-	Release  *v1.Release
+	// Release is the Helm release when one was found.
+	Release *v1.Release
+	// NotFound is true when no release exists for the project and environment.
 	NotFound bool
 }
 

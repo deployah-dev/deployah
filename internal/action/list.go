@@ -18,7 +18,9 @@ type ReleaseLister interface {
 
 // ListParams holds the filter parameters for listing releases.
 type ListParams struct {
-	Project     string
+	// Project limits results to one Deployah project.
+	Project string
+	// Environment limits results to one environment.
 	Environment string
 }
 

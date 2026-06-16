@@ -22,7 +22,7 @@ import (
 	yamlutil "k8s.io/apimachinery/pkg/util/yaml"
 )
 
-// TestScenariosDir is the directory containing test scenarios
+// TestScenariosDir is the directory containing integration test scenarios.
 var TestScenariosDir = getTestScenariosDir()
 
 // getTestScenariosDir finds the test scenarios directory
@@ -49,25 +49,35 @@ func getTestScenariosDir() string {
 	return "scenarios"
 }
 
-// TestScenario represents a single test scenario
+// TestScenario describes one integration test case under scenarios/.
 type TestScenario struct {
-	Name           string
-	ScenarioDir    string
-	ManifestFile   string
-	Environment    string
-	EnvFiles       []string
-	ExpectedDir    string
-	ExpectError    bool     // Simple: just check if error occurs
-	ExpectedErrors []string // Advanced: check for specific error messages
+	// Name is the scenario directory name.
+	Name string
+	// ScenarioDir is the relative path under TestScenariosDir.
+	ScenarioDir string
+	// ManifestFile is the manifest filename within ScenarioDir.
+	ManifestFile string
+	// Environment selects the manifest environment for chart generation.
+	Environment string
+	// EnvFiles lists dotenv files to copy into the test workspace.
+	EnvFiles []string
+	// ExpectedDir is the golden output directory, relative to TestScenariosDir.
+	ExpectedDir string
+	// ExpectError requires manifest loading to fail.
+	ExpectError bool
+	// ExpectedErrors requires specific substrings in the load error message.
+	ExpectedErrors []string
 }
 
-// IntegrationTestSuite provides comprehensive testing using scenario directories
+// IntegrationTestSuite runs scenario-based chart and manifest tests.
 type IntegrationTestSuite struct {
+	// ScenariosDir is the root directory of test scenarios.
 	ScenariosDir string
-	OutputDir    string
+	// OutputDir is the temporary workspace for a test run.
+	OutputDir string
 }
 
-// NewIntegrationTestSuite creates a new integration test suite
+// NewIntegrationTestSuite creates a suite rooted at [TestScenariosDir].
 func NewIntegrationTestSuite(t *testing.T) *IntegrationTestSuite {
 	t.Helper()
 	outputDir := t.TempDir()

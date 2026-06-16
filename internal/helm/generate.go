@@ -58,18 +58,23 @@ func parseContainerImage(imageRef string) (repository, tagOrDigest string) {
 	return repo, ""
 }
 
-// ChartData holds values substituted in templates, including arbitrary
-// values for values.yaml. .Values can be used in values.yaml.gotmpl for
-// flexible templating.
+// ChartData holds values substituted in Helm chart templates.
 type ChartData struct {
+	// Chart holds metadata rendered into Chart.yaml.
 	Chart struct {
-		Name        string
+		// Name is the chart name.
+		Name string
+		// Description is the chart description.
 		Description string
-		Version     string
-		AppVersion  string
+		// Version is the chart version.
+		Version string
+		// AppVersion is the application version.
+		AppVersion string
 	}
-	Values   map[string]any     // For values.yaml templating
-	Manifest *manifest.Manifest // Added for dynamic sub-charts
+	// Values is the data map for values.yaml templating.
+	Values map[string]any
+	// Manifest is the source Deployah manifest for dynamic sub-charts.
+	Manifest *manifest.Manifest
 }
 
 // GenerateReleaseName returns the Helm release name for project and

@@ -13,14 +13,16 @@ import (
 	v1 "helm.sh/helm/v4/pkg/release/v1"
 )
 
-// ReleaseGetter abstracts fetching releases by project/environment.
+// ReleaseGetter lists Helm releases that match a label selector.
 type ReleaseGetter interface {
 	ListReleases(ctx context.Context, selector labels.Selector) ([]*v1.Release, error)
 }
 
 // StatusParams holds the parameters for a status query.
 type StatusParams struct {
-	Project     string
+	// Project is the Deployah project name.
+	Project string
+	// Environment limits status to one environment.
 	Environment string
 }
 

@@ -311,7 +311,7 @@ func (m *Manager) KubeConfig(ctx context.Context, name string) (*KubeConfig, err
 }
 
 // ContextName returns the Kubernetes context name for a cluster.
-// Pure helper — performs no I/O.
+// Pure helper: performs no I/O.
 func (m *Manager) ContextName(name string) string {
 	return "kind-" + name
 }

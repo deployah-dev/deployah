@@ -43,31 +43,50 @@ func (m *Manifest) EnvironmentNames() []string {
 	return names
 }
 
-// Environment defines the environment definition in the project.
+// Environment defines a named deployment target and its configuration sources.
 type Environment struct {
-	Name       string            `json:"name" yaml:"name"`
-	EnvFile    string            `json:"envFile,omitempty" yaml:"envFile,omitempty"`
-	ConfigFile string            `json:"configFile,omitempty" yaml:"configFile,omitempty"`
-	Context    string            `json:"context,omitempty" yaml:"context,omitempty"`
-	Variables  map[string]string `json:"variables,omitempty" yaml:"variables,omitempty"`
+	// Name is the environment identifier (e.g. "staging").
+	Name string `json:"name" yaml:"name"`
+	// EnvFile is the path to a dotenv file for this environment.
+	EnvFile string `json:"envFile,omitempty" yaml:"envFile,omitempty"`
+	// ConfigFile is the path to an environment-specific config file.
+	ConfigFile string `json:"configFile,omitempty" yaml:"configFile,omitempty"`
+	// Context is the Kubernetes context to use for this environment.
+	Context string `json:"context,omitempty" yaml:"context,omitempty"`
+	// Variables holds inline key-value overrides for this environment.
+	Variables map[string]string `json:"variables,omitempty" yaml:"variables,omitempty"`
 }
 
 // Component defines a deployable unit in the project.
 type Component struct {
-	Role           ComponentRole     `json:"role,omitempty" yaml:"role,omitempty"`
-	EnvFile        string            `json:"envFile,omitempty" yaml:"envFile,omitempty"`
-	ConfigFile     string            `json:"configFile,omitempty" yaml:"configFile,omitempty"`
-	Environments   []string          `json:"environments,omitempty" yaml:"environments,omitempty"`
-	Kind           ComponentKind     `json:"kind,omitempty" yaml:"kind,omitempty"`
-	Image          string            `json:"image" yaml:"image"`
-	Command        []string          `json:"command,omitempty" yaml:"command,omitempty"`
-	Args           []string          `json:"args,omitempty" yaml:"args,omitempty"`
-	Port           int               `json:"port,omitempty" yaml:"port,omitempty"`
-	Autoscaling    *Autoscaling      `json:"autoscaling,omitempty" yaml:"autoscaling,omitempty"`
-	Resources      Resources         `json:"resources" yaml:"resources,omitempty"`
-	ResourcePreset ResourcePreset    `json:"resourcePreset,omitempty" yaml:"resourcePreset,omitempty"`
-	Ingress        *Ingress          `json:"ingress,omitempty" yaml:"ingress,omitempty"`
-	Env            map[string]string `json:"env,omitempty" yaml:"env,omitempty"`
+	// Role selects the default deployment strategy for the component.
+	Role ComponentRole `json:"role,omitempty" yaml:"role,omitempty"`
+	// EnvFile is the path to a component-specific dotenv file.
+	EnvFile string `json:"envFile,omitempty" yaml:"envFile,omitempty"`
+	// ConfigFile is the path to a component-specific config file.
+	ConfigFile string `json:"configFile,omitempty" yaml:"configFile,omitempty"`
+	// Environments limits the component to the named environments.
+	Environments []string `json:"environments,omitempty" yaml:"environments,omitempty"`
+	// Kind selects stateless or stateful deployment behavior.
+	Kind ComponentKind `json:"kind,omitempty" yaml:"kind,omitempty"`
+	// Image is the container image reference.
+	Image string `json:"image" yaml:"image"`
+	// Command overrides the container entrypoint.
+	Command []string `json:"command,omitempty" yaml:"command,omitempty"`
+	// Args overrides the container command arguments.
+	Args []string `json:"args,omitempty" yaml:"args,omitempty"`
+	// Port is the primary container port for services.
+	Port int `json:"port,omitempty" yaml:"port,omitempty"`
+	// Autoscaling configures horizontal pod autoscaling.
+	Autoscaling *Autoscaling `json:"autoscaling,omitempty" yaml:"autoscaling,omitempty"`
+	// Resources sets explicit CPU, memory, and storage requests and limits.
+	Resources Resources `json:"resources" yaml:"resources,omitempty"`
+	// ResourcePreset selects a named resource profile when Resources is empty.
+	ResourcePreset ResourcePreset `json:"resourcePreset,omitempty" yaml:"resourcePreset,omitempty"`
+	// Ingress exposes the component through an HTTP or HTTPS route.
+	Ingress *Ingress `json:"ingress,omitempty" yaml:"ingress,omitempty"`
+	// Env sets static environment variables for the container.
+	Env map[string]string `json:"env,omitempty" yaml:"env,omitempty"`
 }
 
 // Autoscaling defines the autoscaling settings for the component.

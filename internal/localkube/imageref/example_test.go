@@ -16,7 +16,9 @@ package imageref_test
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"os"
 
 	"deployah.dev/deployah/internal/localkube/imageref"
 )
@@ -24,15 +26,34 @@ import (
 // ExampleOpen resolves a local file, daemon image, or registry image
 // to a tar stream.
 func ExampleOpen() {
-	// Resolve any of: local file path, local daemon image, remote registry image.
-	rc, err := imageref.Open(context.Background(), "myapp:latest")
+	f, err := os.CreateTemp("", "example-*.tar")
 	if err != nil {
 		log.Fatal(err)
 	}
-	if closeErr := rc.Close(); closeErr != nil {
-		log.Fatal(closeErr)
+	path := f.Name()
+	if err = f.Close(); err != nil {
+		if rmErr := os.Remove(path); rmErr != nil {
+			log.Print(rmErr)
+		}
+		log.Fatal(err)
 	}
 
-	// rc is an io.ReadCloser of a Docker/OCI tar archive.
-	// Pass it directly to localkube.Manager.LoadImageArchive.
+	rc, err := imageref.Open(context.Background(), path)
+	if err != nil {
+		if rmErr := os.Remove(path); rmErr != nil {
+			log.Print(rmErr)
+		}
+		log.Fatal(err)
+	}
+	defer func() {
+		if closeErr := rc.Close(); closeErr != nil {
+			log.Print(closeErr)
+		}
+		if rmErr := os.Remove(path); rmErr != nil {
+			log.Print(rmErr)
+		}
+	}()
+
+	fmt.Println("resolved file")
+	// Output: resolved file
 }

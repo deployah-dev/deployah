@@ -25,8 +25,8 @@ import (
 	v1 "helm.sh/helm/v4/pkg/release/v1"
 )
 
-// ReleaseViewModel represents the curated output structure for json/yaml
-// matching what is displayed in table mode.
+// ReleaseViewModel is the JSON and YAML output shape for Helm releases.
+// Field values match the table output for the same release.
 type ReleaseViewModel struct {
 	Project      string         `json:"project" yaml:"project"`
 	Environment  string         `json:"environment" yaml:"environment"`
@@ -77,7 +77,7 @@ func getPodInfo(ctx context.Context, k8sClient *k8s.Client, release *v1.Release)
 	return totalPods, readyPods, status
 }
 
-// ReleaseToViewModel converts a Helm release to a view model for output
+// ReleaseToViewModel converts a Helm release to a view model for output.
 func ReleaseToViewModel(rel *v1.Release) ReleaseViewModel {
 	project, environment := extractDeployahLabels(rel)
 

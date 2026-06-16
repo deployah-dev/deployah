@@ -31,8 +31,7 @@ import (
 
 // registryAuthSecretName is the fixed name of the Kubernetes Secret written by
 // SyncRegistryAuth. Using a predictable name keeps the operation idempotent and
-// makes it easy for users to reference the secret in their Helm values or
-// custom manifests.
+// lets callers reference the secret in Helm values or custom manifests.
 const registryAuthSecretName = "deployah-registry-auth"
 
 // dockerConfigJSON is the in-memory representation of a Kubernetes

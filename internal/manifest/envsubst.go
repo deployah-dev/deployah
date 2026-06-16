@@ -8,12 +8,9 @@ import (
 )
 
 // SubstituteVariables substitutes variables in manifest data using the
-// provided environment variables.
-// The variables are substituted in the following order:
-// 1. Variables from the environment definition (lowest priority)
-// 2. Variables from the env file (medium priority)
-// 3. Variables from the OS environment variables (highest priority)
-// The variables are substituted using the envsubst package.
+// provided environment. Variable precedence is lowest to highest:
+// environment definition, env file, then OS environment variables.
+// Substitution uses the envsubst syntax.
 func SubstituteVariables(data []byte, env *Environment) ([]byte, error) {
 	variables := make(map[string]string)
 

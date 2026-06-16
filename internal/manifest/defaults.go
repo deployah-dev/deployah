@@ -153,9 +153,9 @@ func getCachedSchemaInfo(version string, schemaType schema.SchemaType) (*schemaI
 	return result, nil
 }
 
-// ClearSchemaCache clears all cached schemas and patterns.
-// This function is primarily useful for testing to ensure clean state
-// between test runs and for memory management in long-running applications.
+// ClearSchemaCache clears all cached schemas and patterns. Call it between
+// tests that mutate schema caches, or to release memory in long-running
+// processes.
 //
 // Example usage in tests:
 //
@@ -281,17 +281,12 @@ func extractDefaultsFromSchemaData(schemaData any, path string, defaults Default
 	}
 }
 
-// GetDefaultValues extracts all default values from a JSON schema.
-// This is the main entry point for schema-based defaults for a version and
-// type.
+// GetDefaultValues extracts all default values from a JSON schema. This is the
+// main entry point for schema-based defaults for a version and type.
 //
-// Parameters:
-//   - version: Schema version identifier (e.g., "v1-alpha.1")
-//   - schemaType: Type of schema to process (manifest or environments)
-//
-// Returns:
-//   - DefaultValues: Map of paths to default values extracted from the schema
-//   - error: If schema loading or processing fails
+// version is the schema version identifier (e.g. "v1-alpha.1"). schemaType
+// selects the manifest or environments schema. Returns a map of dot-notation
+// paths to default values, or an error if schema loading or processing fails.
 //
 // Example usage:
 //
@@ -394,12 +389,9 @@ func resolveResourcePresets(manifest *Manifest) error {
 //  3. Merge manifest and environment defaults
 //  4. Apply merged defaults to environments with placeholder substitution
 //
-// Parameters:
-//   - manifest: Manifest to fill with defaults (modified in-place)
-//   - version: Schema version to use for default extraction
-//
-// Returns:
-//   - error: If schema loading, default extraction, or application fails
+// manifest is updated in place. version selects the schema version for default
+// extraction. Returns an error if schema loading, default extraction, or
+// application fails.
 //
 // Example:
 //
@@ -1036,13 +1028,9 @@ func isZeroValue(val any) bool {
 // This is a convenience function that creates a minimal manifest structure and
 // then applies all relevant defaults from the specified schema version.
 //
-// Parameters:
-//   - projectName: Name of the project
-//   - version: Schema version to use for defaults
-//
-// Returns:
-//   - *Manifest: New manifest with defaults applied
-//   - error: If creation or default application fails
+// projectName names the new project. version selects the schema version for
+// defaults. Returns a new manifest with defaults applied, or an error if
+// creation or default application fails.
 //
 // Example:
 //

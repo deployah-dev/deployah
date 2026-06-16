@@ -49,25 +49,32 @@ func terminalSizeFromWH(w, h int) remotecommand.TerminalSize {
 	return remotecommand.TerminalSize{Width: uint16(w), Height: uint16(h)}
 }
 
-// ExecuteOptions contains all the options for shell execution
+// ExecuteOptions configures an interactive or one-shot shell session.
 type ExecuteOptions struct {
+	// ProjectName is the Deployah project name.
 	ProjectName string
-	Component   string
-	Container   string
-	Shell       string
-	Command     string
-	WorkDir     string
+	// Component is the target component name.
+	Component string
+	// Container selects a container when the pod has more than one.
+	Container string
+	// Shell is the shell binary to run inside the container.
+	Shell string
+	// Command runs a single command instead of an interactive shell.
+	Command string
+	// WorkDir is the working directory inside the container.
+	WorkDir string
+	// Environment limits pod selection to one environment.
 	Environment string
 }
 
-// ShellExecutor handles shell execution in containers
+// ShellExecutor runs kubectl exec sessions against Deployah pods.
 type ShellExecutor struct {
 	runtime *runtime.Runtime
 	k8s     *k8s.Client
 	ctx     *nabat.Context
 }
 
-// NewShellExecutor creates a new shell executor
+// NewShellExecutor constructs a [ShellExecutor] from a command [runtime.Runtime].
 func NewShellExecutor(rt *runtime.Runtime, ctx *nabat.Context) (*ShellExecutor, error) {
 	k8sClient, err := k8s.NewClientFromRuntime(ctx, rt)
 	if err != nil {
@@ -81,7 +88,7 @@ func NewShellExecutor(rt *runtime.Runtime, ctx *nabat.Context) (*ShellExecutor, 
 	}, nil
 }
 
-// Execute runs the shell command with the given options
+// Execute runs a shell or command in the selected pod container.
 func (e *ShellExecutor) Execute(opts ExecuteOptions) error {
 	componentName, err := e.selectComponent(opts.ProjectName, opts.Component)
 	if err != nil {

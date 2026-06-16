@@ -47,7 +47,8 @@
 //
 // The optional cloud provider runs the cloud-provider-kind image as a managed
 // container via the [gopherly.dev/currus] engine abstraction. This avoids
-// in-process global state mutation and works without elevated privileges on Linux.
+// in-process global state mutation and works without elevated privileges on
+// Linux.
 //
 //	m, _ := localkube.New()
 //	defer m.Close()
@@ -61,8 +62,8 @@
 //	// Logs go to os.Stderr by default; pass WithAttachWriter to redirect them.
 //	ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
 //	defer stop()
-//	_ = m.AttachCloudProvider(ctx)                                    // → os.Stderr
-//	_ = m.AttachCloudProvider(ctx, localkube.WithAttachWriter(w))     // → any io.Writer
+//	_ = m.AttachCloudProvider(ctx) // logs to os.Stderr
+//	_ = m.AttachCloudProvider(ctx, localkube.WithAttachWriter(w))
 //
 // Docker and Podman are fully supported. Returns [ErrUnsupported] for
 // nerdctl/finch (cluster create/delete/kubeconfig still work on all engines).
@@ -88,8 +89,9 @@
 //
 // Create writes to one deployah-managed location:
 //
-//  1. Kubeconfig copy (XDG StateHome/deployah/localkube/kubeconfigs/<name>.yaml):
-//     written by [Manager.KubeConfig], accessible via [KubeConfig.Path].
+//  1. Kubeconfig copy under XDG StateHome at
+//     deployah/localkube/kubeconfigs/<name>.yaml: written by
+//     [Manager.KubeConfig], accessible via [KubeConfig.Path].
 //
 // Kind itself writes to two additional locations:
 //
