@@ -11,8 +11,6 @@ buildGoModule {
   version = deployahVersion;
   inherit src vendorHash;
 
-  goSum = builtins.readFile "${src}/go.sum";
-
   ldflags = [
     "-s"
     "-w"
