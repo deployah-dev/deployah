@@ -48,6 +48,16 @@ git-hooks.lib.${system}.run {
       files = "(\\.go|go\\.mod|go\\.sum)$";
       pass_filenames = false;
     };
+    # Regenerate the CLI reference (docs/cli) from the command tree. If a command
+    # or flag changed without regenerating, this rewrites the files and the
+    # commit is blocked until they are staged. Run: nix run .#gen-docs
+    gen-docs = {
+      enable = true;
+      name = "gen-docs";
+      entry = "${go}/bin/go run ./internal/tools/gendocs";
+      files = "(\\.go|go\\.mod|go\\.sum)$";
+      pass_filenames = false;
+    };
     vendor-hash-check = {
       enable = true;
       name = "vendor-hash-check";

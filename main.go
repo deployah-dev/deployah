@@ -17,6 +17,8 @@ package main
 
 import "deployah.dev/deployah/internal/cmd"
 
+//go:generate go run ./internal/tools/gendocs
+
 func main() {
 	cmd.Execute()
 }

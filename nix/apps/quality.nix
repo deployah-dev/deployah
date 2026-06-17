@@ -33,4 +33,12 @@
       exec ${pkgs.go}/bin/go mod tidy
     '';
   };
+
+  gen-docs = lib.mkApp {
+    name = "gen-docs";
+    description = "Generate the CLI reference under docs/cli from the command tree";
+    script = ''
+      exec ${pkgs.go}/bin/go run ./internal/tools/gendocs
+    '';
+  };
 }
