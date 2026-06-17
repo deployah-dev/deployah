@@ -4,6 +4,8 @@
 
 Deployah is a CLI tool that makes deploying applications effortless by leveraging Helm—no Kubernetes or Helm expertise required.
 
+You write a short **spec**. Deployah turns it into a running **release** on Kubernetes. We call this **Spec-to-Release**. It is like Source-to-Image (S2I), but for the deploy step: **S2I builds your image; Deployah runs your release.**
+
 ---
 
 ## Installation
@@ -245,6 +247,10 @@ Each phase has specific error handling and validation, ensuring deployments are 
 ### Under the Hood
 
 Deployah uses a **Helm chart library** as its foundation, automatically generating the appropriate Kubernetes resources (Deployments, Services, Ingress, HPA) based on your component definitions. The tool handles all the Helm complexity while providing a clean, declarative interface.
+
+### How Deployah Compares
+
+Deployah is not the only tool in this space. The key difference is **how much Helm and Kubernetes knowledge you need** — Deployah aims for none, with nothing to install in your cluster. For an honest, detailed comparison with five similar live tools (DevSpace, Werf, Score, Epinio, and Kubero), see **[docs/comparison.md](docs/comparison.md)**.
 
 ---
 

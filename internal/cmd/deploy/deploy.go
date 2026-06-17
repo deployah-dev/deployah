@@ -25,11 +25,11 @@ func Register(app *nabat.App) {
 		nabat.WithArg("environment", "", nabat.WithRequired(), nabat.WithUsage("Environment to deploy to"), nabat.WithPrompt("Environment", "", nabat.WithHint("e.g. prod, staging"))),
 		nabat.WithFlag("dry-run", false, nabat.WithUsage("Perform a dry run (render templates without installing)")),
 		nabat.WithExample(`
-# Deploy to production using default manifest path (./deployah.yaml)
+# Deploy to production using the default spec path (./deployah.yaml)
 deployah deploy prod
 
-# Deploy to staging with an explicit manifest path
-deployah deploy staging -c ./path/to/deployah.yaml
+# Deploy to staging with an explicit spec path
+deployah deploy staging -s ./path/to/deployah.yaml
 
 # Deploy to production with a dry run
 deployah deploy prod --dry-run`),

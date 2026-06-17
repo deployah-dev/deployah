@@ -1,8 +1,8 @@
 {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://deployah.dev/schemas/v1-alpha.1/manifest.json",
-    "title": "Deployah Configuration",
-    "description": "Deployah configuration file, used to configure the deployment process.",
+    "title": "Deployah Spec",
+    "description": "Deployah spec file. Describes a project and its components, and how to deploy them.",
     "type": "object",
     "additionalProperties": false,
     "properties": {

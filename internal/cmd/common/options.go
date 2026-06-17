@@ -8,7 +8,7 @@ type GlobalOptions struct {
 	Namespace  string        `nabat:"namespace"`
 	Kubeconfig string        `nabat:"kubeconfig"`
 	Context    string        `nabat:"context"`
-	Config     string        `nabat:"config"`
+	Spec       string        `nabat:"spec"`
 	Debug      bool          `nabat:"debug"`
 	Timeout    time.Duration `nabat:"timeout"`
 }

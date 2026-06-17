@@ -55,19 +55,19 @@ type ProjectConfig struct {
 // Register adds the init command to app.
 func Register(app *nabat.App) {
 	app.MustCommand("init",
-		nabat.WithDescription("Initialize Deployah configuration for a new project"),
-		nabat.WithLongDescription("Initialize Deployah configuration for a new project"),
+		nabat.WithDescription("Create a new Deployah spec for a project"),
+		nabat.WithLongDescription("Create a new Deployah spec for a project"),
 		nabat.WithAliases("initialize"),
 		nabat.WithFlag("output", DefaultOutputFile, nabat.WithShort('o'), nabat.WithUsage("The output file path.")),
-		nabat.WithFlag("dry-run", false, nabat.WithUsage("Preview the generated manifest without saving it")),
+		nabat.WithFlag("dry-run", false, nabat.WithUsage("Preview the generated spec without saving it")),
 		nabat.WithExample(`
 # Initialize a new project
 deployah init
 
-# Initialize a new project and save the configuration to a file
+# Initialize a new project and save the spec to a file
 deployah init --output deployah.yaml
 
-# Preview the generated manifest without saving it
+# Preview the generated spec without saving it
 deployah init --dry-run`),
 		nabat.WithRun(runInit),
 	)
