@@ -2,7 +2,7 @@
 
 > **WARNING:** Deployah is experimental and under active development.
 
-Deployah is a CLI tool that makes deploying applications effortless by leveraging Helm—no Kubernetes or Helm expertise required.
+Deployah is a CLI tool that makes deploying apps easy. It uses Helm under the hood, so you do not need to know Kubernetes or Helm.
 
 You write a short **spec**. Deployah turns it into a running **release** on Kubernetes. We call this **Spec-to-Release**. It is like Source-to-Image (S2I), but for the deploy step: **S2I builds your image; Deployah runs your release.**
 
@@ -138,7 +138,7 @@ for all Ingress and LoadBalancer resources in the cluster.
 
 ## Quick Start
 
-1. **Create a `deployah.yaml` manifest** in your project root.
+1. **Create a `deployah.yaml` spec** in your project root.
 2. **(Optional) Add a `.env` or `.env.<envName>` file** for environment-specific variables.
 3. **Run Deployah:**
 
@@ -150,7 +150,7 @@ for all Ingress and LoadBalancer resources in the cluster.
 
 ## How It Works
 
-Deployah transforms your simple `deployah.yaml` manifest into a complete Kubernetes deployment through an 8-phase pipeline:
+Deployah transforms your simple `deployah.yaml` spec into a complete Kubernetes deployment through an 8-phase pipeline:
 
 ```mermaid
 flowchart LR
@@ -206,12 +206,12 @@ The deployment process is organized into three logical phases:
 
 #### 🔵 Phase 1: Input Processing
 
-1. **Parse** → Read and validate your YAML manifest structure
+1. **Parse** → Read and validate your YAML spec structure
 2. **Validate** → Check against JSON Schema for correctness and type safety
 
 #### 🟣 Phase 2: Configuration Resolution  
 
-1. **Resolve Environment** → Select the right environment configuration based on CLI arguments and manifest definitions
+1. **Resolve Environment** → Select the right environment configuration based on CLI arguments and your spec
 2. **Substitute Variables** → Replace `${VARIABLES}` with actual values using clear precedence rules
 3. **Apply Defaults** → Fill in sensible defaults from schema patterns and resource presets
 
@@ -224,33 +224,33 @@ Each phase has specific error handling and validation, ensuring deployments are 
 
 ### Design Principles
 
-- **Developer-First Experience**: Prioritize simplicity and developer productivity over advanced features. Most applications follow similar deployment patterns, so Deployah provides sensible defaults and clear variable substitution.
+- **Developer first.** We keep things simple instead of adding many advanced features. Most apps deploy in similar ways, so Deployah gives you good defaults and clear variables.
 
-- **Layered Validation Strategy**: Multi-layer validation with JSON Schema at the core. This provides standardized validation with clear error messages, supports API versioning, and allows for both schema and business rule validation.
+- **Strong validation.** Deployah checks your spec in layers, with JSON Schema at the center. You get clear error messages, support for schema versions, and checks for both structure and rules.
 
-- **Explicit Variable Precedence**: Clear, documented variable substitution hierarchy prevents confusion about which values take precedence and enables environment-specific overrides while maintaining security.
+- **Clear variable order.** Deployah has simple, documented rules for which value wins. So you always know what is used, and you can safely override values per environment.
 
-- **Schema-Driven Defaults**: Extract default values from JSON Schema rather than hardcoding them. This creates a single source of truth for validation and defaults, ensuring automatic consistency.
+- **Defaults from the schema.** Deployah reads default values from the JSON Schema, not from hard-coded code. So validation and defaults always match, with one source of truth.
 
 ### What Deployah Solves
 
-- **Kubernetes Complexity**: Eliminates the need to understand Helm charts, Kubernetes manifests, or cluster-specific configurations. Deployah handles all the underlying complexity while providing a clean interface.
+- **Kubernetes is complex.** You do not need to know Helm charts, Kubernetes manifests, or cluster details. Deployah handles the hard parts and gives you a clean, simple interface.
 
-- **Configuration Management**: Single manifest file with environment-specific overrides, clear variable substitution, and explicit precedence rules. No more scattered configuration files or environment-specific scripts.
+- **Config gets scattered.** With Deployah you have one spec file, with per-environment overrides, clear variables, and simple rules. No more many config files or custom scripts.
 
-- **Deployment Safety**: Built-in validation prevents common deployment mistakes, ensures resource specifications are reasonable, and provides clear error messages with actionable suggestions.
+- **Mistakes are easy.** Built-in checks catch common errors, warn about odd resource values, and give clear messages that tell you how to fix them.
 
-- **Team Consistency**: Standardized deployment patterns across teams and projects, reducing onboarding time and preventing configuration drift between environments.
+- **Teams drift apart.** Deployah gives every team and project the same deploy pattern. New people learn faster, and environments stay in sync.
 
-- **Environment Management**: Explicit environment selection prevents accidental deployments to wrong environments, with clear error messages guiding users to correct usage.
+- **Wrong-environment deploys happen.** Deployah makes you choose the environment on purpose, so you do not deploy to the wrong place by accident. When something is unclear, the error message guides you.
 
 ### Under the Hood
 
-Deployah uses a **Helm chart library** as its foundation, automatically generating the appropriate Kubernetes resources (Deployments, Services, Ingress, HPA) based on your component definitions. The tool handles all the Helm complexity while providing a clean, declarative interface.
+Under the hood, Deployah uses a **Helm chart**. From your components, it creates the right Kubernetes resources for you (Deployments, Services, Ingress, HPA). You get a clean, declarative interface, and Deployah handles the Helm details.
 
 ### How Deployah Compares
 
-Deployah is not the only tool in this space. The key difference is **how much Helm and Kubernetes knowledge you need** — Deployah aims for none, with nothing to install in your cluster. For an honest, detailed comparison with five similar live tools (DevSpace, Werf, Score, Epinio, and Kubero), see **[docs/comparison.md](docs/comparison.md)**.
+Deployah is not the only tool in this space. The main difference is **how much Helm and Kubernetes knowledge you need**. Deployah aims for none, with nothing to install in your cluster. For an honest, detailed comparison with five similar live tools (DevSpace, Werf, Score, Epinio, and Kubero), see **[docs/comparison.md](docs/comparison.md)**.
 
 ---
 
@@ -295,21 +295,21 @@ components:
 ### Examples
 
 ```sh
-# Deploy to production using default manifest path
+# Deploy to production using the default spec path
 deployah deploy production
 
-# Deploy to staging with an explicit manifest path
-deployah deploy staging -f ./path/to/deployah.yaml
+# Deploy to staging with an explicit spec path
+deployah deploy staging -s ./path/to/deployah.yaml
 ```
 
 ---
 
 ## Variable Substitution Precedence
 
-When substituting variables in your `deployah.yaml` manifest, Deployah uses the following precedence (lowest to highest):
+When substituting variables in your `deployah.yaml` spec, Deployah uses the following precedence (lowest to highest):
 
 1. **Environment Definition Variables:**  
-   Defined in the `variables` field of the selected environment in your manifest.
+   Defined in the `variables` field of the selected environment in your spec.
 2. **Env File Variables:**  
    Loaded from the resolved environment file (e.g., `.env.production`).
 3. **OS Environment Variables:**  
@@ -322,7 +322,7 @@ When substituting variables in your `deployah.yaml` manifest, Deployah uses the 
 environments:
   - name: production
     variables:
-      APP_ENV: manifest
+      APP_ENV: spec
 ```
 
 ```env
@@ -345,7 +345,7 @@ The value used for `${APP_ENV}` will be `osenv`.
 
 | File                      | Used by         | Purpose                                 |
 |---------------------------|-----------------|-----------------------------------------|
-| `deployah.yaml`          | Deployah        | Main Deployah manifest/config           |
+| `deployah.yaml`          | Deployah        | Main Deployah spec           |
 | `.env` / `.env.<envName>` | Deployah & App  | Variable substitution for both; Deployah only uses variables starting with `DPY_VAR_` |
 | `config.yaml`             | Application     | App-specific config, ignored by Deployah|
 | `config.<envName>.yaml`   | Application     | App-specific config for named environments, ignored by Deployah|
@@ -433,7 +433,7 @@ deployah status
 # View application logs
 deployah logs
 
-# Validate your manifest
+# Validate your spec
 deployah validate
 
 # Delete deployments
@@ -447,7 +447,7 @@ deployah <command> --help
 
 ## Troubleshooting
 
-### Manifest & Deployment
+### Spec & Deployment
 
 #### Environment not found
 
@@ -481,7 +481,7 @@ Verify your cluster is reachable with `kubectl cluster-info`.
 Error: failed to generate Helm values
 ```
 
-Check your manifest syntax and make sure all required fields are present.
+Check your spec syntax and make sure all required fields are present.
 Run `deployah validate` to find issues.
 
 ### Local Cluster Networking
@@ -538,7 +538,7 @@ limactl start template:docker-rootful
 
 Gateway ports are bound on all interfaces (`0.0.0.0`). On Linux, make sure
 your firewall allows the mapped ports. On macOS, the Application Firewall
-may ask for permission -- allow it when prompted.
+may ask for permission. Allow it when prompted.
 
 ### Getting Help
 
@@ -553,10 +553,10 @@ deployah <command> --help
 
 ## Schema Reference
 
-Deployah uses JSON Schema for validation. The schema defines the structure and validation rules for your `deployah.yaml` manifest.
+Deployah uses JSON Schema for validation. The schema defines the structure and validation rules for your `deployah.yaml` spec.
 
 - **Schema Version**: v1-alpha.1
-- **Schema Location**: `internal/manifest/schema/v1-alpha.1/manifest.json`
-- **Environment Schema**: `internal/manifest/schema/v1-alpha.1/environments.json`
+- **Schema Location**: `internal/spec/schema/v1-alpha.1/manifest.json`
+- **Environment Schema**: `internal/spec/schema/v1-alpha.1/environments.json`
 
-For the latest schema documentation and examples, see the [schema directory](internal/manifest/schema/) in the repository.
+For the latest schema documentation and examples, see the [schema directory](internal/spec/schema/) in the repository.
