@@ -15,7 +15,7 @@
 // Package runtime holds per-command Kubernetes and Helm client state.
 //
 // [Runtime] lazily constructs Helm and Kubernetes clients from global CLI
-// options, caches the loaded manifest, and travels through [context.Context]
+// options, caches the loaded spec, and travels through [context.Context]
 // so every command shares one configured environment per invocation.
 //
 // Construct a runtime with [New], attach it via [WithContext], and retrieve

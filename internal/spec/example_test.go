@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package manifest_test
+package spec_test
 
 import (
 	"context"
@@ -20,19 +20,19 @@ import (
 	"log"
 	"os"
 
-	"deployah.dev/deployah/internal/manifest"
+	"deployah.dev/deployah/internal/spec"
 )
 
-// ExampleFillManifestWithDefaults applies schema defaults to a minimal manifest.
-func ExampleFillManifestWithDefaults() {
-	m := &manifest.Manifest{
+// ExampleFillSpecWithDefaults applies schema defaults to a minimal manifest.
+func ExampleFillSpecWithDefaults() {
+	m := &spec.Spec{
 		APIVersion: "v1-alpha.1",
 		Project:    "demo",
-		Components: map[string]manifest.Component{
+		Components: map[string]spec.Component{
 			"web": {Image: "nginx:latest"},
 		},
 	}
-	if err := manifest.FillManifestWithDefaults(m, "v1-alpha.1"); err != nil {
+	if err := spec.FillSpecWithDefaults(m, "v1-alpha.1"); err != nil {
 		log.Fatal(err)
 	}
 	fmt.Println(m.Components["web"].Port)
@@ -70,7 +70,7 @@ components:
 		log.Fatal(err)
 	}
 
-	m, err := manifest.Load(context.Background(), path, "")
+	m, err := spec.Load(context.Background(), path, "")
 	if err != nil {
 		if rmErr := os.Remove(path); rmErr != nil {
 			log.Print(rmErr)

@@ -14,7 +14,7 @@
 
 // Package action implements deploy, delete, list, and status business logic.
 //
-// Each operation loads a manifest and delegates to Helm or Kubernetes
+// Each operation loads a spec and delegates to Helm or Kubernetes
 // through small interfaces so commands stay thin and tests can inject fakes.
 //
 // # Operations

@@ -14,7 +14,7 @@
 
 // Package list implements the deployah list command.
 //
-// The command shows Helm releases and manifest components for the current
+// The command shows Helm releases and spec components for the current
 // project, optionally filtered by environment. Output is available as a table
 // or structured JSON/YAML through shared CLI rendering helpers.
 //

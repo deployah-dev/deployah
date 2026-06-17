@@ -17,7 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"deployah.dev/deployah/internal/helm"
-	"deployah.dev/deployah/internal/manifest"
+	"deployah.dev/deployah/internal/spec"
 
 	yamlutil "k8s.io/apimachinery/pkg/util/yaml"
 )
@@ -167,14 +167,14 @@ func (suite *IntegrationTestSuite) setupScenarioEnvironment(t *testing.T, scenar
 }
 
 // loadManifest loads a manifest from the current directory
-func (suite *IntegrationTestSuite) loadManifest(t *testing.T, manifestFile string) (*manifest.Manifest, error) {
+func (suite *IntegrationTestSuite) loadManifest(t *testing.T, manifestFile string) (*spec.Spec, error) {
 	t.Helper()
 	ctx := context.Background()
-	return manifest.Load(ctx, "deployah.yaml", "")
+	return spec.Load(ctx, "deployah.yaml", "")
 }
 
 // generateChart generates the Helm chart from the manifest
-func (suite *IntegrationTestSuite) generateChart(t *testing.T, manifest *manifest.Manifest, environment string) (string, error) {
+func (suite *IntegrationTestSuite) generateChart(t *testing.T, manifest *spec.Spec, environment string) (string, error) {
 	t.Helper()
 	ctx := context.Background()
 	return helm.PrepareChart(ctx, manifest, environment)

@@ -6,7 +6,7 @@ import (
 
 	"nabat.dev/nabat"
 
-	"deployah.dev/deployah/internal/manifest"
+	"deployah.dev/deployah/internal/spec"
 )
 
 func collectEnvironments(c *nabat.Context, config *ProjectConfig) error {
@@ -53,8 +53,8 @@ func collectEnvironments(c *nabat.Context, config *ProjectConfig) error {
 	return nil
 }
 
-func collectEnvironmentDetails(c *nabat.Context, envName string) (manifest.Environment, error) {
-	env := manifest.Environment{Name: envName}
+func collectEnvironmentDetails(c *nabat.Context, envName string) (spec.Environment, error) {
+	env := spec.Environment{Name: envName}
 
 	var addVariables bool
 	err := c.Form(
@@ -105,7 +105,7 @@ func collectEnvironmentVariables(c *nabat.Context) (map[string]string, error) {
 				nabat.WithFormField(&varName, "Variable Name",
 					"Environment variable name (uppercase with underscores)",
 					nabat.WithHint("APP_ENV"),
-					nabat.WithValidate(manifest.ValidateEnvVarName),
+					nabat.WithValidate(spec.ValidateEnvVarName),
 				),
 				nabat.WithFormField(&varValue, "Variable Value",
 					"Value for the environment variable",

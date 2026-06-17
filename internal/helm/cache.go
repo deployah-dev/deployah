@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"deployah.dev/deployah/internal/manifest"
+	"deployah.dev/deployah/internal/spec"
 )
 
 // ChartCache represents a cached chart entry
@@ -39,13 +39,13 @@ var (
 	chartHashOnce     sync.Once       // Ensure embedded chart hash is computed only once
 )
 
-// GenerateCacheKey creates a cache key from manifest and chart template
+// GenerateCacheKey creates a cache key from spec and chart template
 // hashes.
-func GenerateCacheKey(manifest *manifest.Manifest) (string, error) {
-	// Create a deterministic representation of the manifest for hashing
-	manifestBytes, err := json.Marshal(manifest)
+func GenerateCacheKey(manifest *spec.Spec) (string, error) {
+	// Create a deterministic representation of the spec for hashing
+	specBytes, err := json.Marshal(manifest)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal manifest for hashing: %w", err)
+		return "", fmt.Errorf("failed to marshal spec for hashing: %w", err)
 	}
 
 	// Get hash of embedded chart templates to detect chart updates
@@ -54,9 +54,9 @@ func GenerateCacheKey(manifest *manifest.Manifest) (string, error) {
 		return "", fmt.Errorf("failed to generate embedded chart hash: %w", err)
 	}
 
-	// Combine manifest hash and chart hash for comprehensive cache key
-	manifestHash := sha256.Sum256(manifestBytes)
-	combinedData := fmt.Sprintf("%s-%s", hex.EncodeToString(manifestHash[:]), chartHash)
+	// Combine spec hash and chart hash for comprehensive cache key
+	specHash := sha256.Sum256(specBytes)
+	combinedData := fmt.Sprintf("%s-%s", hex.EncodeToString(specHash[:]), chartHash)
 	finalHash := sha256.Sum256([]byte(combinedData))
 
 	return hex.EncodeToString(finalHash[:]), nil

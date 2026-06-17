@@ -37,9 +37,9 @@ func runValidate(c *nabat.Context) error {
 
 	rt := runtime.FromContext(c)
 
-	m, err := rt.Manifest(c, opts.Environment)
+	m, err := rt.Spec(c, opts.Environment)
 	if err != nil {
-		return fmt.Errorf("load manifest: %w", err)
+		return fmt.Errorf("load spec: %w", err)
 	}
 
 	c.Success("Spec validated", "project", m.Project, "environment", opts.Environment)

@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package manifest
+package spec
 
 // File and Path Constants
 const (
-	// DefaultManifestPath is the default path for the Deployah manifest file
-	DefaultManifestPath = "deployah.yaml"
+	// DefaultSpecPath is the default path for the Deployah spec file
+	DefaultSpecPath = "deployah.yaml"
 
 	// DefaultEnvFile is the default environment file name
 	DefaultEnvFile = ".env"
@@ -68,7 +68,7 @@ const (
 	EnvironmentNamePattern = "^[a-zA-Z0-9_-]+$"
 )
 
-// Manifest Processing
+// Spec Processing
 const (
 	// PlaceholderName is the placeholder used in templates for name substitution
 	PlaceholderName = "{name}"

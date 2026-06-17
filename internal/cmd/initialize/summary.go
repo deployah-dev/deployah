@@ -7,7 +7,7 @@ import (
 	"nabat.dev/nabat"
 	"sigs.k8s.io/yaml"
 
-	"deployah.dev/deployah/internal/manifest"
+	"deployah.dev/deployah/internal/spec"
 )
 
 func showSummaryAndSave(c *nabat.Context, config *ProjectConfig) error {
@@ -67,67 +67,67 @@ func showSummaryAndSave(c *nabat.Context, config *ProjectConfig) error {
 		return fmt.Errorf("failed to show summary: %w", err)
 	}
 
-	if err = validateManifestAndEnvironments(config); err != nil {
+	if err = validateSpecAndEnvironments(config); err != nil {
 		return fmt.Errorf("configuration validation failed: %w", err)
 	}
 
-	manifestData := manifest.Manifest{
+	specData := spec.Spec{
 		APIVersion:   "v1-alpha.1",
 		Project:      config.Name,
 		Environments: config.Environments,
 		Components:   config.Components,
 	}
 
-	if err = manifest.FillManifestWithDefaults(&manifestData, manifestData.APIVersion); err != nil {
-		return fmt.Errorf("failed to apply defaults to manifest: %w", err)
+	if err = spec.FillSpecWithDefaults(&specData, specData.APIVersion); err != nil {
+		return fmt.Errorf("failed to apply defaults to spec: %w", err)
 	}
 
 	if config.DryRun {
-		return showManifestPreview(c, &manifestData)
+		return showSpecPreview(c, &specData)
 	}
 
-	if err = manifest.Save(&manifestData, config.OutputPath); err != nil {
-		return fmt.Errorf("failed to save manifest to %s: %w", config.OutputPath, err)
+	if err = spec.Save(&specData, config.OutputPath); err != nil {
+		return fmt.Errorf("failed to save spec to %s: %w", config.OutputPath, err)
 	}
 
 	return nil
 }
 
-func validateManifestAndEnvironments(config *ProjectConfig) error {
-	manifestData := manifest.Manifest{
+func validateSpecAndEnvironments(config *ProjectConfig) error {
+	specData := spec.Spec{
 		APIVersion:   "v1-alpha.1",
 		Project:      config.Name,
 		Environments: config.Environments,
 		Components:   config.Components,
 	}
 
-	manifestBytes, err := yaml.Marshal(&manifestData)
+	specBytes, err := yaml.Marshal(&specData)
 	if err != nil {
-		return fmt.Errorf("failed to convert manifest to YAML: %w", err)
+		return fmt.Errorf("failed to convert spec to YAML: %w", err)
 	}
 
-	var manifestObj map[string]any
-	if err = yaml.Unmarshal(manifestBytes, &manifestObj); err != nil {
-		return fmt.Errorf("failed to parse manifest YAML: %w", err)
+	var specObj map[string]any
+	if err = yaml.Unmarshal(specBytes, &specObj); err != nil {
+		return fmt.Errorf("failed to parse spec YAML: %w", err)
 	}
 
-	if err = manifest.ValidateManifest(manifestObj, manifestData.APIVersion); err != nil {
-		return fmt.Errorf("manifest validation failed: %w", err)
+	if err = spec.ValidateSpec(specObj, specData.APIVersion); err != nil {
+		return fmt.Errorf("spec validation failed: %w", err)
 	}
 
 	return nil
 }
 
-func showManifestPreview(c *nabat.Context, manifestData *manifest.Manifest) error {
-	manifestYAML, err := yaml.Marshal(manifestData)
+func showSpecPreview(c *nabat.Context, specData *spec.Spec) error {
+	specYAML, err := yaml.Marshal(specData)
 	if err != nil {
-		return fmt.Errorf("failed to marshal manifest for preview: %w", err)
+		return fmt.Errorf("failed to marshal spec for preview: %w", err)
 	}
 
 	var preview strings.Builder
 	preview.WriteString(DryRunPreviewHeader)
-	if _, writeErr := preview.Write(manifestYAML); writeErr != nil {
-		return fmt.Errorf("failed to write manifest preview: %w", writeErr)
+	if _, writeErr := preview.Write(specYAML); writeErr != nil {
+		return fmt.Errorf("failed to write spec preview: %w", writeErr)
 	}
 	preview.WriteString(DryRunPreviewFooter)
 

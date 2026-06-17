@@ -16,7 +16,7 @@ import (
 	"gopkg.in/yaml.v3"
 	"k8s.io/utils/ptr"
 
-	"deployah.dev/deployah/internal/manifest"
+	"deployah.dev/deployah/internal/spec"
 
 	sprig "github.com/Masterminds/sprig/v3"
 )
@@ -73,8 +73,8 @@ type ChartData struct {
 	}
 	// Values is the data map for values.yaml templating.
 	Values map[string]any
-	// Manifest is the source Deployah manifest for dynamic sub-charts.
-	Manifest *manifest.Manifest
+	// Spec is the source Deployah spec for dynamic sub-charts.
+	Spec *spec.Spec
 }
 
 // GenerateReleaseName returns the Helm release name for project and
@@ -87,8 +87,8 @@ func GenerateReleaseName(projectName, environmentName string) string {
 // rendering .gotmpl files with Go templates and Sprig functions. It returns
 // the prepared chart root directory. Uses caching to avoid regenerating
 // identical charts.
-func PrepareChart(ctx context.Context, manifest *manifest.Manifest, desiredEnvironment string) (string, error) {
-	// Generate comprehensive cache key based on both manifest and embedded chart templates
+func PrepareChart(ctx context.Context, manifest *spec.Spec, desiredEnvironment string) (string, error) {
+	// Generate comprehensive cache key based on both spec and embedded chart templates
 	cacheKey, err := GenerateCacheKey(manifest)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate cache key: %w", err)
@@ -118,7 +118,7 @@ func PrepareChart(ctx context.Context, manifest *manifest.Manifest, desiredEnvir
 	chartData.Chart.Name = manifest.Project
 	chartData.Chart.Version = "0.1.0"
 	chartData.Values = map[string]any{}
-	chartData.Manifest = manifest
+	chartData.Spec = manifest
 
 	err = fs.WalkDir(ChartTemplateFS, root, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -191,9 +191,9 @@ func PrepareChart(ctx context.Context, manifest *manifest.Manifest, desiredEnvir
 	}
 
 	// Create a values.yaml file that includes the values for each component
-	values, err := MapManifestToChartValues(manifest, desiredEnvironment)
+	values, err := MapSpecToChartValues(manifest, desiredEnvironment)
 	if err != nil {
-		return "", fmt.Errorf("failed to map manifest to chart values: %w", err)
+		return "", fmt.Errorf("failed to map spec to chart values: %w", err)
 	}
 	valuesYAML, err := yaml.Marshal(values)
 	if err != nil {
@@ -211,7 +211,7 @@ func PrepareChart(ctx context.Context, manifest *manifest.Manifest, desiredEnvir
 }
 
 // createComponentSubCharts creates sub-chart directories for each component
-func createComponentSubCharts(chartDir string, manifest *manifest.Manifest) error {
+func createComponentSubCharts(chartDir string, manifest *spec.Spec) error {
 	chartsDir := filepath.Join(chartDir, "charts")
 	if err := os.MkdirAll(chartsDir, 0o750); err != nil {
 		return fmt.Errorf("failed to create charts directory: %w", err)
@@ -260,9 +260,9 @@ func createComponentAppTemplate(templatesDir string) error {
 	return os.WriteFile(filepath.Join(templatesDir, "app.yaml"), []byte(appTemplate), 0o600)
 }
 
-// MapManifestToChartValues converts a manifest into Helm chart values for the
+// MapSpecToChartValues converts a spec into Helm chart values for the
 // given environment.
-func MapManifestToChartValues(m *manifest.Manifest, desiredEnvironment string) (map[string]any, error) {
+func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string) (map[string]any, error) {
 	values := make(map[string]any)
 
 	for componentName, component := range m.Components {
@@ -279,7 +279,7 @@ func MapManifestToChartValues(m *manifest.Manifest, desiredEnvironment string) (
 			},
 		}
 
-		if component.Role != manifest.ComponentRoleService {
+		if component.Role != spec.ComponentRoleService {
 			// TODO: Add support for component roles such as "worker", and "job"
 			return nil, fmt.Errorf("role %s is not supported yet", component.Role)
 		}
@@ -294,7 +294,7 @@ func MapManifestToChartValues(m *manifest.Manifest, desiredEnvironment string) (
 		//   - config.api.yaml (component-specific)
 		//   - config.api.production.yaml (environment and component-specific)
 
-		if component.Kind == manifest.ComponentKindStateful {
+		if component.Kind == spec.ComponentKindStateful {
 			// TODO: Add support for stateful components
 			return nil, fmt.Errorf("stateful components are not supported yet")
 		}
@@ -319,7 +319,7 @@ func MapManifestToChartValues(m *manifest.Manifest, desiredEnvironment string) (
 
 		resources := map[string]any{}
 
-		// Map manifest-level resolved resources (defaults/presets applied already by manifest package)
+		// Map spec-level resolved resources (defaults/presets applied already by spec package)
 		if (component.Resources.CPU != nil && *component.Resources.CPU != "") ||
 			(component.Resources.Memory != nil && *component.Resources.Memory != "") ||
 			(component.Resources.EphemeralStorage != nil && *component.Resources.EphemeralStorage != "") {
@@ -370,7 +370,7 @@ func MapManifestToChartValues(m *manifest.Manifest, desiredEnvironment string) (
 
 		// Add ports only for service role components with a valid port
 		// Worker and job roles do not expose ports (there is no use case for ports for worker or job components)
-		if component.Port > 0 && component.Role == manifest.ComponentRoleService {
+		if component.Port > 0 && component.Role == spec.ComponentRoleService {
 			componentValues["ports"] = []map[string]any{
 				{
 					"name":          "http",

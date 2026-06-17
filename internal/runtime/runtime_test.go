@@ -26,7 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
 
-	"deployah.dev/deployah/internal/manifest"
+	"deployah.dev/deployah/internal/spec"
 
 	v1 "helm.sh/helm/v4/pkg/release/v1"
 )
@@ -43,7 +43,7 @@ func (m *MockHelmClient) IsReachable() error {
 }
 
 // InstallApp records a mock call for InstallApp.
-func (m *MockHelmClient) InstallApp(ctx context.Context, manifest *manifest.Manifest, environment string, dryRun bool) error {
+func (m *MockHelmClient) InstallApp(ctx context.Context, manifest *spec.Spec, environment string, dryRun bool) error {
 	args := m.Called(ctx, manifest, environment, dryRun)
 	return args.Error(0)
 }
@@ -369,7 +369,7 @@ func TestIntegrationWithMocks(t *testing.T) {
 		mockLogger := &MockLoggerProvider{}
 
 		// Set up expectations
-		testManifest := &manifest.Manifest{
+		testManifest := &spec.Spec{
 			Project: "test-project",
 		}
 

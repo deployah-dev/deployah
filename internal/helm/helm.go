@@ -17,7 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/selection"
 
-	"deployah.dev/deployah/internal/manifest"
+	"deployah.dev/deployah/internal/spec"
 
 	v1 "helm.sh/helm/v4/pkg/release/v1"
 )
@@ -174,7 +174,7 @@ func (c *Client) IsReachable() error {
 }
 
 // InstallApp installs or upgrades the app using the embedded chart.
-func (c *Client) InstallApp(ctx context.Context, manifest *manifest.Manifest, environment string, dryRun bool) error {
+func (c *Client) InstallApp(ctx context.Context, manifest *spec.Spec, environment string, dryRun bool) error {
 	// Set comprehensive labels for better filtering
 	labels := map[string]string{
 		"deployah.dev/project":     manifest.Project,

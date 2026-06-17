@@ -1,4 +1,4 @@
-package manifest
+package spec
 
 import (
 	"bytes"
@@ -13,7 +13,7 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"github.com/spf13/cast"
 
-	"deployah.dev/deployah/internal/manifest/schema"
+	"deployah.dev/deployah/internal/spec/schema"
 )
 
 // DefaultValues represents default values extracted from a JSON schema.
@@ -31,7 +31,7 @@ type DefaultValues map[string]any
 
 // Constants for path construction and validation.
 // These constants define the structure and patterns used for navigating
-// and applying defaults to nested manifest structures.
+// and applying defaults to nested spec structures.
 const (
 	// Computed lengths for efficient string operations
 	componentsPrefixLength   = len(ComponentsPrefix)   // 11 - avoids repeated len() calls
@@ -43,10 +43,10 @@ const (
 // and pattern extraction operations.
 //
 // Cache keys follow the format: "{version}-{schemaType}"
-// Example: "v1-alpha.1-manifest", "v1-alpha.1-environments"
+// Example: "v1-alpha.1-spec", "v1-alpha.1-environments"
 var (
 	// compiledSchemaCache stores compiled JSON schemas with their raw data
-	// Key format: "v1-alpha.1-manifest" -> schemaInfo{compiled, rawData}
+	// Key format: "v1-alpha.1-spec" -> schemaInfo{compiled, rawData}
 	compiledSchemaCache = make(map[string]*schemaInfo)
 
 	// patternCache stores extracted component name patterns from schemas
@@ -285,7 +285,7 @@ func extractDefaultsFromSchemaData(schemaData any, path string, defaults Default
 // main entry point for schema-based defaults for a version and type.
 //
 // version is the schema version identifier (e.g. "v1-alpha.1"). schemaType
-// selects the manifest or environments schema. Returns a map of dot-notation
+// selects the spec or environments schema. Returns a map of dot-notation
 // paths to default values, or an error if schema loading or processing fails.
 //
 // Example usage:
@@ -322,7 +322,7 @@ func GetDefaultValues(version string, schemaType schema.SchemaType) (DefaultValu
 // that preset limits are not automatically applied.
 //
 // Parameters:
-//   - manifest: Manifest to process (modified in-place)
+//   - spec: Spec to process (modified in-place)
 //
 // Returns:
 //   - error: If preset resolution fails
@@ -340,8 +340,8 @@ func GetDefaultValues(version string, schemaType schema.SchemaType) (DefaultValu
 //		Memory: "512Mi",
 //		EphemeralStorage: "50Mi",
 //	}
-func resolveResourcePresets(manifest *Manifest) error {
-	for componentName, component := range manifest.Components {
+func resolveResourcePresets(spec *Spec) error {
+	for componentName, component := range spec.Components {
 		// Only resolve if ResourcePreset is set and Resources are empty
 		if component.ResourcePreset != "" && isZeroValue(component.Resources) {
 			if presetResources, exists := ResourcePresetMappings[component.ResourcePreset]; exists {
@@ -355,12 +355,12 @@ func resolveResourcePresets(manifest *Manifest) error {
 				// Clear the resourcePreset field after converting to resources
 				// to avoid validation conflicts
 				component.ResourcePreset = ""
-				manifest.Components[componentName] = component
+				spec.Components[componentName] = component
 				continue
 			}
 		}
 
-		// If neither explicit resources nor a preset is provided, apply a default preset at manifest layer
+		// If neither explicit resources nor a preset is provided, apply a default preset at spec layer
 		if component.ResourcePreset == "" && isZeroValue(component.Resources) {
 			if presetResources, exists := ResourcePresetMappings[ResourcePresetSmall]; exists {
 				component.ResourcePreset = ResourcePresetSmall
@@ -372,30 +372,30 @@ func resolveResourcePresets(manifest *Manifest) error {
 				// Clear the resourcePreset field after converting to resources
 				// to avoid validation conflicts
 				component.ResourcePreset = ""
-				manifest.Components[componentName] = component
+				spec.Components[componentName] = component
 			}
 		}
 	}
 	return nil
 }
 
-// FillManifestWithDefaults fills a [Manifest] with defaults from JSON
-// schemas. It applies manifest and environment schema defaults, resolves
+// FillSpecWithDefaults fills a [Spec] with defaults from JSON
+// schemas. It applies spec and environment schema defaults, resolves
 // resource presets, and supports environment-specific placeholder substitution.
 //
 // The function processes defaults in this order:
-//  1. Apply manifest schema defaults to components
+//  1. Apply spec schema defaults to components
 //  2. Resolve resource presets to concrete values
-//  3. Merge manifest and environment defaults
+//  3. Merge spec and environment defaults
 //  4. Apply merged defaults to environments with placeholder substitution
 //
-// manifest is updated in place. version selects the schema version for default
+// spec is updated in place. version selects the schema version for default
 // extraction. Returns an error if schema loading, default extraction, or
 // application fails.
 //
 // Example:
 //
-//	manifest := &Manifest{
+//	spec := &Spec{
 //		APIVersion: "v1-alpha.1",
 //		Project:    "my-app",
 //		Components: map[string]Component{
@@ -405,21 +405,21 @@ func resolveResourcePresets(manifest *Manifest) error {
 //			{Name: "production"}, // Only name specified
 //		},
 //	}
-//	err := FillManifestWithDefaults(manifest, "v1-alpha.1")
+//	err := FillSpecWithDefaults(spec, "v1-alpha.1")
 //	// After filling:
-//	// manifest.Components["web"].Role = "service"
-//	// manifest.Components["web"].Port = 8080
-//	// manifest.Environments[0].EnvFile = ".env.production"
-func FillManifestWithDefaults(manifest *Manifest, version string) error {
-	if manifest == nil {
-		return fmt.Errorf("manifest cannot be nil")
+//	// spec.Components["web"].Role = "service"
+//	// spec.Components["web"].Port = 8080
+//	// spec.Environments[0].EnvFile = ".env.production"
+func FillSpecWithDefaults(spec *Spec, version string) error {
+	if spec == nil {
+		return fmt.Errorf("spec cannot be nil")
 	}
 
 	if version == "" {
 		return fmt.Errorf("version cannot be empty")
 	}
 
-	manifestDefaults, err := GetDefaultValues(version, schema.SchemaTypeManifest)
+	specDefaults, err := GetDefaultValues(version, schema.SchemaTypeManifest)
 	if err != nil {
 		return fmt.Errorf("failed to get default values: %w", err)
 	}
@@ -430,27 +430,27 @@ func FillManifestWithDefaults(manifest *Manifest, version string) error {
 	}
 
 	// Apply defaults to components
-	if manifest.Components == nil {
-		manifest.Components = make(map[string]Component)
+	if spec.Components == nil {
+		spec.Components = make(map[string]Component)
 	}
 
-	for componentName, component := range manifest.Components {
-		if err = applyDefaultsRecursively(&component, manifestDefaults, "components."+componentName, version); err != nil {
+	for componentName, component := range spec.Components {
+		if err = applyDefaultsRecursively(&component, specDefaults, "components."+componentName, version); err != nil {
 			return fmt.Errorf("failed to apply defaults to component %s: %w", componentName, err)
 		}
-		manifest.Components[componentName] = component
+		spec.Components[componentName] = component
 	}
 
 	// Resolve resource presets after applying schema defaults
-	if err = resolveResourcePresets(manifest); err != nil {
+	if err = resolveResourcePresets(spec); err != nil {
 		return fmt.Errorf("failed to resolve resource presets: %w", err)
 	}
 
-	// Merge manifest and environment defaults for environments
+	// Merge spec and environment defaults for environments
 	mergedDefaults := make(DefaultValues)
-	// Copy manifest defaults first
-	if err = mergo.Merge(&mergedDefaults, manifestDefaults); err != nil {
-		return fmt.Errorf("failed to merge manifest defaults: %w", err)
+	// Copy spec defaults first
+	if err = mergo.Merge(&mergedDefaults, specDefaults); err != nil {
+		return fmt.Errorf("failed to merge spec defaults: %w", err)
 	}
 	// Merge environment defaults with override to allow env defaults to take precedence
 	if err = mergo.Merge(&mergedDefaults, envDefaults, mergo.WithOverride); err != nil {
@@ -458,9 +458,9 @@ func FillManifestWithDefaults(manifest *Manifest, version string) error {
 	}
 
 	// Apply environment defaults
-	for i := range manifest.Environments {
-		if err = applyDefaultsRecursively(&manifest.Environments[i], mergedDefaults, "environments."+manifest.Environments[i].Name, version); err != nil {
-			return fmt.Errorf("failed to apply defaults to environment %s: %w", manifest.Environments[i].Name, err)
+	for i := range spec.Environments {
+		if err = applyDefaultsRecursively(&spec.Environments[i], mergedDefaults, "environments."+spec.Environments[i].Name, version); err != nil {
+			return fmt.Errorf("failed to apply defaults to environment %s: %w", spec.Environments[i].Name, err)
 		}
 	}
 
@@ -933,10 +933,10 @@ func setFieldValue(field reflect.Value, value any) error {
 			func(f, t reflect.Type, data any) (any, error) {
 				if f.Kind() == reflect.String && t.Kind() == reflect.String {
 					// Handle custom string types like ComponentRole, ComponentKind, etc.
-					if t.String() == "manifest.ComponentRole" ||
-						t.String() == "manifest.ComponentKind" ||
-						t.String() == "manifest.MetricType" ||
-						t.String() == "manifest.ResourcePreset" {
+					if t.String() == "spec.ComponentRole" ||
+						t.String() == "spec.ComponentKind" ||
+						t.String() == "spec.MetricType" ||
+						t.String() == "spec.ResourcePreset" {
 						return data, nil
 					}
 				}
@@ -1024,24 +1024,24 @@ func isZeroValue(val any) bool {
 	}
 }
 
-// CreateManifestWithDefaults creates a new Manifest with default values applied.
-// This is a convenience function that creates a minimal manifest structure and
+// CreateSpecWithDefaults creates a new Spec with default values applied.
+// This is a convenience function that creates a minimal spec structure and
 // then applies all relevant defaults from the specified schema version.
 //
 // projectName names the new project. version selects the schema version for
-// defaults. Returns a new manifest with defaults applied, or an error if
+// defaults. Returns a new spec with defaults applied, or an error if
 // creation or default application fails.
 //
 // Example:
 //
-//	manifest, err := CreateManifestWithDefaults("my-app", "v1-alpha.1")
+//	spec, err := CreateSpecWithDefaults("my-app", "v1-alpha.1")
 //	// Returns:
-//	// &Manifest{
+//	// &Spec{
 //	//     APIVersion: "v1-alpha.1",
 //	//     Project:    "my-app",
 //	//     Components: map[string]Component{}, // Empty but initialized
 //	// }
-func CreateManifestWithDefaults(projectName, version string) (*Manifest, error) {
+func CreateSpecWithDefaults(projectName, version string) (*Spec, error) {
 	if projectName == "" {
 		return nil, fmt.Errorf("project name cannot be empty")
 	}
@@ -1050,20 +1050,20 @@ func CreateManifestWithDefaults(projectName, version string) (*Manifest, error) 
 		return nil, fmt.Errorf("version cannot be empty")
 	}
 
-	manifest := &Manifest{
+	spec := &Spec{
 		APIVersion: version,
 		Project:    projectName,
 		Components: make(map[string]Component),
 	}
 
-	if err := FillManifestWithDefaults(manifest, version); err != nil {
-		return nil, fmt.Errorf("failed to fill manifest with defaults: %w", err)
+	if err := FillSpecWithDefaults(spec, version); err != nil {
+		return nil, fmt.Errorf("failed to fill spec with defaults: %w", err)
 	}
 
-	return manifest, nil
+	return spec, nil
 }
 
-// extractComponentPattern extracts the component name pattern from the manifest
+// extractComponentPattern extracts the component name pattern from the spec
 // schema.
 // This function retrieves the regular expression pattern used in patternProperties
 // for component definitions, enabling dynamic component name matching.

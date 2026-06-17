@@ -1,4 +1,4 @@
-package manifest
+package spec
 
 import (
 	"bufio"
@@ -15,7 +15,7 @@ import (
 // not exist. If explicitlySet is false, the function returns nil when the
 // file does not exist.
 func parseEnvFile(path string, explicitlySet bool) (map[string]string, error) {
-	data, err := os.ReadFile(path) // #nosec G304 -- env file path from manifest or CLI
+	data, err := os.ReadFile(path) // #nosec G304 -- env file path from spec or CLI
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			if explicitlySet {

@@ -1,4 +1,4 @@
-package manifest
+package spec
 
 import (
 	"fmt"
@@ -7,7 +7,7 @@ import (
 	"github.com/fluxcd/pkg/envsubst"
 )
 
-// SubstituteVariables substitutes variables in manifest data using the
+// SubstituteVariables substitutes variables in spec data using the
 // provided environment. Variable precedence is lowest to highest:
 // environment definition, env file, then OS environment variables.
 // Substitution uses the envsubst syntax.

@@ -1,4 +1,4 @@
-package manifest
+package spec
 
 import (
 	"encoding/json"
@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"sync"
 
-	"deployah.dev/deployah/internal/manifest/schema"
+	"deployah.dev/deployah/internal/spec/schema"
 )
 
 // fieldValidators holds compiled regex patterns extracted from the JSON schema
@@ -28,12 +28,12 @@ func initValidators() error {
 	// Get the latest schema to extract patterns from
 	schemaBytes, err := schema.GetLatestManifestSchema()
 	if err != nil {
-		return fmt.Errorf("failed to get latest manifest schema: %w", err)
+		return fmt.Errorf("failed to get latest spec schema: %w", err)
 	}
 
 	var schemaData map[string]any
 	if err = json.Unmarshal(schemaBytes, &schemaData); err != nil {
-		return fmt.Errorf("failed to parse manifest schema: %w", err)
+		return fmt.Errorf("failed to parse spec schema: %w", err)
 	}
 
 	// Extract project name pattern

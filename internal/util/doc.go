@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // Package util provides small validation helpers shared by CLI prompts and
-// manifest processing.
+// spec processing.
 //
 // Functions such as [ValidatePositiveInteger], [ValidateNonEmpty], and
 // [ValidateResourceString] centralize input checks so interactive init and

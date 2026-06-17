@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package helm generates Helm charts from Deployah manifests and drives
+// Package helm generates Helm charts from Deployah specs and drives
 // install, upgrade, list, and delete operations against a cluster.
 //
 // [PrepareChart] renders templates and values for an environment.

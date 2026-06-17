@@ -6,8 +6,8 @@ import (
 
 	"nabat.dev/nabat"
 
-	"deployah.dev/deployah/internal/manifest"
 	"deployah.dev/deployah/internal/runtime"
+	"deployah.dev/deployah/internal/spec"
 )
 
 // Options holds command-line flags for deploy.
@@ -47,12 +47,12 @@ func runDeploy(c *nabat.Context) error {
 
 	rt := runtime.FromContext(c)
 
-	manifest, err := rt.Manifest(c, opts.Environment)
+	manifest, err := rt.Spec(c, opts.Environment)
 	if err != nil {
-		return fmt.Errorf("load manifest: %w", err)
+		return fmt.Errorf("load spec: %w", err)
 	}
 
-	c.Logger().Debug("manifest loaded", "env", opts.Environment)
+	c.Logger().Debug("spec loaded", "env", opts.Environment)
 
 	// Resolve the target Kubernetes context: the --context flag wins, otherwise
 	// fall back to the selected environment's "context" field. Apply it before
@@ -100,9 +100,9 @@ func runDeploy(c *nabat.Context) error {
 }
 
 // environmentContext returns the "context" field of the named environment in
-// the manifest, or an empty string when the environment is not found or has no
+// the spec, or an empty string when the environment is not found or has no
 // context set.
-func environmentContext(m *manifest.Manifest, name string) string {
+func environmentContext(m *spec.Spec, name string) string {
 	if m == nil {
 		return ""
 	}

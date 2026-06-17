@@ -1,4 +1,4 @@
-package manifest
+package spec
 
 import (
 	"bytes"
@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 
-	"deployah.dev/deployah/internal/manifest/schema"
+	"deployah.dev/deployah/internal/spec/schema"
 
 	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
 )
@@ -45,19 +45,19 @@ func validateYAMLAgainstSchema(
 		return fmt.Errorf("failed to compile %s schema version %q: %w", schemaType, version, err)
 	}
 
-	// Validate the manifest
+	// Validate the spec
 	if err = compiled.Validate(obj); err != nil {
 		return fmt.Errorf("%s validation failed for schema version %q: %w", schemaType, version, err)
 	}
 	return nil
 }
 
-// ValidateManifest validates manifest YAML against the provided JSON schema.
+// ValidateSpec validates spec YAML against the provided JSON schema.
 // version should be the version of the schema (e.g., "v1-alpha.1").
 // This is a strict validation: unknown fields are not allowed.
-func ValidateManifest(manifestObj map[string]any, version string) error {
+func ValidateSpec(specObj map[string]any, version string) error {
 	return validateYAMLAgainstSchema(
-		manifestObj,
+		specObj,
 		version,
 		schema.GetManifestSchema,
 		schema.SchemaTypeManifest,
@@ -68,27 +68,27 @@ func ValidateManifest(manifestObj map[string]any, version string) error {
 // schema file.
 // version should be the version of the schema (e.g., "v1-alpha.1").
 // This is a strict validation: unknown fields are not allowed.
-func ValidateEnvironments(manifestObj map[string]any, version string) error {
+func ValidateEnvironments(specObj map[string]any, version string) error {
 	return validateYAMLAgainstSchema(
-		manifestObj,
+		specObj,
 		version,
 		schema.GetEnvironmentsSchema,
 		schema.SchemaTypeEnvironments,
 	)
 }
 
-// ValidateAPIVersion checks the manifest apiVersion field for presence, type,
+// ValidateAPIVersion checks the spec apiVersion field for presence, type,
 // and validity.
 // Returns the apiVersion string if valid, or an error otherwise.
-func ValidateAPIVersion(manifestObj map[string]any) (string, error) {
+func ValidateAPIVersion(specObj map[string]any) (string, error) {
 	validVersions, err := schema.GetValidManifestVersions()
 	if err != nil {
-		return "", fmt.Errorf("failed to get valid manifest versions: %w", err)
+		return "", fmt.Errorf("failed to get valid spec versions: %w", err)
 	}
 
-	apiVersionVal, ok := manifestObj["apiVersion"]
+	apiVersionVal, ok := specObj["apiVersion"]
 	if !ok {
-		return "", fmt.Errorf("manifest is missing 'apiVersion' field")
+		return "", fmt.Errorf("spec is missing 'apiVersion' field")
 	}
 
 	apiVersionStr, ok := apiVersionVal.(string)
@@ -97,7 +97,7 @@ func ValidateAPIVersion(manifestObj map[string]any) (string, error) {
 	}
 
 	if !slices.Contains(validVersions, apiVersionStr) {
-		return "", fmt.Errorf("unsupported manifest schema version: %s (valid: %v)", apiVersionStr, validVersions)
+		return "", fmt.Errorf("unsupported spec schema version: %s (valid: %v)", apiVersionStr, validVersions)
 	}
 
 	return apiVersionStr, nil
@@ -146,11 +146,11 @@ func ValidateComponentAutoscaling(component Component) error {
 	return nil
 }
 
-// ValidateManifestComponents validates all components in a manifest.
-func ValidateManifestComponents(manifest *Manifest) error {
+// ValidateSpecComponents validates all components in a spec.
+func ValidateSpecComponents(spec *Spec) error {
 	var errs []error
 
-	for name, component := range manifest.Components {
+	for name, component := range spec.Components {
 		if err := ValidateComponentResources(component); err != nil {
 			errs = append(errs, fmt.Errorf("component %s: %w", name, err))
 		}

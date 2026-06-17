@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package manifest
+package spec
 
-// Manifest defines the structure of the project manifest.
-type Manifest struct {
-	// APIVersion is the schema version of the manifest (e.g., "v1-alpha.1").
+// Spec defines the structure of the project spec.
+type Spec struct {
+	// APIVersion is the schema version of the spec (e.g., "v1-alpha.1").
 	APIVersion string `json:"apiVersion,omitempty" yaml:"apiVersion,omitempty"`
 	// Project is the project name.
 	Project string `json:"project" yaml:"project"`
@@ -26,9 +26,9 @@ type Manifest struct {
 	Components map[string]Component `json:"components" yaml:"components"`
 }
 
-// EnvironmentNames returns the list of environment names defined in the manifest.
+// EnvironmentNames returns the list of environment names defined in the spec.
 // Returns an empty slice if no environments are defined.
-func (m *Manifest) EnvironmentNames() []string {
+func (m *Spec) EnvironmentNames() []string {
 	if len(m.Environments) == 0 {
 		return []string{}
 	}

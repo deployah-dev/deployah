@@ -8,12 +8,12 @@ import (
 
 	"nabat.dev/nabat"
 
-	"deployah.dev/deployah/internal/manifest"
+	"deployah.dev/deployah/internal/spec"
 	"deployah.dev/deployah/internal/util"
 )
 
-func validateComponentNameUnique(name string, existing map[string]manifest.Component) error {
-	if err := manifest.ValidateComponentName(name); err != nil {
+func validateComponentNameUnique(name string, existing map[string]spec.Component) error {
+	if err := spec.ValidateComponentName(name); err != nil {
 		return fmt.Errorf("failed to validate component name: %w", err)
 	}
 	if _, exists := existing[name]; exists {
@@ -22,15 +22,15 @@ func validateComponentNameUnique(name string, existing map[string]manifest.Compo
 	return nil
 }
 
-func validateResourcePreset(preset manifest.ResourcePreset) error {
-	validPresets := []manifest.ResourcePreset{
-		manifest.ResourcePresetNano,
-		manifest.ResourcePresetMicro,
-		manifest.ResourcePresetSmall,
-		manifest.ResourcePresetMedium,
-		manifest.ResourcePresetLarge,
-		manifest.ResourcePresetXLarge,
-		manifest.ResourcePreset2XLarge,
+func validateResourcePreset(preset spec.ResourcePreset) error {
+	validPresets := []spec.ResourcePreset{
+		spec.ResourcePresetNano,
+		spec.ResourcePresetMicro,
+		spec.ResourcePresetSmall,
+		spec.ResourcePresetMedium,
+		spec.ResourcePresetLarge,
+		spec.ResourcePresetXLarge,
+		spec.ResourcePreset2XLarge,
 	}
 
 	if slices.Contains(validPresets, preset) {
@@ -70,7 +70,7 @@ func collectComponents(c *nabat.Context, config *ProjectConfig) error {
 		}
 
 		if componentName != "" {
-			var component manifest.Component
+			var component spec.Component
 			component, err = collectComponentDetails(c, componentName, selectedEnvironments)
 			if err != nil {
 				return fmt.Errorf("failed to collect details for component %s: %w", componentName, err)
@@ -89,8 +89,8 @@ func collectComponents(c *nabat.Context, config *ProjectConfig) error {
 	return nil
 }
 
-func collectComponentDetails(c *nabat.Context, componentName string, availableEnvironments []string) (manifest.Component, error) {
-	component := manifest.Component{}
+func collectComponentDetails(c *nabat.Context, componentName string, availableEnvironments []string) (spec.Component, error) {
+	component := spec.Component{}
 
 	if err := collectComponentRole(c, &component, componentName); err != nil {
 		return component, fmt.Errorf("failed to collect component role: %w", err)
@@ -147,46 +147,46 @@ func collectComponentDetails(c *nabat.Context, componentName string, availableEn
 	return component, nil
 }
 
-func collectComponentRole(c *nabat.Context, component *manifest.Component, componentName string) error {
+func collectComponentRole(c *nabat.Context, component *spec.Component, componentName string) error {
 	roles := []string{
-		string(manifest.ComponentRoleService),
-		string(manifest.ComponentRoleWorker),
-		string(manifest.ComponentRoleJob),
+		string(spec.ComponentRoleService),
+		string(spec.ComponentRoleWorker),
+		string(spec.ComponentRoleJob),
 	}
 
 	roleChoice, err := nabat.Select(c,
 		fmt.Sprintf("Role for %s — What role does this component play in your application?", componentName),
 		roles,
-		string(manifest.ComponentRoleService),
+		string(spec.ComponentRoleService),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to collect component role: %w", err)
 	}
 
-	component.Role = manifest.ComponentRole(roleChoice)
+	component.Role = spec.ComponentRole(roleChoice)
 	return nil
 }
 
-func collectComponentKind(c *nabat.Context, component *manifest.Component, componentName string) error {
+func collectComponentKind(c *nabat.Context, component *spec.Component, componentName string) error {
 	kinds := []string{
-		string(manifest.ComponentKindStateless),
-		string(manifest.ComponentKindStateful),
+		string(spec.ComponentKindStateless),
+		string(spec.ComponentKindStateful),
 	}
 
 	kindChoice, err := nabat.Select(c,
 		fmt.Sprintf("Kind for %s — What kind of component is this?", componentName),
 		kinds,
-		string(manifest.ComponentKindStateless),
+		string(spec.ComponentKindStateless),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to collect component kind: %w", err)
 	}
 
-	component.Kind = manifest.ComponentKind(kindChoice)
+	component.Kind = spec.ComponentKind(kindChoice)
 	return nil
 }
 
-func collectComponentImage(c *nabat.Context, component *manifest.Component, componentName string) error {
+func collectComponentImage(c *nabat.Context, component *spec.Component, componentName string) error {
 	var image string
 	err := c.Form(
 		nabat.WithFormField(&image, fmt.Sprintf("Image for %s", componentName),
@@ -205,7 +205,7 @@ func collectComponentImage(c *nabat.Context, component *manifest.Component, comp
 	return nil
 }
 
-func collectComponentPort(c *nabat.Context, component *manifest.Component, componentName string) error {
+func collectComponentPort(c *nabat.Context, component *spec.Component, componentName string) error {
 	addPort, err := c.Confirm(
 		fmt.Sprintf("Add port for %s? Does this component need to expose a port?", componentName),
 		nabat.WithAffirmative("Yes"),
@@ -221,7 +221,7 @@ func collectComponentPort(c *nabat.Context, component *manifest.Component, compo
 			nabat.WithFormField(&portStr, fmt.Sprintf("Port for %s", componentName),
 				"Port number to expose, must be between 1024 and 65535",
 				nabat.WithHint("8080"),
-				nabat.WithValidate(manifest.ValidatePort),
+				nabat.WithValidate(spec.ValidatePort),
 			),
 		)
 		if err != nil {
@@ -239,27 +239,27 @@ func collectComponentPort(c *nabat.Context, component *manifest.Component, compo
 	return nil
 }
 
-func collectComponentResourcePreset(c *nabat.Context, component *manifest.Component, componentName string) error {
+func collectComponentResourcePreset(c *nabat.Context, component *spec.Component, componentName string) error {
 	presets := []string{
-		string(manifest.ResourcePresetNano),
-		string(manifest.ResourcePresetMicro),
-		string(manifest.ResourcePresetSmall),
-		string(manifest.ResourcePresetMedium),
-		string(manifest.ResourcePresetLarge),
-		string(manifest.ResourcePresetXLarge),
-		string(manifest.ResourcePreset2XLarge),
+		string(spec.ResourcePresetNano),
+		string(spec.ResourcePresetMicro),
+		string(spec.ResourcePresetSmall),
+		string(spec.ResourcePresetMedium),
+		string(spec.ResourcePresetLarge),
+		string(spec.ResourcePresetXLarge),
+		string(spec.ResourcePreset2XLarge),
 	}
 
 	resourcePreset, err := nabat.Select(c,
 		fmt.Sprintf("Resource Preset for %s — Select a resource preset for this component", componentName),
 		presets,
-		string(manifest.ResourcePresetSmall),
+		string(spec.ResourcePresetSmall),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to collect resource preset: %w", err)
 	}
 
-	preset := manifest.ResourcePreset(resourcePreset)
+	preset := spec.ResourcePreset(resourcePreset)
 	if err = validateResourcePreset(preset); err != nil {
 		return fmt.Errorf("invalid resource preset selected: %w", err)
 	}
@@ -268,7 +268,7 @@ func collectComponentResourcePreset(c *nabat.Context, component *manifest.Compon
 	return nil
 }
 
-func collectComponentConfigFiles(c *nabat.Context, component *manifest.Component, componentName string) error {
+func collectComponentConfigFiles(c *nabat.Context, component *spec.Component, componentName string) error {
 	addConfigFiles, err := c.Confirm(
 		fmt.Sprintf("Add component-specific config files for %s? Would you like to specify custom environment and config files for this component?", componentName),
 		nabat.WithAffirmative("Yes"),
@@ -305,7 +305,7 @@ func collectComponentConfigFiles(c *nabat.Context, component *manifest.Component
 	return nil
 }
 
-func collectComponentCommand(c *nabat.Context, component *manifest.Component, componentName string) error {
+func collectComponentCommand(c *nabat.Context, component *spec.Component, componentName string) error {
 	addCommand, err := c.Confirm(
 		fmt.Sprintf("Add custom command for %s? Would you like to override the container's default command?", componentName),
 		nabat.WithAffirmative("Yes"),
@@ -332,7 +332,7 @@ func collectComponentCommand(c *nabat.Context, component *manifest.Component, co
 	return nil
 }
 
-func collectComponentArgs(c *nabat.Context, component *manifest.Component, componentName string) error {
+func collectComponentArgs(c *nabat.Context, component *spec.Component, componentName string) error {
 	addArgs, err := c.Confirm(
 		fmt.Sprintf("Add arguments for %s? Would you like to add arguments to the command?", componentName),
 		nabat.WithAffirmative("Yes"),
@@ -359,7 +359,7 @@ func collectComponentArgs(c *nabat.Context, component *manifest.Component, compo
 	return nil
 }
 
-func collectComponentAutoscaling(c *nabat.Context, component *manifest.Component, componentName string) error {
+func collectComponentAutoscaling(c *nabat.Context, component *spec.Component, componentName string) error {
 	addAutoscaling, err := c.Confirm(
 		fmt.Sprintf("Enable autoscaling for %s? Would you like to enable automatic scaling based on resource usage?", componentName),
 		nabat.WithAffirmative("Yes"),
@@ -370,7 +370,7 @@ func collectComponentAutoscaling(c *nabat.Context, component *manifest.Component
 	}
 
 	if addAutoscaling {
-		autoscaling := &manifest.Autoscaling{
+		autoscaling := &spec.Autoscaling{
 			Enabled: true,
 		}
 
@@ -408,9 +408,9 @@ func collectComponentAutoscaling(c *nabat.Context, component *manifest.Component
 		autoscaling.MinReplicas = minReplicas
 		autoscaling.MaxReplicas = maxReplicas
 
-		autoscaling.Metrics = []manifest.Metric{
+		autoscaling.Metrics = []spec.Metric{
 			{
-				Type:   manifest.MetricTypeCPU,
+				Type:   spec.MetricTypeCPU,
 				Target: DefaultCPUThreshold,
 			},
 		}
@@ -421,7 +421,7 @@ func collectComponentAutoscaling(c *nabat.Context, component *manifest.Component
 	return nil
 }
 
-func collectComponentCustomResources(c *nabat.Context, component *manifest.Component, componentName string) error {
+func collectComponentCustomResources(c *nabat.Context, component *spec.Component, componentName string) error {
 	addCustomResources, err := c.Confirm(
 		fmt.Sprintf("Add custom resources for %s? Would you like to specify custom CPU, memory, or storage requirements?", componentName),
 		nabat.WithAffirmative("Yes"),
@@ -455,7 +455,7 @@ func collectComponentCustomResources(c *nabat.Context, component *manifest.Compo
 			return fmt.Errorf("failed to get custom resources: %w", err)
 		}
 
-		resources := manifest.Resources{}
+		resources := spec.Resources{}
 		if cpu != "" {
 			resources.CPU = &cpu
 		}
@@ -472,7 +472,7 @@ func collectComponentCustomResources(c *nabat.Context, component *manifest.Compo
 	return nil
 }
 
-func collectComponentIngress(c *nabat.Context, component *manifest.Component, componentName string) error {
+func collectComponentIngress(c *nabat.Context, component *spec.Component, componentName string) error {
 	addIngress, err := c.Confirm(
 		fmt.Sprintf("Add ingress for %s? Would you like to expose this component via HTTP/HTTPS?", componentName),
 		nabat.WithAffirmative("Yes"),
@@ -489,7 +489,7 @@ func collectComponentIngress(c *nabat.Context, component *manifest.Component, co
 			nabat.WithFormField(&host, fmt.Sprintf("Host for %s", componentName),
 				"Hostname for external access",
 				nabat.WithHint("api.example.com"),
-				nabat.WithValidate(manifest.ValidateHostname),
+				nabat.WithValidate(spec.ValidateHostname),
 			),
 			nabat.WithFormField(&tls, fmt.Sprintf("Enable TLS for %s?", componentName),
 				"Enable HTTPS with TLS certificate",
@@ -502,7 +502,7 @@ func collectComponentIngress(c *nabat.Context, component *manifest.Component, co
 		}
 
 		if host != "" {
-			component.Ingress = &manifest.Ingress{
+			component.Ingress = &spec.Ingress{
 				Host: host,
 				TLS:  tls,
 			}
@@ -512,7 +512,7 @@ func collectComponentIngress(c *nabat.Context, component *manifest.Component, co
 	return nil
 }
 
-func collectComponentEnvironmentVariables(c *nabat.Context, component *manifest.Component, componentName string) error {
+func collectComponentEnvironmentVariables(c *nabat.Context, component *spec.Component, componentName string) error {
 	addComponentEnvVars, err := c.Confirm(
 		fmt.Sprintf("Add environment variables for %s? Would you like to add component-specific environment variables?", componentName),
 		nabat.WithAffirmative("Yes"),
@@ -533,7 +533,7 @@ func collectComponentEnvironmentVariables(c *nabat.Context, component *manifest.
 	return nil
 }
 
-func collectComponentEnvironments(c *nabat.Context, component *manifest.Component, componentName string, availableEnvironments []string) error {
+func collectComponentEnvironments(c *nabat.Context, component *spec.Component, componentName string, availableEnvironments []string) error {
 	if len(availableEnvironments) == 0 {
 		return fmt.Errorf("no environments available for component deployment")
 	}

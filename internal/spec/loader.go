@@ -1,4 +1,4 @@
-package manifest
+package spec
 
 import (
 	"context"
@@ -109,16 +109,16 @@ func fileExists(path string) bool {
 	return err == nil && !info.IsDir()
 }
 
-// Save writes the manifest to a YAML file at the specified path.
-func Save(manifest *Manifest, path string) error {
+// Save writes the spec to a YAML file at the specified path.
+func Save(spec *Spec, path string) error {
 	if path == "" {
-		path = DefaultManifestPath
+		path = DefaultSpecPath
 	}
 
-	// Marshal the manifest to YAML
-	data, err := yaml.Marshal(manifest)
+	// Marshal the spec to YAML
+	data, err := yaml.Marshal(spec)
 	if err != nil {
-		return fmt.Errorf("failed to marshal manifest to YAML: %w", err)
+		return fmt.Errorf("failed to marshal spec to YAML: %w", err)
 	}
 
 	// Create the directory if it doesn't exist
@@ -131,41 +131,41 @@ func Save(manifest *Manifest, path string) error {
 
 	// Write the file
 	if err = os.WriteFile(path, data, 0o600); err != nil {
-		return fmt.Errorf("failed to write manifest to %s: %w", path, err)
+		return fmt.Errorf("failed to write spec to %s: %w", path, err)
 	}
 
 	return nil
 }
 
-// Load reads and parses the manifest YAML file at the given path, resolves
+// Load reads and parses the spec YAML file at the given path, resolves
 // the environment (using the provided envName or default resolution rules),
 // and substitutes variables according to precedence (environment definition,
-// env file, then OS environment). Returns the parsed [Manifest] or an error.
-func Load(ctx context.Context, path, envName string) (*Manifest, error) {
+// env file, then OS environment). Returns the parsed [Spec] or an error.
+func Load(ctx context.Context, path, envName string) (*Spec, error) {
 	if path == "" {
-		path = DefaultManifestPath
+		path = DefaultSpecPath
 	}
 
-	// Read the manifest file
-	data, err := os.ReadFile(path) // #nosec G304 -- manifest path from CLI or default
+	// Read the spec file
+	data, err := os.ReadFile(path) // #nosec G304 -- spec path from CLI or default
 	if err != nil {
-		return nil, fmt.Errorf("failed to read manifest: %w", err)
+		return nil, fmt.Errorf("failed to read spec: %w", err)
 	}
 
 	// Unmarshal into map[string]any for validation.
-	var manifestObj map[string]any
-	if err = yaml.Unmarshal(data, &manifestObj); err != nil {
-		return nil, fmt.Errorf("failed to parse manifest YAML: %w", err)
+	var specObj map[string]any
+	if err = yaml.Unmarshal(data, &specObj); err != nil {
+		return nil, fmt.Errorf("failed to parse spec YAML: %w", err)
 	}
 
 	// Validate API version.
-	version, err := ValidateAPIVersion(manifestObj)
+	version, err := ValidateAPIVersion(specObj)
 	if err != nil {
 		return nil, fmt.Errorf("failed to validate API version: %w", err)
 	}
 
 	// Validate the environments against the schema
-	if err = ValidateEnvironments(manifestObj, version); err != nil {
+	if err = ValidateEnvironments(specObj, version); err != nil {
 		return nil, fmt.Errorf("environments validation failed: %w", err)
 	}
 
@@ -173,7 +173,7 @@ func Load(ctx context.Context, path, envName string) (*Manifest, error) {
 		Environments []Environment `yaml:"environments"`
 	}
 	if err = yaml.Unmarshal(data, &tmp); err != nil {
-		return nil, fmt.Errorf("failed to parse manifest YAML: %w", err)
+		return nil, fmt.Errorf("failed to parse spec YAML: %w", err)
 	}
 
 	// Select the correct environment
@@ -201,36 +201,36 @@ func Load(ctx context.Context, path, envName string) (*Manifest, error) {
 	// Set the resolved env file path for substitution
 	env.EnvFile = envFilePath
 
-	// Substitute variables in the manifest YAML
+	// Substitute variables in the spec YAML
 	substituted, err := SubstituteVariables(data, env)
 	if err != nil {
 		return nil, fmt.Errorf("failed to substitute variables: %w", err)
 	}
 
-	// Unmarshal substituted manifest for final validation
+	// Unmarshal substituted spec for final validation
 	var substitutedObj map[string]any
 	if err = yaml.Unmarshal([]byte(substituted), &substitutedObj); err != nil {
-		return nil, fmt.Errorf("failed to parse substituted manifest YAML: %w", err)
+		return nil, fmt.Errorf("failed to parse substituted spec YAML: %w", err)
 	}
 
-	// Validate the manifest against the schema
-	if err = ValidateManifest(substitutedObj, version); err != nil {
-		return nil, fmt.Errorf("manifest validation failed: %w", err)
+	// Validate the spec against the schema
+	if err = ValidateSpec(substitutedObj, version); err != nil {
+		return nil, fmt.Errorf("spec validation failed: %w", err)
 	}
 
-	// Unmarshal into the Manifest struct
-	var finalManifest Manifest
-	if err = yaml.Unmarshal([]byte(substituted), &finalManifest); err != nil {
-		return nil, fmt.Errorf("failed to parse manifest YAML: %w", err)
+	// Unmarshal into the Spec struct
+	var finalSpec Spec
+	if err = yaml.Unmarshal([]byte(substituted), &finalSpec); err != nil {
+		return nil, fmt.Errorf("failed to parse spec YAML: %w", err)
 	}
 
-	if err = ValidateManifestComponents(&finalManifest); err != nil {
+	if err = ValidateSpecComponents(&finalSpec); err != nil {
 		return nil, fmt.Errorf("validation failed: %w", err)
 	}
 
-	if err = FillManifestWithDefaults(&finalManifest, version); err != nil {
+	if err = FillSpecWithDefaults(&finalSpec, version); err != nil {
 		return nil, fmt.Errorf("failed to apply defaults: %w", err)
 	}
 
-	return &finalManifest, nil
+	return &finalSpec, nil
 }

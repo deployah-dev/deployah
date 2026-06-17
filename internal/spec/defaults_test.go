@@ -1,4 +1,4 @@
-package manifest
+package spec
 
 import (
 	"encoding/json"
@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
-	"deployah.dev/deployah/internal/manifest/schema"
+	"deployah.dev/deployah/internal/spec/schema"
 )
 
 // DefaultsTestSuite is a test suite for the defaults package
@@ -160,17 +160,17 @@ func (s *DefaultsTestSuite) TestGetDefaultValues() {
 	}
 }
 
-// TestFillManifestWithDefaults tests the FillManifestWithDefaults function
-func (s *DefaultsTestSuite) TestFillManifestWithDefaults() {
+// TestFillSpecWithDefaults tests the FillSpecWithDefaults function
+func (s *DefaultsTestSuite) TestFillSpecWithDefaults() {
 	tests := []struct {
 		name      string
-		manifest  *Manifest
+		manifest  *Spec
 		version   string
 		expectErr bool
 	}{
 		{
 			name: "valid manifest with components",
-			manifest: &Manifest{
+			manifest: &Spec{
 				APIVersion: "v1-alpha.1",
 				Project:    "test-project",
 				Components: map[string]Component{
@@ -184,7 +184,7 @@ func (s *DefaultsTestSuite) TestFillManifestWithDefaults() {
 		},
 		{
 			name: "manifest with nil components",
-			manifest: &Manifest{
+			manifest: &Spec{
 				APIVersion: "v1-alpha.1",
 				Project:    "test-project",
 				Components: nil,
@@ -194,7 +194,7 @@ func (s *DefaultsTestSuite) TestFillManifestWithDefaults() {
 		},
 		{
 			name: "manifest with environments",
-			manifest: &Manifest{
+			manifest: &Spec{
 				APIVersion: "v1-alpha.1",
 				Project:    "test-project",
 				Components: map[string]Component{},
@@ -207,7 +207,7 @@ func (s *DefaultsTestSuite) TestFillManifestWithDefaults() {
 		},
 		{
 			name: "invalid version",
-			manifest: &Manifest{
+			manifest: &Spec{
 				APIVersion: "v1-alpha.1",
 				Project:    "test-project",
 				Components: map[string]Component{},
@@ -219,7 +219,7 @@ func (s *DefaultsTestSuite) TestFillManifestWithDefaults() {
 
 	for _, tt := range tests {
 		s.T().Run(tt.name, func(t *testing.T) {
-			err := FillManifestWithDefaults(tt.manifest, tt.version)
+			err := FillSpecWithDefaults(tt.manifest, tt.version)
 			if tt.expectErr {
 				assert.Error(t, err)
 			} else {
@@ -600,8 +600,8 @@ func (s *DefaultsTestSuite) TestIsZeroValue() {
 	}
 }
 
-// TestCreateManifestWithDefaults tests the CreateManifestWithDefaults function
-func (s *DefaultsTestSuite) TestCreateManifestWithDefaults() {
+// TestCreateSpecWithDefaults tests the CreateSpecWithDefaults function
+func (s *DefaultsTestSuite) TestCreateSpecWithDefaults() {
 	tests := []struct {
 		name        string
 		projectName string
@@ -624,7 +624,7 @@ func (s *DefaultsTestSuite) TestCreateManifestWithDefaults() {
 
 	for _, tt := range tests {
 		s.T().Run(tt.name, func(t *testing.T) {
-			manifest, err := CreateManifestWithDefaults(tt.projectName, tt.version)
+			manifest, err := CreateSpecWithDefaults(tt.projectName, tt.version)
 			if tt.expectErr {
 				assert.Error(t, err)
 				assert.Nil(t, manifest)
@@ -725,7 +725,7 @@ func (s *DefaultsTestSuite) TestIsComponentPath() {
 // TestIntegration tests integration scenarios with real schema defaults
 func (s *DefaultsTestSuite) TestIntegration() {
 	s.T().Run("create manifest with defaults and verify component defaults", func(t *testing.T) {
-		manifest, err := CreateManifestWithDefaults("test-project", "v1-alpha.1")
+		manifest, err := CreateSpecWithDefaults("test-project", "v1-alpha.1")
 		assert.NoError(t, err)
 		assert.NotNil(t, manifest)
 
@@ -734,7 +734,7 @@ func (s *DefaultsTestSuite) TestIntegration() {
 			Image: "nginx:latest",
 		}
 
-		err = FillManifestWithDefaults(manifest, "v1-alpha.1")
+		err = FillSpecWithDefaults(manifest, "v1-alpha.1")
 		assert.NoError(t, err)
 
 		webComponent := manifest.Components["web"]
@@ -745,7 +745,7 @@ func (s *DefaultsTestSuite) TestIntegration() {
 	})
 
 	s.T().Run("verify autoscaling defaults", func(t *testing.T) {
-		manifest := &Manifest{
+		manifest := &Spec{
 			APIVersion: "v1-alpha.1",
 			Project:    "test-project",
 			Components: map[string]Component{
@@ -758,7 +758,7 @@ func (s *DefaultsTestSuite) TestIntegration() {
 			},
 		}
 
-		err := FillManifestWithDefaults(manifest, "v1-alpha.1")
+		err := FillSpecWithDefaults(manifest, "v1-alpha.1")
 		assert.NoError(t, err)
 
 		apiComponent := manifest.Components["api"]
@@ -771,7 +771,7 @@ func (s *DefaultsTestSuite) TestIntegration() {
 	})
 
 	s.T().Run("verify environment defaults", func(t *testing.T) {
-		manifest := &Manifest{
+		manifest := &Spec{
 			APIVersion: "v1-alpha.1",
 			Project:    "test-project",
 			Components: map[string]Component{},
@@ -780,7 +780,7 @@ func (s *DefaultsTestSuite) TestIntegration() {
 			},
 		}
 
-		err := FillManifestWithDefaults(manifest, "v1-alpha.1")
+		err := FillSpecWithDefaults(manifest, "v1-alpha.1")
 		assert.NoError(t, err)
 
 		assert.Equal(t, ".env.production", manifest.Environments[0].EnvFile)

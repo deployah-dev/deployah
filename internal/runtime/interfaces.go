@@ -21,7 +21,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
 
-	"deployah.dev/deployah/internal/manifest"
+	"deployah.dev/deployah/internal/spec"
 
 	v1 "helm.sh/helm/v4/pkg/release/v1"
 )
@@ -36,8 +36,8 @@ type RuntimeProvider interface {
 	// Kubernetes returns a configured Kubernetes clientset
 	Kubernetes() (KubernetesClient, error)
 
-	// Manifest loads and returns the parsed manifest for the given environment
-	Manifest(ctx context.Context, environment string) (*manifest.Manifest, error)
+	// Spec loads and returns the parsed spec for the given environment
+	Spec(ctx context.Context, environment string) (*spec.Spec, error)
 
 	// DebugKeepTempChart returns whether temporary chart directories should be kept
 	DebugKeepTempChart() bool
@@ -53,7 +53,7 @@ type HelmClient interface {
 	IsReachable() error
 
 	// InstallApp installs or upgrades an application using Helm
-	InstallApp(ctx context.Context, manifest *manifest.Manifest, environment string, dryRun bool) error
+	InstallApp(ctx context.Context, manifest *spec.Spec, environment string, dryRun bool) error
 
 	// DeleteRelease uninstalls a Helm release
 	DeleteRelease(ctx context.Context, project, environment string) error
@@ -77,17 +77,17 @@ type KubernetesClient interface {
 	kubernetes.Interface
 }
 
-// ManifestLoader defines the interface for manifest loading operations.
+// SpecLoader defines the interface for spec loading operations.
 // This enables testing with mock loaders and different loading strategies.
-type ManifestLoader interface {
-	// Load reads and parses a manifest file
-	Load(ctx context.Context, path, envName string) (*manifest.Manifest, error)
+type SpecLoader interface {
+	// Load reads and parses a spec file
+	Load(ctx context.Context, path, envName string) (*spec.Spec, error)
 
-	// Save writes a manifest to a file
-	Save(manifest *manifest.Manifest, path string) error
+	// Save writes a spec to a file
+	Save(manifest *spec.Spec, path string) error
 
-	// Validate validates a manifest against its schema
-	Validate(manifest *manifest.Manifest) error
+	// Validate validates a spec against its schema
+	Validate(manifest *spec.Spec) error
 }
 
 // LoggerProvider defines the interface for logging operations.

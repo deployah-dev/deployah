@@ -14,7 +14,7 @@
 
 // Package deploy implements the deployah deploy command.
 //
-// The command renders a Deployah manifest into a Helm chart and installs or
+// The command renders a Deployah spec into a Helm chart and installs or
 // upgrades the release on the target cluster for the chosen environment.
 // A dry-run mode renders templates without mutating the cluster.
 //

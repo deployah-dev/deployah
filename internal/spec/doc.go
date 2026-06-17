@@ -12,25 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package manifest parses, validates, and manipulates Deployah manifest files.
+// Package spec parses, validates, and manipulates Deployah spec files.
 //
-// It loads YAML manifests, resolves environments and env files, applies
+// It loads YAML specs, resolves environments and env files, applies
 // schema defaults, substitutes variables, and validates against embedded
 // JSON schemas.
 //
 // # Loading and saving
 //
-//   - [Load]: read a manifest, resolve an environment, substitute variables
-//   - [Save]: write a manifest to YAML
+//   - [Load]: read a spec, resolve an environment, substitute variables
+//   - [Save]: write a spec to YAML
 //
 // # Validation
 //
-//   - [ValidateManifest]: validate manifest data against a schema version
+//   - [ValidateSpec]: validate spec data against a schema version
 //   - [ValidateEnvironments]: validate environment definitions
-//   - [ValidateManifestComponents]: check component resources and autoscaling
+//   - [ValidateSpecComponents]: check component resources and autoscaling
 //
 // # Defaults
 //
-//   - [FillManifestWithDefaults]: apply schema defaults to a [Manifest]
-//   - [CreateManifestWithDefaults]: create a new manifest with defaults
-package manifest
+//   - [FillSpecWithDefaults]: apply schema defaults to a [Spec]
+//   - [CreateSpecWithDefaults]: create a new spec with defaults
+package spec

@@ -15,7 +15,7 @@
 // Package initialize implements the deployah init command.
 //
 // The interactive init flow walks through project name, environments,
-// components, and resource settings, then writes a deployah.yaml manifest
+// components, and resource settings, then writes a deployah.yaml spec
 // with schema defaults applied. Dry-run mode previews the file without saving.
 //
 // Register the command with [Register] on a [nabat.dev/nabat.App] instance.

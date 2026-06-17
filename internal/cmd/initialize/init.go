@@ -5,11 +5,11 @@ import (
 
 	"nabat.dev/nabat"
 
-	"deployah.dev/deployah/internal/manifest"
+	"deployah.dev/deployah/internal/spec"
 )
 
 const (
-	// DefaultOutputFile is the default manifest path written by init.
+	// DefaultOutputFile is the default spec path written by init.
 	DefaultOutputFile = "deployah.yaml"
 	// DefaultCPUThreshold is the default HPA CPU target percentage.
 	DefaultCPUThreshold = 75
@@ -20,9 +20,9 @@ const (
 )
 
 const (
-	// DryRunPreviewHeader prefixes the dry-run manifest preview output.
+	// DryRunPreviewHeader prefixes the dry-run spec preview output.
 	DryRunPreviewHeader = "=== DRY RUN MODE - PREVIEW OF GENERATED MANIFEST ===\n"
-	// DryRunPreviewFooter suffixes the dry-run manifest preview output.
+	// DryRunPreviewFooter suffixes the dry-run spec preview output.
 	DryRunPreviewFooter = "\n=== END PREVIEW ===\n\nThis is a preview. Use --dry-run=false to actually save the configuration."
 )
 
@@ -46,8 +46,8 @@ type Options struct {
 // ProjectConfig holds the collected configuration data
 type ProjectConfig struct {
 	Name         string
-	Environments []manifest.Environment
-	Components   map[string]manifest.Component
+	Environments []spec.Environment
+	Components   map[string]spec.Component
 	OutputPath   string
 	DryRun       bool
 }
@@ -83,7 +83,7 @@ func runInit(c *nabat.Context) error {
 
 	config := &ProjectConfig{
 		OutputPath: opts.Output,
-		Components: make(map[string]manifest.Component),
+		Components: make(map[string]spec.Component),
 		DryRun:     opts.DryRun,
 	}
 

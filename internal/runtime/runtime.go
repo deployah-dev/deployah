@@ -11,7 +11,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 
 	"deployah.dev/deployah/internal/helm"
-	"deployah.dev/deployah/internal/manifest"
+	"deployah.dev/deployah/internal/spec"
 )
 
 // runtimeKey is a private context key for storing the Runtime in context
@@ -24,18 +24,18 @@ type Runtime struct {
 	kubeconfig           string
 	kubeContext          string
 	extraKubeconfigPaths []string
-	manifestPath         string
+	specPath             string
 
 	// Options for client configuration
 	storageDriver string
 	debug         bool
 	timeout       time.Duration
 
-	logger   LoggerProvider
-	helm     HelmClient
-	k8s      KubernetesClient
-	manifest *manifest.Manifest
-	mu       sync.Mutex
+	logger LoggerProvider
+	helm   HelmClient
+	k8s    KubernetesClient
+	spec   *spec.Spec
+	mu     sync.Mutex
 
 	// Factory functions for creating clients (enables testing)
 	helmFactory func(*Runtime) (HelmClient, error)
@@ -79,10 +79,10 @@ func WithExtraKubeconfigPaths(paths ...string) Option {
 	}
 }
 
-// WithManifestPath sets the manifest file path.
-func WithManifestPath(manifestPath string) Option {
+// WithSpecPath sets the spec file path.
+func WithSpecPath(specPath string) Option {
 	return func(r *Runtime) {
-		r.manifestPath = manifestPath
+		r.specPath = specPath
 	}
 }
 
@@ -239,29 +239,29 @@ func (r *Runtime) Kubernetes() (KubernetesClient, error) {
 	return r.k8s, nil
 }
 
-// Manifest loads and memoizes the manifest for the configured path and
+// Spec loads and memoizes the spec for the configured path and
 // environment.
-func (r *Runtime) Manifest(ctx context.Context, environment string) (*manifest.Manifest, error) {
+func (r *Runtime) Spec(ctx context.Context, environment string) (*spec.Spec, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.manifest != nil {
-		return r.manifest, nil
+	if r.spec != nil {
+		return r.spec, nil
 	}
-	if r.manifestPath == "" {
-		return nil, fmt.Errorf("manifest path must be set")
+	if r.specPath == "" {
+		return nil, fmt.Errorf("spec path must be set")
 	}
-	m, err := manifest.Load(ctx, r.manifestPath, environment)
+	m, err := spec.Load(ctx, r.specPath, environment)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load manifest: %w", err)
+		return nil, fmt.Errorf("failed to load spec: %w", err)
 	}
-	r.manifest = m
+	r.spec = m
 	return m, nil
 }
 
 // SetKubeContext sets the Kubernetes context to target and invalidates any
 // memoized clients so they are rebuilt with the new context on next use.
 //
-// It is intended to be called after the manifest is loaded (so an
+// It is intended to be called after the spec is loaded (so an
 // environment's "context" field can be applied) but before the Helm or
 // Kubernetes clients are first built. A non-empty context set here takes
 // effect; callers enforce precedence (flag over environment field) by only
@@ -287,7 +287,7 @@ func (r *Runtime) Close() error {
 	// but this method provides a hook for future cleanup needs
 	r.helm = nil
 	r.k8s = nil
-	r.manifest = nil
+	r.spec = nil
 
 	return nil
 }

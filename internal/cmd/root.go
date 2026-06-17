@@ -33,8 +33,8 @@ import (
 	"deployah.dev/deployah/internal/cmd/shell"
 	"deployah.dev/deployah/internal/cmd/status"
 	"deployah.dev/deployah/internal/cmd/validate"
-	"deployah.dev/deployah/internal/manifest"
 	"deployah.dev/deployah/internal/runtime"
+	"deployah.dev/deployah/internal/spec"
 )
 
 var version = "dev"
@@ -48,7 +48,7 @@ func NewApp() *nabat.App {
 		nabat.WithLongDescription("Deployah is a Spec-to-Release tool. You write a short spec; Deployah renders and installs the Helm release, so you do not write Helm charts or Kubernetes YAML."),
 		nabat.WithCompletion(nabat.WithCompletionHidden()),
 		nabat.WithFlag("debug", false, nabat.WithShort('d'), nabat.WithUsage("Enable debug mode (verbose logging and keep temporary files)"), nabat.WithPersistent()),
-		nabat.WithFlag("spec", manifest.DefaultManifestPath, nabat.WithShort('s'), nabat.WithUsage("Path to the Deployah spec file (YAML or JSON)"), nabat.WithPersistent()),
+		nabat.WithFlag("spec", spec.DefaultSpecPath, nabat.WithShort('s'), nabat.WithUsage("Path to the Deployah spec file (YAML or JSON)"), nabat.WithPersistent()),
 		nabat.WithFlag("namespace", "", nabat.WithShort('n'), nabat.WithUsage("Kubernetes namespace to use for Deployah operations (defaults to current context namespace)"), nabat.WithPersistent()),
 		nabat.WithFlag("kubeconfig", "", nabat.WithShort('k'), nabat.WithUsage("Path to the kubeconfig file to use (defaults to standard kubeconfig resolution)"), nabat.WithPersistent()),
 		nabat.WithFlag("context", "", nabat.WithUsage("Kubernetes context to use (overrides the current context and any environment 'context' field)"), nabat.WithPersistent()),
@@ -74,7 +74,7 @@ func NewApp() *nabat.App {
 			runtime.WithNamespace(opts.Namespace),
 			runtime.WithKubeconfig(opts.Kubeconfig),
 			runtime.WithKubeContext(opts.Context),
-			runtime.WithManifestPath(opts.Spec),
+			runtime.WithSpecPath(opts.Spec),
 			runtime.WithDebug(opts.Debug),
 			runtime.WithTimeout(opts.Timeout),
 		}

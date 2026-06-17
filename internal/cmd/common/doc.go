@@ -15,6 +15,6 @@
 // Package common defines flags and options shared by every Deployah command.
 //
 // [GlobalOptions] captures persistent CLI flags such as namespace, kubeconfig,
-// manifest path, debug mode, and operation timeout. The root command reads
+// spec path, debug mode, and operation timeout. The root command reads
 // these values in its pre-run hook and builds a [runtime.Runtime] from them.
 package common

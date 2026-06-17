@@ -1,4 +1,4 @@
-package manifest
+package spec
 
 import (
 	"testing"
@@ -77,18 +77,18 @@ func TestValidateComponentResources(t *testing.T) {
 	}
 }
 
-// TestValidateManifestComponents verifies ValidateManifestComponents across
+// TestValidateSpecComponents verifies ValidateSpecComponents across
 // manifest component configurations.
-func TestValidateManifestComponents(t *testing.T) {
+func TestValidateSpecComponents(t *testing.T) {
 	tests := []struct {
 		name      string
-		manifest  *Manifest
+		manifest  *Spec
 		expectErr bool
 		errMsg    string
 	}{
 		{
 			name: "valid manifest with single component",
-			manifest: &Manifest{
+			manifest: &Spec{
 				Components: map[string]Component{
 					"web": {
 						Resources: Resources{
@@ -101,7 +101,7 @@ func TestValidateManifestComponents(t *testing.T) {
 		},
 		{
 			name: "invalid manifest with conflicting component",
-			manifest: &Manifest{
+			manifest: &Spec{
 				Components: map[string]Component{
 					"web": {
 						Resources: Resources{
@@ -116,7 +116,7 @@ func TestValidateManifestComponents(t *testing.T) {
 		},
 		{
 			name: "valid manifest with multiple components",
-			manifest: &Manifest{
+			manifest: &Spec{
 				Components: map[string]Component{
 					"web": {
 						Resources: Resources{
@@ -135,7 +135,7 @@ func TestValidateManifestComponents(t *testing.T) {
 		},
 		{
 			name: "invalid manifest with empty resources object",
-			manifest: &Manifest{
+			manifest: &Spec{
 				Components: map[string]Component{
 					"web": {
 						Image: "nginx:latest",
@@ -152,7 +152,7 @@ func TestValidateManifestComponents(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := ValidateManifestComponents(tt.manifest)
+			err := ValidateSpecComponents(tt.manifest)
 			if tt.expectErr {
 				assert.Error(t, err)
 				if tt.errMsg != "" {
