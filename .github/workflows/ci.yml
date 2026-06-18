@@ -97,7 +97,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        check: [tidy, lint, fmt, lint-md]
+        check: [tidy, lint, fmt, lint-md, update-vendor-hash]
     steps:
       - uses: actions/checkout@v6
 
@@ -120,7 +120,7 @@ jobs:
         run: nix run .#${{ matrix.check }}
 
       - name: Verify no uncommitted changes
-        if: matrix.check == 'tidy' || matrix.check == 'fmt'
+        if: matrix.check == 'tidy' || matrix.check == 'fmt' || matrix.check == 'update-vendor-hash'
         run: |
           if [ -n "$(git status --porcelain)" ]; then
             echo "::error::Run 'nix run .#${{ matrix.check }}' and commit changes"
