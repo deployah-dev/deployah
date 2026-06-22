@@ -120,13 +120,16 @@ func NewClient(opts ...Option) (*Client, error) {
 	settings := cli.New()
 
 	// An explicit kubeconfig takes full precedence; extra paths are ignored,
-	// matching client-go's ExplicitPath semantics. Otherwise append the extra
-	// paths to whatever KUBECONFIG env already contributed so their contexts
-	// are available without touching the user's default kubeconfig.
+	// matching client-go's ExplicitPath semantics. Otherwise prepend the extra
+	// paths before the default kubeconfig so deployah-managed contexts (e.g.
+	// a recreated Kind cluster) take priority over stale entries in
+	// ~/.kube/config.
 	if c.kubeconfig != "" {
 		settings.KubeConfig = c.kubeconfig
 	} else if len(c.extraKubeconfigPaths) > 0 {
-		all := append([]string{settings.KubeConfig}, c.extraKubeconfigPaths...)
+		all := make([]string, 0, len(c.extraKubeconfigPaths)+1)
+		all = append(all, c.extraKubeconfigPaths...)
+		all = append(all, settings.KubeConfig)
 		var parts []string
 		for _, p := range all {
 			if p != "" {

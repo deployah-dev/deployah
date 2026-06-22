@@ -1,11 +1,14 @@
 package deploy
 
 import (
+	"context"
 	"fmt"
 	"strings"
+	"sync"
 
 	"nabat.dev/nabat"
 
+	"deployah.dev/deployah/internal/helm"
 	"deployah.dev/deployah/internal/runtime"
 	"deployah.dev/deployah/internal/spec"
 )
@@ -80,10 +83,42 @@ func runDeploy(c *nabat.Context) error {
 		title = fmt.Sprintf("Dry run for '%s'...", opts.Environment)
 	}
 
-	err = c.Spinner(title, func(_ *nabat.Spinner) error {
-		return helmClient.InstallApp(c, manifest, opts.Environment, opts.DryRun)
-	})
+	var watcher *DeployWatcher
+
+	if !opts.DryRun {
+		k8sClient, k8sErr := rt.Kubernetes()
+		if k8sErr != nil {
+			// Watcher setup is best-effort; continue without it.
+			c.Logger().Debug("skipping event watcher: k8s client unavailable", "err", k8sErr)
+		} else {
+			releaseName := helm.GenerateReleaseName(manifest.Project, opts.Environment)
+			watcher = NewDeployWatcher(k8sClient, rt.Namespace(), releaseName)
+		}
+	}
+
+	err = c.Status(func(st *nabat.Status) error {
+		var wg sync.WaitGroup
+		var cancel context.CancelFunc
+		if watcher != nil {
+			var watchCtx context.Context
+			watchCtx, cancel = context.WithCancel(c)
+			wg.Go(func() {
+				watcher.Run(watchCtx, st)
+			})
+		}
+		helmErr := helmClient.InstallApp(c, manifest, opts.Environment, opts.DryRun)
+		if cancel != nil {
+			cancel()
+		}
+		wg.Wait()
+		return helmErr
+	}, nabat.WithTitle(title))
 	if err != nil {
+		if watcher != nil {
+			for _, w := range watcher.Warnings() {
+				c.Warn(fmt.Sprintf("[%s] %s: %s", w.Object, w.Reason, w.Message))
+			}
+		}
 		if opts.DryRun {
 			return fmt.Errorf("dry run failed: %w", err)
 		}
@@ -93,10 +128,28 @@ func runDeploy(c *nabat.Context) error {
 	if opts.DryRun {
 		c.Success("Dry run completed", "project", manifest.Project, "environment", opts.Environment)
 	} else {
-		c.Success("Deployed", "project", manifest.Project, "environment", opts.Environment)
+		summary := buildSummaryMsg(watcher)
+		c.Success("Deployed"+summary, "project", manifest.Project, "environment", opts.Environment)
 	}
 
 	return nil
+}
+
+// buildSummaryMsg formats a component readiness summary from the watcher.
+// It returns an empty string when no watcher or no summary data is available.
+func buildSummaryMsg(w *DeployWatcher) string {
+	if w == nil {
+		return ""
+	}
+	statuses := w.Summary()
+	if len(statuses) == 0 {
+		return ""
+	}
+	var parts []string
+	for _, s := range statuses {
+		parts = append(parts, fmt.Sprintf("%s: %d/%d", s.Name, s.ReadyPods, s.TotalPods))
+	}
+	return " (" + strings.Join(parts, ", ") + ")"
 }
 
 // environmentContext returns the "context" field of the named environment in

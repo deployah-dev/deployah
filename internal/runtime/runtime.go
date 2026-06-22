@@ -331,11 +331,12 @@ func (r *Runtime) kubeconfigRESTConfig() (*rest.Config, error) {
 	if r.kubeconfig != "" {
 		loadingRules.ExplicitPath = r.kubeconfig
 	} else if len(r.extraKubeconfigPaths) > 0 {
-		// Append deployah-managed kubeconfig files so their contexts are
-		// available without touching the user's default kubeconfig. ExplicitPath
-		// takes full precedence when --kubeconfig is given, so we only extend
+		// Prepend deployah-managed kubeconfig files so they take priority
+		// over ~/.kube/config when both define the same context name (e.g.
+		// a recreated Kind cluster on a new port). ExplicitPath takes full
+		// precedence when --kubeconfig is given, so we only extend
 		// Precedence when no explicit path was provided.
-		loadingRules.Precedence = append(loadingRules.Precedence, r.extraKubeconfigPaths...)
+		loadingRules.Precedence = append(r.extraKubeconfigPaths, loadingRules.Precedence...)
 	}
 	overrides := &clientcmd.ConfigOverrides{}
 	if r.kubeContext != "" {
