@@ -7,7 +7,7 @@ import (
 
 	"deployah.dev/deployah/internal/cli"
 	"deployah.dev/deployah/internal/k8s"
-	"deployah.dev/deployah/internal/runtime"
+	"deployah.dev/deployah/internal/session"
 )
 
 // Options holds command-line flags for list.
@@ -48,8 +48,12 @@ func runList(c *nabat.Context) error {
 		return fmt.Errorf("binding options: %w", err)
 	}
 
-	rt := runtime.FromContext(c)
-	helmClient, err := rt.Helm()
+	rt := session.FromContext(c)
+	cluster, err := rt.Target(c, opts.Environment)
+	if err != nil {
+		return fmt.Errorf("target cluster: %w", err)
+	}
+	helmClient, err := cluster.Helm()
 	if err != nil {
 		return fmt.Errorf("helm client: %w", err)
 	}
@@ -73,7 +77,14 @@ func runList(c *nabat.Context) error {
 	}
 
 	if len(valid) == 0 {
-		c.Info("No releases found", "project", opts.Project, "environment", opts.Environment)
+		args := []any{}
+		if opts.Project != "" {
+			args = append(args, "project", opts.Project)
+		}
+		if opts.Environment != "" {
+			args = append(args, "environment", opts.Environment)
+		}
+		c.Info("No releases found", args...)
 		return nil
 	}
 

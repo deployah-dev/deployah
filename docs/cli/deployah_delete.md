@@ -14,9 +14,10 @@ deployah delete <project> <environment> [flags]
 
 ```text
       --dry-run          Simulate the deletion without actually removing the project
-      --force            Force deletion without confirmation
   -o, --output string    Output format for dry-run preview (default "tree")
       --show-resources   Show detailed resources that would be deleted (implies --dry-run)
+      --wait             Wait until all Kubernetes resources are fully deleted before returning (uses stable legacy polling; suitable for CI)
+  -y, --yes              Skip confirmation prompt and continue even if the release is not found
 ```
 
 ### Options inherited from parent commands

@@ -16,7 +16,7 @@ import (
 	"nabat.dev/nabat"
 
 	"deployah.dev/deployah/internal/k8s"
-	"deployah.dev/deployah/internal/runtime"
+	"deployah.dev/deployah/internal/session"
 
 	corev1 "k8s.io/api/core/v1"
 )
@@ -69,20 +69,21 @@ type ExecuteOptions struct {
 
 // ShellExecutor runs kubectl exec sessions against Deployah pods.
 type ShellExecutor struct {
-	runtime *runtime.Runtime
+	cluster *session.Cluster
 	k8s     *k8s.Client
 	ctx     *nabat.Context
 }
 
-// NewShellExecutor constructs a [ShellExecutor] from a command [runtime.Runtime].
-func NewShellExecutor(rt *runtime.Runtime, ctx *nabat.Context) (*ShellExecutor, error) {
-	k8sClient, err := k8s.NewClientFromRuntime(ctx, rt)
+// NewShellExecutor constructs a [ShellExecutor] from a resolved [session.Cluster].
+func NewShellExecutor(cluster *session.Cluster, ctx *nabat.Context) (*ShellExecutor, error) {
+	clientset, err := cluster.Kubernetes()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create k8s client: %w", err)
 	}
+	k8sClient := k8s.NewClient(clientset, cluster.Namespace())
 
 	return &ShellExecutor{
-		runtime: rt,
+		cluster: cluster,
 		k8s:     k8sClient,
 		ctx:     ctx,
 	}, nil
@@ -244,12 +245,12 @@ func (e *ShellExecutor) buildExecCommand(shell, command, workdir string) []strin
 
 // execTest executes a test command to check if something exists
 func (e *ShellExecutor) execTest(podName, containerName string, cmd []string) error {
-	k8sClient, err := e.runtime.Kubernetes()
+	k8sClient, err := e.cluster.Kubernetes()
 	if err != nil {
 		return fmt.Errorf("failed to get kubernetes client: %w", err)
 	}
 
-	config, err := e.runtime.RESTConfig()
+	config, err := e.cluster.RESTConfig()
 	if err != nil {
 		return fmt.Errorf("failed to get rest config: %w", err)
 	}
@@ -257,7 +258,7 @@ func (e *ShellExecutor) execTest(podName, containerName string, cmd []string) er
 	req := k8sClient.CoreV1().RESTClient().Post().
 		Resource("pods").
 		Name(podName).
-		Namespace(e.runtime.Namespace()).
+		Namespace(e.cluster.Namespace()).
 		SubResource("exec").
 		VersionedParams(&corev1.PodExecOptions{
 			Container: containerName,
@@ -283,12 +284,12 @@ func (e *ShellExecutor) execTest(podName, containerName string, cmd []string) er
 
 // execInContainer executes a command in the container
 func (e *ShellExecutor) execInContainer(podName, containerName string, cmd []string) error {
-	k8sClient, err := e.runtime.Kubernetes()
+	k8sClient, err := e.cluster.Kubernetes()
 	if err != nil {
 		return fmt.Errorf("failed to get kubernetes client: %w", err)
 	}
 
-	config, err := e.runtime.RESTConfig()
+	config, err := e.cluster.RESTConfig()
 	if err != nil {
 		return fmt.Errorf("failed to get rest config: %w", err)
 	}
@@ -340,7 +341,7 @@ func (e *ShellExecutor) execInContainer(podName, containerName string, cmd []str
 	req := k8sClient.CoreV1().RESTClient().Post().
 		Resource("pods").
 		Name(podName).
-		Namespace(e.runtime.Namespace()).
+		Namespace(e.cluster.Namespace()).
 		SubResource("exec").
 		VersionedParams(&corev1.PodExecOptions{
 			Container: containerName,

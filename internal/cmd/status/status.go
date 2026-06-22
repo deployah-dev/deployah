@@ -9,7 +9,7 @@ import (
 
 	"deployah.dev/deployah/internal/cli"
 	"deployah.dev/deployah/internal/k8s"
-	"deployah.dev/deployah/internal/runtime"
+	"deployah.dev/deployah/internal/session"
 )
 
 // Options holds command-line flags for status.
@@ -48,8 +48,12 @@ func runStatus(c *nabat.Context) error {
 		return fmt.Errorf("binding options: %w", err)
 	}
 
-	rt := runtime.FromContext(c)
-	helmClient, err := rt.Helm()
+	rt := session.FromContext(c)
+	cluster, err := rt.Target(c, opts.Environment)
+	if err != nil {
+		return fmt.Errorf("target cluster: %w", err)
+	}
+	helmClient, err := cluster.Helm()
 	if err != nil {
 		return fmt.Errorf("helm client: %w", err)
 	}
@@ -78,10 +82,11 @@ func runStatus(c *nabat.Context) error {
 
 	var k8sClient *k8s.Client
 	if opts.Detailed {
-		k8sClient, err = k8s.NewClientFromRuntime(c, rt)
-		if err != nil {
-			return fmt.Errorf("k8s client: %w", err)
+		clientset, k8sErr := cluster.Kubernetes()
+		if k8sErr != nil {
+			return fmt.Errorf("k8s client: %w", k8sErr)
 		}
+		k8sClient = k8s.NewClient(clientset, cluster.Namespace())
 	}
 
 	headers := []string{"PROJECT", "ENV", "STATUS", "REV", "AGE", "NAMESPACE"}

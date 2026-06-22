@@ -10,7 +10,7 @@ import (
 
 	"deployah.dev/deployah/internal/cli"
 	"deployah.dev/deployah/internal/helm"
-	"deployah.dev/deployah/internal/runtime"
+	"deployah.dev/deployah/internal/session"
 
 	v1 "helm.sh/helm/v4/pkg/release/v1"
 )
@@ -19,10 +19,11 @@ import (
 type Options struct {
 	Project       string `nabat:"project"`
 	Environment   string `nabat:"environment"`
-	Force         bool   `nabat:"force"`
+	Yes           bool   `nabat:"yes"`
 	DryRun        bool   `nabat:"dry-run"`
 	ShowResources bool   `nabat:"show-resources"`
 	Output        string `nabat:"output"`
+	Wait          bool   `nabat:"wait"`
 }
 
 // ResourceInfo holds parsed metadata about a single Kubernetes resource
@@ -55,16 +56,20 @@ func Register(app *nabat.App) {
 		nabat.WithAliases("uninstall", "remove"),
 		nabat.WithArg("project", "", nabat.WithRequired(), nabat.WithUsage("Project name to delete"), nabat.WithPrompt("Project name", "", nabat.WithHint("e.g. my-app"))),
 		nabat.WithArg("environment", "", nabat.WithRequired(), nabat.WithUsage("Environment to delete from"), nabat.WithPrompt("Environment", "", nabat.WithHint("e.g. production"))),
-		nabat.WithFlag("force", false, nabat.WithUsage("Force deletion without confirmation")),
+		nabat.WithFlag("yes", false, nabat.WithShort('y'), nabat.WithUsage("Skip confirmation prompt and continue even if the release is not found")),
 		nabat.WithFlag("dry-run", false, nabat.WithUsage("Simulate the deletion without actually removing the project")),
 		nabat.WithFlag("show-resources", false, nabat.WithUsage("Show detailed resources that would be deleted (implies --dry-run)")),
 		nabat.WithSelectFlag("output", cli.OutputFormatTree, cli.DeleteOutputFormats, nabat.WithShort('o'), nabat.WithUsage("Output format for dry-run preview")),
+		nabat.WithFlag("wait", false, nabat.WithUsage("Wait until all Kubernetes resources are fully deleted before returning (uses stable legacy polling; suitable for CI)")),
 		nabat.WithExample(`
 # Delete a project in an environment
 deployah delete my-app production
 
-# Force deletion without confirmation
-deployah delete my-app production --force
+# Skip confirmation prompt
+deployah delete my-app production --yes
+
+# Skip confirmation (shorthand)
+deployah delete my-app production -y
 
 # Dry run to see what would be deleted
 deployah delete my-app production --dry-run
@@ -73,7 +78,10 @@ deployah delete my-app production --dry-run
 deployah delete my-app production --show-resources
 
 # Output dry-run preview as JSON
-deployah delete my-app production --dry-run --output json`),
+deployah delete my-app production --dry-run --output json
+
+# Wait until all resources are fully removed (useful in CI)
+deployah delete my-app production --wait`),
 		nabat.WithRun(runDelete),
 	)
 }
@@ -89,8 +97,12 @@ func runDelete(c *nabat.Context) error {
 		opts.DryRun = true
 	}
 
-	rt := runtime.FromContext(c)
-	helmClient, err := rt.Helm()
+	rt := session.FromContext(c)
+	cluster, err := rt.Target(c, opts.Environment)
+	if err != nil {
+		return fmt.Errorf("target cluster: %w", err)
+	}
+	helmClient, err := cluster.Helm()
 	if err != nil {
 		return fmt.Errorf("helm client: %w", err)
 	}
@@ -100,10 +112,10 @@ func runDelete(c *nabat.Context) error {
 	if err != nil {
 		if errors.Is(err, helm.ErrReleaseNotFound) {
 			c.Warn("Project not found", "project", opts.Project, "environment", opts.Environment)
-			if !opts.Force {
-				return fmt.Errorf("project '%s' in environment '%s': %w — use --force to ignore", opts.Project, opts.Environment, helm.ErrReleaseNotFound)
+			if !opts.Yes {
+				return fmt.Errorf("project '%s' in environment '%s': %w — use --yes to ignore", opts.Project, opts.Environment, helm.ErrReleaseNotFound)
 			}
-			c.Info("Continuing with --force despite missing project", "project", opts.Project)
+			c.Info("Continuing with --yes despite missing project", "project", opts.Project)
 		} else {
 			return fmt.Errorf("check project status: %w", err)
 		}
@@ -113,7 +125,7 @@ func runDelete(c *nabat.Context) error {
 		return renderDryRunPreview(c, opts.Project, opts.Environment, release, opts.ShowResources, opts.Output)
 	}
 
-	if !opts.Force {
+	if !opts.Yes {
 		confirmed, confirmErr := c.Confirm(
 			fmt.Sprintf("Delete project '%s' in environment '%s'?", opts.Project, opts.Environment),
 			nabat.WithAffirmative("Yes, delete it"),
@@ -131,7 +143,7 @@ func runDelete(c *nabat.Context) error {
 	err = c.Spinner(
 		fmt.Sprintf("Deleting '%s' in '%s'...", opts.Project, opts.Environment),
 		func(_ *nabat.Spinner) error {
-			return helmClient.DeleteRelease(c, opts.Project, opts.Environment)
+			return helmClient.DeleteRelease(c, opts.Project, opts.Environment, opts.Wait)
 		},
 	)
 	if err != nil {

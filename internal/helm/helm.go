@@ -300,8 +300,18 @@ func (c *Client) GetRelease(ctx context.Context, project, environment string) (*
 	return releaserToV1(rel)
 }
 
-// DeleteRelease uninstalls the given release.
-func (c *Client) DeleteRelease(ctx context.Context, project, environment string) error {
+// DeleteRelease uninstalls the given release. When wait is false (the default)
+// it returns immediately after hooks complete, matching vanilla `helm uninstall`
+// behavior. When wait is true it blocks until all Kubernetes resources are
+// fully removed, using the legacy polling strategy (kube.LegacyStrategy) with
+// foreground cascade deletion.
+//
+// StatusWatcherStrategy is intentionally avoided for uninstall: it has a known
+// race condition where cluster-scoped resources (ClusterRole, ClusterRoleBinding,
+// ServiceAccount) are reported as Terminating indefinitely even after Kubernetes
+// has already deleted them, causing the call to block until timeout.
+// See https://github.com/helm/helm/issues/31766.
+func (c *Client) DeleteRelease(ctx context.Context, project, environment string, wait bool) error {
 	if project == "" || environment == "" {
 		return errors.New("project or environment cannot be empty")
 	}
@@ -311,7 +321,13 @@ func (c *Client) DeleteRelease(ctx context.Context, project, environment string)
 	un.IgnoreNotFound = true
 	un.KeepHistory = false
 	un.Timeout = c.timeout
-	un.WaitStrategy = kube.StatusWatcherStrategy
+
+	if wait {
+		un.WaitStrategy = kube.LegacyStrategy
+		un.DeletionPropagation = "foreground"
+	} else {
+		un.WaitStrategy = kube.HookOnlyStrategy
+	}
 
 	if _, err := un.Run(releaseName); err != nil {
 		return c.wrapHelmError("uninstall", releaseName, err)

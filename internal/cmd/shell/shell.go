@@ -5,7 +5,7 @@ import (
 
 	"nabat.dev/nabat"
 
-	"deployah.dev/deployah/internal/runtime"
+	"deployah.dev/deployah/internal/session"
 )
 
 // Options holds command-line flags for shell.
@@ -62,9 +62,14 @@ func runShell(c *nabat.Context) error {
 		return fmt.Errorf("binding options: %w", err)
 	}
 
-	rt := runtime.FromContext(c)
+	rt := session.FromContext(c)
 
-	executor, err := NewShellExecutor(rt, c)
+	cluster, err := rt.Target(c, opts.Environment)
+	if err != nil {
+		return fmt.Errorf("target cluster: %w", err)
+	}
+
+	executor, err := NewShellExecutor(cluster, c)
 	if err != nil {
 		return fmt.Errorf("shell executor: %w", err)
 	}

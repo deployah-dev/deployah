@@ -16,7 +16,7 @@ import (
 	"nabat.dev/nabat"
 
 	"deployah.dev/deployah/internal/k8s"
-	"deployah.dev/deployah/internal/runtime"
+	"deployah.dev/deployah/internal/session"
 )
 
 // Options holds command-line flags for logs.
@@ -93,12 +93,18 @@ func runLogs(c *nabat.Context) error {
 		}
 	}
 
-	rt := runtime.FromContext(c)
+	rt := session.FromContext(c)
 
-	k8sClient, err := k8s.NewClientFromRuntime(c, rt)
+	cluster, err := rt.Target(c, opts.Environment)
+	if err != nil {
+		return fmt.Errorf("target cluster: %w", err)
+	}
+
+	clientset, err := cluster.Kubernetes()
 	if err != nil {
 		return fmt.Errorf("k8s client: %w", err)
 	}
+	k8sClient := k8s.NewClient(clientset, cluster.Namespace())
 
 	labelSelectorStr, err := k8s.BuildSelector(opts.Project, opts.Component, opts.Environment)
 	if err != nil {
@@ -146,7 +152,7 @@ func runLogs(c *nabat.Context) error {
 	}
 
 	cfg := &stern.Config{
-		Namespaces:          []string{rt.Namespace()},
+		Namespaces:          []string{cluster.Namespace()},
 		AllNamespaces:       false,
 		EphemeralContainers: false,
 		InitContainers:      false,

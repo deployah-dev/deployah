@@ -13,7 +13,7 @@ import (
 // ReleaseDeleter abstracts Helm get/delete operations.
 type ReleaseDeleter interface {
 	GetRelease(ctx context.Context, project, environment string) (*v1.Release, error)
-	DeleteRelease(ctx context.Context, project, environment string) error
+	DeleteRelease(ctx context.Context, project, environment string, wait bool) error
 }
 
 // DeleteParams holds the parameters for a delete operation.
@@ -22,10 +22,12 @@ type DeleteParams struct {
 	Project string
 	// Environment is the target environment name.
 	Environment string
-	// Force skips the not-found check and proceeds with deletion.
-	Force bool
+	// Yes skips the not-found check and proceeds with deletion.
+	Yes bool
 	// DryRun previews deletion without mutating the cluster.
 	DryRun bool
+	// Wait blocks until all Kubernetes resources are fully removed.
+	Wait bool
 }
 
 // DeleteResult contains the outcome of a delete check.
@@ -51,7 +53,7 @@ func (d *Delete) Check(ctx context.Context, params DeleteParams) (*DeleteResult,
 	release, err := d.deleter.GetRelease(ctx, params.Project, params.Environment)
 	if err != nil {
 		if errors.Is(err, helm.ErrReleaseNotFound) {
-			if !params.Force {
+			if !params.Yes {
 				return nil, fmt.Errorf("project '%s' in environment '%s': %w", params.Project, params.Environment, helm.ErrReleaseNotFound)
 			}
 			return &DeleteResult{NotFound: true}, nil
@@ -62,8 +64,8 @@ func (d *Delete) Check(ctx context.Context, params DeleteParams) (*DeleteResult,
 }
 
 // Execute performs the actual deletion.
-func (d *Delete) Execute(ctx context.Context, project, environment string) error {
-	if err := d.deleter.DeleteRelease(ctx, project, environment); err != nil {
+func (d *Delete) Execute(ctx context.Context, project, environment string, wait bool) error {
+	if err := d.deleter.DeleteRelease(ctx, project, environment, wait); err != nil {
 		return fmt.Errorf("delete release: %w", err)
 	}
 	return nil

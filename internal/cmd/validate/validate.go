@@ -5,7 +5,7 @@ import (
 
 	"nabat.dev/nabat"
 
-	"deployah.dev/deployah/internal/runtime"
+	"deployah.dev/deployah/internal/session"
 )
 
 // Options holds command-line flags for validate.
@@ -35,7 +35,7 @@ func runValidate(c *nabat.Context) error {
 		return fmt.Errorf("binding options: %w", err)
 	}
 
-	rt := runtime.FromContext(c)
+	rt := session.FromContext(c)
 
 	m, err := rt.Spec(c, opts.Environment)
 	if err != nil {

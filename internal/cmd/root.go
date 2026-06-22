@@ -33,7 +33,7 @@ import (
 	"deployah.dev/deployah/internal/cmd/shell"
 	"deployah.dev/deployah/internal/cmd/status"
 	"deployah.dev/deployah/internal/cmd/validate"
-	"deployah.dev/deployah/internal/runtime"
+	"deployah.dev/deployah/internal/session"
 	"deployah.dev/deployah/internal/spec"
 )
 
@@ -52,7 +52,7 @@ func NewApp() *nabat.App {
 		nabat.WithFlag("namespace", "", nabat.WithShort('n'), nabat.WithUsage("Kubernetes namespace to use for Deployah operations (defaults to current context namespace)"), nabat.WithPersistent()),
 		nabat.WithFlag("kubeconfig", "", nabat.WithShort('k'), nabat.WithUsage("Path to the kubeconfig file to use (defaults to standard kubeconfig resolution)"), nabat.WithPersistent()),
 		nabat.WithFlag("context", "", nabat.WithUsage("Kubernetes context to use (overrides the current context and any environment 'context' field)"), nabat.WithPersistent()),
-		nabat.WithFlag("timeout", runtime.DefaultTimeout, nabat.WithShort('t'), nabat.WithUsage("Timeout for Deployah operations (install/upgrade, list, status, logs, delete)"), nabat.WithPersistent()),
+		nabat.WithFlag("timeout", session.DefaultTimeout, nabat.WithShort('t'), nabat.WithUsage("Timeout for Deployah operations (install/upgrade, list, status, logs, delete)"), nabat.WithPersistent()),
 		nabat.WithExtension(logging.New(logging.WithVerboseFlag("debug"))),
 	)
 
@@ -70,20 +70,20 @@ func NewApp() *nabat.App {
 			localKubeconfig = ""
 		}
 
-		rtOpts := []runtime.Option{
-			runtime.WithNamespace(opts.Namespace),
-			runtime.WithKubeconfig(opts.Kubeconfig),
-			runtime.WithKubeContext(opts.Context),
-			runtime.WithSpecPath(opts.Spec),
-			runtime.WithDebug(opts.Debug),
-			runtime.WithTimeout(opts.Timeout),
+		rtOpts := []session.Option{
+			session.WithNamespace(opts.Namespace),
+			session.WithKubeconfig(opts.Kubeconfig),
+			session.WithKubeContext(opts.Context),
+			session.WithSpecPath(opts.Spec),
+			session.WithDebug(opts.Debug),
+			session.WithTimeout(opts.Timeout),
 		}
 		if localKubeconfig != "" {
-			rtOpts = append(rtOpts, runtime.WithExtraKubeconfigPaths(localKubeconfig))
+			rtOpts = append(rtOpts, session.WithExtraKubeconfigPaths(localKubeconfig))
 		}
 
-		rt := runtime.New(rtOpts...)
-		c.SetContext(runtime.WithContext(c.Context(), rt))
+		rt := session.New(rtOpts...)
+		c.SetContext(session.WithContext(c.Context(), rt))
 		return nil
 	}); err != nil {
 		panic(fmt.Sprintf("failed to register OnPreRun hook: %v", err))

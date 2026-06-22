@@ -11,14 +11,13 @@ import (
 
 	"deployah.dev/deployah/internal/helm"
 	"deployah.dev/deployah/internal/k8s"
-	"deployah.dev/deployah/internal/runtime"
+	"deployah.dev/deployah/internal/session"
 	"deployah.dev/deployah/internal/spec"
 )
 
 // Options holds command-line flags for deploy.
 type Options struct {
 	Environment string `nabat:"environment"`
-	Context     string `nabat:"context"`
 	DryRun      bool   `nabat:"dry-run"`
 }
 
@@ -50,25 +49,21 @@ func runDeploy(c *nabat.Context) error {
 
 	c.Logger().Debug("starting deployment process")
 
-	rt := runtime.FromContext(c)
+	sess := session.FromContext(c)
 
-	manifest, err := rt.Spec(c, opts.Environment)
+	cluster, err := sess.Target(c, opts.Environment)
+	if err != nil {
+		return fmt.Errorf("target cluster: %w", err)
+	}
+
+	manifest, err := sess.Spec(c, opts.Environment)
 	if err != nil {
 		return fmt.Errorf("load spec: %w", err)
 	}
 
 	c.Logger().Debug("spec loaded", "env", opts.Environment)
 
-	// Resolve the target Kubernetes context: the --context flag wins, otherwise
-	// fall back to the selected environment's "context" field. Apply it before
-	// the Helm client is built so the right cluster is targeted.
-	if kubeContext := opts.Context; kubeContext != "" {
-		rt.SetKubeContext(kubeContext)
-	} else if envContext := environmentContext(manifest, opts.Environment); envContext != "" {
-		rt.SetKubeContext(envContext)
-	}
-
-	helmClient, err := rt.Helm()
+	helmClient, err := cluster.Helm()
 	if err != nil {
 		return fmt.Errorf("helm client: %w%s", err, clusterHint(err))
 	}
@@ -88,7 +83,7 @@ func runDeploy(c *nabat.Context) error {
 	var watcher *DeployWatcher
 
 	if !opts.DryRun {
-		k8sClient, k8sErr := rt.Kubernetes()
+		k8sClient, k8sErr := cluster.Kubernetes()
 		if k8sErr != nil {
 			// K8s client is best-effort: skip both the pre-flight check and the
 			// event watcher rather than failing the whole deploy.
@@ -100,7 +95,7 @@ func runDeploy(c *nabat.Context) error {
 				}
 			}
 			releaseName := helm.GenerateReleaseName(manifest.Project, opts.Environment)
-			watcher = NewDeployWatcher(k8sClient, rt.Namespace(), releaseName)
+			watcher = NewDeployWatcher(k8sClient, cluster.Namespace(), releaseName)
 		}
 	}
 
@@ -160,21 +155,6 @@ func buildSummaryMsg(w *DeployWatcher) string {
 	return " (" + strings.Join(parts, ", ") + ")"
 }
 
-// environmentContext returns the "context" field of the named environment in
-// the spec, or an empty string when the environment is not found or has no
-// context set.
-func environmentContext(m *spec.Spec, name string) string {
-	if m == nil {
-		return ""
-	}
-	for _, env := range m.Environments {
-		if env.Name == name {
-			return env.Context
-		}
-	}
-	return ""
-}
-
 // requiredAPIs derives the Kubernetes API group/version requirements for the
 // components that will be deployed in the target environment. Only components
 // whose Environments list includes the target (or have no restriction) are
@@ -230,8 +210,8 @@ func requiredAPIs(manifest *spec.Spec, environment string) []k8s.APIRequirement 
 }
 
 // clusterHint returns an actionable suffix for errors that look like the target
-// cluster or context is missing or unreachable, pointing users at the local
-// cluster workflow. It returns an empty string for unrelated errors.
+// cluster or context is missing or unreachable. It returns an empty string for
+// unrelated errors.
 func clusterHint(err error) string {
 	if err == nil {
 		return ""
