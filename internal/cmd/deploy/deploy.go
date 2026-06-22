@@ -3,12 +3,14 @@ package deploy
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 
 	"nabat.dev/nabat"
 
 	"deployah.dev/deployah/internal/helm"
+	"deployah.dev/deployah/internal/k8s"
 	"deployah.dev/deployah/internal/runtime"
 	"deployah.dev/deployah/internal/spec"
 )
@@ -88,9 +90,15 @@ func runDeploy(c *nabat.Context) error {
 	if !opts.DryRun {
 		k8sClient, k8sErr := rt.Kubernetes()
 		if k8sErr != nil {
-			// Watcher setup is best-effort; continue without it.
-			c.Logger().Debug("skipping event watcher: k8s client unavailable", "err", k8sErr)
+			// K8s client is best-effort: skip both the pre-flight check and the
+			// event watcher rather than failing the whole deploy.
+			c.Logger().Debug("skipping k8s checks: client unavailable", "err", k8sErr)
 		} else {
+			if reqs := requiredAPIs(manifest, opts.Environment); len(reqs) > 0 {
+				if capErr := k8s.CheckAPIRequirements(c, k8sClient, reqs); capErr != nil {
+					return capErr
+				}
+			}
 			releaseName := helm.GenerateReleaseName(manifest.Project, opts.Environment)
 			watcher = NewDeployWatcher(k8sClient, rt.Namespace(), releaseName)
 		}
@@ -165,6 +173,60 @@ func environmentContext(m *spec.Spec, name string) string {
 		}
 	}
 	return ""
+}
+
+// requiredAPIs derives the Kubernetes API group/version requirements for the
+// components that will be deployed in the target environment. Only components
+// whose Environments list includes the target (or have no restriction) are
+// considered. Multiple components needing the same API group are deduplicated.
+//
+// The API version choices mirror what the embedded Helm chart templates select:
+//   - autoscaling.enabled → autoscaling/v2 or autoscaling/v2beta2
+//     (hpa.yaml: common.capabilities.hpa.apiVersion)
+//   - ingress → networking.k8s.io/v1
+//     (ingress.yaml: common.capabilities.ingress.apiVersion)
+func requiredAPIs(manifest *spec.Spec, environment string) []k8s.APIRequirement {
+	type entry struct {
+		groupVersions []string
+		components    []string
+	}
+
+	entries := make(map[string]*entry) // keyed by canonical group/version string
+
+	add := func(groupVersions []string, componentName string) {
+		key := strings.Join(groupVersions, "|")
+		e := entries[key]
+		if e == nil {
+			e = &entry{groupVersions: groupVersions}
+			entries[key] = e
+		}
+		e.components = append(e.components, fmt.Sprintf("%q", componentName))
+	}
+
+	for name, component := range manifest.Components {
+		if len(component.Environments) > 0 && !slices.Contains(component.Environments, environment) {
+			continue
+		}
+		if component.Autoscaling != nil && component.Autoscaling.Enabled {
+			add([]string{"autoscaling/v2", "autoscaling/v2beta2"}, name)
+		}
+		if component.Ingress != nil {
+			add([]string{"networking.k8s.io/v1"}, name)
+		}
+	}
+
+	reqs := make([]k8s.APIRequirement, 0, len(entries))
+	for _, e := range entries {
+		noun := "component"
+		if len(e.components) > 1 {
+			noun = "components"
+		}
+		reqs = append(reqs, k8s.APIRequirement{
+			GroupVersions: e.groupVersions,
+			Reason:        fmt.Sprintf("required by %s %s", noun, strings.Join(e.components, ", ")),
+		})
+	}
+	return reqs
 }
 
 // clusterHint returns an actionable suffix for errors that look like the target

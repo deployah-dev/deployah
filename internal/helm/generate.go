@@ -300,12 +300,7 @@ func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string) (map[string]a
 		}
 
 		if component.Autoscaling != nil && component.Autoscaling.Enabled {
-			componentValues["autoscaling"] = map[string]any{
-				"enabled":     true,
-				"minReplicas": component.Autoscaling.MinReplicas,
-				"maxReplicas": component.Autoscaling.MaxReplicas,
-				"metrics":     component.Autoscaling.Metrics,
-			}
+			componentValues["autoscaling"] = buildAutoscalingValues(component.Autoscaling)
 		}
 		// TODO: Add support for component env, The user can specify the environment variables for the component e.g. NODE_ENV=roduction
 
@@ -341,12 +336,7 @@ func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string) (map[string]a
 		}
 
 		if component.Autoscaling != nil && component.Autoscaling.Enabled {
-			componentValues["autoscaling"] = map[string]any{
-				"enabled":     true,
-				"minReplicas": component.Autoscaling.MinReplicas,
-				"maxReplicas": component.Autoscaling.MaxReplicas,
-				"metrics":     component.Autoscaling.Metrics,
-			}
+			componentValues["autoscaling"] = buildAutoscalingValues(component.Autoscaling)
 		}
 
 		imageValues := map[string]any{
@@ -385,4 +375,27 @@ func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string) (map[string]a
 	}
 
 	return values, nil
+}
+
+// buildAutoscalingValues translates the spec Autoscaling configuration into
+// the Helm values map consumed by the embedded hpa.yaml template.
+//
+// Known metric types (cpu, memory) become the dedicated targetCPU / targetMemory
+// values so the template can emit the correct HPA v2 schema. When the same
+// type appears more than once, the last entry wins.
+func buildAutoscalingValues(a *spec.Autoscaling) map[string]any {
+	v := map[string]any{
+		"enabled":     true,
+		"minReplicas": a.MinReplicas,
+		"maxReplicas": a.MaxReplicas,
+	}
+	for _, m := range a.Metrics {
+		switch m.Type {
+		case spec.MetricTypeCPU:
+			v["targetCPU"] = m.Target
+		case spec.MetricTypeMemory:
+			v["targetMemory"] = m.Target
+		}
+	}
+	return v
 }

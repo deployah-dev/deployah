@@ -143,6 +143,16 @@ func ValidateComponentAutoscaling(component Component) error {
 		return fmt.Errorf("minReplicas cannot be greater than maxReplicas")
 	}
 
+	for _, m := range component.Autoscaling.Metrics {
+		switch m.Type {
+		case MetricTypeCPU, MetricTypeMemory:
+			// known types -- translated to targetCPU / targetMemory in the Helm layer
+		default:
+			return fmt.Errorf("unsupported metric type %q: only %q and %q are supported",
+				m.Type, MetricTypeCPU, MetricTypeMemory)
+		}
+	}
+
 	return nil
 }
 
