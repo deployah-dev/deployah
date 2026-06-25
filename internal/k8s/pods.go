@@ -18,6 +18,10 @@ import (
 	"context"
 	"fmt"
 
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/selection"
+
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -76,37 +80,40 @@ func (c *Client) GetPodInfo(ctx context.Context, podName string) (*PodInfo, erro
 	}, nil
 }
 
-// GetPodStatus retrieves pod status information for a release
+// GetPodStatus retrieves pod status information for a release.
 func (c *Client) GetPodStatus(ctx context.Context, releaseName string) (int, int, string, error) {
-	// Create label selector for pods belonging to this release
-	selector := fmt.Sprintf("app.kubernetes.io/instance=%s", releaseName)
+	req, err := labels.NewRequirement("app.kubernetes.io/instance", selection.Equals, []string{releaseName})
+	if err != nil {
+		return 0, 0, "0/0", fmt.Errorf("build selector for release %s: %w", releaseName, err)
+	}
+	selector := labels.NewSelector().Add(*req).String()
 
 	pods, err := c.k8sClient.CoreV1().Pods(c.namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: selector,
 	})
 	if err != nil {
-		return 0, 0, "0/0", fmt.Errorf("failed to list pods for release %s: %w", releaseName, err)
+		return 0, 0, "0/0", fmt.Errorf("list pods for release %s: %w", releaseName, err)
 	}
 
 	totalPods := len(pods.Items)
 	readyPods := 0
 
 	for _, pod := range pods.Items {
-		if pod.Status.Phase == "Running" {
-			ready := true
-			for _, container := range pod.Status.ContainerStatuses {
-				if !container.Ready {
-					ready = false
-					break
-				}
-			}
-			if ready {
-				readyPods++
-			}
+		if pod.Status.Phase == corev1.PodRunning && isPodContainersReady(pod.Status.ContainerStatuses) {
+			readyPods++
 		}
 	}
 
 	return totalPods, readyPods, fmt.Sprintf("%d/%d", readyPods, totalPods), nil
+}
+
+func isPodContainersReady(statuses []corev1.ContainerStatus) bool {
+	for _, cs := range statuses {
+		if !cs.Ready {
+			return false
+		}
+	}
+	return true
 }
 
 // ValidatePodExists checks if a pod with the given name exists

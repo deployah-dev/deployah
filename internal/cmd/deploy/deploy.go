@@ -90,7 +90,7 @@ func runDeploy(c *nabat.Context) error {
 			c.Logger().Debug("skipping k8s checks: client unavailable", "err", k8sErr)
 		} else {
 			if reqs := requiredAPIs(manifest, opts.Environment); len(reqs) > 0 {
-				if capErr := k8s.CheckAPIRequirements(c, k8sClient, reqs); capErr != nil {
+				if capErr := k8s.CheckAPIRequirements(k8sClient, reqs); capErr != nil {
 					return capErr
 				}
 			}

@@ -27,32 +27,6 @@ type PodInfo struct {
 	Status string
 }
 
-// ComponentInfo summarizes pod readiness for one Deployah component.
-type ComponentInfo struct {
-	// Name is the component name.
-	Name string
-	// Project is the owning project name.
-	Project string
-	// PodCount is the total number of pods for the component.
-	PodCount int
-	// ReadyPods is the number of ready pods.
-	ReadyPods int
-}
-
-// ProjectInfo summarizes pod readiness across all components in a project.
-type ProjectInfo struct {
-	// Name is the project name.
-	Name string
-	// Environment is the environment filter used for the query.
-	Environment string
-	// Components lists component names included in the summary.
-	Components []string
-	// PodCount is the total number of pods across components.
-	PodCount int
-	// ReadyPods is the number of ready pods across components.
-	ReadyPods int
-}
-
 // Label constants for Deployah resources.
 const (
 	ProjectLabel     = "deployah.dev/project"

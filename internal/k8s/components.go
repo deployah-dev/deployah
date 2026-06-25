@@ -66,48 +66,6 @@ func (c *Client) ValidateComponentExists(ctx context.Context, projectName, compo
 	return nil
 }
 
-// GetComponentInfo gets detailed information about a specific component
-func (c *Client) GetComponentInfo(ctx context.Context, projectName, componentName string) (*ComponentInfo, error) {
-	pods, err := c.GetRunningPods(ctx, projectName, componentName, "")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get pods for component: %w", err)
-	}
-
-	readyPods := 0
-	for _, pod := range pods {
-		if pod.Status == "Running" {
-			readyPods++
-		}
-	}
-
-	return &ComponentInfo{
-		Name:      componentName,
-		Project:   projectName,
-		PodCount:  len(pods),
-		ReadyPods: readyPods,
-	}, nil
-}
-
-// GetProjectComponents gets all components for a project with their information
-func (c *Client) GetProjectComponents(ctx context.Context, projectName string) ([]ComponentInfo, error) {
-	components, err := c.GetAvailableComponents(ctx, projectName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get available components: %w", err)
-	}
-
-	componentInfos := make([]ComponentInfo, 0, len(components))
-	for _, componentName := range components {
-		info, infoErr := c.GetComponentInfo(ctx, projectName, componentName)
-		if infoErr != nil {
-			// Log error but continue with other components
-			continue
-		}
-		componentInfos = append(componentInfos, *info)
-	}
-
-	return componentInfos, nil
-}
-
 // GetAvailableEnvironments lists environment names from running pods for a
 // project and component.
 func (c *Client) GetAvailableEnvironments(ctx context.Context, projectName, componentName string) ([]string, error) {

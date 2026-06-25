@@ -15,7 +15,6 @@
 package k8s
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -50,7 +49,7 @@ func TestCheckAPIRequirements_AllSatisfied(t *testing.T) {
 		{GroupVersions: []string{"networking.k8s.io/v1"}, Reason: `required by component "api"`},
 	}
 
-	err := CheckAPIRequirements(context.Background(), cs, reqs)
+	err := CheckAPIRequirements(cs, reqs)
 	assert.NoError(t, err)
 }
 
@@ -63,7 +62,7 @@ func TestCheckAPIRequirements_OneMissing(t *testing.T) {
 		{GroupVersions: []string{"autoscaling/v2"}, Reason: `required by component "web" (autoscaling enabled)`},
 	}
 
-	err := CheckAPIRequirements(context.Background(), cs, reqs)
+	err := CheckAPIRequirements(cs, reqs)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "autoscaling/v2")
 	assert.Contains(t, err.Error(), `required by component "web" (autoscaling enabled)`)
@@ -79,7 +78,7 @@ func TestCheckAPIRequirements_MultipleMissing(t *testing.T) {
 		{GroupVersions: []string{"networking.k8s.io/v1"}, Reason: `required by component "api" (ingress enabled)`},
 	}
 
-	err := CheckAPIRequirements(context.Background(), cs, reqs)
+	err := CheckAPIRequirements(cs, reqs)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "autoscaling/v2")
 	assert.Contains(t, err.Error(), "networking.k8s.io/v1")
@@ -99,7 +98,7 @@ func TestCheckAPIRequirements_FallbackGroupVersion(t *testing.T) {
 		},
 	}
 
-	err := CheckAPIRequirements(context.Background(), cs, reqs)
+	err := CheckAPIRequirements(cs, reqs)
 	assert.NoError(t, err, "fallback version should satisfy the requirement")
 }
 
@@ -108,7 +107,7 @@ func TestCheckAPIRequirements_FallbackGroupVersion(t *testing.T) {
 func TestCheckAPIRequirements_EmptyRequirements(t *testing.T) {
 	cs := fakeClientWithAPIs() // no APIs at all
 
-	err := CheckAPIRequirements(context.Background(), cs, nil)
+	err := CheckAPIRequirements(cs, nil)
 	assert.NoError(t, err)
 }
 
@@ -121,7 +120,7 @@ func TestCheckAPIRequirements_ErrorFormatBulletList(t *testing.T) {
 		{GroupVersions: []string{"autoscaling/v2", "autoscaling/v2beta2"}, Reason: `required by component "web"`},
 	}
 
-	err := CheckAPIRequirements(context.Background(), cs, reqs)
+	err := CheckAPIRequirements(cs, reqs)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cluster does not support required APIs")
 	assert.Contains(t, err.Error(), "autoscaling/v2 or autoscaling/v2beta2")

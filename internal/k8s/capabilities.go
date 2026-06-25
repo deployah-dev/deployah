@@ -15,7 +15,6 @@
 package k8s
 
 import (
-	"context"
 	"fmt"
 	"strings"
 
@@ -41,7 +40,11 @@ type APIRequirement struct {
 // The check calls ServerGroups once and builds an in-memory set of available
 // group/version strings, so it incurs a single network round-trip regardless
 // of how many requirements are checked.
-func CheckAPIRequirements(ctx context.Context, client kubernetes.Interface, reqs []APIRequirement) error {
+//
+// NOTE: client-go's ServerGroups does not accept a context (it uses
+// [context.TODO] internally). Cancellation is not propagated to the underlying
+// HTTP call. See https://github.com/kubernetes/kubernetes/issues/110810.
+func CheckAPIRequirements(client kubernetes.Interface, reqs []APIRequirement) error {
 	if len(reqs) == 0 {
 		return nil
 	}
