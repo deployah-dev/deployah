@@ -86,6 +86,60 @@ const (
 	EnvFileSuffix = "/*"
 )
 
+// Health Check Probe Timing
+//
+// These constants define the Kubernetes probe parameters used when building
+// startup, readiness, and liveness probes from the spec health fields. They
+// are named constants so that the product behavior (e.g. how quickly a pod
+// is removed from rotation) can be reviewed and changed in one place.
+const (
+	// DefaultStartupProbePeriod is how often (in seconds) the startup probe
+	// checks the container port during the startup window.
+	DefaultStartupProbePeriod = 5
+
+	// DefaultStartupProbeFailureThreshold is how many consecutive failures
+	// before the container is killed during startup.
+	// Budget: 36 * 5s = 180s (3 minutes).
+	DefaultStartupProbeFailureThreshold = 36
+
+	// DefaultStartupProbeTimeout is the per-request timeout in seconds for
+	// the startup probe.
+	DefaultStartupProbeTimeout = 3
+
+	// DefaultReadinessProbePeriod is how often (in seconds) the readiness
+	// probe checks whether the container can receive traffic.
+	DefaultReadinessProbePeriod = 5
+
+	// DefaultReadinessProbeFailureThreshold is how many consecutive failures
+	// before the container is removed from service endpoints.
+	// Detection window: 3 * 5s = 15s.
+	DefaultReadinessProbeFailureThreshold = 3
+
+	// DefaultReadinessProbeTimeout is the per-request timeout in seconds for
+	// the readiness probe.
+	DefaultReadinessProbeTimeout = 3
+
+	// DefaultLivenessProbePeriod is how often (in seconds) the alive probe
+	// checks whether the container is responsive.
+	DefaultLivenessProbePeriod = 10
+
+	// DefaultLivenessProbeTimeout is the per-request timeout in seconds for
+	// the alive probe.
+	DefaultLivenessProbeTimeout = 3
+
+	// DefaultLivenessRestartAfterSec is the default restart-after window
+	// in seconds (used as a numeric fallback in probe generation).
+	DefaultLivenessRestartAfterSec = 60
+
+	// DefaultLivenessInterval is the default value for health.alive.interval
+	// when the field is omitted.
+	DefaultLivenessInterval = "10s"
+
+	// DefaultLivenessRestartAfter is the default value for
+	// health.alive.restartAfter when the field is omitted.
+	DefaultLivenessRestartAfter = "60s"
+)
+
 // Resource Management
 const (
 	// DefaultResourcePreset is the default resource preset when none is specified

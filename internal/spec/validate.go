@@ -156,6 +156,66 @@ func ValidateComponentAutoscaling(component Component) error {
 	return nil
 }
 
+// ValidateComponentHealth validates the health check configuration of a
+// component. Health checks are only supported for role: service components.
+func ValidateComponentHealth(component Component) error {
+	if component.Health == nil {
+		return nil
+	}
+
+	if component.Role != ComponentRoleService && component.Role != "" {
+		return fmt.Errorf("health checks are only supported for role: service components")
+	}
+
+	if component.Health.Ready != nil && !component.Health.Ready.Disabled {
+		if component.Health.Ready.Path != "" && component.Health.Ready.Path[0] != '/' {
+			return fmt.Errorf("health.ready.path must start with /")
+		}
+	}
+
+	if component.Health.Alive != nil && !component.Health.Alive.Disabled {
+		if component.Health.Alive.Path != "" && component.Health.Alive.Path[0] != '/' {
+			return fmt.Errorf("health.alive.path must start with /")
+		}
+
+		if component.Health.Alive.Interval != "" {
+			intervalSec, err := ParseDuration(component.Health.Alive.Interval)
+			if err != nil {
+				return fmt.Errorf("health.alive.interval: %w", err)
+			}
+			if intervalSec <= 0 {
+				return fmt.Errorf("health.alive.interval must be a positive duration")
+			}
+		}
+
+		if component.Health.Alive.RestartAfter != "" {
+			restartSec, err := ParseDuration(component.Health.Alive.RestartAfter)
+			if err != nil {
+				return fmt.Errorf("health.alive.restartAfter: %w", err)
+			}
+			if restartSec <= 0 {
+				return fmt.Errorf("health.alive.restartAfter must be a positive duration")
+			}
+
+			// Validate that restartAfter >= interval so failureThreshold >= 1.
+			intervalStr := component.Health.Alive.Interval
+			if intervalStr == "" {
+				intervalStr = DefaultLivenessInterval
+			}
+			intervalSec, err := ParseDuration(intervalStr)
+			if err != nil {
+				return fmt.Errorf("health.alive.interval: %w", err)
+			}
+			if restartSec < intervalSec {
+				return fmt.Errorf("health.alive.restartAfter (%s) must be greater than or equal to health.alive.interval (%s)",
+					component.Health.Alive.RestartAfter, intervalStr)
+			}
+		}
+	}
+
+	return nil
+}
+
 // ValidateSpecComponents validates all components in a spec.
 func ValidateSpecComponents(spec *Spec) error {
 	var errs []error
@@ -165,6 +225,9 @@ func ValidateSpecComponents(spec *Spec) error {
 			errs = append(errs, fmt.Errorf("component %s: %w", name, err))
 		}
 		if err := ValidateComponentAutoscaling(component); err != nil {
+			errs = append(errs, fmt.Errorf("component %s: %w", name, err))
+		}
+		if err := ValidateComponentHealth(component); err != nil {
 			errs = append(errs, fmt.Errorf("component %s: %w", name, err))
 		}
 	}

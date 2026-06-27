@@ -383,6 +383,98 @@
                                     "TIMEOUT": 30.5
                                 }
                             ]
+                        },
+                        "health": {
+                            "type": "object",
+                            "title": "Health Checks",
+                            "description": "Configures HTTP health checks for the component. When omitted, TCP checks on the component port run automatically. Only supported for role: service components.",
+                            "additionalProperties": false,
+                            "properties": {
+                                "ready": {
+                                    "title": "Ready Check",
+                                    "description": "Controls the readiness check. Provide an object with a path to upgrade from TCP to HTTP. Set to false to disable readiness and startup checks.",
+                                    "oneOf": [
+                                        {
+                                            "type": "boolean",
+                                            "const": false,
+                                            "title": "Disabled",
+                                            "description": "Set to false to disable the readiness and startup checks."
+                                        },
+                                        {
+                                            "type": "object",
+                                            "title": "Ready Check Configuration",
+                                            "additionalProperties": false,
+                                            "required": ["path"],
+                                            "properties": {
+                                                "path": {
+                                                    "type": "string",
+                                                    "title": "Path",
+                                                    "description": "HTTP endpoint that must return 2xx for the component to receive traffic. Must start with /.",
+                                                    "pattern": "^/",
+                                                    "examples": ["/health", "/ready", "/healthz"]
+                                                }
+                                            }
+                                        }
+                                    ],
+                                    "examples": [
+                                        {"path": "/health"},
+                                        false
+                                    ]
+                                },
+                                "alive": {
+                                    "title": "Alive Check",
+                                    "description": "Controls the alive check. Provide an object with a path to upgrade from TCP to HTTP. Set to false to disable the alive check.",
+                                    "oneOf": [
+                                        {
+                                            "type": "boolean",
+                                            "const": false,
+                                            "title": "Disabled",
+                                            "description": "Set to false to disable the alive check."
+                                        },
+                                        {
+                                            "type": "object",
+                                            "title": "Alive Check Configuration",
+                                            "additionalProperties": false,
+                                            "required": ["path"],
+                                            "properties": {
+                                                "path": {
+                                                    "type": "string",
+                                                    "title": "Path",
+                                                    "description": "HTTP endpoint that must return 2xx for the pod to be considered alive. Must start with /. Check only internal process state here, not external dependencies.",
+                                                    "pattern": "^/",
+                                                    "examples": ["/livez", "/healthz", "/alive"]
+                                                },
+                                                "interval": {
+                                                    "type": "string",
+                                                    "title": "Interval",
+                                                    "description": "How often to check the endpoint. Defaults to 10s. Format: a positive integer followed by s (seconds), m (minutes), or h (hours).",
+                                                    "pattern": "^[1-9][0-9]*(s|m|h)$",
+                                                    "default": "10s",
+                                                    "examples": ["10s", "30s", "1m"]
+                                                },
+                                                "restartAfter": {
+                                                    "type": "string",
+                                                    "title": "Restart After",
+                                                    "description": "How long the endpoint must fail continuously before the pod is restarted. Defaults to 60s. The effective window rounds up to the nearest multiple of interval. Format: a positive integer followed by s, m, or h.",
+                                                    "pattern": "^[1-9][0-9]*(s|m|h)$",
+                                                    "default": "60s",
+                                                    "examples": ["60s", "2m", "5m"]
+                                                }
+                                            }
+                                        }
+                                    ],
+                                    "examples": [
+                                        {"path": "/livez"},
+                                        {"path": "/livez", "interval": "10s", "restartAfter": "60s"},
+                                        false
+                                    ]
+                                }
+                            },
+                            "examples": [
+                                {"ready": {"path": "/health"}},
+                                {"ready": {"path": "/health"}, "alive": {"path": "/livez"}},
+                                {"ready": false, "alive": false}
+                            ]
                         }
                     }
                 }

@@ -6,6 +6,8 @@ import (
 	"embed"
 	"fmt"
 	"io/fs"
+	"maps"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -371,10 +373,155 @@ func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string) (map[string]a
 			}
 		}
 
+		// Add health probes for service components.
+		if component.Role == spec.ComponentRoleService {
+			maps.Copy(componentValues, buildProbeValues(component))
+		}
+
 		values[componentName] = componentValues
 	}
 
 	return values, nil
+}
+
+// buildProbeValues constructs the Helm probe values for a service component.
+//
+// Rules:
+//   - Probes are only emitted for role: service components; callers must gate on
+//     the role before calling this function.
+//   - When health is nil (zero-config), all three probes use TCP on the named
+//     "http" port with the default timing constants.
+//   - When health.ready carries a path, the startup and readiness probes upgrade
+//     from TCP to HTTP on that path.
+//   - When health.alive carries a path, the liveness probe upgrades from TCP to
+//     HTTP on that path.
+//   - When health.ready.Disabled is true, the readiness probe is omitted. The
+//     startup probe is still emitted when the alive check is active.
+//   - When health.alive.Disabled is true, the liveness probe is omitted. The
+//     startup probe is still emitted when the ready check is active.
+//   - When both are disabled, no probes are emitted.
+//   - health.alive.interval and health.alive.restartAfter default to
+//     DefaultLivenessInterval / DefaultLivenessRestartAfter when absent.
+//     failureThreshold = ceil(restartAfter / interval), so the effective restart
+//     window is never shorter than the requested restartAfter.
+func buildProbeValues(component spec.Component) map[string]any {
+	h := component.Health
+
+	readyDisabled := h != nil && h.Ready != nil && h.Ready.Disabled
+	aliveDisabled := h != nil && h.Alive != nil && h.Alive.Disabled
+
+	// Nothing to emit when both sides are explicitly off.
+	if readyDisabled && aliveDisabled {
+		return nil
+	}
+
+	result := make(map[string]any)
+
+	// Determine the HTTP path for the ready and alive checks.
+	var readyPath string
+	if h != nil && h.Ready != nil && !h.Ready.Disabled {
+		readyPath = h.Ready.Path
+	}
+	var alivePath string
+	if h != nil && h.Alive != nil && !h.Alive.Disabled {
+		alivePath = h.Alive.Path
+	}
+
+	// Startup probe is active whenever at least one side is not disabled. It
+	// inherits the ready path if set (so it validates the same HTTP endpoint),
+	// otherwise falls back to TCP.
+	result["startupProbe"] = buildStartupProbe(readyPath)
+
+	// Readiness probe.
+	if !readyDisabled {
+		result["readinessProbe"] = buildReadinessProbe(readyPath)
+	}
+
+	// Liveness probe.
+	if !aliveDisabled {
+		var interval, restartAfter string
+		if h != nil && h.Alive != nil {
+			interval = h.Alive.Interval
+			restartAfter = h.Alive.RestartAfter
+		}
+		result["livenessProbe"] = buildLivenessProbe(alivePath, interval, restartAfter)
+	}
+
+	return result
+}
+
+// buildStartupProbe constructs the startup probe map for the Helm values.
+// When path is non-empty the probe uses HTTP; otherwise it uses TCP.
+func buildStartupProbe(path string) map[string]any {
+	p := map[string]any{
+		"enabled":          true,
+		"periodSeconds":    spec.DefaultStartupProbePeriod,
+		"failureThreshold": spec.DefaultStartupProbeFailureThreshold,
+		"timeoutSeconds":   spec.DefaultStartupProbeTimeout,
+	}
+	if path != "" {
+		p["httpGet"] = map[string]any{"path": path, "port": "http"}
+	} else {
+		p["tcpSocket"] = map[string]any{"port": "http"}
+	}
+	return p
+}
+
+// buildReadinessProbe constructs the readiness probe map for the Helm values.
+// When path is non-empty the probe uses HTTP; otherwise it uses TCP.
+func buildReadinessProbe(path string) map[string]any {
+	p := map[string]any{
+		"enabled":          true,
+		"periodSeconds":    spec.DefaultReadinessProbePeriod,
+		"failureThreshold": spec.DefaultReadinessProbeFailureThreshold,
+		"timeoutSeconds":   spec.DefaultReadinessProbeTimeout,
+	}
+	if path != "" {
+		p["httpGet"] = map[string]any{"path": path, "port": "http"}
+	} else {
+		p["tcpSocket"] = map[string]any{"port": "http"}
+	}
+	return p
+}
+
+// buildLivenessProbe constructs the liveness probe map for the Helm values.
+// When path is non-empty the probe uses HTTP; otherwise it uses TCP.
+// interval and restartAfter are duration strings; each defaults when empty.
+// failureThreshold = ceil(restartAfterSec / intervalSec).
+func buildLivenessProbe(path, interval, restartAfter string) map[string]any {
+	if interval == "" {
+		interval = spec.DefaultLivenessInterval
+	}
+	if restartAfter == "" {
+		restartAfter = spec.DefaultLivenessRestartAfter
+	}
+
+	// Errors here are already caught by ValidateComponentHealth; use the
+	// numeric constants as fallback so the caller always gets a valid map.
+	intervalSec, err := spec.ParseDuration(interval)
+	if err != nil || intervalSec <= 0 {
+		intervalSec = spec.DefaultLivenessProbePeriod
+	}
+	restartSec, err := spec.ParseDuration(restartAfter)
+	if err != nil || restartSec <= 0 {
+		restartSec = spec.DefaultLivenessRestartAfterSec
+	}
+
+	// Round up so the real restart window is never shorter than requested.
+	failureThreshold := max(int(math.Ceil(float64(restartSec)/float64(intervalSec))), 1)
+
+	p := map[string]any{
+		"enabled":          true,
+		"periodSeconds":    intervalSec,
+		"failureThreshold": failureThreshold,
+		"timeoutSeconds":   spec.DefaultLivenessProbeTimeout,
+	}
+	if path != "" {
+		p["httpGet"] = map[string]any{"path": path, "port": "http"}
+	} else {
+		p["tcpSocket"] = map[string]any{"port": "http"}
+	}
+	return p
 }
 
 // buildAutoscalingValues translates the spec Autoscaling configuration into

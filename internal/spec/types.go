@@ -14,6 +14,11 @@
 
 package spec
 
+import (
+	"encoding/json"
+	"fmt"
+)
+
 // Spec defines the structure of the project spec.
 type Spec struct {
 	// APIVersion is the schema version of the spec (e.g., "v1-alpha.1").
@@ -87,6 +92,104 @@ type Component struct {
 	Ingress *Ingress `json:"ingress,omitempty" yaml:"ingress,omitempty"`
 	// Env sets static environment variables for the container.
 	Env map[string]string `json:"env,omitempty" yaml:"env,omitempty"`
+	// Health configures ready and alive checks for the component.
+	Health *Health `json:"health,omitempty" yaml:"health,omitempty"`
+}
+
+// Health configures HTTP health checks for a service component. When omitted,
+// TCP checks on the component port run automatically.
+type Health struct {
+	// Ready controls the readiness check. Provide a path to upgrade from TCP
+	// to HTTP. Set to false to disable readiness and startup checks entirely.
+	Ready *HealthReady `json:"ready,omitempty" yaml:"ready,omitempty"`
+	// Alive controls the alive check. Provide a path to upgrade from TCP to
+	// HTTP. Set to false to disable the alive check entirely.
+	Alive *HealthAlive `json:"alive,omitempty" yaml:"alive,omitempty"`
+}
+
+// HealthReady configures the readiness check for a service component. It
+// accepts either false (to disable) or an object with a path.
+//
+// When Ready is nil (field absent), a TCP readiness check on the component
+// port runs automatically.
+type HealthReady struct {
+	// Disabled is true when the developer set ready: false.
+	Disabled bool `json:"-" yaml:"-"`
+	// Path is the HTTP endpoint that must return 2xx for the component to
+	// receive traffic. Must start with /.
+	Path string `json:"path,omitempty" yaml:"path,omitempty"`
+}
+
+// UnmarshalJSON handles both false and object forms:
+//
+//	ready: false         -> HealthReady{Disabled: true}
+//	ready: {path: /h}   -> HealthReady{Path: "/h"}
+func (r *HealthReady) UnmarshalJSON(data []byte) error {
+	// Check for boolean false.
+	var b bool
+	if err := json.Unmarshal(data, &b); err == nil {
+		if !b {
+			r.Disabled = true
+			return nil
+		}
+		return fmt.Errorf("health.ready: true is not valid; omit the field to enable the default TCP check")
+	}
+
+	// Unmarshal as object using an alias to avoid infinite recursion.
+	type healthReadyAlias HealthReady
+	var alias healthReadyAlias
+	if err := json.Unmarshal(data, &alias); err != nil {
+		return fmt.Errorf("health.ready: expected false or an object with a path field: %w", err)
+	}
+	*r = HealthReady(alias)
+	return nil
+}
+
+// HealthAlive configures the alive check for a service component. It accepts
+// either false (to disable) or an object with a path and optional timing.
+//
+// When Alive is nil (field absent), a TCP alive check on the component port
+// runs automatically.
+type HealthAlive struct {
+	// Disabled is true when the developer set alive: false.
+	Disabled bool `json:"-" yaml:"-"`
+	// Path is the HTTP endpoint that must return 2xx for the pod to be
+	// considered alive. Must start with /. Check only internal process
+	// state here, not external dependencies.
+	Path string `json:"path,omitempty" yaml:"path,omitempty"`
+	// Interval is how often to check the endpoint (e.g. "10s", "1m").
+	// Defaults to "10s" when omitted.
+	Interval string `json:"interval,omitempty" yaml:"interval,omitempty"`
+	// RestartAfter is how long the endpoint must fail continuously before
+	// the pod is restarted (e.g. "60s", "2m"). Defaults to "60s" when
+	// omitted. The effective window rounds up to the nearest multiple of
+	// Interval.
+	RestartAfter string `json:"restartAfter,omitempty" yaml:"restartAfter,omitempty"`
+}
+
+// UnmarshalJSON handles both false and object forms:
+//
+//	alive: false                           -> HealthAlive{Disabled: true}
+//	alive: {path: /livez, interval: 10s}  -> HealthAlive{Path: "/livez", ...}
+func (a *HealthAlive) UnmarshalJSON(data []byte) error {
+	// Check for boolean false.
+	var b bool
+	if err := json.Unmarshal(data, &b); err == nil {
+		if !b {
+			a.Disabled = true
+			return nil
+		}
+		return fmt.Errorf("health.alive: true is not valid; omit the field to enable the default TCP check")
+	}
+
+	// Unmarshal as object using an alias to avoid infinite recursion.
+	type healthAliveAlias HealthAlive
+	var alias healthAliveAlias
+	if err := json.Unmarshal(data, &alias); err != nil {
+		return fmt.Errorf("health.alive: expected false or an object with a path field: %w", err)
+	}
+	*a = HealthAlive(alias)
+	return nil
 }
 
 // Autoscaling defines the autoscaling settings for the component.

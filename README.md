@@ -19,6 +19,7 @@ but for the deploy step: S2I builds your image, and Deployah runs your release.
 - [How Deployah works](#how-deployah-works)
 - [Concepts](#concepts)
 - [Writing your spec](#writing-your-spec)
+- [Health checks](#health-checks)
 - [Commands](#commands)
 - [Environments and variables](#environments-and-variables)
 - [Accessing your app](#accessing-your-app)
@@ -193,6 +194,10 @@ A few words you will see often.
   variables.
 - **Resource preset.** A quick way to set CPU and memory without knowing
   Kubernetes units. Use `resourcePreset: small` instead of writing exact values.
+- **Health checks.** Deployah checks that your app is ready for traffic and
+  restarts it if it gets stuck. This happens automatically for every service
+  component. You can improve the checks by giving Deployah an HTTP endpoint to
+  call. See [Health checks](#health-checks).
 - **Bring your own image.** Deployah does not build images. You give it an image
   that already exists in a registry your cluster can pull from. Build your image
   in CI (or locally), then let Deployah deploy it.
@@ -271,6 +276,7 @@ Component:
 | `resources` | none | `cpu`, `memory`, `ephemeralStorage` (Kubernetes units). |
 | `ingress` | none | `host` (required) and `tls` (default false). |
 | `autoscaling` | off | `enabled`, `minReplicas`, `maxReplicas`, `metrics`. |
+| `health` | auto | Ready and alive checks. See [Health checks](#health-checks). |
 | `environments` | none | Which environments deploy this component. |
 
 > [!IMPORTANT]
@@ -306,6 +312,10 @@ A few fields have specific formats:
   or `my-app.local`.
 - **`autoscaling`**: needs `enabled`, `minReplicas`, and `maxReplicas`. Each
   metric has a `type` (`cpu` or `memory`) and a `target` percentage.
+- **`health.alive.interval`** and **`health.alive.restartAfter`**: a positive integer
+  followed by a unit: `s` (seconds), `m` (minutes), or `h` (hours). For example
+  `10s`, `2m`, `1h`. The effective restart time rounds up to the nearest multiple
+  of `interval`.
 - **Names** (`project`, component names, environment names): letters, digits,
   `-`, and `_`. An environment name must be at least 2 characters.
 
@@ -436,6 +446,85 @@ components:
           target: 70
 environments:
   - name: prod
+```
+
+## Health checks
+
+Deployah checks that your app is running and ready for traffic. For every
+`service` component with a `port`, Deployah adds three checks automatically:
+
+- **Startup check.** Waits up to 3 minutes for your app to accept connections
+  on its port. New pods do not receive traffic until this passes. If the app
+  takes longer than 3 minutes to start, the pod is killed and restarted.
+- **Ready check.** Runs every 5 seconds. If your app stops accepting
+  connections for 15 seconds, traffic is routed to other pods until it recovers.
+- **Alive check.** Runs every 10 seconds. If your app is unresponsive for 60
+  seconds, the pod is restarted.
+
+With no configuration, all three checks connect to your app's port (TCP). This
+works for any app. You can make the checks smarter by giving Deployah an HTTP
+endpoint to call.
+
+**Zero config.** All checks run automatically. No `health` block needed.
+
+```yaml
+components:
+  api:
+    image: my-app:1.0.0
+    port: 8080
+```
+
+**Add a readiness endpoint.** Tell Deployah where to check if your app is ready
+for traffic. This also upgrades the startup check to the same endpoint.
+
+```yaml
+components:
+  api:
+    image: my-app:1.0.0
+    port: 8080
+    health:
+      ready:
+        path: /health
+```
+
+Your `/health` endpoint should return a `2xx` status code when your app can
+handle requests. Return `4xx` or `5xx` when it cannot, for example if it is
+still connecting to the database.
+
+**Add a separate restart endpoint.** If your app can get stuck in a way that a
+restart fixes, give Deployah a separate endpoint to check. If this endpoint
+fails for long enough, the pod is restarted.
+
+```yaml
+components:
+  api:
+    image: my-app:1.0.0
+    port: 8080
+    health:
+      ready:
+        path: /health
+      alive:
+        path: /livez
+        interval: 10s      # how often to check (default: 10s)
+        restartAfter: 60s  # how long to fail before restart (default: 60s)
+```
+
+Your `/livez` endpoint should check only whether the process itself is
+responsive. Do not check external dependencies (databases, caches) here. If a
+dependency is down, let the ready endpoint return an error instead. That stops
+traffic without restarting the pod.
+
+**Disable checks.** For a raw TCP service or an app where checks cause
+problems, you can disable them individually.
+
+```yaml
+components:
+  game-server:
+    image: my-game:1.0.0
+    port: 9000
+    health:
+      ready: false
+      alive: false
 ```
 
 ## Commands
