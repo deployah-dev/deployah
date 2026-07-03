@@ -141,11 +141,9 @@ func TestResolveEnvFileWithSanitization(t *testing.T) {
 				require.NoError(t, writeErr)
 			}
 
-			env := &Environment{
-				Name: tt.envName,
-			}
+			env := &Environment{}
 
-			path, explicit, resolveErr := resolveEnvFile(env)
+			path, explicit, resolveErr := resolveEnvFile(env, tt.envName)
 			require.NoError(t, resolveErr)
 			assert.Equal(t, tt.expectedPath, path)
 			assert.Equal(t, tt.expectedExplicit, explicit)
@@ -163,11 +161,10 @@ func TestResolveEnvFileExplicitWithWildcard(t *testing.T) {
 	require.NoError(t, err)
 
 	env := &Environment{
-		Name:    "review/*",   // Wildcard name
-		EnvFile: explicitFile, // But explicit file is set
+		EnvFile: explicitFile,
 	}
 
-	path, explicit, err := resolveEnvFile(env)
+	path, explicit, err := resolveEnvFile(env, "review/*")
 	require.NoError(t, err)
 	assert.Equal(t, explicitFile, path)
 	assert.True(t, explicit)

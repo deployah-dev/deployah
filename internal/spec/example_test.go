@@ -41,10 +41,10 @@ func ExampleFillSpecWithDefaults() {
 
 // ExampleLoad reads a manifest file from disk.
 func ExampleLoad() {
-	const yamlDoc = `apiVersion: v1-alpha.1
+	const yamlDoc = `apiVersion: v1-alpha.2
 project: demo
 environments:
-  - name: default
+  default: {}
 components:
   web:
     image: nginx:latest

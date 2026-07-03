@@ -46,7 +46,7 @@ type Options struct {
 // ProjectConfig holds the collected configuration data
 type ProjectConfig struct {
 	Name         string
-	Environments []spec.Environment
+	Environments map[string]spec.Environment
 	Components   map[string]spec.Component
 	OutputPath   string
 	DryRun       bool
@@ -82,9 +82,10 @@ func runInit(c *nabat.Context) error {
 	c.Logger().Debug("starting project initialization")
 
 	config := &ProjectConfig{
-		OutputPath: opts.Output,
-		Components: make(map[string]spec.Component),
-		DryRun:     opts.DryRun,
+		OutputPath:   opts.Output,
+		Environments: make(map[string]spec.Environment),
+		Components:   make(map[string]spec.Component),
+		DryRun:       opts.DryRun,
 	}
 
 	if err := collectProjectName(c, config); err != nil {

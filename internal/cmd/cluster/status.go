@@ -231,8 +231,12 @@ func gatherAccess(c *nabat.Context, kubeconfig []byte, gwPorts map[uint16]uint16
 				}
 				if hostPort, ok := gwPorts[containerPort]; ok {
 					entry.Address = fmt.Sprintf("127.0.0.1:%d", hostPort)
-					entry.URL = fmt.Sprintf("%s://127.0.0.1:%d", scheme, hostPort)
-					entry.Curl = fmt.Sprintf("curl -H 'Host: %s' %s://127.0.0.1:%d", rule.Host, scheme, hostPort)
+					entry.URL = fmt.Sprintf("%s://%s:%d", scheme, rule.Host, hostPort)
+					if tls {
+						entry.Curl = fmt.Sprintf("curl -k --resolve %s:%d:127.0.0.1 https://%s:%d", rule.Host, hostPort, rule.Host, hostPort)
+					} else {
+						entry.Curl = fmt.Sprintf("curl -H 'Host: %s' http://127.0.0.1:%d", rule.Host, hostPort)
+					}
 				} else {
 					entry.URL = scheme + "://" + rule.Host
 					if addr != "" {

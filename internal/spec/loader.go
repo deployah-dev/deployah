@@ -6,79 +6,103 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 
 	"sigs.k8s.io/yaml"
 )
 
-// sanitizeEnvName removes path separators and wildcards from environment names
-// to prevent them from interfering with file path construction.
-func sanitizeEnvName(name string) string {
-	// Remove wildcard suffix patterns like "/*"
-	sanitized := strings.TrimSuffix(name, "/*")
+// varPattern matches ${VAR} placeholder tokens in YAML scalar values.
+var varPattern = regexp.MustCompile(`\$\{[^}]+\}`)
 
-	// Remove any remaining path separators or wildcards
+// SubstitutionReport records which component fields were produced by envsubst
+// variable expansion. Consumers (e.g. the resolver) use this to distinguish
+// user-supplied literals from dynamically expanded values.
+type SubstitutionReport struct {
+	// DynamicSubdomains maps component names to true when the component's
+	// expose.subdomain field contained a ${VAR} token before substitution.
+	DynamicSubdomains map[string]bool
+}
+
+// sanitizeEnvName removes path separators and wildcards from environment names
+// to prevent them from interfering with env-file path construction.
+// This function is for file path construction only; use [matchEnvKey] for
+// environment key matching.
+func sanitizeEnvName(name string) string {
+	sanitized := strings.TrimSuffix(name, "/*")
 	sanitized = strings.ReplaceAll(sanitized, "/", "")
 	sanitized = strings.ReplaceAll(sanitized, "\\", "")
 	sanitized = strings.ReplaceAll(sanitized, "*", "")
 	sanitized = strings.ReplaceAll(sanitized, "?", "")
-
 	return sanitized
 }
 
-// ResolveEnvironment returns the environment by name, or the default if name
-// is empty. Returns an error if not found or if multiple environments are
-// defined but none specified.
-func ResolveEnvironment(environments []Environment, desiredEnvironment string) (*Environment, error) {
-	// Helper function to format environment names for error messages
-	formatEnvNames := func(envs []Environment) string {
-		names := make([]string, 0, len(envs))
-		for _, env := range envs {
-			names = append(names, fmt.Sprintf("%q", env.Name))
-		}
-		return strings.Join(names, ", ")
-	}
-
-	// If no environments are defined, and no environment is specified, use the default environment.
+// ResolveEnvironment returns the matched map key and environment for the
+// desired name. It uses [matchEnvKey] for exact-then-prefix lookup.
+//
+// When desiredEnvironment is empty:
+//   - Zero environments: returns a synthetic default environment.
+//   - One environment: returns it automatically.
+//   - Two or more: returns an error listing available names.
+func ResolveEnvironment(environments map[string]Environment, desiredEnvironment string) (string, *Environment, error) {
 	if len(environments) == 0 && desiredEnvironment == "" {
-		return &Environment{
-			Name:       "default",
+		env := &Environment{
 			EnvFile:    DefaultEnvFile,
 			ConfigFile: DefaultConfigFile,
-		}, nil
+		}
+		return "default", env, nil
 	}
 
-	// If only one environment is defined, and no environment is specified, use it.
 	if len(environments) == 1 && desiredEnvironment == "" {
-		return &environments[0], nil
+		for k, v := range environments {
+			cp := v
+			return k, &cp, nil
+		}
 	}
 
-	// If multiple environments are defined, and no environment is specified, return an error.
 	if len(environments) > 1 && desiredEnvironment == "" {
-		return nil, fmt.Errorf(
+		names := make([]string, 0, len(environments))
+		for k := range environments {
+			names = append(names, k)
+		}
+		slices.Sort(names)
+		quoted := make([]string, 0, len(names))
+		for _, n := range names {
+			quoted = append(quoted, fmt.Sprintf("%q", n))
+		}
+		return "", nil, fmt.Errorf(
 			"multiple environments found but none specified: %s",
-			formatEnvNames(environments),
+			strings.Join(quoted, ", "),
 		)
 	}
 
-	// Find the specified environment
-	for i, env := range environments {
-		if env.Name == desiredEnvironment {
-			return &environments[i], nil
-		}
+	keys := make([]string, 0, len(environments))
+	for k := range environments {
+		keys = append(keys, k)
 	}
 
-	return nil, fmt.Errorf(
+	if matched, ok := matchEnvKey(desiredEnvironment, keys); ok {
+		cp := environments[matched]
+		return matched, &cp, nil
+	}
+
+	slices.Sort(keys)
+	quoted := make([]string, 0, len(keys))
+	for _, k := range keys {
+		quoted = append(quoted, fmt.Sprintf("%q", k))
+	}
+	return "", nil, fmt.Errorf(
 		"environment %q not found, available environments: %s",
 		desiredEnvironment,
-		formatEnvNames(environments),
+		strings.Join(quoted, ", "),
 	)
 }
 
 // resolveEnvFile determines which env file to use for the given environment,
 // following Deployah's resolution order. Returns the path, whether it was
 // explicitly set, and an error if explicitly set but missing.
-func resolveEnvFile(env *Environment) (string, bool, error) {
+func resolveEnvFile(env *Environment, envName string) (string, bool, error) {
 	if env.EnvFile != "" {
 		if fileExists(env.EnvFile) {
 			return env.EnvFile, true, nil
@@ -86,9 +110,7 @@ func resolveEnvFile(env *Environment) (string, bool, error) {
 		return "", true, fmt.Errorf("explicit envFile %q does not exist", env.EnvFile)
 	}
 
-	// Sanitize the environment name to prevent path separators and wildcards
-	// from interfering with file path construction
-	sanitizedName := sanitizeEnvName(env.Name)
+	sanitizedName := sanitizeEnvName(envName)
 
 	candidates := []string{
 		fmt.Sprintf(".env.%s", sanitizedName),
@@ -109,19 +131,34 @@ func fileExists(path string) bool {
 	return err == nil && !info.IsDir()
 }
 
+// PrescanSubstitutionReport inspects the raw (pre-envsubst) spec for
+// ${VAR} tokens in expose.subdomain fields and returns a SubstitutionReport.
+// Call it after [ParseManifest] and before envsubst so the resolver can
+// distinguish static from dynamic subdomains (the wildcard static-subdomain
+// warning does not fire for dynamically expanded values).
+func PrescanSubstitutionReport(rawSpec *Spec) SubstitutionReport {
+	report := SubstitutionReport{DynamicSubdomains: make(map[string]bool)}
+	for name, comp := range rawSpec.Components {
+		if comp.Expose != nil && comp.Expose.Subdomain != nil {
+			if varPattern.MatchString(*comp.Expose.Subdomain) {
+				report.DynamicSubdomains[name] = true
+			}
+		}
+	}
+	return report
+}
+
 // Save writes the spec to a YAML file at the specified path.
 func Save(spec *Spec, path string) error {
 	if path == "" {
 		path = DefaultSpecPath
 	}
 
-	// Marshal the spec to YAML
 	data, err := yaml.Marshal(spec)
 	if err != nil {
 		return fmt.Errorf("failed to marshal spec to YAML: %w", err)
 	}
 
-	// Create the directory if it doesn't exist
 	dir := filepath.Dir(path)
 	if dir != "." && dir != "" {
 		if err = os.MkdirAll(dir, 0o750); err != nil {
@@ -129,7 +166,6 @@ func Save(spec *Spec, path string) error {
 		}
 	}
 
-	// Write the file
 	if err = os.WriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("failed to write spec to %s: %w", path, err)
 	}
@@ -137,91 +173,85 @@ func Save(spec *Spec, path string) error {
 	return nil
 }
 
-// Load reads and parses the spec YAML file at the given path, resolves
-// the environment (using the provided envName or default resolution rules),
-// and substitutes variables according to precedence (environment definition,
-// env file, then OS environment). Returns the parsed [Spec] or an error.
-func Load(ctx context.Context, path, envName string) (*Spec, error) {
+// Load reads and parses the spec YAML file at the given path, resolves the
+// environment (using desiredEnv or default resolution rules), substitutes
+// variables according to precedence, validates the spec, and applies defaults.
+//
+// This function performs the full load pipeline without platform resolution.
+// For the full pipeline including platform config and [ResolvedSpec], use
+// [Session.ResolvedSpec].
+func Load(ctx context.Context, path, desiredEnv string) (*Spec, error) {
 	if path == "" {
 		path = DefaultSpecPath
 	}
 
-	// Read the spec file
 	data, err := os.ReadFile(path) // #nosec G304 -- spec path from CLI or default
 	if err != nil {
 		return nil, fmt.Errorf("failed to read spec: %w", err)
 	}
 
-	// Unmarshal into map[string]any for validation.
 	var specObj map[string]any
 	if err = yaml.Unmarshal(data, &specObj); err != nil {
 		return nil, fmt.Errorf("failed to parse spec YAML: %w", err)
 	}
 
-	// Validate API version.
 	version, err := ValidateAPIVersion(specObj)
 	if err != nil {
 		return nil, fmt.Errorf("failed to validate API version: %w", err)
 	}
 
-	// Validate the environments against the schema
 	if err = ValidateEnvironments(specObj, version); err != nil {
 		return nil, fmt.Errorf("environments validation failed: %w", err)
 	}
 
+	// Parse the environments section to resolve the target environment.
 	var tmp struct {
-		Environments []Environment `yaml:"environments"`
+		Environments map[string]Environment `yaml:"environments"`
 	}
 	if err = yaml.Unmarshal(data, &tmp); err != nil {
 		return nil, fmt.Errorf("failed to parse spec YAML: %w", err)
 	}
 
-	// Select the correct environment
-	env, err := ResolveEnvironment(tmp.Environments, envName)
+	envName, env, err := ResolveEnvironment(tmp.Environments, desiredEnv)
 	if err != nil {
 		return nil, fmt.Errorf("failed to select environment: %w", err)
 	}
 
-	slog.Info("Selected environment", "environment", env.Name)
+	slog.InfoContext(ctx, "selected environment", "environment", envName)
 
-	envFilePath, explicitlySet, err := resolveEnvFile(env)
+	envFilePath, explicitlySet, err := resolveEnvFile(env, envName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve environment file: %w", err)
 	}
 	if envFilePath != "" {
 		if explicitlySet {
-			slog.Info("Using explicily set env file", "envFile", envFilePath)
+			slog.InfoContext(ctx, "using explicitly set env file", "envFile", envFilePath)
 		} else {
-			slog.Info("Using resolved env file", "envFile", envFilePath)
+			slog.InfoContext(ctx, "using resolved env file", "envFile", envFilePath)
 		}
 	} else {
-		slog.Info("No env file found for environment", "environment", env.Name)
+		slog.InfoContext(ctx, "no env file found for environment", "environment", envName)
 	}
 
-	// Set the resolved env file path for substitution
 	env.EnvFile = envFilePath
 
-	// Substitute variables in the spec YAML
 	substituted, err := SubstituteVariables(data, env)
 	if err != nil {
 		return nil, fmt.Errorf("failed to substitute variables: %w", err)
 	}
 
-	// Unmarshal substituted spec for final validation
 	var substitutedObj map[string]any
-	if err = yaml.Unmarshal([]byte(substituted), &substitutedObj); err != nil {
+	if err = yaml.Unmarshal(substituted, &substitutedObj); err != nil {
 		return nil, fmt.Errorf("failed to parse substituted spec YAML: %w", err)
 	}
 
-	// Validate the spec against the schema
 	if err = ValidateSpec(substitutedObj, version); err != nil {
 		return nil, fmt.Errorf("spec validation failed: %w", err)
 	}
 
-	// Unmarshal into the Spec struct
 	var finalSpec Spec
-	if err = yaml.Unmarshal([]byte(substituted), &finalSpec); err != nil {
-		return nil, fmt.Errorf("failed to parse spec YAML: %w", err)
+	if err = yaml.Unmarshal(substituted, &finalSpec); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal spec: %w", err)
 	}
 
 	if err = ValidateSpecComponents(&finalSpec); err != nil {
@@ -233,4 +263,41 @@ func Load(ctx context.Context, path, envName string) (*Spec, error) {
 	}
 
 	return &finalSpec, nil
+}
+
+// ParseManifest reads and partially validates the spec YAML file: validates
+// the API version and environments section, then unmarshals the raw struct
+// without applying envsubst or defaults. It returns the raw spec and version.
+// Used by [Session.ResolvedSpec] as the first step of the full pipeline.
+func ParseManifest(path string) (*Spec, string, error) {
+	if path == "" {
+		path = DefaultSpecPath
+	}
+
+	data, err := os.ReadFile(path) // #nosec G304 -- spec path from CLI or default
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to read spec: %w", err)
+	}
+
+	var specObj map[string]any
+	if err = yaml.Unmarshal(data, &specObj); err != nil {
+		return nil, "", fmt.Errorf("failed to parse spec YAML: %w", err)
+	}
+
+	version, err := ValidateAPIVersion(specObj)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to validate API version: %w", err)
+	}
+
+	if err = ValidateEnvironments(specObj, version); err != nil {
+		return nil, "", fmt.Errorf("environments validation failed: %w", err)
+	}
+
+	var rawSpec Spec
+	if err = yaml.Unmarshal(data, &rawSpec); err != nil {
+		return nil, "", fmt.Errorf("failed to unmarshal spec: %w", err)
+	}
+	rawSpec.APIVersion = version
+
+	return &rawSpec, version, nil
 }

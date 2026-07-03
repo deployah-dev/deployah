@@ -88,10 +88,12 @@ func GenerateReleaseName(projectName, environmentName string) string {
 // PrepareChart expands the embedded chart into a temporary directory,
 // rendering .gotmpl files with Go templates and Sprig functions. It returns
 // the prepared chart root directory. Uses caching to avoid regenerating
-// identical charts.
-func PrepareChart(ctx context.Context, manifest *spec.Spec, desiredEnvironment string) (string, error) {
-	// Generate comprehensive cache key based on both spec and embedded chart templates
-	cacheKey, err := GenerateCacheKey(manifest)
+// identical charts. When resolved is non-nil it is threaded into
+// [MapSpecToChartValues] so TLS and hostname values come from the platform.
+func PrepareChart(ctx context.Context, manifest *spec.Spec, desiredEnvironment string, resolved *spec.ResolvedSpec) (string, error) {
+	// Generate comprehensive cache key based on resolved spec (or raw spec if
+	// no platform resolution was performed) and embedded chart templates.
+	cacheKey, err := GenerateCacheKey(manifest, resolved)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate cache key: %w", err)
 	}
@@ -193,7 +195,7 @@ func PrepareChart(ctx context.Context, manifest *spec.Spec, desiredEnvironment s
 	}
 
 	// Create a values.yaml file that includes the values for each component
-	values, err := MapSpecToChartValues(manifest, desiredEnvironment)
+	values, err := MapSpecToChartValues(manifest, desiredEnvironment, resolved)
 	if err != nil {
 		return "", fmt.Errorf("failed to map spec to chart values: %w", err)
 	}
@@ -262,14 +264,24 @@ func createComponentAppTemplate(templatesDir string) error {
 	return os.WriteFile(filepath.Join(templatesDir, "app.yaml"), []byte(appTemplate), 0o600)
 }
 
+// resolvedSchemaVersion is the current version of the deployah.resolved values
+// block. Consumers must check this to handle future shape changes.
+const resolvedSchemaVersion = "1"
+
 // MapSpecToChartValues converts a spec into Helm chart values for the
-// given environment.
-func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string) (map[string]any, error) {
+// given environment. When resolved is non-nil, it is used to look up the
+// resolved FQDN and TLS settings for components that declare an expose block.
+// It also writes a deployah.resolved block so the hostname guard can compare
+// values across deploys.
+func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string, resolved *spec.ResolvedSpec) (map[string]any, error) {
 	values := make(map[string]any)
+	// Track resolved per-component data for the deployah.resolved block.
+	resolvedComponents := make(map[string]any)
 
 	for componentName, component := range m.Components {
-		// Skip component if it is not deployed in the desired environment
-		if !slices.Contains(component.Environments, desiredEnvironment) {
+		// Skip component if it is not deployed in the desired environment.
+		// When Environments is empty the component is active in all environments.
+		if len(component.Environments) > 0 && !slices.Contains(component.Environments, desiredEnvironment) {
 			continue
 		}
 
@@ -329,12 +341,33 @@ func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string) (map[string]a
 
 		componentValues["resources"] = resources
 
-		if component.Ingress != nil && component.Ingress.Host != "" {
-			componentValues["ingress"] = map[string]any{
-				"enabled":  true,
-				"hostname": component.Ingress.Host,
-				"tls":      component.Ingress.TLS,
+		if component.Expose != nil {
+			ingressVals := map[string]any{"enabled": true}
+			if resolved != nil {
+				if rc, ok := resolved.Components[componentName]; ok && rc.FQDN != "" {
+					ingressVals["hostname"] = rc.FQDN
+					switch rc.TLSMode {
+					case spec.TLSModeSelfSigned:
+						ingressVals["tls"] = true
+						ingressVals["selfSigned"] = true
+					case spec.TLSModeSecretName:
+						ingressVals["tls"] = true
+						ingressVals["existingSecret"] = rc.TLSSecretName
+					case spec.TLSModeCertManager:
+						ingressVals["tls"] = true
+						ingressVals["annotations"] = map[string]string{
+							"cert-manager.io/cluster-issuer": rc.TLSIssuer,
+						}
+					default:
+						ingressVals["tls"] = false
+					}
+					resolvedComponents[componentName] = map[string]any{
+						"fqdn":    rc.FQDN,
+						"tlsMode": string(rc.TLSMode),
+					}
+				}
 			}
+			componentValues["ingress"] = ingressVals
 		}
 
 		if component.Autoscaling != nil && component.Autoscaling.Enabled {
@@ -379,6 +412,17 @@ func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string) (map[string]a
 		}
 
 		values[componentName] = componentValues
+	}
+
+	// Write the deployah.resolved block so the hostname guard can compare
+	// values across deploys.
+	if len(resolvedComponents) > 0 {
+		values["deployah"] = map[string]any{
+			"resolved": map[string]any{
+				"schemaVersion": resolvedSchemaVersion,
+				"components":    resolvedComponents,
+			},
+		}
 	}
 
 	return values, nil

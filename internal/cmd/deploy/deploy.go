@@ -3,6 +3,7 @@ package deploy
 import (
 	"context"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -17,8 +18,10 @@ import (
 
 // Options holds command-line flags for deploy.
 type Options struct {
-	Environment string `nabat:"environment"`
-	DryRun      bool   `nabat:"dry-run"`
+	Environment         string `nabat:"environment"`
+	DryRun              bool   `nabat:"dry-run"`
+	Explain             bool   `nabat:"explain"`
+	ForceHostnameChange bool   `nabat:"force-hostname-change"`
 }
 
 // Register adds the deploy command to app.
@@ -28,6 +31,8 @@ func Register(app *nabat.App) {
 		nabat.WithLongDescription("Deploy a project to a Kubernetes cluster on a given environment."),
 		nabat.WithArg("environment", "", nabat.WithRequired(), nabat.WithUsage("Environment to deploy to"), nabat.WithPrompt("Environment", "", nabat.WithHint("e.g. prod, staging"))),
 		nabat.WithFlag("dry-run", false, nabat.WithUsage("Perform a dry run (render templates without installing)")),
+		nabat.WithFlag("explain", false, nabat.WithUsage("Print the resolution report before cluster checks (visible even when cluster is unreachable)")),
+		nabat.WithFlag("force-hostname-change", false, nabat.WithUsage("Allow changing the resolved hostname even though it may break existing traffic (skips the hostname guard)")),
 		nabat.WithExample(`
 # Deploy to production using the default spec path (./deployah.yaml)
 deployah deploy prod
@@ -36,7 +41,10 @@ deployah deploy prod
 deployah deploy staging -s ./path/to/deployah.yaml
 
 # Deploy to production with a dry run
-deployah deploy prod --dry-run`),
+deployah deploy prod --dry-run
+
+# Show resolution report before deploying
+deployah deploy prod --explain`),
 		nabat.WithRun(runDeploy),
 	)
 }
@@ -51,17 +59,65 @@ func runDeploy(c *nabat.Context) error {
 
 	sess := session.FromContext(c)
 
-	cluster, err := sess.Target(c, opts.Environment)
-	if err != nil {
-		return fmt.Errorf("target cluster: %w", err)
+	// Prescan the raw (pre-envsubst) manifest for ${VAR} tokens so the
+	// resolver can distinguish static from dynamic subdomains.
+	rawSpec, _, rawErr := spec.ParseManifest(sess.SpecPath())
+	if rawErr != nil {
+		return fmt.Errorf("parse manifest: %w", rawErr)
 	}
+	substReport := spec.PrescanSubstitutionReport(rawSpec)
 
-	manifest, err := sess.Spec(c, opts.Environment)
+	// Load the fully substituted manifest (envsubst applied).
+	manifest, err := spec.Load(c, sess.SpecPath(), opts.Environment)
 	if err != nil {
 		return fmt.Errorf("load spec: %w", err)
 	}
 
 	c.Logger().Debug("spec loaded", "env", opts.Environment)
+
+	// Load platform file.
+	platform, platformErr := sess.Platform()
+	if platformErr != nil {
+		return fmt.Errorf("load platform file: %w", platformErr)
+	}
+
+	// Fail closed when any component uses expose and platform is absent.
+	if platform == nil && hasExposeComponents(manifest) {
+		return fmt.Errorf(
+			"one or more components use expose blocks but no platform file was found; "+
+				"create %s or set DEPLOYAH_PLATFORM_FILE, or pass --platform-file",
+			spec.DefaultPlatformPath,
+		)
+	}
+
+	// Warn when --context overrides the platform file's context for the env.
+	if platform != nil {
+		warnContextMismatch(c, sess.KubeContext(), platform, opts.Environment)
+	}
+
+	// Resolve using the substituted manifest (so expanded subdomains pass DNS
+	// validation) with the raw prescan report (so dynamic fields are skipped).
+	envIdentity := spec.NormalizeEnv(opts.Environment)
+	var resolvedSpec *spec.ResolvedSpec
+	if platform != nil {
+		var report *spec.ResolutionReport
+		resolvedSpec, report, err = spec.Resolve(manifest, platform, envIdentity, substReport)
+		if err != nil {
+			if report != nil && report.ErrorCode != "" {
+				return fmt.Errorf("resolution failed (%s): %w", report.ErrorCode, err)
+			}
+			return fmt.Errorf("resolution failed: %w", err)
+		}
+	}
+
+	if opts.Explain && resolvedSpec != nil {
+		printExplain(c, resolvedSpec)
+	}
+
+	cluster, err := sess.Target(c, opts.Environment)
+	if err != nil {
+		return fmt.Errorf("target cluster: %w", err)
+	}
 
 	helmClient, err := cluster.Helm()
 	if err != nil {
@@ -75,9 +131,24 @@ func runDeploy(c *nabat.Context) error {
 		return fmt.Errorf("%w%s", reachErr, clusterHint(reachErr))
 	}
 
-	title := fmt.Sprintf("Deploying to '%s'...", opts.Environment)
+	// Build deploy title with the resolved Kubernetes context so the user knows
+	// which cluster is being targeted. Append [override] when --context was
+	// passed explicitly and differs from the platform-resolved context.
+	resolvedCtx := cluster.Context()
+	ctxSuffix := ""
+	if resolvedCtx != "" {
+		ctxSuffix = " (context: " + resolvedCtx
+		if platform != nil && sess.KubeContext() != "" {
+			platformCtx := spec.PlatformEnvContext(platform, opts.Environment)
+			if platformCtx != "" && platformCtx != resolvedCtx {
+				ctxSuffix += " [override]"
+			}
+		}
+		ctxSuffix += ")"
+	}
+	title := fmt.Sprintf("Deploying to '%s'%s...", opts.Environment, ctxSuffix)
 	if opts.DryRun {
-		title = fmt.Sprintf("Dry run for '%s'...", opts.Environment)
+		title = fmt.Sprintf("Dry run for '%s'%s...", opts.Environment, ctxSuffix)
 	}
 
 	var watcher *DeployWatcher
@@ -89,13 +160,20 @@ func runDeploy(c *nabat.Context) error {
 			// event watcher rather than failing the whole deploy.
 			c.Logger().Debug("skipping k8s checks: client unavailable", "err", k8sErr)
 		} else {
-			if reqs := requiredAPIs(manifest, opts.Environment); len(reqs) > 0 {
+			if reqs := requiredAPIs(manifest, opts.Environment, resolvedSpec); len(reqs) > 0 {
 				if capErr := k8s.CheckAPIRequirements(k8sClient, reqs); capErr != nil {
 					return capErr
 				}
 			}
 			releaseName := helm.GenerateReleaseName(manifest.Project, opts.Environment)
 			watcher = NewDeployWatcher(k8sClient, cluster.Namespace(), releaseName)
+
+			// Hostname guard: block FQDN changes unless --force-hostname-change.
+			if !opts.ForceHostnameChange && resolvedSpec != nil {
+				if guardErr := checkHostnameGuard(c, helmClient, manifest.Project, opts.Environment, resolvedSpec); guardErr != nil {
+					return guardErr
+				}
+			}
 		}
 	}
 
@@ -109,7 +187,7 @@ func runDeploy(c *nabat.Context) error {
 				watcher.Run(watchCtx, st)
 			})
 		}
-		helmErr := helmClient.InstallApp(c, manifest, opts.Environment, opts.DryRun)
+		helmErr := helmClient.InstallApp(c, manifest, opts.Environment, opts.DryRun, resolvedSpec)
 		if cancel != nil {
 			cancel()
 		}
@@ -138,6 +216,112 @@ func runDeploy(c *nabat.Context) error {
 	return nil
 }
 
+// checkHostnameGuard compares the resolved FQDNs against the prior release's
+// deployah.resolved block and returns an error if any FQDN changed. It skips
+// on first install (no prior release) and components without expose.
+func checkHostnameGuard(c *nabat.Context, helmClient session.HelmClient, project, environment string, resolved *spec.ResolvedSpec) error {
+	ctx := context.Background()
+	rel, err := helmClient.GetRelease(ctx, project, environment)
+	if err != nil {
+		// No prior release (first install) or unrelated error: skip guard.
+		return nil
+	}
+	if rel == nil {
+		return nil
+	}
+
+	// Navigate: rel.Config["deployah"]["resolved"]["components"][compName]["fqdn"]
+	deployahBlock, ok := rel.Config["deployah"]
+	if !ok {
+		// Old release without deployah.resolved block: try ingress.hostname fallback.
+		return checkHostnameGuardLegacy(c, rel.Config, resolved, project, environment)
+	}
+	deployahMap, ok := deployahBlock.(map[string]any)
+	if !ok {
+		return nil
+	}
+	resolvedBlock, ok := deployahMap["resolved"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	componentsBlock, ok := resolvedBlock["components"].(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	var changed []string
+	for compName, rc := range resolved.Components {
+		if rc.FQDN == "" {
+			continue
+		}
+		prevCompAny, exists := componentsBlock[compName]
+		if !exists {
+			continue
+		}
+		prevComp, prevOK := prevCompAny.(map[string]any)
+		if !prevOK {
+			continue
+		}
+		prevFQDN, fqdnOK := prevComp["fqdn"].(string)
+		if !fqdnOK {
+			continue
+		}
+		if prevFQDN != "" && prevFQDN != rc.FQDN {
+			changed = append(changed, fmt.Sprintf("  %s: %s -> %s", compName, prevFQDN, rc.FQDN))
+		}
+	}
+
+	if len(changed) > 0 {
+		return fmt.Errorf(
+			"hostname change detected for %s/%s (pass --force-hostname-change to override):\n%s",
+			project, environment, strings.Join(changed, "\n"),
+		)
+	}
+	return nil
+}
+
+// checkHostnameGuardLegacy checks for hostname changes in old v1-alpha.1 releases
+// that stored hostname in the component ingress.hostname values path.
+func checkHostnameGuardLegacy(_ *nabat.Context, config map[string]any, resolved *spec.ResolvedSpec, project, environment string) error {
+	var changed []string
+	for compName, rc := range resolved.Components {
+		if rc.FQDN == "" {
+			continue
+		}
+		compAny, exists := config[compName]
+		if !exists {
+			continue
+		}
+		compMap, ok := compAny.(map[string]any)
+		if !ok {
+			continue
+		}
+		ingressAny, exists := compMap["ingress"]
+		if !exists {
+			continue
+		}
+		ingressMap, ok := ingressAny.(map[string]any)
+		if !ok {
+			continue
+		}
+		prevHostname, hostnameOK := ingressMap["hostname"].(string)
+		if !hostnameOK {
+			continue
+		}
+		if prevHostname != "" && prevHostname != rc.FQDN {
+			changed = append(changed, fmt.Sprintf("  %s: %s -> %s", compName, prevHostname, rc.FQDN))
+		}
+	}
+
+	if len(changed) > 0 {
+		return fmt.Errorf(
+			"hostname change detected for %s/%s (pass --force-hostname-change to override):\n%s",
+			project, environment, strings.Join(changed, "\n"),
+		)
+	}
+	return nil
+}
+
 // buildSummaryMsg formats a component readiness summary from the watcher.
 // It returns an empty string when no watcher or no summary data is available.
 func buildSummaryMsg(w *DeployWatcher) string {
@@ -160,12 +344,8 @@ func buildSummaryMsg(w *DeployWatcher) string {
 // whose Environments list includes the target (or have no restriction) are
 // considered. Multiple components needing the same API group are deduplicated.
 //
-// The API version choices mirror what the embedded Helm chart templates select:
-//   - autoscaling.enabled → autoscaling/v2 or autoscaling/v2beta2
-//     (hpa.yaml: common.capabilities.hpa.apiVersion)
-//   - ingress → networking.k8s.io/v1
-//     (ingress.yaml: common.capabilities.ingress.apiVersion)
-func requiredAPIs(manifest *spec.Spec, environment string) []k8s.APIRequirement {
+// The resolved spec is used to detect cert-manager requirements (TLS mode).
+func requiredAPIs(manifest *spec.Spec, environment string, resolved *spec.ResolvedSpec) []k8s.APIRequirement {
 	type entry struct {
 		groupVersions []string
 		components    []string
@@ -190,8 +370,13 @@ func requiredAPIs(manifest *spec.Spec, environment string) []k8s.APIRequirement 
 		if component.Autoscaling != nil && component.Autoscaling.Enabled {
 			add([]string{"autoscaling/v2", "autoscaling/v2beta2"}, name)
 		}
-		if component.Ingress != nil {
+		if component.Expose != nil {
 			add([]string{"networking.k8s.io/v1"}, name)
+		}
+		if resolved != nil {
+			if rc, ok := resolved.Components[name]; ok && rc.TLSMode == spec.TLSModeCertManager {
+				add([]string{"cert-manager.io/v1"}, name)
+			}
 		}
 	}
 
@@ -207,6 +392,59 @@ func requiredAPIs(manifest *spec.Spec, environment string) []k8s.APIRequirement 
 		})
 	}
 	return reqs
+}
+
+// warnContextMismatch emits a warning when the --context flag overrides the
+// platform-file context for the target environment. Silenced by setting
+// DEPLOYAH_ALLOW_CONTEXT_MISMATCH=1.
+func warnContextMismatch(c *nabat.Context, kubeCtxOverride string, platform *spec.PlatformConfig, envName string) {
+	if kubeCtxOverride == "" {
+		return
+	}
+	if os.Getenv("DEPLOYAH_ALLOW_CONTEXT_MISMATCH") == "1" {
+		return
+	}
+	platformCtx := spec.PlatformEnvContext(platform, envName)
+	if platformCtx != "" && platformCtx != kubeCtxOverride {
+		c.Warn(fmt.Sprintf(
+			"--context %q overrides platform context %q for environment %q; "+
+				"set DEPLOYAH_ALLOW_CONTEXT_MISMATCH=1 to suppress this warning",
+			kubeCtxOverride, platformCtx, envName,
+		))
+	}
+}
+
+// hasExposeComponents reports whether any component in the spec declares an
+// expose block, meaning platform resolution is required.
+func hasExposeComponents(m *spec.Spec) bool {
+	if m == nil {
+		return false
+	}
+	for _, comp := range m.Components {
+		if comp.Expose != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// printExplain prints the resolution report before cluster checks.
+func printExplain(c *nabat.Context, resolved *spec.ResolvedSpec) {
+	c.Println("--- Resolution Report ---")
+	c.Println(fmt.Sprintf("Environment: %s", resolved.Env.Original))
+	if resolved.KubeContext != "" {
+		c.Println(fmt.Sprintf("Context:     %s", resolved.KubeContext))
+	}
+	for name, rc := range resolved.Components {
+		if rc.FQDN == "" {
+			continue
+		}
+		c.Println(fmt.Sprintf("  %s: hostname=%s tls=%s", name, rc.FQDN, rc.TLSMode))
+	}
+	for _, w := range resolved.Warnings {
+		c.Warn(w)
+	}
+	c.Println("--- End Report ---")
 }
 
 // clusterHint returns an actionable suffix for errors that look like the target

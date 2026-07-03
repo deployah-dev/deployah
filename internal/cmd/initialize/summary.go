@@ -2,6 +2,7 @@ package initialize
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"nabat.dev/nabat"
@@ -27,8 +28,8 @@ func showSummaryAndSave(c *nabat.Context, config *ProjectConfig) error {
 	if len(config.Environments) == 0 {
 		summary.WriteString("  (none)\n")
 	} else {
-		for _, env := range config.Environments {
-			fmt.Fprintf(&summary, "  - %s\n", env.Name)
+		for name := range config.Environments {
+			fmt.Fprintf(&summary, "  - %s\n", name)
 		}
 	}
 	summary.WriteString("\n")
@@ -72,7 +73,7 @@ func showSummaryAndSave(c *nabat.Context, config *ProjectConfig) error {
 	}
 
 	specData := spec.Spec{
-		APIVersion:   "v1-alpha.1",
+		APIVersion:   spec.CurrentManifestVersion,
 		Project:      config.Name,
 		Environments: config.Environments,
 		Components:   config.Components,
@@ -83,11 +84,32 @@ func showSummaryAndSave(c *nabat.Context, config *ProjectConfig) error {
 	}
 
 	if config.DryRun {
-		return showSpecPreview(c, &specData)
+		if previewErr := showSpecPreview(c, &specData); previewErr != nil {
+			return previewErr
+		}
+		c.Println("Note: in live mode a deployah.platform.yaml would also be created (if absent) with the local environment.")
+		return nil
 	}
 
 	if err = spec.Save(&specData, config.OutputPath); err != nil {
 		return fmt.Errorf("failed to save spec to %s: %w", config.OutputPath, err)
+	}
+	c.Success("Created " + config.OutputPath + " (" + spec.CurrentManifestVersion + ")")
+
+	// Scaffold deployah.platform.yaml in the same directory as the manifest,
+	// containing only the local environment. If the file already exists, print
+	// a hint pointing the user to it instead of overwriting.
+	platformPath := filepath.Join(filepath.Dir(config.OutputPath), spec.DefaultPlatformPath)
+	created, platformErr := spec.ScaffoldLocalPlatformFile(platformPath, "127.0.0.1")
+	switch {
+	case platformErr != nil:
+		// Non-fatal: print warning and continue.
+		c.Warn(fmt.Sprintf("failed to write platform file: %v", platformErr))
+	case created:
+		c.Success("Created " + platformPath + " (" + spec.CurrentPlatformVersion + ") with local environment")
+		c.Println("Hint: add production/staging environments to " + platformPath + " before deploying to those targets.")
+	default:
+		c.Println("Hint: " + platformPath + " already exists; no changes made.")
 	}
 
 	return nil
@@ -95,7 +117,7 @@ func showSummaryAndSave(c *nabat.Context, config *ProjectConfig) error {
 
 func validateSpecAndEnvironments(config *ProjectConfig) error {
 	specData := spec.Spec{
-		APIVersion:   "v1-alpha.1",
+		APIVersion:   spec.CurrentManifestVersion,
 		Project:      config.Name,
 		Environments: config.Environments,
 		Components:   config.Components,

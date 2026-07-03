@@ -177,7 +177,7 @@ func (suite *IntegrationTestSuite) loadManifest(t *testing.T, manifestFile strin
 func (suite *IntegrationTestSuite) generateChart(t *testing.T, manifest *spec.Spec, environment string) (string, error) {
 	t.Helper()
 	ctx := context.Background()
-	return helm.PrepareChart(ctx, manifest, environment)
+	return helm.PrepareChart(ctx, manifest, environment, nil)
 }
 
 // renderManifests renders the Kubernetes manifests from the Helm chart

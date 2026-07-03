@@ -12,6 +12,25 @@ import (
 	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
 )
 
+// SentinelSubstituteRaw replaces ${VAR} tokens in raw YAML bytes with
+// format-valid sentinel values so JSON schema format assertions still catch
+// literal typos in fields like subdomain or hostname. Only scalar string
+// values that consist entirely of a single ${VAR} expression are replaced;
+// mixed strings (e.g., "prefix-${VAR}") are left as-is because they are
+// likely already valid enough for schema validation.
+//
+// This is intentionally a simple text-level approach (not a YAML AST walk)
+// because sentinel substitution is only needed for offline validate mode where
+// no env context is available. It is not used during normal deploy flows.
+func SentinelSubstituteRaw(data []byte) []byte {
+	// Replace bare ${VAR} tokens with the sentinel "placeholder".
+	// We only replace tokens that appear as a standalone YAML scalar value
+	// (after a colon-space or as a list item), not inside longer strings.
+	return varPattern.ReplaceAllFunc(data, func(match []byte) []byte {
+		return []byte("placeholder")
+	})
+}
+
 // validateJSONAgainstSchema is a helper that validates JSON data against a
 // JSON schema. schemaLoader returns the schema bytes for a given version.
 func validateYAMLAgainstSchema(

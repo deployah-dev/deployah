@@ -16,7 +16,7 @@ type mockDeployer struct {
 	err error
 }
 
-func (m *mockDeployer) InstallApp(_ context.Context, _ *spec.Spec, _ string, _ bool) error {
+func (m *mockDeployer) InstallApp(_ context.Context, _ *spec.Spec, _ string, _ bool, _ *spec.ResolvedSpec) error {
 	return m.err
 }
 

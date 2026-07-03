@@ -47,14 +47,14 @@ func collectEnvironments(c *nabat.Context, config *ProjectConfig) error {
 		if err != nil {
 			return fmt.Errorf("failed to collect details for environment %s: %w", envName, err)
 		}
-		config.Environments = append(config.Environments, env)
+		config.Environments[envName] = env
 	}
 
 	return nil
 }
 
 func collectEnvironmentDetails(c *nabat.Context, envName string) (spec.Environment, error) {
-	env := spec.Environment{Name: envName}
+	env := spec.Environment{}
 
 	var addVariables bool
 	err := c.Form(

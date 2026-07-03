@@ -17,47 +17,44 @@ package spec
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 )
 
 // Spec defines the structure of the project spec.
 type Spec struct {
-	// APIVersion is the schema version of the spec (e.g., "v1-alpha.1").
+	// APIVersion is the schema version of the spec (e.g., "v1-alpha.2").
 	APIVersion string `json:"apiVersion,omitempty" yaml:"apiVersion,omitempty"`
 	// Project is the project name.
 	Project string `json:"project" yaml:"project"`
-	// Environments is a list of environment definitions.
-	Environments []Environment `json:"environments,omitempty" yaml:"environments,omitempty"`
+	// Environments is a map of environment names to their definitions.
+	// The map key is the environment name (e.g. "production", "staging").
+	// Context is platform-owned and lives in deployah.platform.yaml.
+	Environments map[string]Environment `json:"environments,omitempty" yaml:"environments,omitempty"`
 	// Components is a map of component names to their configuration.
 	Components map[string]Component `json:"components" yaml:"components"`
 }
 
-// EnvironmentNames returns the list of environment names defined in the spec.
-// Returns an empty slice if no environments are defined.
+// EnvironmentNames returns the sorted list of environment names defined in the
+// spec. Returns an empty slice when no environments are defined.
 func (m *Spec) EnvironmentNames() []string {
 	if len(m.Environments) == 0 {
 		return []string{}
 	}
-
-	names := make([]string, 0, len(m.Environments))
-	for _, env := range m.Environments {
-		if env.Name != "" {
-			names = append(names, env.Name)
-		}
+	keys := make([]string, 0, len(m.Environments))
+	for k := range m.Environments {
+		keys = append(keys, k)
 	}
-
-	return names
+	slices.Sort(keys)
+	return keys
 }
 
-// Environment defines a named deployment target and its configuration sources.
+// Environment defines developer-controlled settings for a deployment target.
+// Context is platform-owned and lives in deployah.platform.yaml.
 type Environment struct {
-	// Name is the environment identifier (e.g. "staging").
-	Name string `json:"name" yaml:"name"`
 	// EnvFile is the path to a dotenv file for this environment.
 	EnvFile string `json:"envFile,omitempty" yaml:"envFile,omitempty"`
 	// ConfigFile is the path to an environment-specific config file.
 	ConfigFile string `json:"configFile,omitempty" yaml:"configFile,omitempty"`
-	// Context is the Kubernetes context to use for this environment.
-	Context string `json:"context,omitempty" yaml:"context,omitempty"`
 	// Variables holds inline key-value overrides for this environment.
 	Variables map[string]string `json:"variables,omitempty" yaml:"variables,omitempty"`
 }
@@ -88,8 +85,11 @@ type Component struct {
 	Resources Resources `json:"resources" yaml:"resources,omitempty"`
 	// ResourcePreset selects a named resource profile when Resources is empty.
 	ResourcePreset ResourcePreset `json:"resourcePreset,omitempty" yaml:"resourcePreset,omitempty"`
-	// Ingress exposes the component through an HTTP or HTTPS route.
-	Ingress *Ingress `json:"ingress,omitempty" yaml:"ingress,omitempty"`
+	// Expose exposes the component via an ingress rule resolved against the
+	// platform domain configuration. Replaces the former ingress block.
+	Expose *Expose `json:"expose,omitempty" yaml:"expose,omitempty"`
+	// Profile selects a platform-defined deployment profile (Phase 3).
+	Profile string `json:"profile,omitempty" yaml:"profile,omitempty"`
 	// Env sets static environment variables for the container.
 	Env map[string]string `json:"env,omitempty" yaml:"env,omitempty"`
 	// Health configures ready and alive checks for the component.
@@ -213,10 +213,17 @@ type Resources struct {
 	EphemeralStorage *string `json:"ephemeralStorage,omitempty" yaml:"ephemeralStorage,omitempty"`
 }
 
-// Ingress specifies ingress settings for exposing the component via HTTP/HTTPS.
-type Ingress struct {
-	Host string `json:"host" yaml:"host"`
-	TLS  bool   `json:"tls" yaml:"tls"`
+// Expose declares that a component should be accessible via an ingress rule.
+// The resolved hostname and TLS settings come from the platform configuration
+// referenced by Domain.
+type Expose struct {
+	// Domain is the logical domain key referencing an entry in the platform
+	// environment's domains map (e.g. "public", "internal").
+	Domain string `json:"domain" yaml:"domain"`
+	// Subdomain is a DNS label prepended to the platform baseDomain to form
+	// the FQDN. When nil the component is exposed at the apex (FQDN equals
+	// baseDomain). An explicit empty string is a schema validation error.
+	Subdomain *string `json:"subdomain,omitempty" yaml:"subdomain,omitempty"`
 }
 
 // ComponentRole defines the role of a component and its default deployment

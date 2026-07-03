@@ -1,0 +1,79 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://deployah.dev/schemas/v1-alpha.2/environments.json",
+    "title": "Deployah Environments v1-alpha.2",
+    "description": "Schema for the environments section of the v1-alpha.2 manifest. Environments are an object (map) keyed by name.",
+    "type": "object",
+    "required": ["environments"],
+    "additionalProperties": true,
+    "properties": {
+        "environments": {
+            "type": "object",
+            "title": "Environments",
+            "description": "Map of environment names to environment definitions. Keys support prefix-based wildcard matching, e.g. a 'review' key matches an --environment value of 'review/pr-123'.",
+            "propertyNames": {
+                "type": "string",
+                "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                "minLength": 2
+            },
+            "additionalProperties": {
+                "type": "object",
+                "title": "Environment",
+                "description": "Developer-owned environment definition.",
+                "additionalProperties": false,
+                "properties": {
+                    "envFile": {
+                        "type": "string",
+                        "title": "Environment File",
+                        "description": "Path to a dotenv file for variable substitution.",
+                        "examples": [".env.production"]
+                    },
+                    "configFile": {
+                        "type": "string",
+                        "title": "Configuration File",
+                        "description": "Path to an environment-specific configuration file.",
+                        "examples": ["config.production.yaml"]
+                    },
+                    "variables": {
+                        "type": "object",
+                        "title": "Inline Variables",
+                        "description": "Inline key-value variable overrides.",
+                        "propertyNames": {
+                            "type": "string",
+                            "pattern": "^[A-Z0-9]+(?:_[A-Z0-9]+)*$"
+                        },
+                        "additionalProperties": {
+                            "type": ["string", "number", "boolean"]
+                        },
+                        "examples": [
+                            {
+                                "APP_ENV": "production",
+                                "REPLICAS": 3,
+                                "DEBUG": false
+                            }
+                        ]
+                    }
+                },
+                "examples": [
+                    {"envFile": ".env.production", "configFile": "config.production.yaml"},
+                    {}
+                ]
+            }
+        }
+    },
+    "examples": [
+        {
+            "environments": {
+                "production": {
+                    "envFile": ".env.production",
+                    "configFile": "config.production.yaml",
+                    "variables": {"APP_ENV": "production", "REPLICAS": 3}
+                },
+                "staging": {
+                    "envFile": ".env.staging"
+                },
+                "local": {}
+            }
+        }
+    ]
+}

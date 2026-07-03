@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"testing"
 	"time"
 
@@ -45,8 +46,8 @@ func (m *MockHelmClient) IsReachable() error {
 }
 
 // InstallApp records a mock call for InstallApp.
-func (m *MockHelmClient) InstallApp(ctx context.Context, manifest *spec.Spec, environment string, dryRun bool) error {
-	args := m.Called(ctx, manifest, environment, dryRun)
+func (m *MockHelmClient) InstallApp(ctx context.Context, manifest *spec.Spec, environment string, dryRun bool, resolved *spec.ResolvedSpec) error {
+	args := m.Called(ctx, manifest, environment, dryRun, resolved)
 	return args.Error(0)
 }
 
@@ -250,31 +251,72 @@ func TestContextOperations(t *testing.T) {
 	})
 }
 
-// TestTarget verifies the Target() two-phase resolution logic.
+// TestTarget verifies the Target() context resolution logic.
 func TestTarget(t *testing.T) {
-	t.Run("empty env returns cluster with no spec", func(t *testing.T) {
+	t.Run("empty env returns cluster with empty context", func(t *testing.T) {
 		sess := New()
 		cluster, err := sess.Target(context.Background(), "")
 		assert.NoError(t, err)
 		assert.NotNil(t, cluster)
-		assert.Nil(t, cluster.Spec())
 		assert.Equal(t, "", cluster.kubeContext)
 	})
 
-	t.Run("global context flag wins, no spec needed", func(t *testing.T) {
+	t.Run("global context flag wins over platform", func(t *testing.T) {
 		sess := New(WithKubeContext("my-context"))
 		cluster, err := sess.Target(context.Background(), "prod")
 		assert.NoError(t, err)
 		assert.Equal(t, "my-context", cluster.kubeContext)
 	})
 
-	t.Run("missing spec file falls back gracefully", func(t *testing.T) {
+	t.Run("no platform file falls back to default context", func(t *testing.T) {
 		sess := New(WithSpecPath("/nonexistent/path/deployah.yaml"))
 		cluster, err := sess.Target(context.Background(), "prod")
 		assert.NoError(t, err)
 		assert.NotNil(t, cluster)
-		assert.Nil(t, cluster.Spec())
 		assert.Equal(t, "", cluster.kubeContext)
+	})
+
+	t.Run("platform file context is applied when no --context flag", func(t *testing.T) {
+		platformDir := t.TempDir()
+		platformPath := platformDir + "/deployah.platform.yaml"
+
+		platformYAML := `apiVersion: platform/v1-alpha.1
+environments:
+  production:
+    context: prod-eks
+    domains:
+      main:
+        baseDomain: example.com
+`
+		require.NoError(t, writeFile(platformPath, platformYAML))
+
+		sess := New(WithPlatformFile(platformPath))
+		cluster, err := sess.Target(context.Background(), "production")
+		assert.NoError(t, err)
+		assert.Equal(t, "prod-eks", cluster.kubeContext)
+	})
+
+	t.Run("--context flag overrides platform file context", func(t *testing.T) {
+		platformDir := t.TempDir()
+		platformPath := platformDir + "/deployah.platform.yaml"
+
+		platformYAML := `apiVersion: platform/v1-alpha.1
+environments:
+  production:
+    context: prod-eks
+    domains:
+      main:
+        baseDomain: example.com
+`
+		require.NoError(t, writeFile(platformPath, platformYAML))
+
+		sess := New(
+			WithPlatformFile(platformPath),
+			WithKubeContext("my-override"),
+		)
+		cluster, err := sess.Target(context.Background(), "production")
+		assert.NoError(t, err)
+		assert.Equal(t, "my-override", cluster.kubeContext)
 	})
 
 	t.Run("cluster namespace falls back to default", func(t *testing.T) {
@@ -292,13 +334,17 @@ func TestTarget(t *testing.T) {
 	})
 }
 
+func writeFile(path, content string) error {
+	return os.WriteFile(path, []byte(content), 0o600)
+}
+
 // TestIntegrationWithMocks demonstrates a full workflow using mock clients.
 func TestIntegrationWithMocks(t *testing.T) {
 	t.Run("full workflow with mock helm client", func(t *testing.T) {
 		mockHelm := &MockHelmClient{}
 		testManifest := &spec.Spec{Project: "test-project"}
 
-		mockHelm.On("InstallApp", mock.Anything, testManifest, "production", false).Return(nil)
+		mockHelm.On("InstallApp", mock.Anything, testManifest, "production", false, mock.Anything).Return(nil)
 
 		sess := New(WithHelmFactory(func(s *Session) (HelmClient, error) {
 			return mockHelm, nil
@@ -310,7 +356,7 @@ func TestIntegrationWithMocks(t *testing.T) {
 		helmClient, err := cluster.Helm()
 		assert.NoError(t, err)
 
-		err = helmClient.InstallApp(context.Background(), testManifest, "production", false)
+		err = helmClient.InstallApp(context.Background(), testManifest, "production", false, nil)
 		assert.NoError(t, err)
 		mockHelm.AssertExpectations(t)
 	})

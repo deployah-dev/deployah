@@ -30,6 +30,7 @@ import (
 	"deployah.dev/deployah/internal/cmd/initialize"
 	"deployah.dev/deployah/internal/cmd/list"
 	"deployah.dev/deployah/internal/cmd/logs"
+	"deployah.dev/deployah/internal/cmd/resolve"
 	"deployah.dev/deployah/internal/cmd/shell"
 	"deployah.dev/deployah/internal/cmd/status"
 	"deployah.dev/deployah/internal/cmd/validate"
@@ -49,6 +50,7 @@ func NewApp() *nabat.App {
 		nabat.WithCompletion(nabat.WithCompletionHidden()),
 		nabat.WithFlag("debug", false, nabat.WithShort('d'), nabat.WithUsage("Enable debug mode (verbose logging and keep temporary files)"), nabat.WithPersistent()),
 		nabat.WithFlag("spec", spec.DefaultSpecPath, nabat.WithShort('s'), nabat.WithUsage("Path to the Deployah spec file (YAML or JSON)"), nabat.WithPersistent()),
+		nabat.WithFlag("platform-file", "", nabat.WithUsage("Path to the platform config file (overrides DEPLOYAH_PLATFORM_FILE and the default same-directory lookup)"), nabat.WithPersistent()),
 		nabat.WithFlag("namespace", "", nabat.WithShort('n'), nabat.WithUsage("Kubernetes namespace to use for Deployah operations (defaults to current context namespace)"), nabat.WithPersistent()),
 		nabat.WithFlag("kubeconfig", "", nabat.WithShort('k'), nabat.WithUsage("Path to the kubeconfig file to use (defaults to standard kubeconfig resolution)"), nabat.WithPersistent()),
 		nabat.WithFlag("context", "", nabat.WithUsage("Kubernetes context to use (overrides the current context and any environment 'context' field)"), nabat.WithPersistent()),
@@ -78,6 +80,9 @@ func NewApp() *nabat.App {
 			session.WithDebug(opts.Debug),
 			session.WithTimeout(opts.Timeout),
 		}
+		if opts.PlatformFile != "" {
+			rtOpts = append(rtOpts, session.WithPlatformFile(opts.PlatformFile))
+		}
 		if localKubeconfig != "" {
 			rtOpts = append(rtOpts, session.WithExtraKubeconfigPaths(localKubeconfig))
 		}
@@ -96,6 +101,7 @@ func NewApp() *nabat.App {
 	initialize.Register(app)
 	list.Register(app)
 	logs.Register(app)
+	resolve.Register(app)
 	shell.Register(app)
 	status.Register(app)
 	validate.Register(app)

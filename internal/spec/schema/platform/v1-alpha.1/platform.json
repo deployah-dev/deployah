@@ -1,0 +1,203 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://deployah.dev/schemas/platform/v1-alpha.1/platform.json",
+    "title": "Deployah Platform Config",
+    "description": "Platform-owned configuration file (deployah.platform.yaml). Defines Kubernetes contexts, domain bindings, and storage classes per environment. Not subject to envsubst.",
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["apiVersion", "environments"],
+    "properties": {
+        "apiVersion": {
+            "type": "string",
+            "title": "API Version",
+            "description": "Platform schema version. Must be 'platform/v1-alpha.1'.",
+            "const": "platform/v1-alpha.1"
+        },
+        "environments": {
+            "type": "object",
+            "title": "Environments",
+            "description": "Map of environment keys to platform configuration. Keys support prefix-based wildcard matching (e.g. 'review' matches 'review/pr-123').",
+            "minProperties": 1,
+            "propertyNames": {
+                "type": "string",
+                "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                "minLength": 2
+            },
+            "additionalProperties": {
+                "$ref": "#/$defs/PlatformEnvironment"
+            }
+        }
+    },
+    "$defs": {
+        "PlatformEnvironment": {
+            "type": "object",
+            "title": "Platform Environment",
+            "description": "Platform-controlled settings for a single environment.",
+            "additionalProperties": false,
+            "properties": {
+                "context": {
+                    "type": "string",
+                    "title": "Kubernetes Context",
+                    "description": "The kubeconfig context to use when deploying to this environment.",
+                    "minLength": 1,
+                    "examples": ["prod-eks", "kind-deployah"]
+                },
+                "domains": {
+                    "type": "object",
+                    "title": "Domains",
+                    "description": "Map of logical domain names to domain configuration. Developers reference these by key in expose.domain.",
+                    "propertyNames": {
+                        "type": "string",
+                        "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                        "minLength": 1
+                    },
+                    "additionalProperties": {
+                        "$ref": "#/$defs/PlatformDomain"
+                    }
+                },
+                "storageClasses": {
+                    "type": "object",
+                    "title": "Storage Classes",
+                    "description": "Map of logical storage class names to Kubernetes storage class names.",
+                    "propertyNames": {
+                        "type": "string",
+                        "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                        "minLength": 1
+                    },
+                    "additionalProperties": {
+                        "$ref": "#/$defs/PlatformStorageClass"
+                    }
+                },
+                "allowStaticSubdomain": {
+                    "type": "boolean",
+                    "title": "Allow Static Subdomain",
+                    "description": "When true, suppresses the wildcard static-subdomain warning for this environment key. Use with care: concurrent deploys to this wildcard environment may share a hostname on-cluster.",
+                    "default": false,
+                    "examples": [true]
+                }
+            },
+            "examples": [
+                {
+                    "context": "prod-eks",
+                    "domains": {
+                        "public": {
+                            "baseDomain": "example.com",
+                            "tls": {"mode": "certManager", "issuer": "letsencrypt-prod"}
+                        }
+                    },
+                    "storageClasses": {
+                        "fast": {"className": "fast-ssd"}
+                    }
+                }
+            ]
+        },
+        "PlatformDomain": {
+            "type": "object",
+            "title": "Platform Domain",
+            "description": "Base domain and TLS configuration for a logical domain.",
+            "additionalProperties": false,
+            "required": ["baseDomain"],
+            "properties": {
+                "baseDomain": {
+                    "type": "string",
+                    "title": "Base Domain",
+                    "description": "The DNS apex for this domain, e.g. 'example.com' or '127.0.0.1.nip.io'.",
+                    "minLength": 1,
+                    "examples": ["example.com", "127.0.0.1.nip.io"]
+                },
+                "tls": {
+                    "$ref": "#/$defs/PlatformTLS"
+                }
+            },
+            "examples": [
+                {
+                    "baseDomain": "example.com",
+                    "tls": {"mode": "certManager", "issuer": "letsencrypt-prod"}
+                },
+                {
+                    "baseDomain": "127.0.0.1.nip.io",
+                    "tls": {"mode": "selfSigned"}
+                }
+            ]
+        },
+        "PlatformTLS": {
+            "type": "object",
+            "title": "TLS Configuration",
+            "description": "Explicit TLS configuration for a domain.",
+            "additionalProperties": false,
+            "required": ["mode"],
+            "properties": {
+                "mode": {
+                    "type": "string",
+                    "title": "TLS Mode",
+                    "description": "TLS provisioning strategy: selfSigned (chart-managed stable cert), secretName (pre-existing secret), or certManager (cert-manager issuer).",
+                    "enum": ["selfSigned", "secretName", "certManager"]
+                },
+                "issuer": {
+                    "type": "string",
+                    "title": "Issuer",
+                    "description": "cert-manager ClusterIssuer or Issuer name. Required when mode is certManager.",
+                    "minLength": 1,
+                    "examples": ["letsencrypt-prod", "letsencrypt-staging"]
+                },
+                "secretName": {
+                    "type": "string",
+                    "title": "Secret Name",
+                    "description": "Pre-existing Kubernetes TLS secret name. Required when mode is secretName.",
+                    "minLength": 1,
+                    "examples": ["my-app-tls"]
+                }
+            },
+            "examples": [
+                {"mode": "certManager", "issuer": "letsencrypt-prod"},
+                {"mode": "selfSigned"},
+                {"mode": "secretName", "secretName": "my-app-tls"}
+            ]
+        },
+        "PlatformStorageClass": {
+            "type": "object",
+            "title": "Storage Class",
+            "description": "Mapping from a logical name to a Kubernetes storage class.",
+            "additionalProperties": false,
+            "required": ["className"],
+            "properties": {
+                "className": {
+                    "type": "string",
+                    "title": "Class Name",
+                    "description": "The actual Kubernetes storage class name.",
+                    "minLength": 1,
+                    "examples": ["fast-ssd", "standard-hdd"]
+                }
+            },
+            "examples": [
+                {"className": "fast-ssd"},
+                {"className": "standard-hdd"}
+            ]
+        }
+    },
+    "examples": [
+        {
+            "apiVersion": "platform/v1-alpha.1",
+            "environments": {
+                "production": {
+                    "context": "prod-eks",
+                    "domains": {
+                        "public": {
+                            "baseDomain": "example.com",
+                            "tls": { "mode": "certManager", "issuer": "letsencrypt-prod" }
+                        }
+                    }
+                },
+                "local": {
+                    "context": "kind-deployah",
+                    "domains": {
+                        "public": {
+                            "baseDomain": "127.0.0.1.nip.io",
+                            "tls": { "mode": "selfSigned" }
+                        }
+                    }
+                }
+            }
+        }
+    ]
+}

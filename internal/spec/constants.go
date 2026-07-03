@@ -16,6 +16,11 @@ package spec
 
 // File and Path Constants
 const (
+	// CurrentManifestVersion is the manifest apiVersion written by the init
+	// command and expected by the current resolver. Bump this when a new
+	// schema version is added alongside a new schema directory.
+	CurrentManifestVersion = "v1-alpha.2"
+
 	// DefaultSpecPath is the default path for the Deployah spec file
 	DefaultSpecPath = "deployah.yaml"
 

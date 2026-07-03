@@ -43,8 +43,8 @@ func validateResourcePreset(preset spec.ResourcePreset) error {
 func collectComponents(c *nabat.Context, config *ProjectConfig) error {
 	continueAdding := true
 	selectedEnvironments := make([]string, 0, len(config.Environments))
-	for _, env := range config.Environments {
-		selectedEnvironments = append(selectedEnvironments, env.Name)
+	for name := range config.Environments {
+		selectedEnvironments = append(selectedEnvironments, name)
 	}
 
 	for continueAdding {
@@ -132,8 +132,8 @@ func collectComponentDetails(c *nabat.Context, componentName string, availableEn
 		return component, fmt.Errorf("failed to collect component custom resources: %w", err)
 	}
 
-	if err := collectComponentIngress(c, &component, componentName); err != nil {
-		return component, fmt.Errorf("failed to collect component ingress: %w", err)
+	if err := collectComponentExpose(c, &component, componentName); err != nil {
+		return component, fmt.Errorf("failed to collect component expose: %w", err)
 	}
 
 	if err := collectComponentEnvironmentVariables(c, &component, componentName); err != nil {
@@ -472,40 +472,44 @@ func collectComponentCustomResources(c *nabat.Context, component *spec.Component
 	return nil
 }
 
-func collectComponentIngress(c *nabat.Context, component *spec.Component, componentName string) error {
-	addIngress, err := c.Confirm(
-		fmt.Sprintf("Add ingress for %s? Would you like to expose this component via HTTP/HTTPS?", componentName),
+func collectComponentExpose(c *nabat.Context, component *spec.Component, componentName string) error {
+	addExpose, err := c.Confirm(
+		fmt.Sprintf("Expose %s via HTTP/HTTPS? Would you like to expose this component via an ingress rule?", componentName),
 		nabat.WithAffirmative("Yes"),
 		nabat.WithNegative("No"),
 	)
 	if err != nil {
-		return fmt.Errorf("failed to get ingress preference: %w", err)
+		return fmt.Errorf("failed to get expose preference: %w", err)
 	}
 
-	if addIngress {
-		var host string
-		var tls bool
+	if addExpose {
+		var domain, subdomain string
 		err = c.Form(
-			nabat.WithFormField(&host, fmt.Sprintf("Host for %s", componentName),
-				"Hostname for external access",
-				nabat.WithHint("api.example.com"),
-				nabat.WithValidate(spec.ValidateHostname),
+			nabat.WithFormField(&domain, fmt.Sprintf("Domain key for %s", componentName),
+				"Logical domain key from the platform config (e.g. 'public', 'internal')",
+				nabat.WithHint("public"),
+				nabat.WithValidate(func(s string) error {
+					if s == "" {
+						return fmt.Errorf("domain key must not be empty")
+					}
+					return nil
+				}),
 			),
-			nabat.WithFormField(&tls, fmt.Sprintf("Enable TLS for %s?", componentName),
-				"Enable HTTPS with TLS certificate",
-				nabat.WithAffirmative("Yes"),
-				nabat.WithNegative("No"),
+			nabat.WithFormField(&subdomain, fmt.Sprintf("Subdomain for %s (optional)", componentName),
+				"DNS label prepended to the platform baseDomain (leave empty for apex)",
+				nabat.WithHint("api"),
 			),
 		)
 		if err != nil {
-			return fmt.Errorf("failed to get ingress config: %w", err)
+			return fmt.Errorf("failed to get expose config: %w", err)
 		}
 
-		if host != "" {
-			component.Ingress = &spec.Ingress{
-				Host: host,
-				TLS:  tls,
+		if domain != "" {
+			expose := &spec.Expose{Domain: domain}
+			if subdomain != "" {
+				expose.Subdomain = &subdomain
 			}
+			component.Expose = expose
 		}
 	}
 

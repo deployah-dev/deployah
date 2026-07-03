@@ -3,6 +3,8 @@ package session
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -17,6 +19,19 @@ import (
 // sessionKey is a private context key for storing the Session in context.
 type sessionKey struct{}
 
+// CommandPolicy controls how the session handles missing platform files.
+type CommandPolicy int
+
+const (
+	// PolicyLenient allows proceeding with a warning when the platform file
+	// is absent. Used for read-only commands (logs, status, list, shell).
+	PolicyLenient CommandPolicy = iota
+	// PolicyStrict requires a resolvable platform file for commands that
+	// modify cluster state (deploy, delete). The caller must gate on this
+	// before contacting the cluster.
+	PolicyStrict
+)
+
 // Session holds per-invocation configuration and lazily loads the spec.
 // It is created once in the root pre-run hook and travels through
 // [context.Context] so every command shares one configured environment.
@@ -28,13 +43,15 @@ type Session struct {
 	kubeContext          string
 	extraKubeconfigPaths []string
 	specPath             string
+	platformPath         string
+	commandPolicy        CommandPolicy
 
 	storageDriver string
 	debug         bool
 	timeout       time.Duration
 
-	spec *spec.Spec
-	mu   sync.Mutex
+	platform *spec.PlatformConfig
+	mu       sync.Mutex
 
 	helmFactory func(*Session) (HelmClient, error)
 	k8sFactory  func(*Session) (kubernetes.Interface, error)
@@ -74,6 +91,22 @@ func WithExtraKubeconfigPaths(paths ...string) Option {
 func WithSpecPath(specPath string) Option {
 	return func(s *Session) { s.specPath = specPath }
 }
+
+// WithPlatformFile sets an explicit platform file path, overriding both the
+// DEPLOYAH_PLATFORM_FILE environment variable and the same-directory default.
+func WithPlatformFile(path string) Option {
+	return func(s *Session) { s.platformPath = path }
+}
+
+// WithCommandPolicy sets the platform-missing policy for this session.
+// Destructive commands (deploy, delete) should use [PolicyStrict];
+// read-only commands (logs, status, list, shell) should use [PolicyLenient].
+func WithCommandPolicy(policy CommandPolicy) Option {
+	return func(s *Session) { s.commandPolicy = policy }
+}
+
+// CommandPolicy returns the configured platform-missing policy.
+func (s *Session) CommandPolicy() CommandPolicy { return s.commandPolicy }
 
 // WithStorageDriver sets the Helm storage driver (default: "secret").
 func WithStorageDriver(driver string) Option {
@@ -130,13 +163,53 @@ func FromContext(ctx context.Context) *Session {
 	return nil
 }
 
-// Spec loads and memoizes the spec for the configured path and environment.
-func (s *Session) Spec(ctx context.Context, environment string) (*spec.Spec, error) {
+// Platform loads and memoizes the platform configuration. It resolves the
+// platform file path from (in order of precedence):
+//  1. An explicit path set via [WithPlatformFile].
+//  2. The DEPLOYAH_PLATFORM_FILE environment variable.
+//  3. The same directory as the spec file (deployah.platform.yaml).
+//
+// When no platform file is found, Platform returns (nil, nil). Only when a
+// path is found but fails to load does it return an error.
+func (s *Session) Platform() (*spec.PlatformConfig, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.spec != nil {
-		return s.spec, nil
+	if s.platform != nil {
+		return s.platform, nil
 	}
+	path := s.resolvePlatformPath()
+	if path == "" {
+		return nil, nil //nolint:nilnil // absent platform file is not an error; callers check for nil config
+	}
+	p, err := spec.LoadPlatform(path)
+	if err != nil {
+		return nil, err
+	}
+	s.platform = p
+	return p, nil
+}
+
+// resolvePlatformPath returns the platform file path following the lookup
+// precedence rule. It is called with s.mu held.
+func (s *Session) resolvePlatformPath() string {
+	if s.platformPath != "" {
+		return s.platformPath
+	}
+	if envPath := os.Getenv(spec.PlatformEnvVar); envPath != "" {
+		return envPath
+	}
+	// Same directory as the spec file.
+	if s.specPath != "" {
+		dir := filepath.Dir(s.specPath)
+		return filepath.Join(dir, spec.DefaultPlatformPath)
+	}
+	return spec.DefaultPlatformPath
+}
+
+// Spec loads the spec for the configured path and environment. Each call loads
+// from disk because the result depends on the environment argument (envsubst
+// selects different env files per environment).
+func (s *Session) Spec(ctx context.Context, environment string) (*spec.Spec, error) {
 	if s.specPath == "" {
 		return nil, fmt.Errorf("spec path must be set")
 	}
@@ -144,7 +217,6 @@ func (s *Session) Spec(ctx context.Context, environment string) (*spec.Spec, err
 	if err != nil {
 		return nil, fmt.Errorf("failed to load spec: %w", err)
 	}
-	s.spec = m
 	return m, nil
 }
 
@@ -153,34 +225,45 @@ func (s *Session) Spec(ctx context.Context, environment string) (*spec.Spec, err
 //
 // Precedence for the kubeContext used by the returned Cluster:
 //  1. The global --context flag (already stored in s.kubeContext).
-//  2. The environment's "context" field in the spec (loaded when env is non-empty
-//     and the global flag is absent).
+//  2. The platform file's context for env (via [PlatformEnvContext]).
 //  3. The default context from the active kubeconfig (empty string).
-//
-// If the spec file cannot be loaded when env is non-empty, Target falls back
-// silently to the default context rather than returning an error. Commands that
-// require the spec (e.g. deploy) load it explicitly afterwards and will surface
-// a proper error to the user.
 func (s *Session) Target(ctx context.Context, env string) (*Cluster, error) {
 	kubeCtx := s.kubeContext
-	var resolved *spec.Spec
 
+	// When no --context override, try the platform file.
 	if kubeCtx == "" && env != "" {
-		if m, err := s.Spec(ctx, env); err == nil {
-			resolved = m
-			if envCtx := environmentContext(m, env); envCtx != "" {
-				kubeCtx = envCtx
+		if p, err := s.Platform(); err == nil && p != nil {
+			if pCtx := spec.PlatformEnvContext(p, env); pCtx != "" {
+				kubeCtx = pCtx
 			}
 		}
-		// silently fall back to default context if spec loading fails
 	}
 
 	return &Cluster{
-		Session:      s,
-		resolvedSpec: resolved,
-		kubeContext:  kubeCtx,
+		Session:     s,
+		kubeContext: kubeCtx,
 	}, nil
 }
+
+// SpecPath returns the configured spec file path.
+func (s *Session) SpecPath() string { return s.specPath }
+
+// ParseManifest reads and partially validates the spec (apiVersion +
+// environments only, no envsubst, no defaults). It is intended for commands
+// that need the raw manifest structure without environment-specific processing
+// (e.g. validate manifest-only mode, resolve offline mode).
+func (s *Session) ParseManifest() (*spec.Spec, error) {
+	rawSpec, _, err := spec.ParseManifest(s.specPath)
+	if err != nil {
+		return nil, err
+	}
+	return rawSpec, nil
+}
+
+// KubeContext returns the explicit kube context override, or empty string if
+// none was set. An empty string means the cluster context comes from the
+// platform file or kubeconfig default.
+func (s *Session) KubeContext() string { return s.kubeContext }
 
 // DebugKeepTempChart reports whether temporary chart directories should be kept.
 func (s *Session) DebugKeepTempChart() bool { return s.debug }
@@ -192,7 +275,7 @@ func (s *Session) Timeout() time.Duration { return s.timeout }
 func (s *Session) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.spec = nil
+	s.platform = nil
 	return nil
 }
 
@@ -206,6 +289,7 @@ func (s *Session) cloneWithContext(kubeContext string) *Session {
 		kubeContext:          kubeContext,
 		extraKubeconfigPaths: s.extraKubeconfigPaths,
 		specPath:             s.specPath,
+		platformPath:         s.platformPath,
 		storageDriver:        s.storageDriver,
 		debug:                s.debug,
 		timeout:              s.timeout,
@@ -281,37 +365,21 @@ func (s *Session) kubeconfigRESTConfig() (*rest.Config, error) {
 	return clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, overrides).ClientConfig()
 }
 
-// environmentContext returns the "context" field of the named environment in
-// the spec, or an empty string when the environment is not found or has no
-// context set.
-func environmentContext(m *spec.Spec, name string) string {
-	if m == nil {
-		return ""
-	}
-	for _, env := range m.Environments {
-		if env.Name == name {
-			return env.Context
-		}
-	}
-	return ""
-}
-
 // Cluster is a resolved target: it embeds the base [Session] and adds a
 // confirmed Kubernetes context plus lazily-initialized Helm and Kubernetes
 // clients. Obtain one via [Session.Target].
 type Cluster struct {
 	*Session
-	resolvedSpec *spec.Spec
-	kubeContext  string
+	kubeContext string
 
 	helm HelmClient
 	k8s  kubernetes.Interface
 	mu   sync.Mutex
 }
 
-// Spec returns the spec that was loaded during [Session.Target], or nil if
-// Target was called without an environment or the spec could not be loaded.
-func (cl *Cluster) Spec() *spec.Spec { return cl.resolvedSpec }
+// Context returns the resolved Kubernetes context for this cluster target.
+// An empty string means the default context from the active kubeconfig is used.
+func (cl *Cluster) Context() string { return cl.kubeContext }
 
 // Namespace returns the configured namespace, or "default" if none is set.
 func (cl *Cluster) Namespace() string {

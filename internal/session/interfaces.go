@@ -32,8 +32,10 @@ type HelmClient interface {
 	// IsReachable checks whether the configured Kubernetes cluster is reachable.
 	IsReachable() error
 
-	// InstallApp installs or upgrades an application using Helm.
-	InstallApp(ctx context.Context, manifest *spec.Spec, environment string, dryRun bool) error
+	// InstallApp installs or upgrades an application using Helm. When resolved
+	// is non-nil, TLS and hostname values are sourced from it rather than the
+	// raw spec.
+	InstallApp(ctx context.Context, manifest *spec.Spec, environment string, dryRun bool, resolved *spec.ResolvedSpec) error
 
 	// DeleteRelease uninstalls a Helm release. When wait is true the call
 	// blocks until all resources are fully removed using the legacy polling

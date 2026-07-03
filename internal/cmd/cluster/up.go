@@ -17,12 +17,15 @@ package cluster
 import (
 	"errors"
 	"fmt"
+	"os"
 	"os/signal"
 	"syscall"
 
 	"nabat.dev/nabat"
+	"sigs.k8s.io/yaml"
 
 	"deployah.dev/deployah/internal/localkube"
+	"deployah.dev/deployah/internal/spec"
 )
 
 // upOptions holds command-line flags for "cluster up".
@@ -121,6 +124,12 @@ func runUp(c *nabat.Context) error {
 		return fmt.Errorf("write kubeconfig: %w", err)
 	}
 
+	// Scaffold deployah.platform.yaml in the current working directory.
+	// - Absent:  create with local environment.
+	// - Exists, has local key: skip, print hint.
+	// - Exists, no local key: print the YAML block to add (do NOT mutate).
+	ensureLocalPlatformFile(c, spec.DefaultPlatformPath, localkube.DefaultIngressIP)
+
 	if opts.SyncRegistryAuth {
 		if syncErr := m.SyncRegistryAuth(c, clusterName, "default"); syncErr != nil {
 			// Non-fatal: warn and continue so the rest of cluster up succeeds.
@@ -199,6 +208,53 @@ func runUp(c *nabat.Context) error {
 	}
 	nextSteps(true)
 	return nil
+}
+
+// ensureLocalPlatformFile checks the platform file at path and either creates
+// it, prints a hint when the local env is already present, or prints the block
+// to add when the file exists without a local key. It never mutates an
+// existing file to preserve hand-authored comments. ingressIP is the host IP
+// used for the nip.io base domain (from localkube.DefaultIngressIP).
+func ensureLocalPlatformFile(c *nabat.Context, path, ingressIP string) {
+	data, readErr := os.ReadFile(path) // #nosec G304
+	if readErr != nil {
+		// File absent: scaffold it.
+		created, scaffoldErr := spec.ScaffoldLocalPlatformFile(path, ingressIP)
+		if scaffoldErr != nil {
+			c.Warn(fmt.Sprintf("failed to create platform file: %v", scaffoldErr))
+			return
+		}
+		if created {
+			c.Info("Created " + path + " with local environment (kind-deployah, " + ingressIP + ".nip.io, selfSigned TLS)")
+		}
+		return
+	}
+
+	// File exists: check for local key.
+	var existing spec.PlatformConfig
+	if unmarshalErr := yaml.Unmarshal(data, &existing); unmarshalErr != nil {
+		c.Warn(fmt.Sprintf("failed to parse %s: %v -- skipping platform file update", path, unmarshalErr))
+		return
+	}
+
+	if _, hasLocal := existing.Environments["local"]; hasLocal {
+		c.Info(path + " already has a local environment; no changes made")
+		return
+	}
+
+	// File exists but lacks local key: print the block to add.
+	localEnv := spec.LocalPlatformEnvironment(ingressIP)
+	snippet := spec.PlatformConfig{
+		Environments: map[string]spec.PlatformEnvironment{"local": localEnv},
+	}
+	snippetYAML, marshalErr := yaml.Marshal(&snippet)
+	if marshalErr != nil {
+		c.Warn(fmt.Sprintf("failed to generate platform snippet: %v", marshalErr))
+		return
+	}
+
+	c.Info("Add the following to your " + path + " under environments:")
+	c.Println(string(snippetYAML))
 }
 
 // parseRuntime converts the --runtime flag value to a localkube.Runtime.

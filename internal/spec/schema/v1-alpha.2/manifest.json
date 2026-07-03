@@ -1,0 +1,444 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://deployah.dev/schemas/v1-alpha.2/manifest.json",
+    "title": "Deployah Spec v1-alpha.2",
+    "description": "Deployah developer manifest (deployah.yaml). Environments are a map, context is platform-owned, expose replaces ingress.",
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["apiVersion", "project", "components"],
+    "properties": {
+        "apiVersion": {
+            "type": "string",
+            "title": "API Version",
+            "description": "Schema version. Must be 'v1-alpha.2'.",
+            "const": "v1-alpha.2"
+        },
+        "project": {
+            "type": "string",
+            "title": "Project Name",
+            "description": "The project name used to identify deployments and prefix Kubernetes resources. Must be a valid DNS-1123 subdomain.",
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+            "minLength": 3,
+            "maxLength": 64
+        },
+        "environments": {
+            "type": "object",
+            "title": "Environments",
+            "description": "Map of environment names to environment definitions. Keys support prefix-based wildcard matching. When a single key is defined and no --environment flag is passed, it is selected automatically.",
+            "propertyNames": {
+                "type": "string",
+                "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                "minLength": 2
+            },
+            "additionalProperties": {
+                "$ref": "#/$defs/Environment"
+            }
+        },
+        "components": {
+            "type": "object",
+            "title": "Components",
+            "description": "Map of component names to their configuration.",
+            "propertyNames": {
+                "type": "string",
+                "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                "minLength": 2
+            },
+            "minProperties": 1,
+            "additionalProperties": {
+                "$ref": "#/$defs/Component"
+            }
+        }
+    },
+    "$defs": {
+        "Environment": {
+            "type": "object",
+            "title": "Environment",
+            "description": "Developer-owned environment definition. Context is platform-owned and lives in deployah.platform.yaml.",
+            "additionalProperties": false,
+            "properties": {
+                "envFile": {
+                    "type": "string",
+                    "title": "Environment File",
+                    "description": "Path to a dotenv file for variable substitution in this environment.",
+                    "examples": [".env.production"]
+                },
+                "configFile": {
+                    "type": "string",
+                    "title": "Configuration File",
+                    "description": "Path to an environment-specific configuration file.",
+                    "examples": ["config.production.yaml"]
+                },
+                "variables": {
+                    "type": "object",
+                    "title": "Inline Variables",
+                    "description": "Inline key-value variable overrides for this environment.",
+                    "propertyNames": {
+                        "type": "string",
+                        "pattern": "^[A-Z0-9]+(?:_[A-Z0-9]+)*$"
+                    },
+                    "additionalProperties": {
+                        "type": ["string", "number", "boolean"]
+                    },
+                    "examples": [
+                        {
+                            "APP_ENV": "production",
+                            "REPLICAS": 3,
+                            "DEBUG": false
+                        }
+                    ]
+                }
+            },
+            "examples": [
+                {"envFile": ".env.production", "configFile": "config.production.yaml"},
+                {}
+            ]
+        },
+        "Component": {
+            "type": "object",
+            "title": "Component",
+            "description": "A deployable unit in the project.",
+            "additionalProperties": false,
+            "required": ["image"],
+            "properties": {
+                "role": {
+                    "type": "string",
+                    "title": "Component Role",
+                    "description": "Deployment strategy. 'service' for HTTP services, 'worker' for background tasks, 'job' for one-off tasks.",
+                    "default": "service",
+                    "enum": ["service", "worker", "job"]
+                },
+                "kind": {
+                    "type": "string",
+                    "title": "Component Kind",
+                    "description": "'stateless' for replicas without persistent storage. 'stateful' for replicas requiring a PVC.",
+                    "default": "stateless",
+                    "enum": ["stateless", "stateful"]
+                },
+                "image": {
+                    "type": "string",
+                    "title": "Container Image",
+                    "description": "Container image reference, including optional tag or digest.",
+                    "minLength": 1,
+                    "examples": [
+                        "nginx:1.28.0-alpine",
+                        "nginx@sha256:37075895d8461222f53afa7804aec2c57d69f9842995705cc54a0c4a70d68fc9",
+                        "myregistry.com/myapp/backend:2.0",
+                        "wait4x/wait4x:latest"
+                    ]
+                },
+                "command": {
+                    "type": "array",
+                    "title": "Command",
+                    "description": "Container entrypoint override.",
+                    "items": {"type": "string"},
+                    "examples": [
+                        ["python", "app.py"],
+                        ["bash", "-c", "echo Hello, World!"]
+                    ]
+                },
+                "args": {
+                    "type": "array",
+                    "title": "Arguments",
+                    "description": "Container command argument override.",
+                    "items": {"type": "string"},
+                    "examples": [
+                        ["--port", "8080"],
+                        ["--config", "/etc/config.yaml"]
+                    ]
+                },
+                "port": {
+                    "type": "integer",
+                    "title": "Port",
+                    "description": "Primary container port for service components.",
+                    "default": 8080,
+                    "minimum": 1,
+                    "maximum": 65535,
+                    "examples": [8181, 9000]
+                },
+                "expose": {
+                    "$ref": "#/$defs/Expose"
+                },
+                "envFile": {
+                    "type": "string",
+                    "title": "Component Environment File",
+                    "description": "Component-specific dotenv file path.",
+                    "examples": [".env.api", ".env.api.production"]
+                },
+                "configFile": {
+                    "type": "string",
+                    "title": "Component Configuration File",
+                    "description": "Component-specific configuration file path.",
+                    "examples": ["config.api.yaml", "config.api.production.yaml"]
+                },
+                "environments": {
+                    "type": "array",
+                    "title": "Environment Filter",
+                    "description": "Restrict this component to the listed environment names. When absent the component is active in all environments. Entries support prefix-based wildcard matching, e.g. 'review' matches an --environment value of 'review/pr-123'.",
+                    "minItems": 1,
+                    "items": {"type": "string"},
+                    "examples": [
+                        ["production"],
+                        ["review", "staging"]
+                    ]
+                },
+                "autoscaling": {
+                    "$ref": "#/$defs/Autoscaling"
+                },
+                "resources": {
+                    "$ref": "#/$defs/Resources"
+                },
+                "resourcePreset": {
+                    "type": "string",
+                    "title": "Resource Preset",
+                    "description": "Named resource profile. Cannot be combined with explicit resources.",
+                    "enum": ["nano", "micro", "small", "medium", "large", "xlarge", "2xlarge"],
+                    "examples": ["small", "medium", "xlarge"]
+                },
+                "profile": {
+                    "type": "string",
+                    "title": "Profile",
+                    "description": "Platform profile name. Profiles ship in Phase 3; this field is parsed but not enforced in Phase 1.",
+                    "minLength": 1,
+                    "examples": ["public-web", "gpu-inference"]
+                },
+                "env": {
+                    "type": "object",
+                    "title": "Environment Variables",
+                    "description": "Static environment variables for the container.",
+                    "propertyNames": {
+                        "pattern": "^[A-Z_][A-Z0-9_]*$"
+                    },
+                    "additionalProperties": {
+                        "type": ["string", "number", "boolean"]
+                    },
+                    "examples": [
+                        {
+                            "NODE_ENV": "production",
+                            "DEBUG": true,
+                            "MAX_RETRIES": 5,
+                            "TIMEOUT": 30.5
+                        }
+                    ]
+                },
+                "health": {
+                    "$ref": "#/$defs/Health"
+                }
+            }
+        },
+        "Expose": {
+            "type": "object",
+            "title": "Expose",
+            "description": "Exposes the component via an ingress rule resolved against the platform domain configuration.",
+            "additionalProperties": false,
+            "required": ["domain"],
+            "properties": {
+                "domain": {
+                    "type": "string",
+                    "title": "Domain Key",
+                    "description": "Logical domain key referencing an entry in the platform environment's domains map.",
+                    "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                    "minLength": 1,
+                    "examples": ["public", "internal"]
+                },
+                "subdomain": {
+                    "type": "string",
+                    "title": "Subdomain",
+                    "description": "DNS label prepended to baseDomain to form the FQDN. When absent the component is exposed at the apex (FQDN equals baseDomain). Must be a valid DNS-1123 label.",
+                    "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
+                    "minLength": 1,
+                    "examples": ["api", "www"]
+                }
+            },
+            "examples": [
+                {"domain": "public", "subdomain": "api"},
+                {"domain": "internal"}
+            ]
+        },
+        "Autoscaling": {
+            "type": "object",
+            "title": "Autoscaling",
+            "description": "Horizontal pod autoscaling configuration.",
+            "additionalProperties": false,
+            "required": ["enabled", "minReplicas", "maxReplicas"],
+            "properties": {
+                "enabled": {
+                    "type": "boolean",
+                    "description": "Whether autoscaling is enabled.",
+                    "default": false
+                },
+                "minReplicas": {
+                    "type": "integer",
+                    "description": "Minimum number of replicas.",
+                    "default": 2,
+                    "minimum": 1
+                },
+                "maxReplicas": {
+                    "type": "integer",
+                    "description": "Maximum number of replicas.",
+                    "default": 5,
+                    "minimum": 1
+                },
+                "metrics": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["type", "target"],
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "enum": ["cpu", "memory"]
+                            },
+                            "target": {
+                                "type": "integer",
+                                "minimum": 1
+                            }
+                        }
+                    },
+                    "default": [{"type": "cpu", "target": 75}],
+                    "examples": [
+                        [
+                            {"type": "cpu", "target": 70},
+                            {"type": "memory", "target": 80}
+                        ]
+                    ]
+                }
+            },
+            "examples": [
+                {
+                    "enabled": true,
+                    "minReplicas": 2,
+                    "maxReplicas": 6,
+                    "metrics": [{"type": "cpu", "target": 70}]
+                },
+                {
+                    "enabled": true,
+                    "minReplicas": 3,
+                    "maxReplicas": 10,
+                    "metrics": [
+                        {"type": "cpu", "target": 65},
+                        {"type": "memory", "target": 75}
+                    ]
+                }
+            ]
+        },
+        "Resources": {
+            "type": "object",
+            "title": "Resources",
+            "description": "CPU and memory requests/limits.",
+            "additionalProperties": false,
+            "properties": {
+                "cpu": {
+                    "type": "string",
+                    "pattern": "^([1-9][0-9]*m?|[1-9][0-9]*|0m)$",
+                    "examples": ["500m", "1"]
+                },
+                "memory": {
+                    "type": "string",
+                    "pattern": "^[1-9][0-9]*(Ki|Mi|Gi|Ti|Pi|Ei)$",
+                    "examples": ["256Mi", "1Gi"]
+                },
+                "ephemeralStorage": {
+                    "type": "string",
+                    "pattern": "^[1-9][0-9]*(Ki|Mi|Gi|Ti|Pi|Ei)$",
+                    "examples": ["500Mi", "2Gi"]
+                }
+            },
+            "examples": [
+                {"cpu": "500m", "memory": "512Mi"},
+                {"ephemeralStorage": "2Gi"}
+            ]
+        },
+        "Health": {
+            "type": "object",
+            "title": "Health Checks",
+            "description": "HTTP health check configuration for service components.",
+            "additionalProperties": false,
+            "properties": {
+                "ready": {
+                    "oneOf": [
+                        {"type": "boolean", "const": false},
+                        {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": ["path"],
+                            "properties": {
+                                "path": {
+                                    "type": "string",
+                                    "pattern": "^/",
+                                    "examples": ["/health", "/ready", "/healthz"]
+                                }
+                            }
+                        }
+                    ],
+                    "examples": [
+                        {"path": "/health"},
+                        false
+                    ]
+                },
+                "alive": {
+                    "oneOf": [
+                        {"type": "boolean", "const": false},
+                        {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": ["path"],
+                            "properties": {
+                                "path": {
+                                    "type": "string",
+                                    "pattern": "^/",
+                                    "examples": ["/livez", "/healthz", "/alive"]
+                                },
+                                "interval": {
+                                    "type": "string",
+                                    "pattern": "^[1-9][0-9]*(s|m|h)$",
+                                    "default": "10s",
+                                    "examples": ["10s", "30s", "1m"]
+                                },
+                                "restartAfter": {
+                                    "type": "string",
+                                    "pattern": "^[1-9][0-9]*(s|m|h)$",
+                                    "default": "60s",
+                                    "examples": ["60s", "2m", "5m"]
+                                }
+                            }
+                        }
+                    ],
+                    "examples": [
+                        {"path": "/livez"},
+                        {"path": "/livez", "interval": "10s", "restartAfter": "60s"},
+                        false
+                    ]
+                }
+            },
+            "examples": [
+                {"ready": {"path": "/health"}},
+                {"ready": {"path": "/health"}, "alive": {"path": "/livez"}},
+                {"ready": false, "alive": false}
+            ]
+        }
+    },
+    "examples": [
+        {
+            "apiVersion": "v1-alpha.2",
+            "project": "shop",
+            "environments": {
+                "production": {
+                    "envFile": ".env.production"
+                },
+                "local": {}
+            },
+            "components": {
+                "api": {
+                    "image": "my-app:latest",
+                    "port": 8080,
+                    "expose": {
+                        "domain": "public",
+                        "subdomain": "api"
+                    }
+                }
+            }
+        }
+    ]
+}

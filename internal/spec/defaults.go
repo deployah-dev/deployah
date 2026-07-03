@@ -458,10 +458,12 @@ func FillSpecWithDefaults(spec *Spec, version string) error {
 	}
 
 	// Apply environment defaults
-	for i := range spec.Environments {
-		if err = applyDefaultsRecursively(&spec.Environments[i], mergedDefaults, "environments."+spec.Environments[i].Name, version); err != nil {
-			return fmt.Errorf("failed to apply defaults to environment %s: %w", spec.Environments[i].Name, err)
+	for name := range spec.Environments {
+		env := spec.Environments[name]
+		if err = applyDefaultsRecursively(&env, mergedDefaults, "environments."+name, version); err != nil {
+			return fmt.Errorf("failed to apply defaults to environment %s: %w", name, err)
 		}
+		spec.Environments[name] = env
 	}
 
 	return nil

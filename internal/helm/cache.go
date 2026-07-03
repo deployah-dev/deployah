@@ -39,23 +39,32 @@ var (
 	chartHashOnce     sync.Once       // Ensure embedded chart hash is computed only once
 )
 
-// GenerateCacheKey creates a cache key from spec and chart template
-// hashes.
-func GenerateCacheKey(manifest *spec.Spec) (string, error) {
-	// Create a deterministic representation of the spec for hashing
-	specBytes, err := json.Marshal(manifest)
+// GenerateCacheKey creates a cache key from the resolved spec (or raw spec
+// when resolved is nil) and the embedded chart template hash.
+//
+// When resolved is non-nil it is hashed instead of the full raw spec: this
+// covers only the target-environment subset and ensures platform file changes
+// invalidate the cache. encoding/json sorts map keys deterministically since
+// Go 1.12, so the serialization is stable.
+func GenerateCacheKey(manifest *spec.Spec, resolved *spec.ResolvedSpec) (string, error) {
+	var inputBytes []byte
+	var err error
+	if resolved != nil {
+		inputBytes, err = json.Marshal(resolved)
+	} else {
+		inputBytes, err = json.Marshal(manifest)
+	}
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal spec for hashing: %w", err)
 	}
 
-	// Get hash of embedded chart templates to detect chart updates
+	// Get hash of embedded chart templates to detect chart updates.
 	chartHash, err := getEmbeddedChartHash()
 	if err != nil {
 		return "", fmt.Errorf("failed to generate embedded chart hash: %w", err)
 	}
 
-	// Combine spec hash and chart hash for comprehensive cache key
-	specHash := sha256.Sum256(specBytes)
+	specHash := sha256.Sum256(inputBytes)
 	combinedData := fmt.Sprintf("%s-%s", hex.EncodeToString(specHash[:]), chartHash)
 	finalHash := sha256.Sum256([]byte(combinedData))
 

@@ -251,3 +251,153 @@ func TestBuildLivenessProbe_RestartAfterOnlyDefaultsInterval(t *testing.T) {
 	assert.Equal(t, 12, p["failureThreshold"])
 	assert.Equal(t, 10, p["periodSeconds"])
 }
+
+// TestMapSpecToChartValues_SelfSignedTLS verifies that the selfSigned TLS mode
+// sets ingress.selfSigned:true and does not set existingSecret (the chart
+// derives the secret name from the hostname).
+func TestMapSpecToChartValues_SelfSignedTLS(t *testing.T) {
+	t.Parallel()
+
+	subdomain := "api"
+	m := &spec.Spec{
+		APIVersion: "v1-alpha.2",
+		Project:    "shop",
+		Environments: map[string]spec.Environment{
+			"local": {},
+		},
+		Components: map[string]spec.Component{
+			"api": {
+				Role:  spec.ComponentRoleService,
+				Image: "shop-api:latest",
+				Port:  8080,
+				Expose: &spec.Expose{
+					Domain:    "public",
+					Subdomain: &subdomain,
+				},
+			},
+		},
+	}
+	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.2"))
+
+	resolved := &spec.ResolvedSpec{
+		Spec: m,
+		Env:  spec.NormalizeEnv("local"),
+		Components: map[string]spec.ResolvedComponent{
+			"api": {
+				FQDN:    "api.127.0.0.1.nip.io",
+				TLSMode: spec.TLSModeSelfSigned,
+			},
+		},
+	}
+
+	vals, err := MapSpecToChartValues(m, "local", resolved)
+	require.NoError(t, err)
+
+	apiVals := mustNestedMap(t, vals, "api")
+	ingress := mustNestedMap(t, apiVals, "ingress")
+
+	assert.Equal(t, true, ingress["enabled"])
+	assert.Equal(t, "api.127.0.0.1.nip.io", ingress["hostname"])
+	assert.Equal(t, true, ingress["tls"])
+	assert.Equal(t, true, ingress["selfSigned"], "selfSigned must be true for selfSigned TLS mode")
+	_, hasExistingSecret := ingress["existingSecret"]
+	assert.False(t, hasExistingSecret, "existingSecret must not be set for selfSigned mode")
+}
+
+// TestMapSpecToChartValues_SecretNameTLS verifies secretName mode sets
+// existingSecret.
+func TestMapSpecToChartValues_SecretNameTLS(t *testing.T) {
+	t.Parallel()
+
+	subdomain := "api"
+	m := &spec.Spec{
+		APIVersion: "v1-alpha.2",
+		Project:    "shop",
+		Environments: map[string]spec.Environment{
+			"production": {},
+		},
+		Components: map[string]spec.Component{
+			"api": {
+				Role:  spec.ComponentRoleService,
+				Image: "shop-api:latest",
+				Port:  8080,
+				Expose: &spec.Expose{
+					Domain:    "public",
+					Subdomain: &subdomain,
+				},
+			},
+		},
+	}
+	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.2"))
+
+	resolved := &spec.ResolvedSpec{
+		Spec: m,
+		Env:  spec.NormalizeEnv("production"),
+		Components: map[string]spec.ResolvedComponent{
+			"api": {
+				FQDN:          "api.example.com",
+				TLSMode:       spec.TLSModeSecretName,
+				TLSSecretName: "wildcard-example-com",
+			},
+		},
+	}
+
+	vals, err := MapSpecToChartValues(m, "production", resolved)
+	require.NoError(t, err)
+
+	apiVals := mustNestedMap(t, vals, "api")
+	ingress := mustNestedMap(t, apiVals, "ingress")
+
+	assert.Equal(t, true, ingress["tls"])
+	assert.Equal(t, "wildcard-example-com", ingress["existingSecret"])
+}
+
+// TestMapSpecToChartValues_CertManagerTLS verifies certManager mode sets the
+// annotation.
+func TestMapSpecToChartValues_CertManagerTLS(t *testing.T) {
+	t.Parallel()
+
+	subdomain := "api"
+	m := &spec.Spec{
+		APIVersion: "v1-alpha.2",
+		Project:    "shop",
+		Environments: map[string]spec.Environment{
+			"production": {},
+		},
+		Components: map[string]spec.Component{
+			"api": {
+				Role:  spec.ComponentRoleService,
+				Image: "shop-api:latest",
+				Port:  8080,
+				Expose: &spec.Expose{
+					Domain:    "public",
+					Subdomain: &subdomain,
+				},
+			},
+		},
+	}
+	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.2"))
+
+	resolved := &spec.ResolvedSpec{
+		Spec: m,
+		Env:  spec.NormalizeEnv("production"),
+		Components: map[string]spec.ResolvedComponent{
+			"api": {
+				FQDN:      "api.example.com",
+				TLSMode:   spec.TLSModeCertManager,
+				TLSIssuer: "letsencrypt-prod",
+			},
+		},
+	}
+
+	vals, err := MapSpecToChartValues(m, "production", resolved)
+	require.NoError(t, err)
+
+	apiVals := mustNestedMap(t, vals, "api")
+	ingress := mustNestedMap(t, apiVals, "ingress")
+
+	assert.Equal(t, true, ingress["tls"])
+	annotations, ok := ingress["annotations"].(map[string]string)
+	require.True(t, ok)
+	assert.Equal(t, "letsencrypt-prod", annotations["cert-manager.io/cluster-issuer"])
+}

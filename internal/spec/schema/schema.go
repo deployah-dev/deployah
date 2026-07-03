@@ -1,5 +1,5 @@
-// Package schema embeds versioned JSON schemas for manifest and environment
-// validation.
+// Package schema embeds versioned JSON schemas for manifest, environment, and
+// platform validation.
 package schema
 
 import (
@@ -13,7 +13,7 @@ import (
 
 // FS is the embedded filesystem containing the schema files.
 //
-//go:embed **/*.json
+//go:embed **/*.json platform/**/*.json
 var fs embed.FS
 
 // SchemaType is the type of schema.
@@ -29,7 +29,13 @@ const (
 	SchemaTypeManifest SchemaType = "manifest"
 	// SchemaTypeEnvironments is the type of schema for validating environments.
 	SchemaTypeEnvironments SchemaType = "environments"
+	// SchemaTypePlatform is the type of schema for validating platform configs.
+	SchemaTypePlatform SchemaType = "platform"
 )
+
+// platformSchemaDir is the top-level directory for platform schemas within the
+// embedded FS. It is skipped when iterating manifest schema versions.
+const platformSchemaDir = "platform"
 
 var (
 	// versionRegex matches version strings such as "v1-alpha.1", "v1-beta.2",
@@ -63,6 +69,7 @@ func GetEnvironmentsSchema(version string) ([]byte, error) {
 }
 
 // GetManifestSchemas returns a map of version string to manifest schema []byte.
+// It skips the platform/ subdirectory.
 func GetManifestSchemas() (map[string][]byte, error) {
 	files, err := fs.ReadDir(".")
 	if err != nil {
@@ -75,6 +82,9 @@ func GetManifestSchemas() (map[string][]byte, error) {
 			continue
 		}
 		version := file.Name()
+		if version == platformSchemaDir {
+			continue // platform schemas live here, not manifest schemas
+		}
 		schema, schemaErr := GetManifestSchema(version)
 		if schemaErr != nil {
 			return nil, fmt.Errorf("failed to read schema for version %s: %w", version, schemaErr)
@@ -83,6 +93,18 @@ func GetManifestSchemas() (map[string][]byte, error) {
 	}
 
 	return schemas, nil
+}
+
+// GetPlatformSchema retrieves the JSON schema for validating platform configs
+// at a specific version. Version strings should follow the format
+// "v1-alpha.1", "v1-beta.2", etc. The schema file must be named
+// "platform.json" within the platform/VERSION directory.
+func GetPlatformSchema(version string) ([]byte, error) {
+	fileName := platformSchemaDir + "/" + version + "/" + SchemaTypePlatform.String() + ".json"
+	if _, err := fs.Open(fileName); err != nil {
+		return nil, fmt.Errorf("platform schema not found for version %s: %w", version, err)
+	}
+	return fs.ReadFile(fileName)
 }
 
 // getSortedVersions returns a sorted slice of version strings (ascending order)

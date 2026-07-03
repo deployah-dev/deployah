@@ -176,8 +176,10 @@ func (c *Client) IsReachable() error {
 	return nil
 }
 
-// InstallApp installs or upgrades the app using the embedded chart.
-func (c *Client) InstallApp(ctx context.Context, manifest *spec.Spec, environment string, dryRun bool) error {
+// InstallApp installs or upgrades the app using the embedded chart. When
+// resolved is non-nil, platform-resolved values (FQDN, TLS mode) are used
+// instead of the raw spec fields.
+func (c *Client) InstallApp(ctx context.Context, manifest *spec.Spec, environment string, dryRun bool, resolved *spec.ResolvedSpec) error {
 	// Set comprehensive labels for better filtering
 	labels := map[string]string{
 		"deployah.dev/project":     manifest.Project,
@@ -187,7 +189,7 @@ func (c *Client) InstallApp(ctx context.Context, manifest *spec.Spec, environmen
 	}
 
 	// Resolve chart path
-	chartPath, err := PrepareChart(ctx, manifest, environment)
+	chartPath, err := PrepareChart(ctx, manifest, environment, resolved)
 	if err != nil {
 		return fmt.Errorf("failed to prepare chart: %w", err)
 	}

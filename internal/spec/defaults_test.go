@@ -198,8 +198,8 @@ func (s *DefaultsTestSuite) TestFillSpecWithDefaults() {
 				APIVersion: "v1-alpha.1",
 				Project:    "test-project",
 				Components: map[string]Component{},
-				Environments: []Environment{
-					{Name: "production"},
+				Environments: map[string]Environment{
+					"production": {},
 				},
 			},
 			version:   "v1-alpha.1",
@@ -409,7 +409,7 @@ func (s *DefaultsTestSuite) TestApplyDefaultsToSlice() {
 		{
 			name: "apply defaults to slice with struct items",
 			sliceVal: reflect.ValueOf([]*Environment{
-				{Name: "prod"},
+				{},
 			}),
 			defaults: DefaultValues{
 				"environments[0].envFile": ".env.prod",
@@ -775,17 +775,17 @@ func (s *DefaultsTestSuite) TestIntegration() {
 			APIVersion: "v1-alpha.1",
 			Project:    "test-project",
 			Components: map[string]Component{},
-			Environments: []Environment{
-				{Name: "production"},
+			Environments: map[string]Environment{
+				"production": {},
 			},
 		}
 
 		err := FillSpecWithDefaults(manifest, "v1-alpha.1")
 		assert.NoError(t, err)
 
-		assert.Equal(t, ".env.production", manifest.Environments[0].EnvFile)
-		assert.Equal(t, "config.production.yaml", manifest.Environments[0].ConfigFile)
-		assert.NotNil(t, manifest.Environments[0].Variables)
+		assert.Equal(t, ".env.production", manifest.Environments["production"].EnvFile)
+		assert.Equal(t, "config.production.yaml", manifest.Environments["production"].ConfigFile)
+		assert.NotNil(t, manifest.Environments["production"].Variables)
 	})
 }
 

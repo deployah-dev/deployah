@@ -26,4 +26,10 @@ const (
 
 	// stateSubdirKubeconfigs is the XDG StateHome subpath for kubeconfig copies.
 	stateSubdirKubeconfigs = "deployah/localkube/kubeconfigs"
+
+	// DefaultIngressIP is the host IP at which the Ingress controller is
+	// reachable after cloud-provider-kind maps LoadBalancer ports to the host
+	// (via --enable-lb-port-mapping). It matches the default PortMapping
+	// ListenAddress used by Kind's extraPortMappings.
+	DefaultIngressIP = "127.0.0.1"
 )

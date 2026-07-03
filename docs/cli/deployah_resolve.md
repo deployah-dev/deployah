@@ -1,15 +1,26 @@
-## deployah version
+## deployah resolve
 
-Print version information
+Show the fully resolved configuration for an environment
+
+### Synopsis
+
+Show the fully resolved configuration for a given environment.
+
+resolve is offline: it never contacts a Kubernetes cluster. It loads the
+platform file (deployah.platform.yaml) when present and performs full
+resolution, including FQDN construction and TLS mode selection. When the
+platform file is absent the output is partial and includes PLATFORM_NOT_FOUND.
+
+Use --output json for byte-stable, machine-readable output.
 
 ```text
-deployah version [flags]
+deployah resolve <environment> [flags]
 ```
 
 ### Options
 
 ```text
-      --format string   output format: "text", "short", or "json" (default "text")
+  -o, --output string   Output format: text or json (default "text")
 ```
 
 ### Options inherited from parent commands

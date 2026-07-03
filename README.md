@@ -16,6 +16,7 @@ but for the deploy step: S2I builds your image, and Deployah runs your release.
 - [How Deployah works](#how-deployah-works)
 - [Concepts](#concepts)
 - [Writing your spec](#writing-your-spec)
+- [Platform file](#platform-file)
 - [Health checks](#health-checks)
 - [Commands](#commands)
 - [Environments and variables](#environments-and-variables)
@@ -87,19 +88,20 @@ Save this as `deployah.yaml` in an empty folder. It runs the public `nginx`
 image, so you do not need to build anything.
 
 ```yaml
-apiVersion: v1-alpha.1
+apiVersion: v1-alpha.2
 project: my-first-app
 components:
   web:
     image: nginx:latest
     port: 80
     environments: [local]
-    ingress:
-      host: my-first-app.local
-environments:
-  - name: local
-    context: kind-deployah
+    expose:
+      domain: public
 ```
+
+Deployah also needs a **platform file**, `deployah.platform.yaml`, that maps
+the `local` environment to a domain and a Kubernetes context. `deployah cluster
+up` creates this for you automatically. See [Platform file](#platform-file).
 
 ### 3. Deploy
 
@@ -204,46 +206,60 @@ A few words you will see often.
 Your spec is a file named `deployah.yaml`. It has three required parts:
 `apiVersion`, `project`, and `components`. You also define your `environments`.
 
+Deployah splits configuration across two files, each with a different owner:
+
+- **`deployah.yaml`** (this section). Owned by the developer. Describes what
+  to run: image, port, resources, health checks, and which logical domain to
+  expose on. It never contains a Kubernetes context or a real domain name.
+- **`deployah.platform.yaml`**. Owned by the platform team. Maps each
+  environment to a real Kubernetes context, domain, and TLS strategy. See
+  [Platform file](#platform-file).
+
+This split means a developer can add an environment or expose a component
+without knowing which cluster or domain it runs on, and a platform team can
+change clusters or rotate certificates without touching the app spec.
+
 Here is a full example that shows the common fields. You do not need all of
 them; most have defaults.
 
 ```yaml
-apiVersion: v1-alpha.1            # required: the schema version
-project: shop                     # required: your project name
+apiVersion: v1-alpha.2             # required: the schema version
+project: shop                      # required: your project name
 
-components:                       # required: one or more components
+components:                        # required: one or more components
   api:
     image: ghcr.io/acme/shop-api:${TAG}  # tag comes from the environment below
-    role: service                 # service | worker | job (default: service)
-    kind: stateless               # stateless | stateful (default: stateless)
-    port: 8080                    # the port your app listens on (default: 8080)
-    environments: [staging, prod] # which environments deploy this component
-    command: ["/bin/api"]         # optional: override the image ENTRYPOINT
-    args: ["--verbose"]           # optional: override the image CMD
-    env:                          # planned: not applied to the container yet
+    role: service                  # service | worker | job (default: service)
+    kind: stateless                 # stateless | stateful (default: stateless)
+    port: 8080                     # the port your app listens on (default: 8080)
+    environments: [staging, prod]  # which environments deploy this component
+    command: ["/bin/api"]          # optional: override the image ENTRYPOINT
+    args: ["--verbose"]            # optional: override the image CMD
+    env:                           # planned: not applied to the container yet
       LOG_LEVEL: info
-    resourcePreset: small         # nano|micro|small|medium|large|xlarge|2xlarge
-    ingress:                      # optional: expose over HTTP/HTTPS
-      host: api.example.com       # required when you use ingress
-      tls: false                  # default: false
-    autoscaling:                  # optional: scale on CPU or memory
+    resourcePreset: small          # nano|micro|small|medium|large|xlarge|2xlarge
+    expose:                        # optional: expose over HTTP/HTTPS
+      domain: public               # references a domain key in the platform file
+      subdomain: api                # optional: omit for the domain apex
+    autoscaling:                   # optional: scale on CPU or memory
       enabled: true
       minReplicas: 2
       maxReplicas: 5
       metrics:
-        - type: cpu               # cpu | memory
-          target: 70              # target usage percentage
+        - type: cpu                # cpu | memory
+          target: 70               # target usage percentage
 
-environments:                     # define your environments
-  - name: staging
-    context: kind-deployah        # the kube context to deploy to
+environments:                      # define your environments (a map, not a list)
+  staging:
     variables:
-      TAG: 1.4.0-rc               # fills ${TAG} in the image above
-  - name: prod
-    context: prod-cluster
+      TAG: 1.4.0-rc                # fills ${TAG} in the image above
+  prod:
     variables:
-      TAG: 1.4.0                  # fills ${TAG} in the image above
+      TAG: 1.4.0                   # fills ${TAG} in the image above
 ```
+
+Notice there is no `context` field here: the Kubernetes context for each
+environment comes from `deployah.platform.yaml`, not from `deployah.yaml`.
 
 Use either `resourcePreset` or `resources`, not both. Presets are the easy
 option; `resources` lets you set exact CPU, memory, and ephemeral storage.
@@ -254,10 +270,10 @@ Top level:
 
 | Field | Required | Notes |
 |---|---|---|
-| `apiVersion` | Yes | The schema version, for example `v1-alpha.1`. |
+| `apiVersion` | Yes | The schema version. Must be `v1-alpha.2`. |
 | `project` | Yes | Lowercase name (DNS-1123). Prefixes your Kubernetes resources. |
 | `components` | Yes | A map of component name to component settings. |
-| `environments` | Yes in practice | The list of environments you can deploy to. |
+| `environments` | Yes in practice | A map of environment name to environment settings. Keys support prefix-based wildcard matching, e.g. a `review` key matches `--environment review/pr-123`. |
 
 Component:
 
@@ -271,28 +287,32 @@ Component:
 | `env` | none | Environment variables (uppercase keys). |
 | `resourcePreset` | none | `nano`, `micro`, `small`, `medium`, `large`, `xlarge`, `2xlarge`. |
 | `resources` | none | `cpu`, `memory`, `ephemeralStorage` (Kubernetes units). |
-| `ingress` | none | `host` (required) and `tls` (default false). |
+| `expose` | none | `domain` (required, a key from the platform file) and `subdomain` (optional; omit for the domain apex). See [Platform file](#platform-file). |
 | `autoscaling` | off | `enabled`, `minReplicas`, `maxReplicas`, `metrics`. |
 | `health` | auto | Ready and alive checks. See [Health checks](#health-checks). |
 | `environments` | none | Which environments deploy this component. |
+| `profile` | none | Platform profile name. Parsed but not enforced yet. |
 
 > [!IMPORTANT]
 > Not deployed yet: the schema accepts `role: worker` and `role: job`,
-> `kind: stateful`, and the `env`, `envFile`, and `configFile` fields, but
-> Deployah does not apply them at deploy time yet. Today, deploy a `stateless`
-> `service` using `image`, `port`, `resources` or `resourcePreset`, `ingress`,
-> and `autoscaling`.
+> `kind: stateful`, and the `env`, `envFile`, `configFile`, and `profile`
+> fields, but Deployah does not apply them at deploy time yet. Today, deploy a
+> `stateless` `service` using `image`, `port`, `resources` or
+> `resourcePreset`, `expose`, and `autoscaling`.
 
 Environment:
 
 | Field | Notes |
 |---|---|
-| `name` | The environment name. Must be unique. |
-| `context` | The Kubernetes context to use. For the local cluster, use `kind-deployah`. |
-| `variables` | Values for `${...}` placeholders in your spec. |
 | `envFile` / `configFile` | Files to load for this environment (see below). |
+| `variables` | Values for `${...}` placeholders in your spec. |
 
-To check your spec without deploying, run `deployah validate <environment>`.
+There is no `context` field on an environment: it comes from the matching
+environment key in `deployah.platform.yaml`.
+
+To check your spec without a platform file, run `deployah validate`. To also
+check it resolves against the platform file for a given environment, run
+`deployah validate <environment>`.
 
 ### Value rules
 
@@ -305,8 +325,10 @@ A few fields have specific formats:
 - **`env`**: keys are uppercase letters, digits, and underscores, and start with
   a letter or underscore (for example `LOG_LEVEL`). Values are a string, number,
   or boolean.
-- **`ingress.host`**: a domain name with at least one dot, like `api.example.com`
-  or `my-app.local`.
+- **`expose.domain`**: a key that must exist in the target environment's
+  `domains` map in the platform file.
+- **`expose.subdomain`**: a DNS-1123 label, like `api` or `www`. Omit it to
+  expose the component at the domain apex.
 - **`autoscaling`**: needs `enabled`, `minReplicas`, and `maxReplicas`. Each
   metric has a `type` (`cpu` or `memory`) and a `target` percentage.
 - **`health.alive.interval`** and **`health.alive.restartAfter`**: a positive integer
@@ -341,20 +363,20 @@ Every example below is complete and valid. Copy one and change the values.
 **Smallest spec.** One service, one environment.
 
 ```yaml
-apiVersion: v1-alpha.1
+apiVersion: v1-alpha.2
 project: hello
 components:
   web:
     image: nginx:latest
     environments: [dev]
 environments:
-  - name: dev
+  dev: {}
 ```
 
 **Two components.** A web app and an API in one project.
 
 ```yaml
-apiVersion: v1-alpha.1
+apiVersion: v1-alpha.2
 project: shop
 components:
   web:
@@ -366,13 +388,14 @@ components:
     port: 8080
     environments: [prod]
 environments:
-  - name: prod
+  prod: {}
 ```
 
-**Several environments.** Each one has its own cluster and its own image tag.
+**Several environments.** Each one has its own image tag. The cluster comes
+from the platform file, not from here.
 
 ```yaml
-apiVersion: v1-alpha.1
+apiVersion: v1-alpha.2
 project: shop
 components:
   web:
@@ -380,37 +403,36 @@ components:
     port: 80
     environments: [staging, prod]
 environments:
-  - name: staging
-    context: kind-deployah
+  staging:
     variables:
       TAG: 1.0.0-rc
-  - name: prod
-    context: prod-cluster
+  prod:
     variables:
       TAG: 1.0.0
 ```
 
-**Expose it over HTTPS.** Add an ingress with a host and TLS.
+**Expose it over HTTPS.** Add an `expose` block. TLS is decided by the
+platform file's domain configuration, not by the developer.
 
 ```yaml
-apiVersion: v1-alpha.1
+apiVersion: v1-alpha.2
 project: shop
 components:
   web:
     image: ghcr.io/acme/web:1.0.0
     port: 80
     environments: [prod]
-    ingress:
-      host: shop.example.com
-      tls: true
+    expose:
+      domain: public
+      subdomain: shop
 environments:
-  - name: prod
+  prod: {}
 ```
 
 **Set exact resources.** Use `resources` instead of a preset.
 
 ```yaml
-apiVersion: v1-alpha.1
+apiVersion: v1-alpha.2
 project: shop
 components:
   web:
@@ -421,13 +443,13 @@ components:
       cpu: 500m
       memory: 512Mi
 environments:
-  - name: prod
+  prod: {}
 ```
 
 **Autoscale on CPU.** Scale between 2 and 6 replicas at 70% CPU.
 
 ```yaml
-apiVersion: v1-alpha.1
+apiVersion: v1-alpha.2
 project: shop
 components:
   web:
@@ -442,8 +464,74 @@ components:
         - type: cpu
           target: 70
 environments:
-  - name: prod
+  prod: {}
 ```
+
+## Platform file
+
+Any component that uses `expose` needs a second file, `deployah.platform.yaml`,
+next to `deployah.yaml`. It maps each environment to a real Kubernetes context,
+one or more domains, and a TLS strategy. This file is not processed with
+`${...}` substitution: it holds real values, not templates.
+
+```yaml
+apiVersion: platform/v1-alpha.1
+environments:
+  production:
+    context: prod-eks
+    domains:
+      public:
+        baseDomain: example.com
+        tls:
+          mode: certManager
+          issuer: letsencrypt-prod
+  local:
+    context: kind-deployah
+    domains:
+      public:
+        baseDomain: 127.0.0.1.nip.io
+        tls:
+          mode: selfSigned
+```
+
+A component's `expose.domain: public` resolves against the `public` key under
+the active environment. `expose.subdomain: api` combines with `baseDomain` to
+form `api.example.com`; omitting `subdomain` exposes the component at the
+domain apex (`example.com`).
+
+### TLS modes
+
+| Mode | Meaning |
+|---|---|
+| `selfSigned` | Deployah generates and manages a self-signed certificate. Used by the local cluster. |
+| `secretName` | Use a pre-existing Kubernetes TLS secret in the target namespace. Set `secretName` to its name. |
+| `certManager` | Provision the certificate through [cert-manager](https://cert-manager.io/). Set `issuer` to a `ClusterIssuer` or `Issuer` name. |
+
+### Where the platform file comes from
+
+- `deployah init` scaffolds both `deployah.yaml` and `deployah.platform.yaml`.
+- `deployah cluster up` creates or updates `deployah.platform.yaml` with a
+  `local` environment pointed at the local cluster.
+- Deployah looks for the platform file in this order: `--platform-file`, the
+  `DEPLOYAH_PLATFORM_FILE` environment variable, then the same directory as
+  the spec file.
+
+If a component uses `expose` and no platform file can be found, `deployah
+deploy` and `deployah validate <environment>` stop with an error rather than
+guessing. Use `deployah resolve <environment>` to preview the fully resolved
+hostname, TLS mode, and context without touching a cluster:
+
+```sh
+deployah resolve production
+deployah resolve production --output json
+```
+
+### Hostname guard
+
+Once a component has been deployed with a resolved hostname, changing the
+domain or subdomain on the next deploy is blocked by default, since it can
+silently drop traffic. Pass `--force-hostname-change` to `deployah deploy` to
+allow it.
 
 ## Health checks
 
@@ -540,8 +628,9 @@ These work with every command:
 | Flag | Short | Meaning |
 |---|---|---|
 | `--spec` | `-s` | Path to the spec file (default: `deployah.yaml`). |
+| `--platform-file` | | Path to the platform config file (overrides `DEPLOYAH_PLATFORM_FILE` and the default same-directory lookup). |
 | `--namespace` | `-n` | Kubernetes namespace to use. |
-| `--context` | | Kubernetes context to use (overrides the environment's context). |
+| `--context` | | Kubernetes context to use (overrides the platform file's context). |
 | `--kubeconfig` | `-k` | Path to your kubeconfig file. |
 | `--timeout` | `-t` | Timeout for operations (default: 10m). |
 | `--debug` | `-d` | Verbose logging, and keep temporary files. |
@@ -550,20 +639,22 @@ These work with every command:
 
 | Command | What it does |
 |---|---|
-| `deployah init` | Create a new spec by answering a few questions. Use `-o` to set the output file, or `--dry-run` to preview. |
-| `deployah validate <environment>` | Check your spec against the schema. |
-| `deployah deploy <environment>` | Deploy your project. Use `--dry-run` to render without installing. |
+| `deployah init` | Create a new spec and platform file by answering a few questions. Use `-o` to set the output file, or `--dry-run` to preview. |
+| `deployah validate` | Check the manifest schema only (offline, no platform file needed). |
+| `deployah validate <environment>` | Also load the platform file and check the resolved configuration for that environment. |
+| `deployah resolve <environment>` | Preview the fully resolved hostname, TLS mode, and context, offline. Use `--output json` for machine-readable output. |
+| `deployah deploy <environment>` | Deploy your project. Use `--dry-run` to render without installing, `--explain` to print the resolution report first, or `--force-hostname-change` to bypass the hostname guard. |
 | `deployah status <project>` | Show the status of a deployed project. Use `--detailed` for pod details, `-e` for an environment. |
 | `deployah logs <project>` | Stream logs. Filter with `--component`, `-e`, `--container`, `--since`, `--tail`. Use `--no-follow` for a one-off read. |
 | `deployah shell <project>` | Open a shell in a running container. Choose with `--component` and `--container`. |
 | `deployah list` | List deployed projects. Filter with `-p` (project) and `-e` (environment). |
-| `deployah delete <project> <environment>` | Remove a deployment. Use `--force` to skip the prompt, or `--show-resources` to preview. |
+| `deployah delete <project> <environment>` | Remove a deployment. Fails if no platform file is found, unless you pass `--allow-missing-platform`. Use `--force` to skip the prompt, or `--show-resources` to preview. |
 
 ### Working with the local cluster
 
 | Command | What it does |
 |---|---|
-| `deployah cluster up` | Create the local cluster and start the cloud provider. |
+| `deployah cluster up` | Create the local cluster, start the cloud provider, and create or update `deployah.platform.yaml` with a `local` environment. |
 | `deployah cluster status` | Show the cluster status and the URLs you can open. |
 | `deployah cluster down` | Delete the local cluster. Use `--force` to skip the prompt. |
 | `deployah cluster kubeconfig` | Print the local cluster kubeconfig path. Use `--raw` for its contents. |
@@ -664,7 +755,7 @@ So the same `${APP_ENV}` can come from any of these:
 ```yaml
 # in deployah.yaml (no prefix here)
 environments:
-  - name: production
+  production:
     variables:
       APP_ENV: from-spec
 ```
@@ -715,21 +806,35 @@ files are for your app only.
 
 ## Accessing your app
 
-To reach a component over HTTP, give it an `ingress` with a `host`:
+To reach a component over HTTP or HTTPS, give it an `expose` block and add a
+matching domain to your platform file's `local` environment:
 
 ```yaml
+# deployah.yaml
 components:
   web:
     image: nginx:latest
     port: 80
     environments: [local]
-    ingress:
-      host: my-app.local
+    expose:
+      domain: public
 ```
 
-On the local cluster, run `deployah cluster status` to see the URL and port for
-your app. Open that URL in your browser. The local cluster maps it to
-`localhost` for you, so you do not need extra setup.
+```yaml
+# deployah.platform.yaml (created for you by 'deployah cluster up')
+environments:
+  local:
+    context: kind-deployah
+    domains:
+      public:
+        baseDomain: 127.0.0.1.nip.io
+        tls:
+          mode: selfSigned
+```
+
+On the local cluster, run `deployah cluster status` to see the resolved URL
+and port for your app. Open that URL in your browser; nip.io resolves to
+`127.0.0.1` for you, so you do not need extra setup or `/etc/hosts` entries.
 
 ## Local cluster networking
 
@@ -778,7 +883,7 @@ error: load spec: ... spec is missing 'apiVersion' field
 ```
 
 Your spec needs `apiVersion`, `project`, and `components`, and an `environments`
-list. Run `deployah validate <environment>` to find the problem.
+map. Run `deployah validate` to find the problem.
 
 **Environment not found.**
 
@@ -787,7 +892,7 @@ error: environment "production" not found
 ```
 
 Check the environment name in your spec, or run `deployah list` to see what is
-available.
+deployed.
 
 **Variable not found.**
 
@@ -807,6 +912,88 @@ error: unable to connect to Kubernetes cluster
 Check that your cluster is reachable with `kubectl cluster-info`. For a local
 cluster, run `deployah cluster up` and deploy with the `local` environment (or
 pass `--context kind-deployah`).
+
+### Deploy succeeds but the app returns 503 / times out over HTTPS
+
+**Symptom.** `deployah deploy` completes, the pod is Running and 1/1, but
+requests to the app fail:
+
+```text
+< HTTP/1.1 503 Service Unavailable
+< server: envoy
+upstream connect error or disconnect/reset before headers. reset reason: connection timeout
+```
+
+`kubectl port-forward svc/<project>-<env>-web 8080:80` works, which confirms
+the pod is healthy and only the ingress path is broken.
+
+**Cause.** The local cluster uses cloud-provider-kind to serve ingress. Its
+Envoy gateway runs in a container and forwards traffic from the container
+network into the cluster. When the host drops that forwarded traffic, Envoy
+returns 503 -- even though the pod is fine. This is a host networking issue, not
+a Deployah or app problem.
+
+#### Linux
+
+The host's iptables `FORWARD` chain defaults to `DROP` (set by Docker, or
+re-imposed by firewalld/ufw), which silently drops the gateway's traffic.
+
+Confirm:
+
+```sh
+sudo iptables -S FORWARD | head -1
+# -P FORWARD DROP   <-- this is the cause
+```
+
+Find the Kind bridge interface:
+
+```sh
+bridge=br-$(docker network inspect kind -f '{{.Id}}' | cut -c1-12)
+```
+
+Then apply one of these fixes:
+
+**firewalld:**
+
+```sh
+sudo firewall-cmd --permanent --zone=trusted --change-interface="$bridge"
+sudo firewall-cmd --reload
+```
+
+**iptables / nftables** (survives Docker restarts without opening the whole
+host):
+
+```sh
+sudo iptables -I DOCKER-USER -o "$bridge" -j ACCEPT
+sudo iptables -I DOCKER-USER -i "$bridge" -j ACCEPT
+```
+
+**ufw:** set `DEFAULT_FORWARD_POLICY="ACCEPT"` in `/etc/default/ufw`, then run
+`sudo ufw reload`.
+
+Re-run your request afterwards. Avoid `sudo iptables -P FORWARD ACCEPT` -- it
+works but opens the entire host to forwarded traffic.
+
+#### macOS (Docker Desktop / OrbStack / Podman machine)
+
+The Docker daemon runs inside a Linux VM, so there is no host firewall rule to
+change. Instead:
+
+- Always reach the app via `127.0.0.1`, never a `172.x` container address.
+  Deployah publishes ingress on `127.0.0.1` by default.
+- Recreate the cluster: `deployah cluster down && deployah cluster up`.
+- Restart the VM: quit and reopen Docker Desktop, or `orb restart`, or
+  `podman machine stop && podman machine start`.
+- If the problem persists, see the
+  [upstream issue](https://github.com/kubernetes-sigs/cloud-provider-kind/issues/142).
+
+#### Reach the app while you fix the above
+
+```sh
+kubectl --kubeconfig "$(deployah cluster kubeconfig)" \
+  port-forward svc/<project>-<env>-web 8080:80
+curl http://localhost:8080
+```
 
 ### Local cluster networking
 
@@ -869,12 +1056,13 @@ deployah <command> --help
 
 ## Schema reference
 
-Deployah validates your spec with JSON Schema. The schema defines the structure
-and the rules for `deployah.yaml`.
+Deployah validates your spec and platform file with JSON Schema.
 
-- **Schema version:** v1-alpha.1
-- **Spec schema:** `internal/spec/schema/v1-alpha.1/manifest.json`
-- **Environments schema:** `internal/spec/schema/v1-alpha.1/environments.json`
+- **Manifest schema version:** v1-alpha.2
+- **Manifest schema:** `internal/spec/schema/v1-alpha.2/manifest.json`
+- **Manifest environments schema:** `internal/spec/schema/v1-alpha.2/environments.json`
+- **Platform schema version:** platform/v1-alpha.1
+- **Platform schema:** `internal/spec/schema/platform/v1-alpha.1/platform.json`
 
 For the latest schema and examples, see the
 [schema directory](internal/spec/schema/) in the repository.

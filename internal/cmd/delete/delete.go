@@ -11,19 +11,21 @@ import (
 	"deployah.dev/deployah/internal/cli"
 	"deployah.dev/deployah/internal/helm"
 	"deployah.dev/deployah/internal/session"
+	"deployah.dev/deployah/internal/spec"
 
 	v1 "helm.sh/helm/v4/pkg/release/v1"
 )
 
 // Options holds command-line flags for delete.
 type Options struct {
-	Project       string `nabat:"project"`
-	Environment   string `nabat:"environment"`
-	Yes           bool   `nabat:"yes"`
-	DryRun        bool   `nabat:"dry-run"`
-	ShowResources bool   `nabat:"show-resources"`
-	Output        string `nabat:"output"`
-	Wait          bool   `nabat:"wait"`
+	Project              string `nabat:"project"`
+	Environment          string `nabat:"environment"`
+	Yes                  bool   `nabat:"yes"`
+	DryRun               bool   `nabat:"dry-run"`
+	ShowResources        bool   `nabat:"show-resources"`
+	Output               string `nabat:"output"`
+	Wait                 bool   `nabat:"wait"`
+	AllowMissingPlatform bool   `nabat:"allow-missing-platform"`
 }
 
 // ResourceInfo holds parsed metadata about a single Kubernetes resource
@@ -61,6 +63,7 @@ func Register(app *nabat.App) {
 		nabat.WithFlag("show-resources", false, nabat.WithUsage("Show detailed resources that would be deleted (implies --dry-run)")),
 		nabat.WithSelectFlag("output", cli.OutputFormatTree, cli.DeleteOutputFormats, nabat.WithShort('o'), nabat.WithUsage("Output format for dry-run preview")),
 		nabat.WithFlag("wait", false, nabat.WithUsage("Wait until all Kubernetes resources are fully deleted before returning (uses stable legacy polling; suitable for CI)")),
+		nabat.WithFlag("allow-missing-platform", false, nabat.WithUsage("Allow deletion to proceed even when no platform file is found (uses default kubeconfig context; requires --project and --context or a resolved kubeconfig)")),
 		nabat.WithExample(`
 # Delete a project in an environment
 deployah delete my-app production
@@ -98,6 +101,25 @@ func runDelete(c *nabat.Context) error {
 	}
 
 	rt := session.FromContext(c)
+
+	// Fail closed when no platform file is found, unless the escape hatch is
+	// active. Without the platform file the delete targets the kubeconfig's
+	// default context, which may be the wrong cluster.
+	if !opts.AllowMissingPlatform {
+		platform, platformErr := rt.Platform()
+		if platformErr != nil {
+			return fmt.Errorf("load platform file: %w", platformErr)
+		}
+		if platform == nil {
+			return fmt.Errorf(
+				"no platform file found (%s or DEPLOYAH_PLATFORM_FILE); "+
+					"pass --platform-file to provide the authoritative cluster context, "+
+					"or --allow-missing-platform to proceed with the default kubeconfig context",
+				spec.DefaultPlatformPath,
+			)
+		}
+	}
+
 	cluster, err := rt.Target(c, opts.Environment)
 	if err != nil {
 		return fmt.Errorf("target cluster: %w", err)
