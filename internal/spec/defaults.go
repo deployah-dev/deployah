@@ -43,14 +43,14 @@ const (
 // and pattern extraction operations.
 //
 // Cache keys follow the format: "{version}-{schemaType}"
-// Example: "v1-alpha.1-spec", "v1-alpha.1-environments"
+// Example: "v1-alpha.2-spec", "v1-alpha.2-environments"
 var (
 	// compiledSchemaCache stores compiled JSON schemas with their raw data
-	// Key format: "v1-alpha.1-spec" -> schemaInfo{compiled, rawData}
+	// Key format: "v1-alpha.2-spec" -> schemaInfo{compiled, rawData}
 	compiledSchemaCache = make(map[string]*schemaInfo)
 
 	// patternCache stores extracted component name patterns from schemas
-	// Key format: "v1-alpha.1" -> "^[a-zA-Z0-9_-]+$"
+	// Key format: "v1-alpha.2" -> "^[a-zA-Z0-9_-]+$"
 	patternCache = make(map[string]string)
 
 	// schemaMutex protects concurrent access to the caches
@@ -74,7 +74,7 @@ type schemaInfo struct {
 // This function implements a thread-safe cache for compiled JSON schemas.
 //
 // Parameters:
-//   - version: Schema version (e.g., "v1-alpha.1")
+//   - version: Schema version (e.g., "v1-alpha.2")
 //   - schemaType: Type of schema ([schema.SchemaTypeManifest] or
 //     [schema.SchemaTypeEnvironments])
 //
@@ -84,7 +84,7 @@ type schemaInfo struct {
 //
 // Example:
 //
-//	info, err := getCachedSchemaInfo("v1-alpha.1", schema.SchemaTypeManifest)
+//	info, err := getCachedSchemaInfo("v1-alpha.2", schema.SchemaTypeManifest)
 //	if err != nil {
 //		return nil, fmt.Errorf("failed to get schema: %w", err)
 //	}
@@ -193,11 +193,38 @@ func extractDefaultsFromSchemaInfo(schemaInfo *schemaInfo, path string) DefaultV
 
 	// Use the raw schema data for extracting defaults
 	if schemaInfo.rawData != nil {
-		// Extract defaults from the schema recursively
-		extractDefaultsFromSchemaData(schemaInfo.rawData, path, defaults)
+		w := &defaultsWalker{root: schemaInfo.rawData, visited: make(map[string]bool)}
+		w.walk(schemaInfo.rawData, path, defaults)
 	}
 
 	return defaults
+}
+
+// defaultsWalker carries the root schema so $ref pointers resolve, and a
+// visited set (ref + path) so cyclic definitions terminate.
+type defaultsWalker struct {
+	root    map[string]any
+	visited map[string]bool
+}
+
+// resolveRef follows a local "#/a/b" JSON pointer within the root schema.
+func (w *defaultsWalker) resolveRef(ref string) (map[string]any, bool) {
+	if !strings.HasPrefix(ref, "#/") {
+		return nil, false
+	}
+	node := any(w.root)
+	for part := range strings.SplitSeq(strings.TrimPrefix(ref, "#/"), "/") {
+		m, ok := node.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		node, ok = m[part]
+		if !ok {
+			return nil, false
+		}
+	}
+	m, ok := node.(map[string]any)
+	return m, ok
 }
 
 // extractDefaultsFromSchemaData recursively processes schema data.
@@ -220,10 +247,22 @@ func extractDefaultsFromSchemaInfo(schemaInfo *schemaInfo, path string) DefaultV
 //	// Input schema: {"properties": {"port": {"default": 8080}}}
 //	// Input path: "components.web"
 //	// Result: defaults["components.web.port"] = 8080
-func extractDefaultsFromSchemaData(schemaData any, path string, defaults DefaultValues) {
+func (w *defaultsWalker) walk(schemaData any, path string, defaults DefaultValues) {
 	schemaMap, ok := schemaData.(map[string]any)
 	if !ok {
 		return
+	}
+
+	// Follow local $ref pointers (e.g. "#/$defs/Component") at the same
+	// path; the visited set stops cycles.
+	if ref, exists := schemaMap["$ref"].(string); exists {
+		key := ref + "|" + path
+		if !w.visited[key] {
+			w.visited[key] = true
+			if target, resolved := w.resolveRef(ref); resolved {
+				w.walk(target, path, defaults)
+			}
+		}
 	}
 
 	// Check if this schema object has a default value
@@ -242,8 +281,7 @@ func extractDefaultsFromSchemaData(schemaData any, path string, defaults Default
 			}
 			propPath += propName
 
-			// Recursively extract defaults from this property
-			extractDefaultsFromSchemaData(propSchema, propPath, defaults)
+			w.walk(propSchema, propPath, defaults)
 		}
 	}
 
@@ -260,9 +298,27 @@ func extractDefaultsFromSchemaData(schemaData any, path string, defaults Default
 			}
 			propPath += "[" + pattern + "]"
 
-			// Recursively extract defaults from this property
-			extractDefaultsFromSchemaData(propSchema, propPath, defaults)
+			w.walk(propSchema, propPath, defaults)
 		}
+	}
+
+	// Handle map-typed additionalProperties combined with a propertyNames
+	// pattern (the v1-alpha.2 layout for components/environments); the
+	// pattern plays the same role as a patternProperties key.
+	if addProps, exists := schemaMap["additionalProperties"].(map[string]any); exists {
+		pattern := ".*"
+		if propNames, hasNames := schemaMap["propertyNames"].(map[string]any); hasNames {
+			if p, hasPattern := propNames["pattern"].(string); hasPattern {
+				pattern = p
+			}
+		}
+		propPath := path
+		if propPath != "" {
+			propPath += "."
+		}
+		propPath += "[" + pattern + "]"
+
+		w.walk(addProps, propPath, defaults)
 	}
 
 	// Handle items (array schemas)
@@ -276,21 +332,20 @@ func extractDefaultsFromSchemaData(schemaData any, path string, defaults Default
 		}
 		itemsPath += "[0]" // Use [0] to indicate first array item
 
-		// Recursively extract defaults from array items
-		extractDefaultsFromSchemaData(items, itemsPath, defaults)
+		w.walk(items, itemsPath, defaults)
 	}
 }
 
 // GetDefaultValues extracts all default values from a JSON schema. This is the
 // main entry point for schema-based defaults for a version and type.
 //
-// version is the schema version identifier (e.g. "v1-alpha.1"). schemaType
+// version is the schema version identifier (e.g. "v1-alpha.2"). schemaType
 // selects the spec or environments schema. Returns a map of dot-notation
 // paths to default values, or an error if schema loading or processing fails.
 //
 // Example usage:
 //
-//	defaults, err := GetDefaultValues("v1-alpha.1", schema.SchemaTypeManifest)
+//	defaults, err := GetDefaultValues("v1-alpha.2", schema.SchemaTypeManifest)
 //	if err != nil {
 //		return err
 //	}
@@ -396,7 +451,7 @@ func resolveResourcePresets(spec *Spec) error {
 // Example:
 //
 //	spec := &Spec{
-//		APIVersion: "v1-alpha.1",
+//		APIVersion: "v1-alpha.2",
 //		Project:    "my-app",
 //		Components: map[string]Component{
 //			"web": {Image: "nginx:latest"}, // Only image specified
@@ -405,7 +460,7 @@ func resolveResourcePresets(spec *Spec) error {
 //			{Name: "production"}, // Only name specified
 //		},
 //	}
-//	err := FillSpecWithDefaults(spec, "v1-alpha.1")
+//	err := FillSpecWithDefaults(spec, "v1-alpha.2")
 //	// After filling:
 //	// spec.Components["web"].Role = "service"
 //	// spec.Components["web"].Port = 8080
@@ -1036,10 +1091,10 @@ func isZeroValue(val any) bool {
 //
 // Example:
 //
-//	spec, err := CreateSpecWithDefaults("my-app", "v1-alpha.1")
+//	spec, err := CreateSpecWithDefaults("my-app", "v1-alpha.2")
 //	// Returns:
 //	// &Spec{
-//	//     APIVersion: "v1-alpha.1",
+//	//     APIVersion: "v1-alpha.2",
 //	//     Project:    "my-app",
 //	//     Components: map[string]Component{}, // Empty but initialized
 //	// }
@@ -1080,7 +1135,7 @@ func CreateSpecWithDefaults(projectName, version string) (*Spec, error) {
 //
 // Example:
 //
-//	pattern := extractComponentPattern("v1-alpha.1")
+//	pattern := extractComponentPattern("v1-alpha.2")
 //	// Returns: "^[a-zA-Z0-9_-]+$"
 //	// This pattern matches component names like "web", "api-server", "worker_1"
 func extractComponentPattern(version string) string {
@@ -1111,15 +1166,13 @@ func extractComponentPattern(version string) string {
 	if !ok {
 		return ""
 	}
-	patternProps, ok := components["patternProperties"].(map[string]any)
-	if !ok {
-		return ""
-	}
-	for pattern := range patternProps {
-		schemaMutex.Lock()
-		patternCache[version] = pattern
-		schemaMutex.Unlock()
-		return pattern
+	if propNames, hasNames := components["propertyNames"].(map[string]any); hasNames {
+		if pattern, hasPattern := propNames["pattern"].(string); hasPattern {
+			schemaMutex.Lock()
+			patternCache[version] = pattern
+			schemaMutex.Unlock()
+			return pattern
+		}
 	}
 	return ""
 }

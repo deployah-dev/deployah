@@ -9,6 +9,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"deployah.dev/deployah/internal/cli"
+	"deployah.dev/deployah/internal/cmd/common"
 	"deployah.dev/deployah/internal/helm"
 	"deployah.dev/deployah/internal/session"
 	"deployah.dev/deployah/internal/spec"
@@ -124,6 +125,7 @@ func runDelete(c *nabat.Context) error {
 	if err != nil {
 		return fmt.Errorf("target cluster: %w", err)
 	}
+	common.WarnContextFallback(c, cluster, opts.Environment)
 	helmClient, err := cluster.Helm()
 	if err != nil {
 		return fmt.Errorf("helm client: %w", err)
@@ -148,8 +150,16 @@ func runDelete(c *nabat.Context) error {
 	}
 
 	if !opts.Yes {
+		targetCtx := cluster.Context()
+		if fallback, current := cluster.ContextFallback(); fallback {
+			targetCtx = current
+		}
+		prompt := fmt.Sprintf("Delete project '%s' in environment '%s'?", opts.Project, opts.Environment)
+		if targetCtx != "" {
+			prompt = fmt.Sprintf("Delete project '%s' in environment '%s' (context: %s)?", opts.Project, opts.Environment, targetCtx)
+		}
 		confirmed, confirmErr := c.Confirm(
-			fmt.Sprintf("Delete project '%s' in environment '%s'?", opts.Project, opts.Environment),
+			prompt,
 			nabat.WithAffirmative("Yes, delete it"),
 			nabat.WithNegative("No, cancel"),
 		)

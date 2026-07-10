@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"deployah.dev/deployah/internal/spec/schema"
 
@@ -72,7 +73,7 @@ func validateYAMLAgainstSchema(
 }
 
 // ValidateSpec validates spec YAML against the provided JSON schema.
-// version should be the version of the schema (e.g., "v1-alpha.1").
+// version should be the version of the schema (e.g., "v1-alpha.2").
 // This is a strict validation: unknown fields are not allowed.
 func ValidateSpec(specObj map[string]any, version string) error {
 	return validateYAMLAgainstSchema(
@@ -85,7 +86,7 @@ func ValidateSpec(specObj map[string]any, version string) error {
 
 // ValidateEnvironments validates environments YAML against the provided JSON
 // schema file.
-// version should be the version of the schema (e.g., "v1-alpha.1").
+// version should be the version of the schema (e.g., "v1-alpha.2").
 // This is a strict validation: unknown fields are not allowed.
 func ValidateEnvironments(specObj map[string]any, version string) error {
 	return validateYAMLAgainstSchema(
@@ -182,10 +183,14 @@ func ValidateComponentHealth(component Component) error {
 		return nil
 	}
 
-	if component.Role != ComponentRoleService && component.Role != "" {
+	// Role may still be "" here if this runs before defaults are filled in;
+	// the schema defaults it to service, so treat empty the same way.
+	if !component.Role.IsService() && component.Role != "" {
 		return fmt.Errorf("health checks are only supported for role: service components")
 	}
 
+	// No port check here: only service roles reach this point, and the
+	// schema defaults their port to 8080 after validation.
 	if component.Health.Ready != nil && !component.Health.Ready.Disabled {
 		if component.Health.Ready.Path != "" && component.Health.Ready.Path[0] != '/' {
 			return fmt.Errorf("health.ready.path must start with /")
@@ -249,11 +254,43 @@ func ValidateSpecComponents(spec *Spec) error {
 		if err := ValidateComponentHealth(component); err != nil {
 			errs = append(errs, fmt.Errorf("component %s: %w", name, err))
 		}
+		if err := ValidateComponentExpose(component); err != nil {
+			errs = append(errs, fmt.Errorf("component %s: %w", name, err))
+		}
+		if err := ValidateComponentEnvironmentFilter(component); err != nil {
+			errs = append(errs, fmt.Errorf("component %s: %w", name, err))
+		}
 	}
 
 	if len(errs) > 0 {
 		return fmt.Errorf("component validation failed: %w", errors.Join(errs...))
 	}
 
+	return nil
+}
+
+// ValidateComponentExpose rejects an expose block combining apex with a
+// subdomain.
+func ValidateComponentExpose(component Component) error {
+	if component.Expose == nil {
+		return nil
+	}
+	if component.Expose.Apex && component.Expose.Subdomain != nil {
+		return fmt.Errorf("expose: apex and subdomain are mutually exclusive")
+	}
+	return nil
+}
+
+// ValidateComponentEnvironmentFilter rejects unsupported "/*" suffixes in a
+// component's environments filter: matching is prefix-based, so a plain
+// name already covers its wildcard instances.
+func ValidateComponentEnvironmentFilter(component Component) error {
+	for _, entry := range component.Environments {
+		if base, cut := strings.CutSuffix(entry, "/*"); cut {
+			return fmt.Errorf(
+				"environments filter entry %q: the \"/*\" suffix is not supported; use %q, which already matches names like %q",
+				entry, base, base+"/pr-123")
+		}
+	}
 	return nil
 }

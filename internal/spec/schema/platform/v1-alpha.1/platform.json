@@ -105,6 +105,13 @@
                     "minLength": 1,
                     "examples": ["example.com", "127.0.0.1.nip.io"]
                 },
+                "default": {
+                    "type": "boolean",
+                    "title": "Default Domain",
+                    "description": "Marks this domain as the one used when a component's expose block names no domain. At most one domain per environment may be the default; an environment with a single domain does not need the marker.",
+                    "default": false,
+                    "examples": [true]
+                },
                 "tls": {
                     "$ref": "#/$defs/PlatformTLS"
                 }

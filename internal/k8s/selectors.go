@@ -19,6 +19,8 @@ import (
 
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/selection"
+
+	"deployah.dev/deployah/internal/spec"
 )
 
 // SelectorBuilder helps build Kubernetes label selectors for Deployah resources
@@ -61,13 +63,15 @@ func (sb *SelectorBuilder) WithComponent(component string) (*SelectorBuilder, er
 	return sb, nil
 }
 
-// WithEnvironment adds an environment label requirement to the selector
+// WithEnvironment adds an environment label requirement to the selector.
+// The name is normalized to its label-safe form so wildcard environments
+// (review/pr-42) match what deploy wrote.
 func (sb *SelectorBuilder) WithEnvironment(environment string) (*SelectorBuilder, error) {
 	if environment == "" {
 		return sb, nil
 	}
 
-	req, err := labels.NewRequirement(EnvironmentLabel, selection.Equals, []string{environment})
+	req, err := labels.NewRequirement(EnvironmentLabel, selection.Equals, []string{spec.NormalizeEnv(environment).K8sSafe})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create environment label requirement: %w", err)
 	}
@@ -125,7 +129,7 @@ func BuildLabelSelector(project, environment string) (labels.Selector, error) {
 		selector = selector.Add(*req)
 	}
 	if environment != "" {
-		req, err := labels.NewRequirement(EnvironmentLabel, selection.Equals, []string{environment})
+		req, err := labels.NewRequirement(EnvironmentLabel, selection.Equals, []string{spec.NormalizeEnv(environment).K8sSafe})
 		if err != nil {
 			return nil, fmt.Errorf("environment label: %w", err)
 		}

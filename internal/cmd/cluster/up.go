@@ -219,7 +219,7 @@ func ensureLocalPlatformFile(c *nabat.Context, path, ingressIP string) {
 	data, readErr := os.ReadFile(path) // #nosec G304
 	if readErr != nil {
 		// File absent: scaffold it.
-		created, scaffoldErr := spec.ScaffoldLocalPlatformFile(path, ingressIP)
+		created, scaffoldErr := spec.ScaffoldPlatformFile(path, ingressIP, []string{"local"})
 		if scaffoldErr != nil {
 			c.Warn(fmt.Sprintf("failed to create platform file: %v", scaffoldErr))
 			return

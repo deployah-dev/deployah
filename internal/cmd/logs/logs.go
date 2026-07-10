@@ -15,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"nabat.dev/nabat"
 
+	"deployah.dev/deployah/internal/cmd/common"
 	"deployah.dev/deployah/internal/k8s"
 	"deployah.dev/deployah/internal/session"
 )
@@ -99,6 +100,7 @@ func runLogs(c *nabat.Context) error {
 	if err != nil {
 		return fmt.Errorf("target cluster: %w", err)
 	}
+	common.WarnContextFallback(c, cluster, opts.Environment)
 
 	clientset, err := cluster.Kubernetes()
 	if err != nil {

@@ -2,15 +2,14 @@
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://deployah.dev/schemas/v1-alpha.2/environments.json",
     "title": "Deployah Environments v1-alpha.2",
-    "description": "Schema for the environments section of the v1-alpha.2 manifest. Environments are an object (map) keyed by name.",
+    "description": "Schema for the environments section of the v1-alpha.2 manifest. The section is optional: which environments exist is owned by the platform file; an entry here only adds developer overrides (envFile, variables) for that environment.",
     "type": "object",
-    "required": ["environments"],
     "additionalProperties": true,
     "properties": {
         "environments": {
             "type": "object",
             "title": "Environments",
-            "description": "Map of environment names to environment definitions. Keys support prefix-based wildcard matching, e.g. a 'review' key matches an --environment value of 'review/pr-123'.",
+            "description": "Map of environment names to developer overrides for them. Keys support prefix-based wildcard matching, e.g. a 'review' key matches an --environment value of 'review/pr-123'.",
             "propertyNames": {
                 "type": "string",
                 "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",

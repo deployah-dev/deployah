@@ -20,6 +20,7 @@ but for the deploy step: S2I builds your image, and Deployah runs your release.
 - [Health checks](#health-checks)
 - [Commands](#commands)
 - [Environments and variables](#environments-and-variables)
+- [Precedence rules](#precedence-rules)
 - [Accessing your app](#accessing-your-app)
 - [Local cluster networking](#local-cluster-networking)
 - [Troubleshooting](#troubleshooting)
@@ -95,9 +96,11 @@ components:
     image: nginx:latest
     port: 80
     environments: [local]
-    expose:
-      domain: public
+    expose: true
 ```
+
+`expose: true` gives the component a hostname made from its name (here
+`web.127.0.0.1.nip.io`) with HTTPS, all decided by the platform file.
 
 Deployah also needs a **platform file**, `deployah.platform.yaml`, that maps
 the `local` environment to a domain and a Kubernetes context. `deployah cluster
@@ -190,7 +193,8 @@ A few words you will see often.
   "not supported yet" error.
 - **Environment.** A target such as `dev`, `staging`, or `prod`. Each
   environment can use a different cluster, different files, and different
-  variables.
+  variables. The platform file registers which environments exist; an entry
+  in the spec's `environments` map only adds overrides for one of them.
 - **Resource preset.** A quick way to set CPU and memory without knowing
   Kubernetes units. Use `resourcePreset: small` instead of writing exact values.
 - **Health checks.** Deployah checks that your app is ready for traffic and
@@ -238,9 +242,10 @@ components:                        # required: one or more components
     env:                           # planned: not applied to the container yet
       LOG_LEVEL: info
     resourcePreset: small          # nano|micro|small|medium|large|xlarge|2xlarge
-    expose:                        # optional: expose over HTTP/HTTPS
-      domain: public               # references a domain key in the platform file
-      subdomain: api                # optional: omit for the domain apex
+    expose:                        # optional: `expose: true` uses all defaults
+      subdomain: api                # optional: defaults to the component name
+      # domain: internal            # optional: defaults to the platform's default domain
+      # apex: true                  # optional: use the bare domain instead of a subdomain
     autoscaling:                   # optional: scale on CPU or memory
       enabled: true
       minReplicas: 2
@@ -287,7 +292,7 @@ Component:
 | `env` | none | Environment variables (uppercase keys). |
 | `resourcePreset` | none | `nano`, `micro`, `small`, `medium`, `large`, `xlarge`, `2xlarge`. |
 | `resources` | none | `cpu`, `memory`, `ephemeralStorage` (Kubernetes units). |
-| `expose` | none | `domain` (required, a key from the platform file) and `subdomain` (optional; omit for the domain apex). See [Platform file](#platform-file). |
+| `expose` | none | `true` for all defaults, or an object with `domain` (defaults to the platform's default domain), `subdomain` (defaults to the component name), and `apex`. See [Platform file](#platform-file). |
 | `autoscaling` | off | `enabled`, `minReplicas`, `maxReplicas`, `metrics`. |
 | `health` | auto | Ready and alive checks. See [Health checks](#health-checks). |
 | `environments` | none | Which environments deploy this component. |
@@ -310,8 +315,9 @@ Environment:
 There is no `context` field on an environment: it comes from the matching
 environment key in `deployah.platform.yaml`.
 
-To check your spec without a platform file, run `deployah validate`. To also
-check it resolves against the platform file for a given environment, run
+To check your spec, run `deployah validate`; when a platform file exists it
+also cross-checks `expose.domain` keys and environment names against it. To
+check the full resolution for a given environment, run
 `deployah validate <environment>`.
 
 ### Value rules
@@ -325,18 +331,24 @@ A few fields have specific formats:
 - **`env`**: keys are uppercase letters, digits, and underscores, and start with
   a letter or underscore (for example `LOG_LEVEL`). Values are a string, number,
   or boolean.
+- **`expose`**: `true`, `false`, or an object. `true` means all defaults.
 - **`expose.domain`**: a key that must exist in the target environment's
-  `domains` map in the platform file.
+  `domains` map in the platform file. Omit it to use the environment's only
+  domain, or the one marked `default: true` there.
 - **`expose.subdomain`**: a DNS-1123 label, like `api` or `www`. Omit it to
-  expose the component at the domain apex.
+  use the component name. Cannot be combined with `apex`.
+- **`expose.apex`**: set `true` to expose the component at the bare domain
+  (e.g. `example.com`) instead of a subdomain.
 - **`autoscaling`**: needs `enabled`, `minReplicas`, and `maxReplicas`. Each
   metric has a `type` (`cpu` or `memory`) and a `target` percentage.
 - **`health.alive.interval`** and **`health.alive.restartAfter`**: a positive integer
   followed by a unit: `s` (seconds), `m` (minutes), or `h` (hours). For example
   `10s`, `2m`, `1h`. The effective restart time rounds up to the nearest multiple
   of `interval`.
-- **Names** (`project`, component names, environment names): letters, digits,
-  `-`, and `_`. An environment name must be at least 2 characters.
+- **Names** (`project`, component names, environment names): lowercase
+  letters, digits, and dashes (`-`), and cannot start or end with a dash.
+  `project` must be at least 3 characters; component and environment names
+  must be at least 2.
 
 ### Resource presets
 
@@ -355,6 +367,11 @@ These are the current values (request / limit):
 | `2xlarge` | 1000m / 6000m | 3072Mi / 12288Mi |
 
 All presets use the same ephemeral storage: 50Mi request, 2Gi limit.
+
+> [!NOTE]
+> Only the request values are applied to the container today. The limit
+> values above are defined for future use but are not yet set on the
+> Kubernetes resource spec, for presets or for manual `resources`.
 
 ### Spec examples
 
@@ -411,8 +428,10 @@ environments:
       TAG: 1.0.0
 ```
 
-**Expose it over HTTPS.** Add an `expose` block. TLS is decided by the
-platform file's domain configuration, not by the developer.
+**Expose it over HTTPS.** `expose: true` is all you need: the hostname is
+`web.<baseDomain>` (the component name plus the platform's domain), and TLS
+comes from the platform file. Set `subdomain` only when you want a different
+label, and `apex: true` for the bare domain.
 
 ```yaml
 apiVersion: v1-alpha.2
@@ -422,11 +441,7 @@ components:
     image: ghcr.io/acme/web:1.0.0
     port: 80
     environments: [prod]
-    expose:
-      domain: public
-      subdomain: shop
-environments:
-  prod: {}
+    expose: true
 ```
 
 **Set exact resources.** Use `resources` instead of a preset.
@@ -469,10 +484,18 @@ environments:
 
 ## Platform file
 
-Any component that uses `expose` needs a second file, `deployah.platform.yaml`,
-next to `deployah.yaml`. It maps each environment to a real Kubernetes context,
-one or more domains, and a TLS strategy. This file is not processed with
-`${...}` substitution: it holds real values, not templates.
+A second file, `deployah.platform.yaml`, lives next to `deployah.yaml`. It
+owns the environments: it registers which environment names exist, and maps
+each one to a real Kubernetes context, one or more domains, and a TLS
+strategy. When this file is present, `deployah deploy <environment>` only
+accepts names registered here. Any component that uses `expose` requires it.
+This file is not processed with `${...}` substitution: it holds real values,
+not templates.
+
+> [!NOTE]
+> The schema also accepts a `storageClasses` map (logical name to Kubernetes
+> storage class name) on each environment, for future use with stateful
+> components. It is validated but not consumed by Deployah yet.
 
 ```yaml
 apiVersion: platform/v1-alpha.1
@@ -482,6 +505,12 @@ environments:
     domains:
       public:
         baseDomain: example.com
+        default: true            # used when a component names no domain
+        tls:
+          mode: certManager
+          issuer: letsencrypt-prod
+      internal:
+        baseDomain: internal.corp
         tls:
           mode: certManager
           issuer: letsencrypt-prod
@@ -494,10 +523,22 @@ environments:
           mode: selfSigned
 ```
 
-A component's `expose.domain: public` resolves against the `public` key under
-the active environment. `expose.subdomain: api` combines with `baseDomain` to
-form `api.example.com`; omitting `subdomain` exposes the component at the
-domain apex (`example.com`).
+A component's expose block resolves against the active environment's
+`domains` map:
+
+- `expose: true` (or an empty object) uses the environment's **default
+  domain** and the **component name** as the subdomain: component `web` on
+  `example.com` becomes `web.example.com`.
+- The default domain is the environment's only domain, or the one marked
+  `default: true` when there are several. Naming several domains without a
+  default and omitting `expose.domain` is an error that lists the keys.
+- `expose.subdomain: api` overrides the label: `api.example.com`.
+- `expose.apex: true` uses the bare domain (`example.com`) instead of a
+  subdomain. Only one component can hold the apex per domain.
+- When an environment name is matched by wildcard prefix (e.g. `review`
+  matching `review/pr-123`), a static, non-templated `expose.subdomain` warns
+  by default, since every wildcard match would collide on the same hostname.
+  Set `allowStaticSubdomain: true` on that platform environment to allow it.
 
 ### TLS modes
 
@@ -509,7 +550,10 @@ domain apex (`example.com`).
 
 ### Where the platform file comes from
 
-- `deployah init` scaffolds both `deployah.yaml` and `deployah.platform.yaml`.
+- `deployah init` scaffolds `deployah.yaml`, plus `deployah.platform.yaml`
+  with every environment you selected: `local` gets a full entry, the others
+  are registered empty. An empty entry has no context yet, so init prints a
+  reminder to set one before deploying somewhere real.
 - `deployah cluster up` creates or updates `deployah.platform.yaml` with a
   `local` environment pointed at the local cluster.
 - Deployah looks for the platform file in this order: `--platform-file`, the
@@ -639,16 +683,17 @@ These work with every command:
 
 | Command | What it does |
 |---|---|
-| `deployah init` | Create a new spec and platform file by answering a few questions. Use `-o` to set the output file, or `--dry-run` to preview. |
-| `deployah validate` | Check the manifest schema only (offline, no platform file needed). |
+| `deployah init` | Create a new spec and platform file by answering a few questions. Use `-o` to set the output file, `--force` to overwrite an existing one, or `--dry-run` to preview. Non-interactive: `--project`, `--environments`, `--set key=value`, or `--defaults` to skip every prompt. |
+| `deployah validate` | Check the manifest schema (offline). When a platform file exists, also cross-check `expose.domain` keys and environment names against it. |
 | `deployah validate <environment>` | Also load the platform file and check the resolved configuration for that environment. |
 | `deployah resolve <environment>` | Preview the fully resolved hostname, TLS mode, and context, offline. Use `--output json` for machine-readable output. |
+| `deployah resolve --environments` | List every environment from both files: where it is registered, its context (or the kubeconfig fallback), domains, and overrides. |
 | `deployah deploy <environment>` | Deploy your project. Use `--dry-run` to render without installing, `--explain` to print the resolution report first, or `--force-hostname-change` to bypass the hostname guard. |
 | `deployah status <project>` | Show the status of a deployed project. Use `--detailed` for pod details, `-e` for an environment. |
 | `deployah logs <project>` | Stream logs. Filter with `--component`, `-e`, `--container`, `--since`, `--tail`. Use `--no-follow` for a one-off read. |
 | `deployah shell <project>` | Open a shell in a running container. Choose with `--component` and `--container`. |
 | `deployah list` | List deployed projects. Filter with `-p` (project) and `-e` (environment). |
-| `deployah delete <project> <environment>` | Remove a deployment. Fails if no platform file is found, unless you pass `--allow-missing-platform`. Use `--force` to skip the prompt, or `--show-resources` to preview. |
+| `deployah delete <project> <environment>` | Remove a deployment. Fails if no platform file is found, unless you pass `--allow-missing-platform`. Use `-y`/`--yes` to skip the prompt, `--dry-run` or `--show-resources` to preview, and `--wait` to block until resources are gone. |
 
 ### Working with the local cluster
 
@@ -662,14 +707,35 @@ These work with every command:
 ## Environments and variables
 
 Deployah supports multiple environments (for example `dev`, `staging`, `prod`).
-You define them in the `environments` list, and you choose one when you deploy:
+The [platform file](#platform-file) registers them, and you choose one when
+you deploy:
 
 ```sh
 deployah deploy staging
 ```
 
-If you define more than one environment, you must say which one to use. If you
-do not, Deployah shows an error that lists the environments you can pick.
+The `environments` section in `deployah.yaml` is optional. Add an entry only
+when an environment needs its own substitution values or env file:
+
+```yaml
+environments:
+  production:
+    variables:
+      TAG: v1.4.2
+```
+
+### How the environment is picked
+
+When you name an environment, Deployah checks it against a registry: the
+platform file's environments when that file exists, otherwise the spec's
+`environments` keys, if any are defined. A name outside the registry is an
+error that lists the valid names. With no registry at all, any name is
+accepted. Matching is exact first, then by prefix: a `review` entry matches
+`review/pr-123`.
+
+When you do not name one: a single registered environment is selected
+automatically, several make Deployah stop and list them, and none means a
+built-in `default` environment is used.
 
 ### Two kinds of variables
 
@@ -804,10 +870,34 @@ Keys in an env file that do not start with `DPY_VAR_` are left alone. Deployah
 does not use them, so they are free for your app to read on its own. The `config`
 files are for your app only.
 
+## Precedence rules
+
+Several settings can come from more than one place. This table shows the
+order Deployah checks them in; the first match wins.
+
+| Setting | Order (first match wins) |
+|---|---|
+| Environment registry (which names you may deploy to) | platform file environments → spec `environments` keys → any name |
+| Environment selection (no name given) | the single registered environment → error listing them when there are several → built-in `default` when there are none |
+| Kubernetes context | `--context` flag → `context` in the platform file for that environment → your kubeconfig's current context |
+| Expose domain | `expose.domain` in the spec → the domain marked `default: true` in the platform file → the environment's only domain |
+| Expose hostname label | `expose.apex: true` (bare domain) → `expose.subdomain` in the spec → the component name |
+| Substitution variables (`${...}`) | shell `DPY_VAR_*` → env file `DPY_VAR_*` → the environment's `variables` in the spec |
+| Env file | explicit `envFile` in the spec → `.env.<env>` → `.deployah/.env.<env>` → `.env` → `.deployah/.env` |
+| Platform file location | `--platform-file` flag → `DEPLOYAH_PLATFORM_FILE` env var → same directory as the spec |
+
+Two context situations print a warning, so a deploy to the wrong cluster is
+visible before it happens:
+
+- `--context` overrides the platform file's context for the environment.
+  Silence it with `DEPLOYAH_ALLOW_CONTEXT_MISMATCH=1`.
+- The environment has no context anywhere. The deploy then follows your
+  kubeconfig's current context, and the warning names that context.
+
 ## Accessing your app
 
-To reach a component over HTTP or HTTPS, give it an `expose` block and add a
-matching domain to your platform file's `local` environment:
+To reach a component over HTTP or HTTPS, give it `expose: true`. Its hostname
+comes from the component name plus the platform file's domain:
 
 ```yaml
 # deployah.yaml
@@ -816,8 +906,7 @@ components:
     image: nginx:latest
     port: 80
     environments: [local]
-    expose:
-      domain: public
+    expose: true
 ```
 
 ```yaml

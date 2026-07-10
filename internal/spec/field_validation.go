@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 
 	"deployah.dev/deployah/internal/spec/schema"
@@ -19,8 +20,9 @@ type fieldValidators struct {
 }
 
 var (
-	validators *fieldValidators
-	once       sync.Once
+	validators    *fieldValidators
+	validatorsErr error
+	once          sync.Once
 )
 
 // initValidators extracts regex patterns from the JSON schema and compiles them
@@ -48,14 +50,19 @@ func initValidators() error {
 		return fmt.Errorf("failed to extract component name pattern: %w", err)
 	}
 
-	// Extract environment name pattern
-	envPattern, err := extractPattern(schemaData, []string{"properties", "environments", "items", "properties", "name", "pattern"})
+	// Extract environment name pattern. v1-alpha.2 models "environments" as
+	// an object keyed by environment name, so the pattern lives on
+	// propertyNames rather than on an array item's "name" field.
+	envPattern, err := extractPattern(schemaData, []string{"properties", "environments", "propertyNames", "pattern"})
 	if err != nil {
 		return fmt.Errorf("failed to extract environment name pattern: %w", err)
 	}
 
-	// Extract environment variable name pattern
-	envVarPattern, err := extractPattern(schemaData, []string{"properties", "environments", "items", "properties", "variables", "propertyNames", "pattern"})
+	// Extract environment variable name pattern. Environment values are
+	// defined via the $defs/Environment ref, so navigate there directly
+	// rather than through "properties.environments" (which only has
+	// propertyNames, not a nested "variables" field).
+	envVarPattern, err := extractPattern(schemaData, []string{"$defs", "Environment", "properties", "variables", "propertyNames", "pattern"})
 	if err != nil {
 		return fmt.Errorf("failed to extract environment variable name pattern: %w", err)
 	}
@@ -100,14 +107,17 @@ func extractPattern(data map[string]any, path []string) (string, error) {
 	return "", fmt.Errorf("empty path provided")
 }
 
-// getValidators ensures validators are initialized and returns them
+// getValidators ensures validators are initialized and returns them. The
+// initialization error (if any) is cached in validatorsErr so repeated calls
+// after a failed first attempt keep returning the error instead of a nil
+// validators pointer (sync.Once only runs initValidators once, regardless of
+// outcome).
 func getValidators() (*fieldValidators, error) {
-	var err error
 	once.Do(func() {
-		err = initValidators()
+		validatorsErr = initValidators()
 	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize validators: %w", err)
+	if validatorsErr != nil {
+		return nil, fmt.Errorf("failed to initialize validators: %w", validatorsErr)
 	}
 	return validators, nil
 }
@@ -127,6 +137,27 @@ func ValidateProjectName(name string) error {
 		return fmt.Errorf("project name '%s' is invalid: must be lowercase alphanumeric characters or dashes (-) separated and cannot start or end with a dash (-)", name)
 	}
 	return nil
+}
+
+// SanitizeProjectName rewrites s to satisfy [ValidateProjectName]'s pattern
+// (the result may still be too short; callers should check that separately).
+func SanitizeProjectName(s string) string {
+	var b strings.Builder
+	needDash := false
+	for _, r := range strings.ToLower(s) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			if needDash && b.Len() > 0 {
+				b.WriteByte('-')
+			}
+			b.WriteRune(r)
+			needDash = false
+		default:
+			// Collapse this and any following invalid run into one dash.
+			needDash = true
+		}
+	}
+	return b.String()
 }
 
 // ValidateComponentName validates a component name against the JSON schema pattern
@@ -152,13 +183,18 @@ func ValidateEnvName(name string) error {
 		return fmt.Errorf("environment name cannot be empty")
 	}
 
+	// Both the manifest and platform schemas require at least 2 characters.
+	if len(name) < 2 {
+		return fmt.Errorf("environment name '%s' is invalid: must be at least 2 characters", name)
+	}
+
 	v, err := getValidators()
 	if err != nil {
 		return fmt.Errorf("failed to initialize validators: %w", err)
 	}
 
 	if !v.envNamePattern.MatchString(name) {
-		return fmt.Errorf("environment name '%s' is invalid: must match pattern ^[a-z0-9]+(?:-[a-z0-9]+)*(?:/\\*)?$", name)
+		return fmt.Errorf("environment name '%s' is invalid: must be lowercase alphanumeric characters or dashes (-) separated and cannot start or end with a dash (-)", name)
 	}
 	return nil
 }

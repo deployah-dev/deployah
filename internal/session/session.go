@@ -177,9 +177,14 @@ func (s *Session) Platform() (*spec.PlatformConfig, error) {
 	if s.platform != nil {
 		return s.platform, nil
 	}
+	explicit := s.platformPath != "" || os.Getenv(spec.PlatformEnvVar) != ""
 	path := s.resolvePlatformPath()
-	if path == "" {
-		return nil, nil //nolint:nilnil // absent platform file is not an error; callers check for nil config
+	if !explicit {
+		// The default-path lookup treats an absent file as "no platform
+		// config"; only an explicitly named file must exist.
+		if _, err := os.Stat(path); err != nil {
+			return nil, nil //nolint:nilnil // absent platform file is not an error; callers check for nil config
+		}
 	}
 	p, err := spec.LoadPlatform(path)
 	if err != nil {
@@ -208,12 +213,17 @@ func (s *Session) resolvePlatformPath() string {
 
 // Spec loads the spec for the configured path and environment. Each call loads
 // from disk because the result depends on the environment argument (envsubst
-// selects different env files per environment).
+// selects different env files per environment). The platform config, when
+// present, supplies the environment registry.
 func (s *Session) Spec(ctx context.Context, environment string) (*spec.Spec, error) {
 	if s.specPath == "" {
 		return nil, fmt.Errorf("spec path must be set")
 	}
-	m, err := spec.Load(ctx, s.specPath, environment)
+	platform, err := s.Platform()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load platform file: %w", err)
+	}
+	m, err := spec.Load(ctx, s.specPath, environment, platform)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load spec: %w", err)
 	}
@@ -239,10 +249,17 @@ func (s *Session) Target(ctx context.Context, env string) (*Cluster, error) {
 		}
 	}
 
-	return &Cluster{
+	cluster := &Cluster{
 		Session:     s,
 		kubeContext: kubeCtx,
-	}, nil
+	}
+	if kubeCtx == "" {
+		// Record the fallback where it happens so every command can warn
+		// about it consistently.
+		cluster.fallbackContext = s.CurrentKubeContext()
+		cluster.usedFallback = true
+	}
+	return cluster, nil
 }
 
 // SpecPath returns the configured spec file path.
@@ -342,6 +359,24 @@ func defaultKubernetesFactory(s *Session) (kubernetes.Interface, error) {
 	return cs, nil
 }
 
+// CurrentKubeContext returns the current-context name from the active
+// kubeconfig resolution (explicit --kubeconfig path, deployah-managed extra
+// paths, then KUBECONFIG/~/.kube/config), ignoring any --context override.
+// Returns an empty string when no kubeconfig is readable.
+func (s *Session) CurrentKubeContext() string {
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	if s.kubeconfig != "" {
+		loadingRules.ExplicitPath = s.kubeconfig
+	} else if len(s.extraKubeconfigPaths) > 0 {
+		loadingRules.Precedence = append(s.extraKubeconfigPaths, loadingRules.Precedence...)
+	}
+	cfg, err := loadingRules.Load()
+	if err != nil {
+		return ""
+	}
+	return cfg.CurrentContext
+}
+
 // kubeconfigRESTConfig builds a REST config from kubeconfig resolution rules,
 // honoring an explicit kubeconfig path (s.kubeconfig) and/or a context
 // override (s.kubeContext). When neither is set it uses the default
@@ -372,9 +407,21 @@ type Cluster struct {
 	*Session
 	kubeContext string
 
+	// usedFallback is true when neither --context nor a platform context
+	// resolved, so clients follow the kubeconfig current-context
+	// (fallbackContext, empty when no kubeconfig is readable).
+	usedFallback    bool
+	fallbackContext string
+
 	helm HelmClient
 	k8s  kubernetes.Interface
 	mu   sync.Mutex
+}
+
+// ContextFallback reports whether the target follows the kubeconfig
+// current-context, and that context's name.
+func (cl *Cluster) ContextFallback() (bool, string) {
+	return cl.usedFallback, cl.fallbackContext
 }
 
 // Context returns the resolved Kubernetes context for this cluster target.

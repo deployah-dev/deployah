@@ -21,6 +21,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/google/renameio/v2"
 	"sigs.k8s.io/yaml"
 
 	"deployah.dev/deployah/internal/spec/schema"
@@ -28,8 +29,8 @@ import (
 	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
 )
 
-// SupportedPlatformVersions lists platform schema versions that are compatible
-// with the current manifest API. Only one version exists in Phase 1.
+// SupportedPlatformVersions lists platform schema versions that are
+// compatible with the current manifest API.
 var SupportedPlatformVersions = []string{"platform/v1-alpha.1"}
 
 // CurrentPlatformVersion is the platform apiVersion written by scaffold
@@ -135,7 +136,11 @@ func validatePlatformYAML(raw map[string]any, schemaBytes []byte, version string
 // be non-empty.
 func validatePlatformConsistency(p *PlatformConfig) error {
 	for envKey, env := range p.Environments {
+		var defaults []string
 		for domainKey, domain := range env.Domains {
+			if domain.Default {
+				defaults = append(defaults, domainKey)
+			}
 			if domain.BaseDomain == "" {
 				return fmt.Errorf("environments.%s.domains.%s.baseDomain must not be empty",
 					envKey, domainKey)
@@ -145,6 +150,11 @@ func validatePlatformConsistency(p *PlatformConfig) error {
 					return err
 				}
 			}
+		}
+		if len(defaults) > 1 {
+			slices.Sort(defaults)
+			return fmt.Errorf("environments.%s.domains: at most one domain may set default: true, got %s",
+				envKey, strings.Join(defaults, ", "))
 		}
 	}
 	return nil
@@ -177,25 +187,39 @@ func IsSupportedPlatformVersion(apiVersion string) bool {
 	return slices.Contains(SupportedPlatformVersions, apiVersion)
 }
 
-// ScaffoldLocalPlatformFile writes a deployah.platform.yaml at path containing
-// only the local environment (kind-deployah context, nip.io, selfSigned TLS).
-// ingressIP is the host IP at which the Ingress controller is reachable; it
-// becomes the left-hand label of the nip.io base domain.
-// If the file already exists it is not modified; the function returns false and
-// the caller should print a hint to the user instead.
-func ScaffoldLocalPlatformFile(path, ingressIP string) (created bool, err error) {
+// ScaffoldPlatformFile writes a deployah.platform.yaml at path registering
+// the given environment names. "local" gets a full entry (kind-deployah
+// context, nip.io domain, self-signed TLS); every other name gets an empty
+// entry with no context, meaning deploys to it follow the kubeconfig
+// current-context until one is set.
+func ScaffoldPlatformFile(path, ingressIP string, envNames []string) (created bool, err error) {
 	if path == "" {
 		path = DefaultPlatformPath
 	}
 
-	// Do not overwrite an existing file.
+	// Never overwrite an existing file; the caller prints a hint instead.
 	if _, statErr := os.Stat(path); statErr == nil {
 		return false, nil
 	}
 
+	// The platform schema requires at least one environment entry
+	// (minProperties: 1).
+	if len(envNames) == 0 {
+		return false, nil
+	}
+
+	envs := make(map[string]PlatformEnvironment, len(envNames))
+	for _, name := range envNames {
+		if name == "local" {
+			envs[name] = LocalPlatformEnvironment(ingressIP)
+			continue
+		}
+		envs[name] = PlatformEnvironment{}
+	}
+
 	platform := PlatformConfig{
 		APIVersion:   CurrentPlatformVersion,
-		Environments: map[string]PlatformEnvironment{"local": LocalPlatformEnvironment(ingressIP)},
+		Environments: envs,
 	}
 
 	data, marshalErr := yaml.Marshal(&platform)
@@ -203,8 +227,25 @@ func ScaffoldLocalPlatformFile(path, ingressIP string) (created bool, err error)
 		return false, fmt.Errorf("failed to marshal platform config: %w", marshalErr)
 	}
 
-	if writeErr := os.WriteFile(path, data, 0o600); writeErr != nil {
+	if writeErr := renameio.WriteFile(path, data, 0o600); writeErr != nil {
 		return false, fmt.Errorf("failed to write platform file %s: %w", path, writeErr)
 	}
 	return true, nil
+}
+
+// MissingPlatformEnvironments returns the subset of envNames that have no
+// entry in platform.Environments, sorted for stable output. platform may be
+// nil, which reports every name as missing.
+func MissingPlatformEnvironments(platform *PlatformConfig, envNames []string) []string {
+	var missing []string
+	for _, name := range envNames {
+		if platform != nil {
+			if _, ok := platform.Environments[name]; ok {
+				continue
+			}
+		}
+		missing = append(missing, name)
+	}
+	slices.Sort(missing)
+	return missing
 }

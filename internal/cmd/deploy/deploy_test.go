@@ -118,6 +118,29 @@ func TestRequiredAPIs_NoCertManagerForSelfSigned(t *testing.T) {
 	}
 }
 
+// TestRequiredAPIs_WildcardEnvironmentFilter verifies the component
+// environments filter uses the same exact-then-prefix matching as
+// spec.Resolve, so a "review" filter is active for a "review/pr-123" deploy.
+func TestRequiredAPIs_WildcardEnvironmentFilter(t *testing.T) {
+	t.Parallel()
+
+	m := &spec.Spec{
+		Components: map[string]spec.Component{
+			"web": {
+				Environments: []string{"review"},
+				Autoscaling:  &spec.Autoscaling{Enabled: true},
+			},
+		},
+	}
+
+	reqs := requiredAPIs(m, "review/pr-123", nil)
+	require.Len(t, reqs, 1)
+	assert.Contains(t, reqs[0].GroupVersions, "autoscaling/v2")
+
+	assert.Empty(t, requiredAPIs(m, "staging", nil),
+		"filter must exclude non-matching environments")
+}
+
 // TestCheckHostnameGuard_FirstInstall_Passes passes when no prior release exists.
 func TestCheckHostnameGuard_FirstInstall_Passes(t *testing.T) {
 	c := nabatContext(t)

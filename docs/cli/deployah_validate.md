@@ -4,7 +4,7 @@ Validate a Deployah spec
 
 ### Synopsis
 
-Validate a Deployah spec against the JSON schema. Without --environment, validates the manifest only (offline, fast). With --environment, also loads the platform file and runs cross-file resolution validation.
+Validate a Deployah spec against the JSON schema. Without an environment, validates the manifest (offline, fast) and, when a platform file exists, cross-checks expose.domain keys and environment names against it. With an environment, also runs full cross-file resolution validation.
 
 ```text
 deployah validate [environment] [flags]

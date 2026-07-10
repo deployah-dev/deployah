@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
 
+	"github.com/google/renameio/v2"
 	"sigs.k8s.io/yaml"
 )
 
@@ -25,6 +27,17 @@ type SubstitutionReport struct {
 	DynamicSubdomains map[string]bool
 }
 
+// normalizeComponents removes expose blocks written as `expose: false`, so
+// the rest of the code only ever sees a nil or active Expose.
+func normalizeComponents(s *Spec) {
+	for name, comp := range s.Components {
+		if comp.Expose != nil && comp.Expose.disabled {
+			comp.Expose = nil
+			s.Components[name] = comp
+		}
+	}
+}
+
 // sanitizeEnvName removes path separators and wildcards from environment names
 // to prevent them from interfering with env-file path construction.
 // This function is for file path construction only; use [matchEnvKey] for
@@ -38,65 +51,64 @@ func sanitizeEnvName(name string) string {
 	return sanitized
 }
 
-// ResolveEnvironment returns the matched map key and environment for the
-// desired name. It uses [matchEnvKey] for exact-then-prefix lookup.
+// environmentRegistry returns the sorted environment names that may be
+// deployed to, plus a label naming the file that owns them. The platform
+// config owns the registry when present; the spec map is the fallback.
+func environmentRegistry(environments map[string]Environment, platform *PlatformConfig) ([]string, string) {
+	if platform != nil {
+		return slices.Sorted(maps.Keys(platform.Environments)), "the platform file"
+	}
+	return slices.Sorted(maps.Keys(environments)), "the spec"
+}
+
+// ResolveEnvironment selects the target environment and returns its name and
+// developer-owned overrides. Which names are valid (the registry) is owned by
+// the platform config when one exists; the spec's environments map supplies
+// optional per-environment overrides (envFile, variables) and acts as the
+// registry only when there is no platform config.
 //
 // When desiredEnvironment is empty:
-//   - Zero environments: returns a synthetic default environment.
-//   - One environment: returns it automatically.
-//   - Two or more: returns an error listing available names.
-func ResolveEnvironment(environments map[string]Environment, desiredEnvironment string) (string, *Environment, error) {
-	if len(environments) == 0 && desiredEnvironment == "" {
-		env := &Environment{
-			EnvFile:    DefaultEnvFile,
-			ConfigFile: DefaultConfigFile,
+//   - Empty registry: returns a synthetic default environment.
+//   - One registry entry: selects it automatically.
+//   - Two or more: returns an error listing the registry names.
+//
+// When desiredEnvironment is set it must match the registry via
+// [matchEnvKey]; with an empty registry any name is accepted as-is.
+func ResolveEnvironment(environments map[string]Environment, platform *PlatformConfig, desiredEnvironment string) (string, *Environment, error) {
+	registry, source := environmentRegistry(environments, platform)
+
+	name := desiredEnvironment
+	if desiredEnvironment == "" {
+		switch len(registry) {
+		case 0:
+			// Zero value: a non-empty EnvFile is treated as explicit by
+			// resolveEnvFile and errors when the file is missing.
+			return "default", &Environment{}, nil
+		case 1:
+			name = registry[0]
+		default:
+			return "", nil, fmt.Errorf(
+				"multiple environments found in %s but none specified: %s",
+				source, joinStrings(registry),
+			)
 		}
-		return "default", env, nil
+	} else if len(registry) > 0 {
+		matched, ok := matchEnvKey(desiredEnvironment, registry)
+		if !ok {
+			return "", nil, fmt.Errorf(
+				"environment %q not found in %s, available environments: %s",
+				desiredEnvironment, source, joinStrings(registry),
+			)
+		}
+		name = matched
 	}
 
-	if len(environments) == 1 && desiredEnvironment == "" {
-		for k, v := range environments {
-			cp := v
-			return k, &cp, nil
-		}
-	}
-
-	if len(environments) > 1 && desiredEnvironment == "" {
-		names := make([]string, 0, len(environments))
-		for k := range environments {
-			names = append(names, k)
-		}
-		slices.Sort(names)
-		quoted := make([]string, 0, len(names))
-		for _, n := range names {
-			quoted = append(quoted, fmt.Sprintf("%q", n))
-		}
-		return "", nil, fmt.Errorf(
-			"multiple environments found but none specified: %s",
-			strings.Join(quoted, ", "),
-		)
-	}
-
-	keys := make([]string, 0, len(environments))
-	for k := range environments {
-		keys = append(keys, k)
-	}
-
-	if matched, ok := matchEnvKey(desiredEnvironment, keys); ok {
+	// The spec entry is an optional override; absent means zero value.
+	if matched, ok := matchEnvKey(name, slices.Collect(maps.Keys(environments))); ok {
 		cp := environments[matched]
 		return matched, &cp, nil
 	}
-
-	slices.Sort(keys)
-	quoted := make([]string, 0, len(keys))
-	for _, k := range keys {
-		quoted = append(quoted, fmt.Sprintf("%q", k))
-	}
-	return "", nil, fmt.Errorf(
-		"environment %q not found, available environments: %s",
-		desiredEnvironment,
-		strings.Join(quoted, ", "),
-	)
+	return name, &Environment{}, nil
 }
 
 // resolveEnvFile determines which env file to use for the given environment,
@@ -166,7 +178,9 @@ func Save(spec *Spec, path string) error {
 		}
 	}
 
-	if err = os.WriteFile(path, data, 0o600); err != nil {
+	// Atomic write-then-rename: a crash or interrupt never leaves a
+	// truncated or partially written file behind.
+	if err = renameio.WriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("failed to write spec to %s: %w", path, err)
 	}
 
@@ -177,10 +191,10 @@ func Save(spec *Spec, path string) error {
 // environment (using desiredEnv or default resolution rules), substitutes
 // variables according to precedence, validates the spec, and applies defaults.
 //
-// This function performs the full load pipeline without platform resolution.
-// For the full pipeline including platform config and [ResolvedSpec], use
-// [Session.ResolvedSpec].
-func Load(ctx context.Context, path, desiredEnv string) (*Spec, error) {
+// platform supplies the environment registry for [ResolveEnvironment]; pass
+// nil when no platform file exists. This function performs the load pipeline
+// without platform resolution; for [ResolvedSpec] see [Resolve].
+func Load(ctx context.Context, path, desiredEnv string, platform *PlatformConfig) (*Spec, error) {
 	if path == "" {
 		path = DefaultSpecPath
 	}
@@ -212,7 +226,7 @@ func Load(ctx context.Context, path, desiredEnv string) (*Spec, error) {
 		return nil, fmt.Errorf("failed to parse spec YAML: %w", err)
 	}
 
-	envName, env, err := ResolveEnvironment(tmp.Environments, desiredEnv)
+	envName, env, err := ResolveEnvironment(tmp.Environments, platform, desiredEnv)
 	if err != nil {
 		return nil, fmt.Errorf("failed to select environment: %w", err)
 	}
@@ -253,6 +267,7 @@ func Load(ctx context.Context, path, desiredEnv string) (*Spec, error) {
 	if err = yaml.Unmarshal(substituted, &finalSpec); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal spec: %w", err)
 	}
+	normalizeComponents(&finalSpec)
 
 	if err = ValidateSpecComponents(&finalSpec); err != nil {
 		return nil, fmt.Errorf("validation failed: %w", err)
@@ -298,6 +313,7 @@ func ParseManifest(path string) (*Spec, string, error) {
 		return nil, "", fmt.Errorf("failed to unmarshal spec: %w", err)
 	}
 	rawSpec.APIVersion = version
+	normalizeComponents(&rawSpec)
 
 	return &rawSpec, version, nil
 }

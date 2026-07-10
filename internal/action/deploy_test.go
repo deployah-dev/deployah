@@ -33,7 +33,7 @@ func (m *mockSpecLoader) Spec(_ context.Context, _ string) (*spec.Spec, error) {
 }
 
 var testManifest = &spec.Spec{
-	APIVersion: "v1-alpha.1",
+	APIVersion: "v1-alpha.2",
 	Project:    "my-app",
 }
 

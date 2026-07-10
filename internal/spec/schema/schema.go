@@ -38,7 +38,7 @@ const (
 const platformSchemaDir = "platform"
 
 var (
-	// versionRegex matches version strings such as "v1-alpha.1", "v1-beta.2",
+	// versionRegex matches version strings such as "v1-alpha.2", "v1-beta.2",
 	// and similar pre-release formats.
 	versionRegex = regexp.MustCompile(`^v(\d+)(?:-(alpha|beta|rc)\.(\d+))?$`)
 	// preReleaseOrder is a map that defines the order of pre-release types.
@@ -47,7 +47,7 @@ var (
 
 // GetManifestSchema retrieves the JSON schema for validating manifests at a
 // specific version.
-// Version strings should follow the format "v1-alpha.1", "v1-beta.2", etc.
+// Version strings should follow the format "v1-alpha.2", "v1-beta.2", etc.
 // The schema file must be named "manifest.json" within the version directory.
 func GetManifestSchema(version string) ([]byte, error) {
 	fileName := version + "/manifest.json"
@@ -58,7 +58,7 @@ func GetManifestSchema(version string) ([]byte, error) {
 }
 
 // GetEnvironmentsSchema returns the environments schema for the given version.
-// Version strings should follow the format "v1-alpha.1", "v1-beta.2", etc.
+// Version strings should follow the format "v1-alpha.2", "v1-beta.2", etc.
 // The schema file must be named "environments.json" within the version directory.
 func GetEnvironmentsSchema(version string) ([]byte, error) {
 	fileName := version + "/environments.json"
@@ -97,7 +97,7 @@ func GetManifestSchemas() (map[string][]byte, error) {
 
 // GetPlatformSchema retrieves the JSON schema for validating platform configs
 // at a specific version. Version strings should follow the format
-// "v1-alpha.1", "v1-beta.2", etc. The schema file must be named
+// "v1-alpha.2", "v1-beta.2", etc. The schema file must be named
 // "platform.json" within the platform/VERSION directory.
 func GetPlatformSchema(version string) ([]byte, error) {
 	fileName := platformSchemaDir + "/" + version + "/" + SchemaTypePlatform.String() + ".json"

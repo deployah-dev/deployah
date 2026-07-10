@@ -24,7 +24,7 @@
         "environments": {
             "type": "object",
             "title": "Environments",
-            "description": "Map of environment names to environment definitions. Keys support prefix-based wildcard matching. When a single key is defined and no --environment flag is passed, it is selected automatically.",
+            "description": "Optional map of environment names to developer overrides (envFile, variables). Which environments exist is owned by the platform file when one is present. Keys support prefix-based wildcard matching.",
             "propertyNames": {
                 "type": "string",
                 "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
@@ -41,7 +41,8 @@
             "propertyNames": {
                 "type": "string",
                 "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
-                "minLength": 2
+                "minLength": 2,
+                "maxLength": 63
             },
             "minProperties": 1,
             "additionalProperties": {
@@ -156,7 +157,13 @@
                     "examples": [8181, 9000]
                 },
                 "expose": {
-                    "$ref": "#/$defs/Expose"
+                    "title": "Expose",
+                    "description": "Boolean shorthand or object. 'expose: true' exposes with all defaults (the environment's default domain, the component name as subdomain, platform TLS); 'expose: false' equals omitting the block.",
+                    "anyOf": [
+                        {"type": "boolean"},
+                        {"$ref": "#/$defs/Expose"}
+                    ],
+                    "examples": [true, {"subdomain": "api"}]
                 },
                 "envFile": {
                     "type": "string",
@@ -228,14 +235,13 @@
         "Expose": {
             "type": "object",
             "title": "Expose",
-            "description": "Exposes the component via an ingress rule resolved against the platform domain configuration.",
+            "description": "Exposes the component via an ingress rule resolved against the platform domain configuration. All fields are optional: the domain defaults to the environment's only (or default-marked) domain, and the subdomain defaults to the component name.",
             "additionalProperties": false,
-            "required": ["domain"],
             "properties": {
                 "domain": {
                     "type": "string",
                     "title": "Domain Key",
-                    "description": "Logical domain key referencing an entry in the platform environment's domains map.",
+                    "description": "Domain key referencing an entry in the platform environment's domains map. When absent, the environment's only domain is used, or the one marked 'default: true' in the platform file.",
                     "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
                     "minLength": 1,
                     "examples": ["public", "internal"]
@@ -243,15 +249,23 @@
                 "subdomain": {
                     "type": "string",
                     "title": "Subdomain",
-                    "description": "DNS label prepended to baseDomain to form the FQDN. When absent the component is exposed at the apex (FQDN equals baseDomain). Must be a valid DNS-1123 label.",
+                    "description": "DNS label prepended to baseDomain to form the FQDN. When absent the component name is used. Must be a valid DNS-1123 label. Mutually exclusive with apex.",
                     "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
                     "minLength": 1,
                     "examples": ["api", "www"]
+                },
+                "apex": {
+                    "type": "boolean",
+                    "title": "Apex",
+                    "description": "Expose the component at the baseDomain itself instead of a subdomain. Mutually exclusive with subdomain.",
+                    "default": false,
+                    "examples": [true]
                 }
             },
             "examples": [
-                {"domain": "public", "subdomain": "api"},
-                {"domain": "internal"}
+                {"subdomain": "api"},
+                {"domain": "internal"},
+                {"apex": true}
             ]
         },
         "Autoscaling": {

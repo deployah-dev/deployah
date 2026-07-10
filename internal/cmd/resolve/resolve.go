@@ -20,6 +20,8 @@ package resolve
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 
@@ -31,8 +33,9 @@ import (
 
 // Options holds command-line flags for resolve.
 type Options struct {
-	Environment string `nabat:"environment"`
-	Output      string `nabat:"output"`
+	Environment  string `nabat:"environment"`
+	Output       string `nabat:"output"`
+	Environments bool   `nabat:"environments"`
 }
 
 // Register adds the resolve command to app.
@@ -46,16 +49,24 @@ platform file (deployah.platform.yaml) when present and performs full
 resolution, including FQDN construction and TLS mode selection. When the
 platform file is absent the output is partial and includes PLATFORM_NOT_FOUND.
 
+With --environments it instead lists every environment from the spec and
+platform files: where each is registered, its context (or the kubeconfig
+fallback), its domains, and any spec overrides.
+
 Use --output json for byte-stable, machine-readable output.
 `),
-		nabat.WithArg("environment", "", nabat.WithRequired(), nabat.WithUsage("Environment to resolve"), nabat.WithPrompt("Environment", "", nabat.WithHint("e.g. production"))),
+		nabat.WithArg("environment", "", nabat.WithUsage("Environment to resolve (omit with --environments)")),
 		nabat.WithFlag("output", "text", nabat.WithShort('o'), nabat.WithUsage("Output format: text or json")),
+		nabat.WithFlag("environments", false, nabat.WithUsage("List every environment from the spec and platform files instead of resolving one")),
 		nabat.WithExample(`
 # Resolve the production environment
 deployah resolve production
 
 # Machine-readable JSON output
-deployah resolve production --output json`),
+deployah resolve production --output json
+
+# Overview of every environment from both files
+deployah resolve --environments`),
 		nabat.WithRun(runResolve),
 	)
 }
@@ -68,25 +79,30 @@ func runResolve(c *nabat.Context) error {
 
 	sess := session.FromContext(c)
 
+	if opts.Environments {
+		return runEnvironmentsOverview(c, sess, opts.Output)
+	}
+	if opts.Environment == "" {
+		return fmt.Errorf("environment argument required; or pass --environments for an overview")
+	}
+
 	// Load and parse the manifest (no envsubst, no cluster).
 	rawSpec, _, err := spec.ParseManifest(sess.SpecPath())
 	if err != nil {
 		return fmt.Errorf("load manifest: %w", err)
 	}
 
-	// Resolve the environment from the manifest.
-	matchedKey, _, envErr := spec.ResolveEnvironment(rawSpec.Environments, opts.Environment)
-	envIdentity := spec.NormalizeEnv(opts.Environment)
-	if envErr == nil && matchedKey != "" {
-		envIdentity = spec.NormalizeEnv(matchedKey)
-	}
-
-	// Load platform (degraded when absent).
+	// Load platform (degraded when absent). It owns the environment registry.
 	platform, platformErr := sess.Platform()
 	if platformErr != nil {
 		// Platform file was found but failed to load: hard error.
 		return fmt.Errorf("load platform: %w", platformErr)
 	}
+
+	// Keep the user's exact name (wildcard instances included) so warnings
+	// and the report match what deploy would do; Resolve prefix-matches
+	// registry keys internally.
+	envIdentity := spec.NormalizeEnv(opts.Environment)
 
 	// Build substitution report (pre-scan for ${VAR} tokens).
 	substReport := spec.PrescanSubstitutionReport(rawSpec)
@@ -183,6 +199,123 @@ type jsonComponent struct {
 	TLSMode       string `json:"tls_mode,omitempty"`
 	TLSIssuer     string `json:"tls_issuer,omitempty"`
 	TLSSecretName string `json:"tls_secret_name,omitempty"`
+}
+
+// envOverviewRow is one environment in the --environments overview.
+type envOverviewRow struct {
+	Name string `json:"name"`
+	// Source is "platform", "spec" (no platform file), or "spec-only"
+	// (platform file exists but does not register this name).
+	Source          string   `json:"source"`
+	Deployable      bool     `json:"deployable"`
+	Context         string   `json:"context,omitempty"`
+	ContextFallback string   `json:"context_fallback,omitempty"`
+	Domains         []string `json:"domains,omitempty"`
+	Overrides       []string `json:"overrides,omitempty"`
+}
+
+// buildEnvironmentOverview merges environment names from both files into
+// sorted overview rows. currentCtx is the kubeconfig current-context, shown
+// as the fallback for deployable environments without a context.
+func buildEnvironmentOverview(rawSpec *spec.Spec, platform *spec.PlatformConfig, currentCtx string) []envOverviewRow {
+	names := make(map[string]bool)
+	if platform != nil {
+		for n := range platform.Environments {
+			names[n] = true
+		}
+	}
+	for n := range rawSpec.Environments {
+		names[n] = true
+	}
+
+	rows := make([]envOverviewRow, 0, len(names))
+	for _, n := range slices.Sorted(maps.Keys(names)) {
+		row := envOverviewRow{Name: n}
+		if platform == nil {
+			row.Source = "spec"
+			row.Deployable = true
+			row.ContextFallback = currentCtx
+		} else if pe, registered := platform.Environments[n]; registered {
+			row.Source = "platform"
+			row.Deployable = true
+			row.Context = pe.Context
+			if pe.Context == "" {
+				row.ContextFallback = currentCtx
+			}
+			row.Domains = slices.Sorted(maps.Keys(pe.Domains))
+		} else {
+			row.Source = "spec-only"
+		}
+		if env, ok := rawSpec.Environments[n]; ok {
+			if env.EnvFile != "" {
+				row.Overrides = append(row.Overrides, "envFile")
+			}
+			if env.ConfigFile != "" {
+				row.Overrides = append(row.Overrides, "configFile")
+			}
+			if len(env.Variables) > 0 {
+				row.Overrides = append(row.Overrides, "variables")
+			}
+		}
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+// runEnvironmentsOverview prints every environment from the spec and
+// platform files in the requested output format.
+func runEnvironmentsOverview(c *nabat.Context, sess *session.Session, output string) error {
+	rawSpec, _, err := spec.ParseManifest(sess.SpecPath())
+	if err != nil {
+		return fmt.Errorf("load manifest: %w", err)
+	}
+	platform, platformErr := sess.Platform()
+	if platformErr != nil {
+		return fmt.Errorf("load platform: %w", platformErr)
+	}
+
+	rows := buildEnvironmentOverview(rawSpec, platform, sess.CurrentKubeContext())
+
+	if strings.EqualFold(output, "json") {
+		data, marshalErr := json.MarshalIndent(map[string][]envOverviewRow{"environments": rows}, "", "  ")
+		if marshalErr != nil {
+			return fmt.Errorf("json marshal: %w", marshalErr)
+		}
+		c.Println(string(data))
+		return nil
+	}
+
+	if platform == nil {
+		c.Println("No platform file found; the spec's environments act as the registry.")
+	}
+	if len(rows) == 0 {
+		c.Println("No environments are defined in either file.")
+		return nil
+	}
+	c.Println("Environments:")
+	for _, r := range rows {
+		c.Println("  " + r.Name)
+		if r.Source == "spec-only" {
+			c.Println("    registered: no — add it to the platform file before deploying there")
+			continue
+		}
+		c.Println("    registered: " + r.Source)
+		switch {
+		case r.Context != "":
+			c.Println("    context:    " + r.Context)
+		case r.ContextFallback != "":
+			c.Println(fmt.Sprintf("    context:    (none — deploys follow the current kubeconfig context %q)", r.ContextFallback))
+		default:
+			c.Println("    context:    (none — deploys follow the current kubeconfig context)")
+		}
+		if len(r.Domains) > 0 {
+			c.Println("    domains:    " + strings.Join(r.Domains, ", "))
+		}
+		if len(r.Overrides) > 0 {
+			c.Println("    overrides:  " + strings.Join(r.Overrides, ", "))
+		}
+	}
+	return nil
 }
 
 // outputJSON writes the resolution result as byte-stable JSON.

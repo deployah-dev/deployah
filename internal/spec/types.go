@@ -15,6 +15,7 @@
 package spec
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -94,6 +95,13 @@ type Component struct {
 	Env map[string]string `json:"env,omitempty" yaml:"env,omitempty"`
 	// Health configures ready and alive checks for the component.
 	Health *Health `json:"health,omitempty" yaml:"health,omitempty"`
+}
+
+// ListensOnPort reports whether the component has a service role and a
+// configured port, i.e. whether it should get a container port, an
+// ingress rule, or a health probe.
+func (c Component) ListensOnPort() bool {
+	return c.Role.IsService() && c.Port > 0
 }
 
 // Health configures HTTP health checks for a service component. When omitted,
@@ -216,14 +224,57 @@ type Resources struct {
 // Expose declares that a component should be accessible via an ingress rule.
 // The resolved hostname and TLS settings come from the platform configuration
 // referenced by Domain.
+// In YAML the field also accepts a boolean shorthand: `expose: true` equals
+// an empty object (all defaults) and `expose: false` equals omitting the
+// block.
 type Expose struct {
-	// Domain is the logical domain key referencing an entry in the platform
-	// environment's domains map (e.g. "public", "internal").
-	Domain string `json:"domain" yaml:"domain"`
+	// Domain is the domain key referencing an entry in the platform
+	// environment's domains map. When empty, the environment's only domain
+	// is used, or the one marked default in the platform file.
+	Domain string `json:"domain,omitempty" yaml:"domain,omitempty"`
 	// Subdomain is a DNS label prepended to the platform baseDomain to form
-	// the FQDN. When nil the component is exposed at the apex (FQDN equals
-	// baseDomain). An explicit empty string is a schema validation error.
+	// the FQDN. When nil the component name is used. Mutually exclusive
+	// with Apex.
 	Subdomain *string `json:"subdomain,omitempty" yaml:"subdomain,omitempty"`
+	// Apex exposes the component at the baseDomain itself. Mutually
+	// exclusive with Subdomain.
+	Apex bool `json:"apex,omitempty" yaml:"apex,omitempty"`
+
+	// disabled records the `expose: false` shorthand; normalizeComponents
+	// turns such blocks into a nil Expose after parsing.
+	disabled bool
+}
+
+// UnmarshalJSON accepts the boolean shorthand alongside the object form.
+func (e *Expose) UnmarshalJSON(data []byte) error {
+	switch string(bytes.TrimSpace(data)) {
+	case "true":
+		*e = Expose{}
+		return nil
+	case "false":
+		*e = Expose{disabled: true}
+		return nil
+	}
+	type plain Expose
+	var p plain
+	if err := json.Unmarshal(data, &p); err != nil {
+		return err
+	}
+	*e = Expose(p)
+	return nil
+}
+
+// MarshalJSON emits `true` for the zero value so generated specs keep the
+// shorthand form, and `false` for a disabled block.
+func (e Expose) MarshalJSON() ([]byte, error) {
+	if e.disabled {
+		return []byte("false"), nil
+	}
+	if e == (Expose{}) {
+		return []byte("true"), nil
+	}
+	type plain Expose
+	return json.Marshal(plain(e))
 }
 
 // ComponentRole defines the role of a component and its default deployment
@@ -238,6 +289,13 @@ const (
 	// ComponentRoleJob runs a finite batch or one-off task.
 	ComponentRoleJob ComponentRole = "job"
 )
+
+// IsService reports whether r is the "service" role, the only role that
+// listens on a port or gets exposed via an ingress rule. Worker and job
+// components run without inbound traffic.
+func (r ComponentRole) IsService() bool {
+	return r == ComponentRoleService
+}
 
 // ComponentKind specifies the kind of the component.
 type ComponentKind string

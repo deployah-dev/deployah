@@ -17,6 +17,8 @@ package spec
 import (
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 
@@ -73,6 +75,11 @@ func Resolve(
 			report.ErrorCode = re.Code
 			report.ErrorMessage = re.Message
 			return nil, report, re
+		}
+
+		for _, w := range unknownEnvironmentNameWarnings(appSpec, keys) {
+			report.Warnings = append(report.Warnings, w)
+			resolved.Warnings = append(resolved.Warnings, w)
 		}
 	}
 
@@ -165,22 +172,41 @@ func resolveComponent(
 		}
 	}
 
+	domainKeys := slices.Sorted(maps.Keys(platformEnv.Domains))
 	domainKey := comp.Expose.Domain
+	domainDefaulted := false
+	if domainKey == "" {
+		key, err := defaultDomainKey(platformEnv)
+		if err != nil {
+			return rc, result, &ResolutionError{
+				Code: ErrCodeDomainGap,
+				Message: fmt.Sprintf(
+					"component %q names no expose.domain and environment %q has %s",
+					name, env.Original, err,
+				),
+			}
+		}
+		domainKey = key
+		domainDefaulted = true
+	}
 	domain, ok := platformEnv.Domains[domainKey]
 	if !ok {
 		return rc, result, &ResolutionError{
 			Code: ErrCodeDomainGap,
 			Message: fmt.Sprintf(
-				"component %q references domain %q but environment %q does not define it",
-				name, domainKey, env.Original,
+				"component %q references domain %q but environment %q does not define it (available: %s)",
+				name, domainKey, env.Original, joinStrings(domainKeys),
 			),
 		}
+	}
+	domainSource := fmt.Sprintf("platform environments.%s.domains.%s", env.Original, domainKey)
+	if domainDefaulted {
+		domainSource += " (default domain)"
 	}
 
 	// Build FQDN.
 	var fqdn string
-	if comp.Expose.Subdomain == nil {
-		// Apex mode.
+	if comp.Expose.Apex {
 		fqdn = domain.BaseDomain
 		if errs := k8svalidation.IsDNS1123Subdomain(fqdn); len(errs) > 0 {
 			return rc, result, &ResolutionError{
@@ -195,10 +221,15 @@ func resolveComponent(
 			Component: name,
 			Path:      "expose.host",
 			Value:     fqdn,
-			Source:    fmt.Sprintf("platform environments.%s.domains.%s.baseDomain (apex)", env.Original, domainKey),
+			Source:    domainSource + ".baseDomain (apex)",
 		})
 	} else {
-		subdomain := *comp.Expose.Subdomain
+		subdomain := name
+		subdomainSource := "component name (default)"
+		if comp.Expose.Subdomain != nil {
+			subdomain = *comp.Expose.Subdomain
+			subdomainSource = fmt.Sprintf("expose.subdomain=%q", subdomain)
+		}
 		isDynamic := substReport.DynamicSubdomains[name]
 
 		// Skip DNS validation when the subdomain was produced by envsubst
@@ -207,11 +238,15 @@ func resolveComponent(
 		// valid label.
 		if !isDynamic {
 			if errs := k8svalidation.IsDNS1123Label(subdomain); len(errs) > 0 {
+				field := fmt.Sprintf("expose.subdomain %q", subdomain)
+				if comp.Expose.Subdomain == nil {
+					field = fmt.Sprintf("the component name %q (used as the default subdomain)", subdomain)
+				}
 				return rc, result, &ResolutionError{
 					Code: ErrCodeInvalidDNS,
 					Message: fmt.Sprintf(
-						"component %q: expose.subdomain %q is not a valid DNS label: %s",
-						name, subdomain, strings.Join(errs, "; "),
+						"component %q: %s is not a valid DNS label: %s",
+						name, field, strings.Join(errs, "; "),
 					),
 				}
 			}
@@ -232,7 +267,7 @@ func resolveComponent(
 			Component: name,
 			Path:      "expose.host",
 			Value:     fqdn,
-			Source:    fmt.Sprintf("expose.subdomain=%q + platform environments.%s.domains.%s.baseDomain", subdomain, env.Original, domainKey),
+			Source:    subdomainSource + " + " + domainSource + ".baseDomain",
 		})
 
 		// Wildcard static-subdomain warning.
@@ -290,6 +325,108 @@ func resolveComponent(
 	}
 
 	return rc, result, nil
+}
+
+// defaultDomainKey picks the domain used when a component names none: the
+// environment's only domain, else the one marked default. The error text
+// describes what the environment has instead; callers wrap it.
+func defaultDomainKey(pe *PlatformEnvironment) (string, error) {
+	keys := slices.Sorted(maps.Keys(pe.Domains))
+	if len(keys) == 1 {
+		return keys[0], nil
+	}
+	if len(keys) == 0 {
+		return "", errors.New("no domains defined")
+	}
+	// Platform validation guarantees at most one default per environment.
+	for k, d := range pe.Domains {
+		if d.Default {
+			return k, nil
+		}
+	}
+	return "", fmt.Errorf("several domains and none marked default: %s", joinStrings(keys))
+}
+
+// unknownEnvironmentNameWarnings reports spec environment keys and component
+// environments filter entries that match nothing in the platform registry.
+// Warnings, not errors, so not-yet-registered environments stay legal.
+func unknownEnvironmentNameWarnings(appSpec *Spec, registry []string) []string {
+	var warnings []string
+	for _, name := range appSpec.EnvironmentNames() {
+		if _, ok := matchEnvKey(name, registry); !ok {
+			warnings = append(warnings, fmt.Sprintf(
+				"environment %q has overrides in the spec but is not defined in the platform file (available: %s)",
+				name, joinStrings(registry)))
+		}
+	}
+
+	for _, compName := range slices.Sorted(maps.Keys(appSpec.Components)) {
+		for _, entry := range appSpec.Components[compName].Environments {
+			if _, ok := matchEnvKey(entry, registry); !ok {
+				warnings = append(warnings, fmt.Sprintf(
+					"component %q environments filter entry %q matches no environment in the platform file (available: %s)",
+					compName, entry, joinStrings(registry)))
+			}
+		}
+	}
+	return warnings
+}
+
+// CrossCheckPlatformReferences checks spec references against the platform
+// file without picking an environment. It returns problems (expose.domain
+// keys defined in no platform environment) and warnings (environment names
+// unknown to the registry). Domains containing ${VAR} tokens are skipped.
+func CrossCheckPlatformReferences(appSpec *Spec, platform *PlatformConfig) (problems, warnings []string) {
+	if appSpec == nil || platform == nil {
+		return nil, nil
+	}
+	registry := slices.Sorted(maps.Keys(platform.Environments))
+	warnings = unknownEnvironmentNameWarnings(appSpec, registry)
+
+	domainKeys := make(map[string]bool)
+	for _, pe := range platform.Environments {
+		for k := range pe.Domains {
+			domainKeys[k] = true
+		}
+	}
+	available := slices.Sorted(maps.Keys(domainKeys))
+	for _, name := range slices.Sorted(maps.Keys(appSpec.Components)) {
+		comp := appSpec.Components[name]
+		if comp.Expose == nil || strings.Contains(comp.Expose.Domain, "${") {
+			continue
+		}
+		domain := comp.Expose.Domain
+		if domain != "" && !domainKeys[domain] {
+			problems = append(problems, fmt.Sprintf(
+				"component %q expose.domain %q is not defined in any platform environment (available: %s)",
+				name, domain, joinStrings(available)))
+			continue
+		}
+		// Per-environment gaps for the environments the component is
+		// active in: a named domain missing there, or an ambiguous default.
+		for _, envKey := range registry {
+			if len(comp.Environments) > 0 {
+				if _, ok := matchEnvKey(envKey, comp.Environments); !ok {
+					continue
+				}
+			}
+			pe := platform.Environments[envKey]
+			if domain != "" {
+				if _, ok := pe.Domains[domain]; !ok {
+					warnings = append(warnings, fmt.Sprintf(
+						"component %q references domain %q but environment %q does not define it",
+						name, domain, envKey))
+				}
+				continue
+			}
+			if _, err := defaultDomainKey(&pe); err != nil {
+				warnings = append(warnings, fmt.Sprintf(
+					"component %q relies on the default domain but environment %q has %s",
+					name, envKey, err))
+			}
+		}
+	}
+	return problems, warnings
 }
 
 // joinStrings returns a sorted, comma-separated, quoted list of strings.

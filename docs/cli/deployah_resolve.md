@@ -11,15 +11,20 @@ platform file (deployah.platform.yaml) when present and performs full
 resolution, including FQDN construction and TLS mode selection. When the
 platform file is absent the output is partial and includes PLATFORM_NOT_FOUND.
 
+With --environments it instead lists every environment from the spec and
+platform files: where each is registered, its context (or the kubeconfig
+fallback), its domains, and any spec overrides.
+
 Use --output json for byte-stable, machine-readable output.
 
 ```text
-deployah resolve <environment> [flags]
+deployah resolve [environment] [flags]
 ```
 
 ### Options
 
 ```text
+      --environments    List every environment from the spec and platform files instead of resolving one
   -o, --output string   Output format: text or json (default "text")
 ```
 

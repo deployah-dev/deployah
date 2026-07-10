@@ -255,6 +255,48 @@ func TestBuildLivenessProbe_RestartAfterOnlyDefaultsInterval(t *testing.T) {
 // TestMapSpecToChartValues_SelfSignedTLS verifies that the selfSigned TLS mode
 // sets ingress.selfSigned:true and does not set existingSecret (the chart
 // derives the secret name from the hostname).
+// TestMapSpecToChartValues_EnvironmentFilterPrefixMatch verifies the
+// component environments filter uses the same exact-then-prefix matching as
+// spec.Resolve, so resolution and the generated chart agree on wildcard
+// deploys like "review/pr-123".
+func TestMapSpecToChartValues_EnvironmentFilterPrefixMatch(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		filter      []string
+		environment string
+		wantActive  bool
+	}{
+		{"exact match", []string{"production"}, "production", true},
+		{"prefix match on wildcard deploy", []string{"review"}, "review/pr-123", true},
+		{"no match", []string{"production"}, "staging", false},
+		{"empty filter is active everywhere", nil, "staging", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			comp := serviceComponent()
+			comp.Environments = tt.filter
+			m := &spec.Spec{
+				APIVersion: "v1-alpha.2",
+				Project:    "shop",
+				Components: map[string]spec.Component{"web": comp},
+			}
+			require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.2"))
+
+			vals, err := MapSpecToChartValues(m, tt.environment, nil)
+			require.NoError(t, err)
+
+			_, active := vals["web"]
+			assert.Equal(t, tt.wantActive, active)
+		})
+	}
+}
+
+// TestMapSpecToChartValues_SelfSignedTLS verifies selfSigned mode enables
+// ingress TLS without an existingSecret.
 func TestMapSpecToChartValues_SelfSignedTLS(t *testing.T) {
 	t.Parallel()
 

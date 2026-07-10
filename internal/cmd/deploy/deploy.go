@@ -4,12 +4,12 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"slices"
 	"strings"
 	"sync"
 
 	"nabat.dev/nabat"
 
+	"deployah.dev/deployah/internal/cmd/common"
 	"deployah.dev/deployah/internal/helm"
 	"deployah.dev/deployah/internal/k8s"
 	"deployah.dev/deployah/internal/session"
@@ -67,19 +67,20 @@ func runDeploy(c *nabat.Context) error {
 	}
 	substReport := spec.PrescanSubstitutionReport(rawSpec)
 
+	// The platform file owns the environment registry --environment is
+	// validated against, so it loads before the spec.
+	platform, platformErr := sess.Platform()
+	if platformErr != nil {
+		return fmt.Errorf("load platform file: %w", platformErr)
+	}
+
 	// Load the fully substituted manifest (envsubst applied).
-	manifest, err := spec.Load(c, sess.SpecPath(), opts.Environment)
+	manifest, err := spec.Load(c, sess.SpecPath(), opts.Environment, platform)
 	if err != nil {
 		return fmt.Errorf("load spec: %w", err)
 	}
 
 	c.Logger().Debug("spec loaded", "env", opts.Environment)
-
-	// Load platform file.
-	platform, platformErr := sess.Platform()
-	if platformErr != nil {
-		return fmt.Errorf("load platform file: %w", platformErr)
-	}
 
 	// Fail closed when any component uses expose and platform is absent.
 	if platform == nil && hasExposeComponents(manifest) {
@@ -135,6 +136,7 @@ func runDeploy(c *nabat.Context) error {
 	// which cluster is being targeted. Append [override] when --context was
 	// passed explicitly and differs from the platform-resolved context.
 	resolvedCtx := cluster.Context()
+	common.WarnContextFallback(c, cluster, opts.Environment)
 	ctxSuffix := ""
 	if resolvedCtx != "" {
 		ctxSuffix = " (context: " + resolvedCtx
@@ -280,7 +282,7 @@ func checkHostnameGuard(c *nabat.Context, helmClient session.HelmClient, project
 	return nil
 }
 
-// checkHostnameGuardLegacy checks for hostname changes in old v1-alpha.1 releases
+// checkHostnameGuardLegacy checks for hostname changes in old v1-alpha.2 releases
 // that stored hostname in the component ingress.hostname values path.
 func checkHostnameGuardLegacy(_ *nabat.Context, config map[string]any, resolved *spec.ResolvedSpec, project, environment string) error {
 	var changed []string
@@ -364,8 +366,12 @@ func requiredAPIs(manifest *spec.Spec, environment string, resolved *spec.Resolv
 	}
 
 	for name, component := range manifest.Components {
-		if len(component.Environments) > 0 && !slices.Contains(component.Environments, environment) {
-			continue
+		// Same matcher as spec.Resolve and chart generation, so wildcard
+		// deploys agree on the active component set.
+		if len(component.Environments) > 0 {
+			if _, ok := spec.MatchEnvKey(environment, component.Environments); !ok {
+				continue
+			}
 		}
 		if component.Autoscaling != nil && component.Autoscaling.Enabled {
 			add([]string{"autoscaling/v2", "autoscaling/v2beta2"}, name)

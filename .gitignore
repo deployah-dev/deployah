@@ -1,3 +1,5 @@
+# Deployah config
+deployah.platform.yaml
 deployah.yaml
 .env.*
 .env

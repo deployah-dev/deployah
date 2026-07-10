@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestValidateComponentResources verifies ValidateComponentResources rules.
@@ -165,6 +166,21 @@ func TestValidateSpecComponents(t *testing.T) {
 	}
 }
 
+// TestValidateComponentExpose verifies apex and subdomain are mutually
+// exclusive.
+func TestValidateComponentExpose(t *testing.T) {
+	t.Parallel()
+
+	sub := "api"
+	assert.NoError(t, ValidateComponentExpose(Component{}))
+	assert.NoError(t, ValidateComponentExpose(Component{Expose: &Expose{Apex: true}}))
+	assert.NoError(t, ValidateComponentExpose(Component{Expose: &Expose{Subdomain: &sub}}))
+
+	err := ValidateComponentExpose(Component{Expose: &Expose{Apex: true, Subdomain: &sub}})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "mutually exclusive")
+}
+
 // TestValidateComponentHealth verifies ValidateComponentHealth rules.
 func TestValidateComponentHealth(t *testing.T) {
 	t.Parallel()
@@ -186,6 +202,17 @@ func TestValidateComponentHealth(t *testing.T) {
 			name: "ready with path is valid",
 			component: Component{
 				Role: ComponentRoleService,
+				Port: 8080,
+				Health: &Health{
+					Ready: &HealthReady{Path: "/health"},
+				},
+			},
+			expectErr: false,
+		},
+		{
+			name: "ready with path and no port is valid (schema defaults port)",
+			component: Component{
+				Role: ComponentRoleService,
 				Health: &Health{
 					Ready: &HealthReady{Path: "/health"},
 				},
@@ -196,12 +223,23 @@ func TestValidateComponentHealth(t *testing.T) {
 			name: "alive with path, interval, restartAfter is valid",
 			component: Component{
 				Role: ComponentRoleService,
+				Port: 8080,
 				Health: &Health{
 					Alive: &HealthAlive{
 						Path:         "/livez",
 						Interval:     "10s",
 						RestartAfter: "60s",
 					},
+				},
+			},
+			expectErr: false,
+		},
+		{
+			name: "alive with path and no port is valid (schema defaults port)",
+			component: Component{
+				Role: ComponentRoleService,
+				Health: &Health{
+					Alive: &HealthAlive{Path: "/livez"},
 				},
 			},
 			expectErr: false,
@@ -270,6 +308,7 @@ func TestValidateComponentHealth(t *testing.T) {
 			name: "alive restartAfter less than interval is invalid",
 			component: Component{
 				Role: ComponentRoleService,
+				Port: 8080,
 				Health: &Health{
 					Alive: &HealthAlive{
 						Path:         "/livez",
@@ -285,6 +324,7 @@ func TestValidateComponentHealth(t *testing.T) {
 			name: "alive restartAfter equal to interval is valid",
 			component: Component{
 				Role: ComponentRoleService,
+				Port: 8080,
 				Health: &Health{
 					Alive: &HealthAlive{
 						Path:         "/livez",
@@ -312,6 +352,7 @@ func TestValidateComponentHealth(t *testing.T) {
 			name: "resources and health both valid on service",
 			component: Component{
 				Role: ComponentRoleService,
+				Port: 8080,
 				Resources: Resources{
 					CPU: strPtr("500m"),
 				},

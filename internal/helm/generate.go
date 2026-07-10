@@ -82,7 +82,9 @@ type ChartData struct {
 // GenerateReleaseName returns the Helm release name for project and
 // environment. Format: PROJECT_NAME-ENVIRONMENT_NAME.
 func GenerateReleaseName(projectName, environmentName string) string {
-	return projectName + "-" + environmentName
+	// K8sSafe: wildcard names like "review/pr-42" contain "/", which is
+	// illegal in release names and label values.
+	return projectName + "-" + spec.NormalizeEnv(environmentName).K8sSafe
 }
 
 // PrepareChart expands the embedded chart into a temporary directory,
@@ -279,21 +281,24 @@ func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string, resolved *spe
 	resolvedComponents := make(map[string]any)
 
 	for componentName, component := range m.Components {
-		// Skip component if it is not deployed in the desired environment.
-		// When Environments is empty the component is active in all environments.
-		if len(component.Environments) > 0 && !slices.Contains(component.Environments, desiredEnvironment) {
-			continue
+		// Skip component if it is not deployed in the desired environment
+		// (empty filter = active everywhere). Same matcher as spec.Resolve,
+		// so wildcard deploys agree on the active component set.
+		if len(component.Environments) > 0 {
+			if _, ok := spec.MatchEnvKey(desiredEnvironment, component.Environments); !ok {
+				continue
+			}
 		}
 
 		componentValues := map[string]any{
 			"commonLabels": map[string]string{
 				"deployah.dev/project":     m.Project,
 				"deployah.dev/component":   componentName,
-				"deployah.dev/environment": desiredEnvironment,
+				"deployah.dev/environment": spec.NormalizeEnv(desiredEnvironment).K8sSafe,
 			},
 		}
 
-		if component.Role != spec.ComponentRoleService {
+		if !component.Role.IsService() {
 			// TODO: Add support for component roles such as "worker", and "job"
 			return nil, fmt.Errorf("role %s is not supported yet", component.Role)
 		}
@@ -393,9 +398,8 @@ func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string, resolved *spe
 			componentValues["args"] = component.Args
 		}
 
-		// Add ports only for service role components with a valid port
-		// Worker and job roles do not expose ports (there is no use case for ports for worker or job components)
-		if component.Port > 0 && component.Role == spec.ComponentRoleService {
+		// Worker and job roles do not expose ports.
+		if component.ListensOnPort() {
 			componentValues["ports"] = []map[string]any{
 				{
 					"name":          "http",
@@ -407,7 +411,7 @@ func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string, resolved *spe
 		}
 
 		// Add health probes for service components.
-		if component.Role == spec.ComponentRoleService {
+		if component.Role.IsService() {
 			maps.Copy(componentValues, buildProbeValues(component))
 		}
 

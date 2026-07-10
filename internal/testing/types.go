@@ -170,7 +170,7 @@ func (suite *IntegrationTestSuite) setupScenarioEnvironment(t *testing.T, scenar
 func (suite *IntegrationTestSuite) loadManifest(t *testing.T, manifestFile string) (*spec.Spec, error) {
 	t.Helper()
 	ctx := context.Background()
-	return spec.Load(ctx, "deployah.yaml", "")
+	return spec.Load(ctx, "deployah.yaml", "", nil)
 }
 
 // generateChart generates the Helm chart from the manifest

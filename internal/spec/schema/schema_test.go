@@ -16,7 +16,7 @@ type SchemaTestSuite struct {
 
 // TestGetManifestSchema verifies manifest schema retrieval for a version.
 func (s *SchemaTestSuite) TestGetManifestSchema() {
-	schema, err := GetManifestSchema("v1-alpha.1")
+	schema, err := GetManifestSchema("v1-alpha.2")
 	s.Require().NoError(err)
 	s.Require().NotNil(schema)
 }
@@ -32,7 +32,7 @@ func (s *SchemaTestSuite) TestGetManifestSchema_InvalidVersion() {
 // TestGetEnvironmentsSchema verifies environments schema retrieval for a
 // version.
 func (s *SchemaTestSuite) TestGetEnvironmentsSchema() {
-	schema, err := GetEnvironmentsSchema("v1-alpha.1")
+	schema, err := GetEnvironmentsSchema("v1-alpha.2")
 	s.Require().NoError(err)
 	s.Require().NotNil(schema)
 }
@@ -52,20 +52,20 @@ func (s *SchemaTestSuite) TestCompareSchemaVersions() {
 		a, b   string
 		expect int // -1 if a < b, 0 if a == b, 1 if a > b
 	}{
-		{"v1-alpha.1", "v1-beta.2", -1},
+		{"v1-alpha.2", "v1-beta.2", -1},
 		{"v1-beta.2", "v1-beta.11", -1},
 		{"v1-beta.11", "v1-rc.1", -1},
 		{"v1-rc.1", "v1", -1},
 		{"v1", "v1", 0},
 		{"v2", "v1", 1},
-		{"v1-beta.2", "v1-alpha.1", 1},
+		{"v1-beta.2", "v1-alpha.2", 1},
 		{"v1-beta.2", "v1-beta.2", 0},
 		{"v1-beta.2", "v1-beta.11", -1},
 		{"v1-beta.11", "v1-beta.2", 1},
-		{"v1-alpha.1", "v1-alpha.1", 0},
+		{"v1-alpha.2", "v1-alpha.2", 0},
 		{"v1-alpha.1", "v1-alpha.2", -1},
 		{"v1-alpha.2", "v1-alpha.1", 1},
-		{"v1", "v1-alpha.1", 1},
+		{"v1", "v1-alpha.2", 1},
 		{"v1", "v2", -1},
 		{"v1-rc.1", "v1-beta.11", 1},
 		{"v1-rc.1", "v1-rc.1", 0},
@@ -97,12 +97,12 @@ func (s *SchemaTestSuite) TestSortSchemaVersions() {
 	unsorted := []string{
 		"v1-beta.2",
 		"v1",
-		"v1-alpha.1",
+		"v1-alpha.2",
 		"v1-beta.11",
 		"v1-rc.1",
 	}
 	expected := []string{
-		"v1-alpha.1",
+		"v1-alpha.2",
 		"v1-beta.2",
 		"v1-beta.11",
 		"v1-rc.1",

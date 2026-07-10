@@ -16,7 +16,116 @@ func unmarshalComponent(t *testing.T, input string) Component {
 	return c
 }
 
+// TestComponentRole_IsService verifies only the "service" role is treated
+// as a service.
+func TestComponentRole_IsService(t *testing.T) {
+	t.Parallel()
+
+	assert.True(t, ComponentRoleService.IsService())
+	assert.False(t, ComponentRoleWorker.IsService())
+	assert.False(t, ComponentRoleJob.IsService())
+}
+
+// TestComponent_ListensOnPort verifies a component listens on a port only
+// when it has both the service role and a positive port.
+func TestComponent_ListensOnPort(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		component Component
+		want      bool
+	}{
+		{name: "service with port", component: Component{Role: ComponentRoleService, Port: 8080}, want: true},
+		{name: "service without a port", component: Component{Role: ComponentRoleService, Port: 0}, want: false},
+		{name: "worker with a port set", component: Component{Role: ComponentRoleWorker, Port: 8080}, want: false},
+		{name: "job with a port set", component: Component{Role: ComponentRoleJob, Port: 8080}, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, tt.component.ListensOnPort())
+		})
+	}
+}
+
 // TestHealthReady_Unmarshal verifies false|object unmarshaling for health.ready.
+// TestExpose_Unmarshal verifies the true|false|object shorthand for expose.
+func TestExpose_Unmarshal(t *testing.T) {
+	t.Parallel()
+
+	t.Run("true is the zero value", func(t *testing.T) {
+		t.Parallel()
+		c := unmarshalComponent(t, `
+expose: true
+`)
+		require.NotNil(t, c.Expose)
+		assert.Equal(t, Expose{}, *c.Expose)
+	})
+
+	t.Run("false is disabled", func(t *testing.T) {
+		t.Parallel()
+		c := unmarshalComponent(t, `
+expose: false
+`)
+		require.NotNil(t, c.Expose)
+		assert.True(t, c.Expose.disabled)
+	})
+
+	t.Run("object form", func(t *testing.T) {
+		t.Parallel()
+		c := unmarshalComponent(t, `
+expose:
+  domain: internal
+  subdomain: api
+`)
+		require.NotNil(t, c.Expose)
+		assert.Equal(t, "internal", c.Expose.Domain)
+		require.NotNil(t, c.Expose.Subdomain)
+		assert.Equal(t, "api", *c.Expose.Subdomain)
+	})
+
+	t.Run("apex", func(t *testing.T) {
+		t.Parallel()
+		c := unmarshalComponent(t, `
+expose:
+  apex: true
+`)
+		require.NotNil(t, c.Expose)
+		assert.True(t, c.Expose.Apex)
+	})
+}
+
+// TestExpose_Marshal verifies the zero value round-trips as `expose: true`.
+func TestExpose_Marshal(t *testing.T) {
+	t.Parallel()
+
+	out, err := yaml.Marshal(Component{Image: "x", Expose: &Expose{}})
+	require.NoError(t, err)
+	assert.Contains(t, string(out), "expose: true")
+
+	sub := "api"
+	out, err = yaml.Marshal(Component{Image: "x", Expose: &Expose{Subdomain: &sub}})
+	require.NoError(t, err)
+	assert.Contains(t, string(out), "subdomain: api")
+}
+
+// TestNormalizeComponents verifies `expose: false` becomes a nil Expose.
+func TestNormalizeComponents(t *testing.T) {
+	t.Parallel()
+
+	s := &Spec{Components: map[string]Component{
+		"off": {Expose: &Expose{disabled: true}},
+		"on":  {Expose: &Expose{}},
+	}}
+	normalizeComponents(s)
+	assert.Nil(t, s.Components["off"].Expose)
+	assert.NotNil(t, s.Components["on"].Expose)
+}
+
+// TestHealthReady_Unmarshal verifies false|object unmarshaling for
+// health.ready.
 func TestHealthReady_Unmarshal(t *testing.T) {
 	t.Parallel()
 

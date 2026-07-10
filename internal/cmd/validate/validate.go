@@ -3,9 +3,10 @@ package validate
 import (
 	"fmt"
 	"os"
+	"strings"
 
-	"gopkg.in/yaml.v3"
 	"nabat.dev/nabat"
+	"sigs.k8s.io/yaml"
 
 	"deployah.dev/deployah/internal/session"
 	"deployah.dev/deployah/internal/spec"
@@ -21,8 +22,9 @@ func Register(app *nabat.App) {
 	app.MustCommand("validate",
 		nabat.WithDescription("Validate a Deployah spec"),
 		nabat.WithLongDescription("Validate a Deployah spec against the JSON schema. "+
-			"Without --environment, validates the manifest only (offline, fast). "+
-			"With --environment, also loads the platform file and runs cross-file resolution validation."),
+			"Without an environment, validates the manifest (offline, fast) and, when a "+
+			"platform file exists, cross-checks expose.domain keys and environment names against it. "+
+			"With an environment, also runs full cross-file resolution validation."),
 		nabat.WithArg("environment", "", nabat.WithUsage("Environment to validate (optional; enables cross-file resolution check)"), nabat.WithPrompt("Environment", "", nabat.WithHint("e.g. production"))),
 		nabat.WithExample(`
 # Validate manifest schema only (offline, no environment required)
@@ -85,6 +87,31 @@ func runManifestOnly(c *nabat.Context, rt *session.Session) error {
 
 	if err = spec.ValidateSpec(specObj, version); err != nil {
 		return fmt.Errorf("manifest invalid: %w", err)
+	}
+
+	// Cross-field and platform checks are best-effort here: they need the
+	// raw (pre-substitution) spec, so a manifest that only unmarshals after
+	// ${VAR} substitution skips them with a warning.
+	rawSpec, _, parseErr := spec.ParseManifest(specPath)
+	if parseErr != nil {
+		c.Warn(fmt.Sprintf("skipping cross-field checks: %v", parseErr))
+	} else {
+		if compErr := spec.ValidateSpecComponents(rawSpec); compErr != nil {
+			return compErr
+		}
+		platform, platformErr := rt.Platform()
+		if platformErr != nil {
+			return fmt.Errorf("platform file error: %w", platformErr)
+		}
+		if platform != nil {
+			problems, warnings := spec.CrossCheckPlatformReferences(rawSpec, platform)
+			for _, w := range warnings {
+				c.Warn(w)
+			}
+			if len(problems) > 0 {
+				return fmt.Errorf("platform cross-check failed:\n  - %s", strings.Join(problems, "\n  - "))
+			}
+		}
 	}
 
 	c.Success("Manifest schema valid")

@@ -25,7 +25,7 @@
 
         buildGoModule' = pkgs.buildGoModule.override { inherit go; };
 
-        deployahVendorHash = "sha256-Q/wwl8N7Nf3WPtQyi3hThy3nUjQQoxQx/ry75sDhwcg=";
+        deployahVendorHash = "sha256-qLMfmBEucrS2s9apP7uBv15efEKKTNm5mdS+5Qj8r8I=";
 
         deployah = import ./nix/deployah.nix {
           buildGoModule = buildGoModule';

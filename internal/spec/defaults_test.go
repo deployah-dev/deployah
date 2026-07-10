@@ -105,7 +105,8 @@ func (s *DefaultsTestSuite) TestExtractDefaultsFromSchemaData() {
 	for _, tt := range tests {
 		s.T().Run(tt.name, func(t *testing.T) {
 			defaults := make(DefaultValues)
-			extractDefaultsFromSchemaData(tt.schema, tt.path, defaults)
+			w := &defaultsWalker{root: tt.schema, visited: make(map[string]bool)}
+			w.walk(tt.schema, tt.path, defaults)
 			assert.Equal(t, tt.expected, defaults)
 		})
 	}
@@ -121,13 +122,13 @@ func (s *DefaultsTestSuite) TestGetDefaultValues() {
 	}{
 		{
 			name:       "valid manifest schema",
-			version:    "v1-alpha.1",
+			version:    "v1-alpha.2",
 			schemaType: schema.SchemaTypeManifest,
 			expectErr:  false,
 		},
 		{
 			name:       "valid environments schema",
-			version:    "v1-alpha.1",
+			version:    "v1-alpha.2",
 			schemaType: schema.SchemaTypeEnvironments,
 			expectErr:  false,
 		},
@@ -139,7 +140,7 @@ func (s *DefaultsTestSuite) TestGetDefaultValues() {
 		},
 		{
 			name:       "unsupported schema type",
-			version:    "v1-alpha.1",
+			version:    "v1-alpha.2",
 			schemaType: "unsupported",
 			expectErr:  true,
 		},
@@ -154,7 +155,11 @@ func (s *DefaultsTestSuite) TestGetDefaultValues() {
 			} else {
 				assert.NoError(t, err)
 				assert.NotNil(t, defaults)
-				assert.NotEmpty(t, defaults)
+				// The environments schema declares no defaults in
+				// v1-alpha.2; only the manifest schema must be non-empty.
+				if tt.schemaType == schema.SchemaTypeManifest {
+					assert.NotEmpty(t, defaults)
+				}
 			}
 		})
 	}
@@ -171,7 +176,7 @@ func (s *DefaultsTestSuite) TestFillSpecWithDefaults() {
 		{
 			name: "valid manifest with components",
 			manifest: &Spec{
-				APIVersion: "v1-alpha.1",
+				APIVersion: "v1-alpha.2",
 				Project:    "test-project",
 				Components: map[string]Component{
 					"web": {
@@ -179,36 +184,36 @@ func (s *DefaultsTestSuite) TestFillSpecWithDefaults() {
 					},
 				},
 			},
-			version:   "v1-alpha.1",
+			version:   "v1-alpha.2",
 			expectErr: false,
 		},
 		{
 			name: "manifest with nil components",
 			manifest: &Spec{
-				APIVersion: "v1-alpha.1",
+				APIVersion: "v1-alpha.2",
 				Project:    "test-project",
 				Components: nil,
 			},
-			version:   "v1-alpha.1",
+			version:   "v1-alpha.2",
 			expectErr: false,
 		},
 		{
 			name: "manifest with environments",
 			manifest: &Spec{
-				APIVersion: "v1-alpha.1",
+				APIVersion: "v1-alpha.2",
 				Project:    "test-project",
 				Components: map[string]Component{},
 				Environments: map[string]Environment{
 					"production": {},
 				},
 			},
-			version:   "v1-alpha.1",
+			version:   "v1-alpha.2",
 			expectErr: false,
 		},
 		{
 			name: "invalid version",
 			manifest: &Spec{
-				APIVersion: "v1-alpha.1",
+				APIVersion: "v1-alpha.2",
 				Project:    "test-project",
 				Components: map[string]Component{},
 			},
@@ -354,7 +359,7 @@ func (s *DefaultsTestSuite) TestApplyDefaultsRecursively() {
 
 	for _, tt := range tests {
 		s.T().Run(tt.name, func(t *testing.T) {
-			require.NoError(t, applyDefaultsRecursively(tt.obj, tt.defaults, tt.path, "v1-alpha.1"))
+			require.NoError(t, applyDefaultsRecursively(tt.obj, tt.defaults, tt.path, "v1-alpha.2"))
 			assert.Equal(t, tt.expected, tt.obj)
 		})
 	}
@@ -392,7 +397,7 @@ func (s *DefaultsTestSuite) TestApplyDefaultsToMap() {
 	for _, tt := range tests {
 		s.T().Run(tt.name, func(t *testing.T) {
 			// This test mainly ensures the function doesn't panic
-			require.NoError(t, applyDefaultsToMap(tt.mapVal, tt.defaults, tt.path, "v1-alpha.1"))
+			require.NoError(t, applyDefaultsToMap(tt.mapVal, tt.defaults, tt.path, "v1-alpha.2"))
 			// No specific assertions as this is mainly testing for panics
 		})
 	}
@@ -427,7 +432,7 @@ func (s *DefaultsTestSuite) TestApplyDefaultsToSlice() {
 	for _, tt := range tests {
 		s.T().Run(tt.name, func(t *testing.T) {
 			// This test mainly ensures the function doesn't panic
-			require.NoError(t, applyDefaultsToSlice(tt.sliceVal, tt.defaults, tt.path, "v1-alpha.1"))
+			require.NoError(t, applyDefaultsToSlice(tt.sliceVal, tt.defaults, tt.path, "v1-alpha.2"))
 			// No specific assertions as this is mainly testing for panics
 		})
 	}
@@ -611,7 +616,7 @@ func (s *DefaultsTestSuite) TestCreateSpecWithDefaults() {
 		{
 			name:        "valid manifest creation",
 			projectName: "test-project",
-			version:     "v1-alpha.1",
+			version:     "v1-alpha.2",
 			expectErr:   false,
 		},
 		{
@@ -725,7 +730,7 @@ func (s *DefaultsTestSuite) TestIsComponentPath() {
 // TestIntegration tests integration scenarios with real schema defaults
 func (s *DefaultsTestSuite) TestIntegration() {
 	s.T().Run("create manifest with defaults and verify component defaults", func(t *testing.T) {
-		manifest, err := CreateSpecWithDefaults("test-project", "v1-alpha.1")
+		manifest, err := CreateSpecWithDefaults("test-project", "v1-alpha.2")
 		assert.NoError(t, err)
 		assert.NotNil(t, manifest)
 
@@ -734,7 +739,7 @@ func (s *DefaultsTestSuite) TestIntegration() {
 			Image: "nginx:latest",
 		}
 
-		err = FillSpecWithDefaults(manifest, "v1-alpha.1")
+		err = FillSpecWithDefaults(manifest, "v1-alpha.2")
 		assert.NoError(t, err)
 
 		webComponent := manifest.Components["web"]
@@ -746,7 +751,7 @@ func (s *DefaultsTestSuite) TestIntegration() {
 
 	s.T().Run("verify autoscaling defaults", func(t *testing.T) {
 		manifest := &Spec{
-			APIVersion: "v1-alpha.1",
+			APIVersion: "v1-alpha.2",
 			Project:    "test-project",
 			Components: map[string]Component{
 				"api": {
@@ -758,7 +763,7 @@ func (s *DefaultsTestSuite) TestIntegration() {
 			},
 		}
 
-		err := FillSpecWithDefaults(manifest, "v1-alpha.1")
+		err := FillSpecWithDefaults(manifest, "v1-alpha.2")
 		assert.NoError(t, err)
 
 		apiComponent := manifest.Components["api"]
@@ -772,7 +777,7 @@ func (s *DefaultsTestSuite) TestIntegration() {
 
 	s.T().Run("verify environment defaults", func(t *testing.T) {
 		manifest := &Spec{
-			APIVersion: "v1-alpha.1",
+			APIVersion: "v1-alpha.2",
 			Project:    "test-project",
 			Components: map[string]Component{},
 			Environments: map[string]Environment{
@@ -780,12 +785,13 @@ func (s *DefaultsTestSuite) TestIntegration() {
 			},
 		}
 
-		err := FillSpecWithDefaults(manifest, "v1-alpha.1")
+		err := FillSpecWithDefaults(manifest, "v1-alpha.2")
 		assert.NoError(t, err)
 
-		assert.Equal(t, ".env.production", manifest.Environments["production"].EnvFile)
-		assert.Equal(t, "config.production.yaml", manifest.Environments["production"].ConfigFile)
-		assert.NotNil(t, manifest.Environments["production"].Variables)
+		// v1-alpha.2 declares no envFile/configFile defaults: the loader's
+		// convention-based lookup replaced them.
+		assert.Empty(t, manifest.Environments["production"].EnvFile)
+		assert.Empty(t, manifest.Environments["production"].ConfigFile)
 	})
 }
 

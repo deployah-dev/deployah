@@ -5,6 +5,7 @@ import (
 
 	"nabat.dev/nabat"
 
+	"deployah.dev/deployah/internal/cmd/common"
 	"deployah.dev/deployah/internal/session"
 )
 
@@ -68,6 +69,7 @@ func runShell(c *nabat.Context) error {
 	if err != nil {
 		return fmt.Errorf("target cluster: %w", err)
 	}
+	common.WarnContextFallback(c, cluster, opts.Environment)
 
 	executor, err := NewShellExecutor(cluster, c)
 	if err != nil {

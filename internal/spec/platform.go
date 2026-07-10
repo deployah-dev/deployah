@@ -53,6 +53,9 @@ type PlatformEnvironment struct {
 type PlatformDomain struct {
 	// BaseDomain is the DNS apex for this domain, e.g. "example.com".
 	BaseDomain string `json:"baseDomain" yaml:"baseDomain"`
+	// Default marks this domain as the one used when a component's expose
+	// block names no domain. At most one per environment.
+	Default bool `json:"default,omitempty" yaml:"default,omitempty"`
 	// TLS holds the TLS mode and associated parameters.
 	TLS *PlatformTLS `json:"tls,omitempty" yaml:"tls,omitempty"`
 }
