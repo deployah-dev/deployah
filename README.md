@@ -186,7 +186,8 @@ A few words you will see often.
   - `worker`: a long-running background task, not exposed.
   - `job`: a one-off task that runs and then stops.
 - **Kind.** `stateless` (the default, easy to scale) or `stateful` (needs
-  persistent storage).
+  persistent storage). Platform teams can already declare storage classes for
+  when stateful deploys land; see [Storage classes](#storage-classes).
 - **What deploys today.** Deployah currently deploys `stateless` `service`
   components. The `worker` and `job` roles and the `stateful` kind are in the
   schema but are not deployable yet, so a deploy that uses them stops with a
@@ -486,16 +487,11 @@ environments:
 
 A second file, `deployah.platform.yaml`, lives next to `deployah.yaml`. It
 owns the environments: it registers which environment names exist, and maps
-each one to a real Kubernetes context, one or more domains, and a TLS
-strategy. When this file is present, `deployah deploy <environment>` only
-accepts names registered here. Any component that uses `expose` requires it.
-This file is not processed with `${...}` substitution: it holds real values,
-not templates.
-
-> [!NOTE]
-> The schema also accepts a `storageClasses` map (logical name to Kubernetes
-> storage class name) on each environment, for future use with stateful
-> components. It is validated but not consumed by Deployah yet.
+each one to a real Kubernetes context, one or more domains, a TLS strategy,
+and optional storage classes. When this file is present,
+`deployah deploy <environment>` only accepts names registered here. Any
+component that uses `expose` requires it. This file is not processed with
+`${...}` substitution: it holds real values, not templates.
 
 ```yaml
 apiVersion: platform/v1-alpha.1
@@ -514,6 +510,11 @@ environments:
         tls:
           mode: certManager
           issuer: letsencrypt-prod
+    storageClasses:
+      fast:
+        className: fast-ssd
+      standard:
+        className: gp3
   local:
     context: kind-deployah
     domains:
@@ -547,6 +548,33 @@ A component's expose block resolves against the active environment's
 | `selfSigned` | Deployah generates and manages a self-signed certificate. Used by the local cluster. |
 | `secretName` | Use a pre-existing Kubernetes TLS secret in the target namespace. Set `secretName` to its name. |
 | `certManager` | Provision the certificate through [cert-manager](https://cert-manager.io/). Set `issuer` to a `ClusterIssuer` or `Issuer` name. |
+
+### Storage classes
+
+Each environment can declare a `storageClasses` map: logical names that map to
+real Kubernetes [StorageClass](https://kubernetes.io/docs/concepts/storage/storage-classes/)
+names. This is the same idea as `domains`: the platform file owns the cluster
+details; a future stateful component will pick a logical name instead of a
+cluster-specific class string.
+
+| Field | Notes |
+|---|---|
+| `storageClasses.<name>` | Logical name you choose (for example `fast` or `standard`). |
+| `storageClasses.<name>.className` | The Kubernetes StorageClass name in that cluster (required). |
+
+```yaml
+environments:
+  production:
+    storageClasses:
+      fast:
+        className: fast-ssd
+      standard:
+        className: gp3
+```
+
+> [!NOTE]
+> Deployah validates `storageClasses` today but does not use them yet. They are
+> reserved for `kind: stateful` components, which are not deployable yet.
 
 ### Where the platform file comes from
 
