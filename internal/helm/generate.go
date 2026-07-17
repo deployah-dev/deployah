@@ -16,7 +16,6 @@ import (
 
 	"github.com/distribution/reference"
 	"gopkg.in/yaml.v3"
-	"k8s.io/utils/ptr"
 
 	"deployah.dev/deployah/internal/spec"
 
@@ -30,12 +29,7 @@ import (
 var ChartTemplateFS embed.FS
 
 // parseContainerImage parses a container image reference and returns the
-// repository and tag or digest. Supported formats include:
-// - simple: nginx:1.21
-// - with registry port: registry.example.com:5000/nginx:1.21
-// - with digest: nginx@sha256:abc123...
-// - registry port with digest: example.com:5000/nginx@sha256:abc...
-// - with registry port and tag: registry.example.com:5000/nginx:1.21
+// repository and tag or digest.
 func parseContainerImage(imageRef string) (repository, tagOrDigest string) {
 	if imageRef == "" {
 		return "", ""
@@ -43,7 +37,6 @@ func parseContainerImage(imageRef string) (repository, tagOrDigest string) {
 
 	parsed, err := reference.ParseNormalizedNamed(imageRef)
 	if err != nil {
-		// Fallback to raw string if parsing fails
 		return imageRef, ""
 	}
 
@@ -64,14 +57,10 @@ func parseContainerImage(imageRef string) (repository, tagOrDigest string) {
 type ChartData struct {
 	// Chart holds metadata rendered into Chart.yaml.
 	Chart struct {
-		// Name is the chart name.
-		Name string
-		// Description is the chart description.
+		Name        string
 		Description string
-		// Version is the chart version.
-		Version string
-		// AppVersion is the application version.
-		AppVersion string
+		Version     string
+		AppVersion  string
 	}
 	// Values is the data map for values.yaml templating.
 	Values map[string]any
@@ -88,10 +77,8 @@ func GenerateReleaseName(projectName, environmentName string) string {
 }
 
 // PrepareChart expands the embedded chart into a temporary directory,
-// rendering .gotmpl files with Go templates and Sprig functions. It returns
-// the prepared chart root directory. Uses caching to avoid regenerating
-// identical charts. When resolved is non-nil it is threaded into
-// [MapSpecToChartValues] so TLS and hostname values come from the platform.
+// rendering .gotmpl files with Go templates and Sprig functions, and returns
+// the prepared chart root directory (cached across calls for identical charts).
 func PrepareChart(ctx context.Context, manifest *spec.Spec, desiredEnvironment string, resolved *spec.ResolvedSpec) (string, error) {
 	// Generate comprehensive cache key based on resolved spec (or raw spec if
 	// no platform resolution was performed) and embedded chart templates.
@@ -100,7 +87,6 @@ func PrepareChart(ctx context.Context, manifest *spec.Spec, desiredEnvironment s
 		return "", fmt.Errorf("failed to generate cache key: %w", err)
 	}
 
-	// Try to get cached chart first
 	if cachedPath, found := GetCachedChart(cacheKey); found {
 		// Return a copy of the cached chart to avoid conflicts with cleanup
 		return CreateChartCopy(cachedPath)
@@ -168,11 +154,7 @@ func PrepareChart(ctx context.Context, manifest *spec.Spec, desiredEnvironment s
 			return nil
 		}
 
-		// If the file is inside the templates directory, prepend "_" to the file name
-		// for files with .yaml, .tpl, or .txt extensions (excluding .gotmpl or any other templates)
-		// This is needed because go:embed does not include files starting with "_", but Helm expects them.
-		// We want to ensure that when rendering the chart, files like "_helpers.tpl" or "_NOTES.txt" are present.
-		// This logic only applies to files directly under a "templates" directory.
+		// Prepend "_" so Helm sees files go:embed excludes (those starting with "_").
 		if strings.Contains(path, "templates/") {
 			ext := filepath.Ext(d.Name())
 			base := strings.TrimSuffix(d.Name(), ext)
@@ -191,12 +173,10 @@ func PrepareChart(ctx context.Context, manifest *spec.Spec, desiredEnvironment s
 		return "", fmt.Errorf("failed to expand embedded chart: %w", err)
 	}
 
-	// Create dynamic sub-charts for each component
 	if err = createComponentSubCharts(tmpDir, manifest); err != nil {
 		return "", fmt.Errorf("failed to create component sub-charts: %w", err)
 	}
 
-	// Create a values.yaml file that includes the values for each component
 	values, err := MapSpecToChartValues(manifest, desiredEnvironment, resolved)
 	if err != nil {
 		return "", fmt.Errorf("failed to map spec to chart values: %w", err)
@@ -210,10 +190,11 @@ func PrepareChart(ctx context.Context, manifest *spec.Spec, desiredEnvironment s
 		return "", fmt.Errorf("failed to write values.yaml: %w", writeErr)
 	}
 
-	// Cache the generated chart for future use
+	// tmpDir must never be handed out directly; return a copy so the cache
+	// entry survives caller cleanup.
 	SetCachedChart(cacheKey, tmpDir)
 
-	return tmpDir, nil
+	return CreateChartCopy(tmpDir)
 }
 
 // createComponentSubCharts creates sub-chart directories for each component
@@ -229,12 +210,10 @@ func createComponentSubCharts(chartDir string, manifest *spec.Spec) error {
 			return fmt.Errorf("failed to create component chart directory for %s: %w", componentName, err)
 		}
 
-		// Create Chart.yaml for the component
 		if err := createComponentChartYAML(componentChartDir, componentName); err != nil {
 			return fmt.Errorf("failed to create Chart.yaml for component %s: %w", componentName, err)
 		}
 
-		// Create templates directory and app.yaml
 		templatesDir := filepath.Join(componentChartDir, "templates")
 		if err := os.MkdirAll(templatesDir, 0o750); err != nil {
 			return fmt.Errorf("failed to create templates directory for component %s: %w", componentName, err)
@@ -270,11 +249,9 @@ func createComponentAppTemplate(templatesDir string) error {
 // block. Consumers must check this to handle future shape changes.
 const resolvedSchemaVersion = "1"
 
-// MapSpecToChartValues converts a spec into Helm chart values for the
-// given environment. When resolved is non-nil, it is used to look up the
-// resolved FQDN and TLS settings for components that declare an expose block.
-// It also writes a deployah.resolved block so the hostname guard can compare
-// values across deploys.
+// MapSpecToChartValues converts a spec into Helm chart values for the given
+// environment (resolved, if non-nil, supplies FQDN/TLS) and writes a
+// deployah.resolved block so the hostname guard can compare across deploys.
 func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string, resolved *spec.ResolvedSpec) (map[string]any, error) {
 	values := make(map[string]any)
 	// Track resolved per-component data for the deployah.resolved block.
@@ -305,13 +282,8 @@ func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string, resolved *spe
 		// TODO: Implement handling for component envFile
 		//   Exclude Deployah-specific environment variables (those prefixed with DPY_VAR_) and provide the remaining variables to the component
 
-		// TODO: Implement handling for component configFile
-		//   Use a deep merge to merge the component's configFile with the environment's configFile
-		//   Precedence:
-		//   - config.yaml (base)
-		//   - config.production.yaml (environment-specific)
-		//   - config.api.yaml (component-specific)
-		//   - config.api.production.yaml (environment and component-specific)
+		// TODO: Implement component configFile -- deep-merge config.yaml <
+		// config.<env>.yaml < config.<component>.yaml < config.<component>.<env>.yaml.
 
 		if component.Kind == spec.ComponentKindStateful {
 			// TODO: Add support for stateful components
@@ -326,22 +298,27 @@ func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string, resolved *spe
 		image := ""
 		tag := ""
 
-		// Parse container image reference (supports registry ports and digest references)
 		if component.Image != "" {
 			image, tag = parseContainerImage(component.Image)
 		}
 
 		resources := map[string]any{}
 
-		// Map spec-level resolved resources (defaults/presets applied already by spec package)
-		if (component.Resources.CPU != nil && *component.Resources.CPU != "") ||
-			(component.Resources.Memory != nil && *component.Resources.Memory != "") ||
-			(component.Resources.EphemeralStorage != nil && *component.Resources.EphemeralStorage != "") {
-			resources["requests"] = map[string]any{
-				"cpu":               ptr.Deref(component.Resources.CPU, ""),
-				"memory":            ptr.Deref(component.Resources.Memory, ""),
-				"ephemeral-storage": ptr.Deref(component.Resources.EphemeralStorage, ""),
-			}
+		// Map spec-level resolved resources (defaults/presets applied already by spec package).
+		// Only set the requests keys the spec actually provides: a field left
+		// unset is genuinely absent, not an empty-string request.
+		requests := map[string]any{}
+		if component.Resources.CPU != nil && *component.Resources.CPU != "" {
+			requests["cpu"] = *component.Resources.CPU
+		}
+		if component.Resources.Memory != nil && *component.Resources.Memory != "" {
+			requests["memory"] = *component.Resources.Memory
+		}
+		if component.Resources.EphemeralStorage != nil && *component.Resources.EphemeralStorage != "" {
+			requests["ephemeral-storage"] = *component.Resources.EphemeralStorage
+		}
+		if len(requests) > 0 {
+			resources["requests"] = requests
 		}
 
 		componentValues["resources"] = resources
@@ -354,7 +331,16 @@ func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string, resolved *spe
 					switch rc.TLSMode {
 					case spec.TLSModeSelfSigned:
 						ingressVals["tls"] = true
-						ingressVals["selfSigned"] = true
+						if len(rc.TLSCertPEM) == 0 || len(rc.TLSKeyPEM) == 0 {
+							return nil, fmt.Errorf("component %s: self-signed TLS certificate not materialized before render", componentName)
+						}
+						ingressVals["secrets"] = []map[string]any{
+							{
+								"name":        rc.FQDN + "-tls",
+								"certificate": string(rc.TLSCertPEM),
+								"key":         string(rc.TLSKeyPEM),
+							},
+						}
 					case spec.TLSModeSecretName:
 						ingressVals["tls"] = true
 						ingressVals["existingSecret"] = rc.TLSSecretName
@@ -410,7 +396,6 @@ func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string, resolved *spe
 			}
 		}
 
-		// Add health probes for service components.
 		if component.Role.IsService() {
 			maps.Copy(componentValues, buildProbeValues(component))
 		}
@@ -432,26 +417,8 @@ func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string, resolved *spe
 	return values, nil
 }
 
-// buildProbeValues constructs the Helm probe values for a service component.
-//
-// Rules:
-//   - Probes are only emitted for role: service components; callers must gate on
-//     the role before calling this function.
-//   - When health is nil (zero-config), all three probes use TCP on the named
-//     "http" port with the default timing constants.
-//   - When health.ready carries a path, the startup and readiness probes upgrade
-//     from TCP to HTTP on that path.
-//   - When health.alive carries a path, the liveness probe upgrades from TCP to
-//     HTTP on that path.
-//   - When health.ready.Disabled is true, the readiness probe is omitted. The
-//     startup probe is still emitted when the alive check is active.
-//   - When health.alive.Disabled is true, the liveness probe is omitted. The
-//     startup probe is still emitted when the ready check is active.
-//   - When both are disabled, no probes are emitted.
-//   - health.alive.interval and health.alive.restartAfter default to
-//     DefaultLivenessInterval / DefaultLivenessRestartAfter when absent.
-//     failureThreshold = ceil(restartAfter / interval), so the effective restart
-//     window is never shorter than the requested restartAfter.
+// buildProbeValues builds startup/readiness/liveness probe values from the
+// component's health config.
 func buildProbeValues(component spec.Component) map[string]any {
 	h := component.Health
 
@@ -573,11 +540,9 @@ func buildLivenessProbe(path, interval, restartAfter string) map[string]any {
 }
 
 // buildAutoscalingValues translates the spec Autoscaling configuration into
-// the Helm values map consumed by the embedded hpa.yaml template.
-//
-// Known metric types (cpu, memory) become the dedicated targetCPU / targetMemory
-// values so the template can emit the correct HPA v2 schema. When the same
-// type appears more than once, the last entry wins.
+// the Helm values map consumed by the embedded hpa.yaml template. Known
+// metric types (cpu, memory) become targetCPU/targetMemory; duplicates let
+// the last one win.
 func buildAutoscalingValues(a *spec.Autoscaling) map[string]any {
 	v := map[string]any{
 		"enabled":     true,

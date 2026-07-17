@@ -15,7 +15,6 @@ import (
 func DiscoverScenarios(scenariosDir string) ([]TestScenario, error) {
 	var scenarios []TestScenario
 
-	// Look for scenario directories
 	err := filepath.Walk(scenariosDir, func(path string, info os.FileInfo, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -26,13 +25,19 @@ func DiscoverScenarios(scenariosDir string) ([]TestScenario, error) {
 			return nil
 		}
 
-		// Check if this directory contains a deployah.yaml file
+		// plan-* directories hold plan-config.yaml scenarios (see
+		// plan_scenarios.go), not render/golden-file scenarios: skip them
+		// here so they never get treated as a render scenario missing its
+		// expected/ directory.
+		if strings.HasPrefix(info.Name(), "plan-") {
+			return nil
+		}
+
 		manifestPath := filepath.Join(path, "deployah.yaml")
 		if _, statErr := os.Stat(manifestPath); errors.Is(statErr, fs.ErrNotExist) {
 			return nil
 		}
 
-		// Create scenario from directory structure
 		scenarioName := info.Name()
 		scenario := TestScenario{
 			Name:         scenarioName,
@@ -66,7 +71,6 @@ func DiscoverScenarios(scenariosDir string) ([]TestScenario, error) {
 // detectErrorScenario detects scenarios that test error conditions using a
 // hybrid naming and config-file approach.
 func detectErrorScenario(scenario TestScenario, scenarioPath string) TestScenario {
-	// Check for error indicators in the scenario name
 	errorIndicators := []string{
 		"invalid-",
 		"error-",
@@ -77,17 +81,14 @@ func detectErrorScenario(scenario TestScenario, scenarioPath string) TestScenari
 
 	for _, indicator := range errorIndicators {
 		if strings.HasPrefix(scenario.Name, indicator) {
-			// This is an error scenario - set simple error expectation
 			scenario.ExpectError = true
 			scenario.ExpectedErrors = []string{"validation failed"} // Default specific error
 			break
 		}
 	}
 
-	// Check for custom error configuration file
 	errorConfigPath := filepath.Join(scenarioPath, "error-config.yaml")
 	if _, statErr := os.Stat(errorConfigPath); statErr == nil {
-		// Load custom error expectations
 		expectedErrors, loadErr := loadErrorConfig(errorConfigPath)
 		if loadErr == nil {
 			scenario.ExpectedErrors = expectedErrors
@@ -138,12 +139,10 @@ func findEnvFiles(scenariosDir, scenarioPath string) ([]string, error) {
 func LoadScenario(scenariosDir, scenarioName string) (*TestScenario, error) {
 	scenarioDir := filepath.Join(scenariosDir, scenarioName)
 
-	// Check if scenario directory exists
 	if _, err := os.Stat(scenarioDir); errors.Is(err, fs.ErrNotExist) {
 		return nil, fmt.Errorf("scenario directory not found: %s", scenarioDir)
 	}
 
-	// Check if deployah.yaml exists
 	manifestPath := filepath.Join(scenarioDir, "deployah.yaml")
 	if _, statErr := os.Stat(manifestPath); errors.Is(statErr, fs.ErrNotExist) {
 		return nil, fmt.Errorf("deployah.yaml not found in scenario: %s", scenarioName)
@@ -155,20 +154,17 @@ func LoadScenario(scenariosDir, scenarioName string) (*TestScenario, error) {
 		ManifestFile: "deployah.yaml",
 	}
 
-	// Look for environment files
 	envFiles, err := findEnvFiles(scenariosDir, scenarioDir)
 	if err != nil {
 		return nil, err
 	}
 	scenario.EnvFiles = envFiles
 
-	// Look for expected output directory
 	expectedDir := filepath.Join(scenarioDir, "expected")
 	if _, statErr := os.Stat(expectedDir); statErr == nil {
 		scenario.ExpectedDir = filepath.Join(scenarioName, "expected")
 	}
 
-	// Detect if this is an error scenario
 	*scenario = detectErrorScenario(*scenario, scenarioDir)
 
 	return scenario, nil

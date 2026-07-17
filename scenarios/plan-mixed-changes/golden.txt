@@ -1,0 +1,13 @@
+Project:     plan-mixed-changes
+Environment: dev
+Release:     plan-mixed-changes-dev
+Namespace:   default
+
++ Deployment/plan-mixed-changes-dev-api
+- Deployment/plan-mixed-changes-dev-legacy
+~ Deployment/plan-mixed-changes-dev-web
+    image: docker.io/library/nginx:1.25 -> docker.io/library/nginx:1.26
++ Service/plan-mixed-changes-dev-api
+- Service/plan-mixed-changes-dev-legacy
+
+Plan: 2 to add, 1 to change, 2 to destroy.

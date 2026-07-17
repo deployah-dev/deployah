@@ -688,7 +688,8 @@ These work with every command:
 | `deployah validate <environment>` | Also load the platform file and check the resolved configuration for that environment. |
 | `deployah resolve <environment>` | Preview the fully resolved hostname, TLS mode, and context, offline. Use `--output json` for machine-readable output. |
 | `deployah resolve --environments` | List every environment from both files: where it is registered, its context (or the kubeconfig fallback), domains, and overrides. |
-| `deployah deploy <environment>` | Deploy your project. Use `--dry-run` to render without installing, `--explain` to print the resolution report first, or `--force-hostname-change` to bypass the hostname guard. |
+| `deployah plan <environment>` | Preview what a deploy would change, without applying anything. Use `--offline` to render and validate with no cluster access, `--drift` to also compare against live cluster state, or `--output json` for CI. |
+| `deployah deploy <environment>` | Deploy your project. Shows the plan and asks for confirmation before applying; use `-y`/`--yes` to skip the prompt, `--reapply` to upgrade even with no changes, `--explain` to print the resolution report first, or `--force-hostname-change` to bypass the hostname guard. |
 | `deployah status <project>` | Show the status of a deployed project. Use `--detailed` for pod details, `-e` for an environment. |
 | `deployah logs <project>` | Stream logs. Filter with `--component`, `-e`, `--container`, `--since`, `--tail`. Use `--no-follow` for a one-off read. |
 | `deployah shell <project>` | Open a shell in a running container. Choose with `--component` and `--container`. |

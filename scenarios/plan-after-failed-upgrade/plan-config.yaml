@@ -1,0 +1,28 @@
+# previous.yaml stands in for revision 7, the last release that actually
+# applied (a since-abandoned revision 8 upgrade attempt is never
+# represented as a file here: BuildPlan would have walked past it and
+# landed on this same manifest, per plan.LastSuccessfulRelease). It also
+# carries live-object noise fields (resourceVersion, uid, generation,
+# creationTimestamp, managedFields, status, Helm/kubectl annotations) that
+# must not leak into the diff as phantom changes. deployah.yaml is the fix:
+# only the image tag differs.
+freshInstall: false
+
+changes:
+  - action: change
+    kind: Deployment
+    name: plan-after-failed-upgrade-dev-web
+    fields:
+      - path: spec.template.spec.containers.web.image
+        old: "docker.io/library/my-app:1.0.0"
+        new: "docker.io/library/my-app:1.0.1"
+
+summary:
+  add: 0
+  change: 1
+  destroy: 0
+
+# Documentary only: the real warning is computed by walking Helm release
+# history (plan.LastSuccessfulRelease), which needs a live or faked
+# release store this offline harness does not have. See history_test.go.
+warning: "revision 8"

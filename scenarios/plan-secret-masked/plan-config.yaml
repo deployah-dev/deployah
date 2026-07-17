@@ -1,0 +1,26 @@
+# Both stringData and data entries change; plan.ApplyMasking must flag
+# both as masked (kind-based masking: any field under a Secret's data or
+# stringData block), even though the diff itself always runs on the real
+# values first (see internal/plan/mask.go).
+freshInstall: false
+
+changes:
+  - action: change
+    kind: Secret
+    name: web-credentials
+    fields:
+      - path: stringData.DB_PASSWORD
+        old: "old-password"
+        new: "new-password"
+      - path: data.API_TOKEN
+        old: "b2xkLXRva2Vu"
+        new: "bmV3LXRva2Vu"
+
+summary:
+  add: 0
+  change: 1
+  destroy: 0
+
+masked:
+  - stringData.DB_PASSWORD
+  - data.API_TOKEN

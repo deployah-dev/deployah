@@ -106,13 +106,11 @@ func WithDebug(keep bool) Option {
 // Default storage driver is "secret" if not specified.
 // Default timeout is 5 minutes if not specified.
 func NewClient(opts ...Option) (*Client, error) {
-	// Set defaults
 	c := &Client{
 		storageDriver: "secret",
 		timeout:       5 * time.Minute,
 	}
 
-	// Apply all functional options
 	for _, opt := range opts {
 		opt(c)
 	}
@@ -147,7 +145,6 @@ func NewClient(opts ...Option) (*Client, error) {
 		settings.SetNamespace(c.namespace)
 	}
 
-	// Validate storage driver
 	validDrivers := map[string]bool{"secret": true, "configmap": true, "memory": true}
 	if !validDrivers[c.storageDriver] {
 		return nil, fmt.Errorf("invalid storage driver '%s': must be one of 'secret', 'configmap', or 'memory'", c.storageDriver)
@@ -164,11 +161,10 @@ func NewClient(opts ...Option) (*Client, error) {
 }
 
 // IsReachable reports whether the configured Kubernetes cluster is reachable.
-//
-// NOTE: this is also a workaround for helm/helm#32183. Helm v4.2.0 panics on
-// the second IsReachable call when the first one fails (typed-nil cached in
-// getKubeClient). Calling this once before InstallApp prevents InstallApp from
-// ever hitting the second call against a poisoned client.
+// Also works around helm/helm#32183: Helm v4.2.0 panics on a second
+// IsReachable call after the first one fails (typed-nil cached in
+// getKubeClient), so calling this once before InstallApp keeps InstallApp
+// from ever hitting that second call against a poisoned client.
 func (c *Client) IsReachable() error {
 	if err := c.config.KubeClient.IsReachable(); err != nil {
 		return fmt.Errorf("%w: %w", ErrClusterUnreachable, err)
@@ -176,11 +172,19 @@ func (c *Client) IsReachable() error {
 	return nil
 }
 
-// InstallApp installs or upgrades the app using the embedded chart. When
-// resolved is non-nil, platform-resolved values (FQDN, TLS mode) are used
-// instead of the raw spec fields.
+// InstallApp installs or upgrades the app using the embedded chart, using
+// resolved (if non-nil) for platform-resolved FQDN/TLS values. When dryRun
+// is true, it renders client-side via [Client.RenderManifests] instead of
+// touching the cluster.
 func (c *Client) InstallApp(ctx context.Context, manifest *spec.Spec, environment string, dryRun bool, resolved *spec.ResolvedSpec) error {
-	// Set comprehensive labels for better filtering
+	if dryRun {
+		_, cleanup, err := c.RenderManifests(ctx, manifest, environment, resolved)
+		if cleanup != nil {
+			defer cleanup()
+		}
+		return err
+	}
+
 	labels := map[string]string{
 		"deployah.dev/project":     manifest.Project,
 		"deployah.dev/environment": environment,
@@ -188,7 +192,6 @@ func (c *Client) InstallApp(ctx context.Context, manifest *spec.Spec, environmen
 		"deployah.dev/version":     manifest.APIVersion,
 	}
 
-	// Resolve chart path
 	chartPath, err := PrepareChart(ctx, manifest, environment, resolved)
 	if err != nil {
 		return fmt.Errorf("failed to prepare chart: %w", err)
@@ -206,30 +209,9 @@ func (c *Client) InstallApp(ctx context.Context, manifest *spec.Spec, environmen
 	// Values are empty for now, but will be populated later
 	values := map[string]any{}
 
-	// Load chart
 	ch, err := loader.Load(chartPath)
 	if err != nil {
 		return fmt.Errorf("failed to load chart: %w", err)
-	}
-
-	// For dry-run, always treat as install to avoid cluster connectivity issues
-	if dryRun {
-		install := action.NewInstall(c.config)
-		install.ReleaseName = GenerateReleaseName(manifest.Project, environment)
-		install.Namespace = c.settings.Namespace()
-		install.CreateNamespace = true
-		install.Timeout = c.timeout
-		install.WaitStrategy = kube.StatusWatcherStrategy
-		install.RollbackOnFailure = true
-		install.DryRunStrategy = action.DryRunClient
-		install.DisableHooks = true
-		install.DisableOpenAPIValidation = true
-		install.Labels = labels
-
-		if _, runErr := install.RunWithContext(ctx, ch, values); runErr != nil {
-			return c.wrapHelmError("install", GenerateReleaseName(manifest.Project, environment), runErr)
-		}
-		return nil
 	}
 
 	// Decide install vs upgrade by checking release history
@@ -239,7 +221,6 @@ func (c *Client) InstallApp(ctx context.Context, manifest *spec.Spec, environmen
 
 	if histErr != nil {
 		// Not found -> install. For other errors, proceed with install attempt as well
-		// Fresh install
 		install := action.NewInstall(c.config)
 		install.ReleaseName = GenerateReleaseName(manifest.Project, environment)
 		install.Namespace = c.settings.Namespace()
@@ -302,17 +283,13 @@ func (c *Client) GetRelease(ctx context.Context, project, environment string) (*
 	return releaserToV1(rel)
 }
 
-// DeleteRelease uninstalls the given release. When wait is false (the default)
-// it returns immediately after hooks complete, matching vanilla `helm uninstall`
-// behavior. When wait is true it blocks until all Kubernetes resources are
-// fully removed, using the legacy polling strategy (kube.LegacyStrategy) with
-// foreground cascade deletion.
-//
-// StatusWatcherStrategy is intentionally avoided for uninstall: it has a known
-// race condition where cluster-scoped resources (ClusterRole, ClusterRoleBinding,
-// ServiceAccount) are reported as Terminating indefinitely even after Kubernetes
-// has already deleted them, causing the call to block until timeout.
-// See https://github.com/helm/helm/issues/31766.
+// DeleteRelease uninstalls the given release. When wait is false (the
+// default) it returns right after hooks complete, matching vanilla `helm
+// uninstall`. When wait is true it blocks until all resources are removed,
+// via the legacy polling strategy with foreground cascade deletion --
+// StatusWatcherStrategy is avoided here because it can report cluster-scoped
+// resources as Terminating forever after Kubernetes already deleted them
+// (helm/helm#31766).
 func (c *Client) DeleteRelease(ctx context.Context, project, environment string, wait bool) error {
 	if project == "" || environment == "" {
 		return errors.New("project or environment cannot be empty")
@@ -346,8 +323,11 @@ func (c *Client) GetReleaseHistory(ctx context.Context, project, environment str
 
 	releaseName := GenerateReleaseName(project, environment)
 
+	// Helm's History action ignores Max in v4.2.1 (storage.Storage.History
+	// always returns every revision via an unfiltered label query), and
+	// InstallApp never sets Upgrade.MaxHistory, so Helm never prunes old
+	// revisions either: this always returns the release's complete history.
 	history := action.NewHistory(c.config)
-	history.Max = 10 // Get last 10 revisions
 	releases, err := history.Run(releaseName)
 	if err != nil {
 		return nil, c.wrapHelmError("history", releaseName, err)
@@ -372,20 +352,12 @@ func (c *Client) RollbackRelease(ctx context.Context, releaseName string, revisi
 	return nil
 }
 
-// releaserToV1 narrows a Helm v4 release.Releaser back to *v1.Release.
+// releaserToV1 narrows a Helm v4 release.Releaser back to *v1.Release. The v2
+// release type it could also carry is internal to Helm and not importable
+// here, so every Releaser we get today is in practice a *v1.Release.
 //
-// As of helm.sh/helm/v4 v4.2.0 the action package returns release.Releaser
-// (aliased to `any`) so it can later carry the v2 release type alongside
-// v1. The v2 type currently lives under helm.sh/helm/v4/internal/release/v2
-// and is not importable from outside Helm, so every Releaser handed to us
-// today is in practice a *v1.Release.
-//
-// Mirrors helm.sh/helm/v4/pkg/cmd/root.go:releaserToV1Release, which is the
-// pattern the upstream `helm` CLI uses for the same downcast.
-//
-// TODO(deployah): revisit once helm.sh/helm/v4/pkg/release/v2 is exported,
-// at which point we should expose a richer interface to our callers instead
-// of forcing v1.
+// TODO(deployah): revisit once helm.sh/helm/v4/pkg/release/v2 is exported, at
+// which point we should expose a richer interface instead of forcing v1.
 func releaserToV1(r release.Releaser) (*v1.Release, error) {
 	switch rel := r.(type) {
 	case *v1.Release:

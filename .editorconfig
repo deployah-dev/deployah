@@ -1,4 +1,4 @@
-# This .editorconfig file defines the coding style and formatting rules for the project.
+# This .editorconfig file defines the coding style and formatting rules for your project.
 # It ensures consistent code formatting across different editors and development environments.
 root = true
 
@@ -17,3 +17,4 @@ tab_width = 4
 
 [*.{yml,yaml,yml.gotmpl,yaml.gotmpl}]
 indent_size = 2
+indent_style = space

@@ -24,9 +24,9 @@ import (
 	"nabat.dev/nabat"
 
 	"deployah.dev/deployah/internal/k8s"
+	"deployah.dev/deployah/internal/readiness"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 const (
@@ -35,27 +35,13 @@ const (
 	finalRefreshTimeout = 10 * time.Second
 )
 
-// ComponentStatus summarizes pod readiness for one Deployah component
-// at the end of a deploy.
-type ComponentStatus struct {
-	// Name is the component name from the Deployah spec.
-	Name string
-	// ReadyPods is the number of pods that passed readiness checks.
-	ReadyPods int
-	// TotalPods is the total number of pods for this component.
-	TotalPods int
-}
+// ComponentStatus summarizes pod readiness for one Deployah component at
+// the end of a deploy. Alias for [readiness.ComponentStatus].
+type ComponentStatus = readiness.ComponentStatus
 
-// DeployWatcher observes Kubernetes events and pod readiness during a
-// Helm deploy. It feeds a live status view to a [nabat.Status] and
-// collects warning events for post-deploy reporting.
-//
-// Create with [NewDeployWatcher], start with [DeployWatcher.Run], then
-// read results with [DeployWatcher.Warnings] and [DeployWatcher.Summary]
-// after Run returns.
-//
-// DeployWatcher is not safe for concurrent use. Call Run from exactly
-// one goroutine; call Warnings and Summary only after Run returns.
+// DeployWatcher observes Kubernetes events and pod readiness during a Helm
+// deploy, feeding a live status view to a [nabat.Status]. Not safe for
+// concurrent use; call Run once, and read Warnings/Summary after Run returns.
 type DeployWatcher struct {
 	k8sClient   kubernetes.Interface
 	namespace   string
@@ -84,10 +70,8 @@ type headerUpdater interface {
 	SetTitle(string)
 }
 
-// Run watches events and polls pod status until ctx is canceled.
-// It updates st with keyed status rows on each change. Run blocks
-// until ctx is canceled and is intended to be called in a dedicated
-// goroutine.
+// Run watches events and polls pod status until ctx is canceled, updating
+// st with keyed status rows. Intended to run in a dedicated goroutine.
 func (w *DeployWatcher) Run(ctx context.Context, st *nabat.Status) {
 	eventCh, err := k8s.WatchDeployEvents(ctx, w.k8sClient, w.namespace, w.releaseName)
 	if err != nil {
@@ -156,10 +140,7 @@ func (w *DeployWatcher) trackWarning(ev k8s.DeployEvent) {
 	w.warnings = append(w.warnings, ev)
 }
 
-// pushRow adds or updates the Nabat status row for ev. The event UID is
-// used as the row key for dedup only and is not displayed (Label is set to
-// suppress the key column). Cells are REASON, OBJECT, MESSAGE in that order.
-// Warning events use Warn(), normal events use Done().
+// pushRow adds or updates the Nabat status row for ev.
 func (w *DeployWatcher) pushRow(st *nabat.Status, ev k8s.DeployEvent) {
 	msg := ev.Message
 	if ev.Count > 1 {
@@ -191,13 +172,9 @@ func (w *DeployWatcher) updateTitle(st headerUpdater) {
 	st.SetTitle(fmt.Sprintf("pods %d/%d ready", ready, total))
 }
 
-// finalRefresh polls pod readiness in a loop until all pods are ready
-// or finalRefreshTimeout elapses. It updates the status title after
-// each poll and sets the completion to RowWarning if pods are still
-// not fully ready when the timeout expires.
-//
-// Called after the parent ctx is already canceled, hence the
-// independent timeout.
+// finalRefresh polls pod readiness until all pods are ready or
+// finalRefreshTimeout elapses, marking RowWarning on timeout. Called after
+// the parent ctx is already canceled, hence the independent timeout.
 func (w *DeployWatcher) finalRefresh(st *nabat.Status) {
 	deadline := time.After(finalRefreshTimeout)
 	ticker := time.NewTicker(finalRefreshPoll)
@@ -226,73 +203,19 @@ func (w *DeployWatcher) finalRefresh(st *nabat.Status) {
 func (w *DeployWatcher) allReady() bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if len(w.summary) == 0 {
-		return false
-	}
-	for _, s := range w.summary {
-		if s.ReadyPods < s.TotalPods {
-			return false
-		}
-	}
-	return true
+	return readiness.AllReady(w.summary)
 }
 
-// refreshPodStatus lists pods for the release and updates the per-component
-// summary. Errors are silently ignored so the watcher stays passive.
+// refreshPodStatus polls pods for the release via [readiness.Poll] and
+// updates the per-component summary. Errors are silently ignored so the
+// watcher stays passive.
 func (w *DeployWatcher) refreshPodStatus(ctx context.Context) {
-	pods, err := w.k8sClient.CoreV1().Pods(w.namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: "app.kubernetes.io/instance=" + w.releaseName,
-	})
-	if err != nil || pods == nil {
+	statuses, err := readiness.Poll(ctx, w.k8sClient, w.namespace, w.releaseName)
+	if err != nil {
 		return
-	}
-
-	type counts struct{ ready, total int }
-	byComponent := make(map[string]*counts)
-
-	for _, pod := range pods.Items {
-		comp := pod.Labels[k8s.ComponentLabel]
-		if comp == "" {
-			comp = pod.Labels["app.kubernetes.io/component"]
-		}
-		if comp == "" {
-			comp = w.releaseName
-		}
-
-		c := byComponent[comp]
-		if c == nil {
-			c = &counts{}
-			byComponent[comp] = c
-		}
-		c.total++
-
-		if isPodReady(&pod) {
-			c.ready++
-		}
 	}
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
-
-	w.summary = make([]ComponentStatus, 0, len(byComponent))
-	for name, c := range byComponent {
-		w.summary = append(w.summary, ComponentStatus{
-			Name:      name,
-			ReadyPods: c.ready,
-			TotalPods: c.total,
-		})
-	}
-}
-
-// isPodReady reports whether a pod is running and all containers are ready.
-func isPodReady(pod *corev1.Pod) bool {
-	if pod.Status.Phase != corev1.PodRunning {
-		return false
-	}
-	for _, cs := range pod.Status.ContainerStatuses {
-		if !cs.Ready {
-			return false
-		}
-	}
-	return true
+	w.summary = statuses
 }

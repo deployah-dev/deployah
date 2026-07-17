@@ -1,0 +1,13 @@
+# See previous.yaml: this is the raw "current" manifest, read directly
+# instead of rendering deployah.yaml (which cannot produce a Secret from
+# today's spec).
+apiVersion: v1
+kind: Secret
+metadata:
+  name: web-credentials
+  namespace: default
+type: Opaque
+stringData:
+  DB_PASSWORD: new-password
+data:
+  API_TOKEN: bmV3LXRva2Vu

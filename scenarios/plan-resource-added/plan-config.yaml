@@ -1,0 +1,17 @@
+# deployah.yaml adds a new "api" component on top of before.yaml's single
+# "web" component: both of its resources (Deployment and Service) show as
+# additions, and the untouched web component produces no change at all.
+freshInstall: false
+
+changes:
+  - action: add
+    kind: Deployment
+    name: plan-resource-added-dev-api
+  - action: add
+    kind: Service
+    name: plan-resource-added-dev-api
+
+summary:
+  add: 2
+  change: 0
+  destroy: 0

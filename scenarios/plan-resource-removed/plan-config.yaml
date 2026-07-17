@@ -1,0 +1,17 @@
+# deployah.yaml drops the "api" component that before.yaml had: both of
+# its resources (Deployment and Service) show as destroys, and the
+# untouched web component produces no change at all.
+freshInstall: false
+
+changes:
+  - action: destroy
+    kind: Deployment
+    name: plan-resource-removed-dev-api
+  - action: destroy
+    kind: Service
+    name: plan-resource-removed-dev-api
+
+summary:
+  add: 0
+  change: 0
+  destroy: 2

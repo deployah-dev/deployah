@@ -1,0 +1,14 @@
+# Raw manifests: the deployah.yaml spec has no field that produces a
+# Secret resource today (see internal/spec/types.go's Component struct),
+# so this scenario diffs two raw Secret manifests directly instead of
+# rendering deployah.yaml for its current side. See current.yaml.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: web-credentials
+  namespace: default
+type: Opaque
+stringData:
+  DB_PASSWORD: old-password
+data:
+  API_TOKEN: b2xkLXRva2Vu

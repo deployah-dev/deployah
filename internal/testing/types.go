@@ -5,9 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -41,7 +41,15 @@ func getTestScenariosDir() string {
 
 	for _, path := range possiblePaths {
 		if _, err := os.Stat(path); err == nil {
-			return path
+			// Resolve to absolute now: callers later t.Chdir into a
+			// per-scenario temp directory, which would break a relative
+			// path silently (os.Stat just fails and the caller skips
+			// golden-file comparison without reporting anything).
+			abs, absErr := filepath.Abs(path)
+			if absErr != nil {
+				return path
+			}
+			return abs
 		}
 	}
 
@@ -91,20 +99,17 @@ func NewIntegrationTestSuite(t *testing.T) *IntegrationTestSuite {
 func (suite *IntegrationTestSuite) RunScenarioTest(t *testing.T, scenario TestScenario) {
 	t.Helper()
 	t.Run(scenario.Name, func(t *testing.T) {
-		// Setup test environment by copying scenario files to a temporary directory
 		testDir := suite.setupScenarioEnvironment(t, scenario)
 
 		t.Chdir(testDir)
 
 		// Phase 1: Load and validate manifest
-		manifest, err := suite.loadManifest(t, scenario.ManifestFile)
+		manifest, environment, err := suite.loadManifest(t, scenario.ManifestFile, scenario.Environment)
 
 		// Hybrid error checking approach
 		if scenario.ExpectError || len(scenario.ExpectedErrors) > 0 {
-			// This is an error scenario - we EXPECT an error
 			require.Error(t, err)
 
-			// If specific errors are expected, check them
 			if len(scenario.ExpectedErrors) > 0 {
 				for _, expectedErr := range scenario.ExpectedErrors {
 					assert.Contains(t, err.Error(), expectedErr)
@@ -113,26 +118,19 @@ func (suite *IntegrationTestSuite) RunScenarioTest(t *testing.T, scenario TestSc
 			return // Don't proceed to chart generation
 		}
 
-		// Normal scenario - should NOT have errors
 		require.NoError(t, err)
 
-		// Phase 2: Generate Helm chart and values
-		chartPath, err := suite.generateChart(t, manifest, scenario.Environment)
-		require.NoError(t, err)
-		t.Cleanup(func() {
-			require.NoError(t, os.RemoveAll(chartPath))
-		})
-
-		// Phase 3: Render Kubernetes manifests
-		renderedManifests, err := suite.renderManifests(t, chartPath)
+		// Phase 2 & 3: Generate the Helm chart and render it to Kubernetes manifests
+		renderedManifests, err := suite.renderChart(t, manifest, environment)
 		require.NoError(t, err)
 
 		// Phase 4: Validate against expected output
 		if scenario.ExpectedDir != "" {
 			expectedPath := filepath.Join(suite.ScenariosDir, scenario.ExpectedDir)
-			if _, statErr := os.Stat(expectedPath); statErr == nil {
-				suite.validateAgainstExpected(t, renderedManifests, scenario.ExpectedDir)
+			if _, statErr := os.Stat(expectedPath); statErr != nil {
+				t.Fatalf("expected output directory %s vanished after discovery: %v", expectedPath, statErr)
 			}
+			suite.validateAgainstExpected(t, renderedManifests, scenario.ExpectedDir)
 		}
 
 		// Phase 5: Save rendered manifests for inspection (only in verbose mode)
@@ -155,7 +153,6 @@ func (suite *IntegrationTestSuite) setupScenarioEnvironment(t *testing.T, scenar
 	err = copyFile(manifestSrc, manifestDst)
 	require.NoError(t, err)
 
-	// Copy environment files
 	for _, envFile := range scenario.EnvFiles {
 		envSrc := filepath.Join(suite.ScenariosDir, scenario.ScenarioDir, envFile)
 		envDst := filepath.Join(testDir, filepath.Base(envFile))
@@ -166,70 +163,65 @@ func (suite *IntegrationTestSuite) setupScenarioEnvironment(t *testing.T, scenar
 	return testDir
 }
 
-// loadManifest loads a manifest from the current directory
-func (suite *IntegrationTestSuite) loadManifest(t *testing.T, manifestFile string) (*spec.Spec, error) {
+// loadManifest loads a manifest from the current directory and resolves the
+// environment to render, mirroring [spec.Load]'s auto-selection so the caller
+// renders the same environment the spec actually validated against.
+func (suite *IntegrationTestSuite) loadManifest(t *testing.T, manifestFile, desiredEnv string) (*spec.Spec, string, error) {
 	t.Helper()
 	ctx := context.Background()
-	return spec.Load(ctx, "deployah.yaml", "", nil)
+	manifest, err := spec.Load(ctx, manifestFile, desiredEnv, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	envName, _, err := spec.ResolveEnvironment(manifest.Environments, nil, desiredEnv)
+	if err != nil {
+		return nil, "", err
+	}
+	return manifest, envName, nil
 }
 
-// generateChart generates the Helm chart from the manifest
-func (suite *IntegrationTestSuite) generateChart(t *testing.T, manifest *spec.Spec, environment string) (string, error) {
+// renderChart renders manifest/environment through Helm's real template
+// engine via [helm.Client.RenderOffline] (no cluster access, matching
+// `deployah plan --offline`), returning the resulting Kubernetes objects.
+func (suite *IntegrationTestSuite) renderChart(t *testing.T, manifest *spec.Spec, environment string) ([]unstructured.Unstructured, error) {
 	t.Helper()
-	ctx := context.Background()
-	return helm.PrepareChart(ctx, manifest, environment, nil)
-}
 
-// renderManifests renders the Kubernetes manifests from the Helm chart
-func (suite *IntegrationTestSuite) renderManifests(t *testing.T, chartPath string) ([]unstructured.Unstructured, error) {
-	t.Helper()
-	return suite.renderWithHelm(t, chartPath)
-}
-
-// renderWithHelm uses Helm to render templates to Kubernetes manifests
-func (suite *IntegrationTestSuite) renderWithHelm(t *testing.T, chartPath string) ([]unstructured.Unstructured, error) {
-	t.Helper()
-	var manifests []unstructured.Unstructured
-
-	templatesDir := filepath.Join(chartPath, "templates")
-	if _, err := os.Stat(templatesDir); errors.Is(err, fs.ErrNotExist) {
-		return manifests, nil
+	client, err := helm.NewClient()
+	if err != nil {
+		return nil, fmt.Errorf("create helm client: %w", err)
 	}
 
-	err := filepath.Walk(templatesDir, func(path string, info os.FileInfo, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
+	result, cleanup, err := client.RenderOffline(context.Background(), manifest, environment, nil)
+	if cleanup != nil {
+		t.Cleanup(cleanup)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("render chart: %w", err)
+	}
 
-		if !strings.HasSuffix(path, ".yaml") && !strings.HasSuffix(path, ".yml") {
-			return nil
-		}
+	return parseManifestYAML(result.Manifest)
+}
 
-		content, err := os.ReadFile(path) // #nosec G304,G122 -- path from filepath.Walk in chart templates dir
-		if err != nil {
-			return err
-		}
+// parseManifestYAML decodes a "---"-concatenated Kubernetes YAML string
+// into unstructured objects, skipping empty documents.
+func parseManifestYAML(content string) ([]unstructured.Unstructured, error) {
+	var manifests []unstructured.Unstructured
 
-		// Parse YAML documents
-		decoder := yamlutil.NewYAMLOrJSONDecoder(strings.NewReader(string(content)), 4096)
-		for {
-			var obj unstructured.Unstructured
-			if decodeErr := decoder.Decode(&obj); decodeErr != nil {
-				if errors.Is(decodeErr, io.EOF) {
-					break
-				}
-				continue // Skip invalid YAML
+	decoder := yamlutil.NewYAMLOrJSONDecoder(strings.NewReader(content), 4096)
+	for {
+		var obj unstructured.Unstructured
+		if err := decoder.Decode(&obj); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
 			}
-
-			if obj.Object != nil {
-				manifests = append(manifests, obj)
-			}
+			return manifests, fmt.Errorf("decoding manifest YAML: %w", err)
 		}
+		if obj.Object != nil {
+			manifests = append(manifests, obj)
+		}
+	}
 
-		return nil
-	})
-
-	return manifests, err
+	return manifests, nil
 }
 
 // validateAgainstExpected validates rendered manifests against expected files
@@ -237,11 +229,9 @@ func (suite *IntegrationTestSuite) validateAgainstExpected(t *testing.T, manifes
 	t.Helper()
 	expectedPath := filepath.Join(suite.ScenariosDir, expectedDir)
 
-	// Load expected manifests
 	expectedManifests, err := suite.loadExpectedManifests(expectedPath)
 	require.NoError(t, err)
 
-	// Create maps for comparison
 	actualMap := make(map[string]unstructured.Unstructured)
 	for _, manifest := range manifests {
 		key := fmt.Sprintf("%s/%s", manifest.GetKind(), manifest.GetName())
@@ -254,7 +244,6 @@ func (suite *IntegrationTestSuite) validateAgainstExpected(t *testing.T, manifes
 		expectedMap[key] = manifest
 	}
 
-	// Compare manifests
 	for key, expected := range expectedMap {
 		actual, exists := actualMap[key]
 		if !exists {
@@ -290,21 +279,11 @@ func (suite *IntegrationTestSuite) loadExpectedManifests(expectedDir string) ([]
 			return err
 		}
 
-		// Parse YAML documents
-		decoder := yamlutil.NewYAMLOrJSONDecoder(strings.NewReader(string(content)), 4096)
-		for {
-			var obj unstructured.Unstructured
-			if decodeErr := decoder.Decode(&obj); decodeErr != nil {
-				if errors.Is(decodeErr, io.EOF) {
-					break
-				}
-				continue // Skip invalid YAML
-			}
-
-			if obj.Object != nil {
-				manifests = append(manifests, obj)
-			}
+		fileManifests, err := parseManifestYAML(string(content))
+		if err != nil {
+			return fmt.Errorf("%s: %w", path, err)
 		}
+		manifests = append(manifests, fileManifests...)
 
 		return nil
 	})
@@ -315,25 +294,21 @@ func (suite *IntegrationTestSuite) loadExpectedManifests(expectedDir string) ([]
 // compareManifests compares two Kubernetes manifests
 func (suite *IntegrationTestSuite) compareManifests(t *testing.T, actual, expected unstructured.Unstructured, key string) {
 	t.Helper()
-	// Compare basic metadata
 	assert.Equal(t, expected.GetKind(), actual.GetKind(), "Kind mismatch for %s", key)
 	assert.Equal(t, expected.GetName(), actual.GetName(), "Name mismatch for %s", key)
 
-	// Compare labels
 	actualLabels := actual.GetLabels()
 	expectedLabels := expected.GetLabels()
 	for k, v := range expectedLabels {
 		assert.Equal(t, v, actualLabels[k], "Label %s mismatch for %s", k, key)
 	}
 
-	// Compare annotations
 	actualAnnotations := actual.GetAnnotations()
 	expectedAnnotations := expected.GetAnnotations()
 	for k, v := range expectedAnnotations {
 		assert.Equal(t, v, actualAnnotations[k], "Annotation %s mismatch for %s", k, key)
 	}
 
-	// Compare spec (basic comparison)
 	actualSpec, actualFound, err := unstructured.NestedMap(actual.Object, "spec")
 	require.NoError(t, err)
 	expectedSpec, expectedFound, err := unstructured.NestedMap(expected.Object, "spec")
@@ -345,7 +320,9 @@ func (suite *IntegrationTestSuite) compareManifests(t *testing.T, actual, expect
 	}
 }
 
-// compareSpecs compares the spec sections of two manifests
+// compareSpecs compares the spec sections of two manifests, recursing into
+// nested maps and slices instead of comparing them with `!=` (which panics
+// at runtime for map/slice-typed interface values).
 func (suite *IntegrationTestSuite) compareSpecs(t *testing.T, actual, expected map[string]any, resourceName string) {
 	t.Helper()
 	for key, expectedValue := range expected {
@@ -354,10 +331,50 @@ func (suite *IntegrationTestSuite) compareSpecs(t *testing.T, actual, expected m
 			t.Errorf("Missing spec field '%s' in resource %s", key, resourceName)
 			continue
 		}
+		compareValues(t, actualValue, expectedValue, fmt.Sprintf("%s.spec.%s", resourceName, key))
+	}
+}
 
-		// Basic comparison - you might want to expand this
-		if expectedValue != actualValue {
-			t.Errorf("Spec field '%s' mismatch in %s: expected %v, got %v", key, resourceName, expectedValue, actualValue)
+// compareValues deep-compares an actual/expected pair from decoded YAML
+// (map[string]any, []any, or a scalar), recursing field-by-field so a
+// mismatch anywhere reports its exact dotted/indexed path instead of
+// comparing whole maps or slices with `!=`, which panics at runtime for
+// non-comparable dynamic types.
+func compareValues(t *testing.T, actual, expected any, path string) {
+	t.Helper()
+	switch expectedTyped := expected.(type) {
+	case map[string]any:
+		actualTyped, ok := actual.(map[string]any)
+		if !ok {
+			t.Errorf("%s: expected a map, got %T (%v)", path, actual, actual)
+			return
+		}
+		for key, expectedValue := range expectedTyped {
+			actualValue, exists := actualTyped[key]
+			if !exists {
+				t.Errorf("Missing field '%s'", path+"."+key)
+				continue
+			}
+			compareValues(t, actualValue, expectedValue, path+"."+key)
+		}
+
+	case []any:
+		actualTyped, ok := actual.([]any)
+		if !ok {
+			t.Errorf("%s: expected a list, got %T (%v)", path, actual, actual)
+			return
+		}
+		if len(actualTyped) != len(expectedTyped) {
+			t.Errorf("%s: length mismatch: expected %d, got %d", path, len(expectedTyped), len(actualTyped))
+			return
+		}
+		for i, expectedValue := range expectedTyped {
+			compareValues(t, actualTyped[i], expectedValue, fmt.Sprintf("%s[%d]", path, i))
+		}
+
+	default:
+		if !reflect.DeepEqual(actual, expected) {
+			t.Errorf("%s mismatch: expected %v, got %v", path, expected, actual)
 		}
 	}
 }
@@ -375,7 +392,6 @@ func (suite *IntegrationTestSuite) saveRenderedManifests(t *testing.T, manifests
 		filename := fmt.Sprintf("%s-%s.yaml", kind, name)
 		filepath := filepath.Join(outputDir, filename)
 
-		// Convert to YAML
 		data, marshalErr := yaml.Marshal(manifest.Object)
 		require.NoError(t, marshalErr)
 

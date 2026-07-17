@@ -20,14 +20,15 @@ import (
 
 	"k8s.io/apimachinery/pkg/labels"
 
+	"deployah.dev/deployah/internal/render"
 	"deployah.dev/deployah/internal/spec"
 
 	v1 "helm.sh/helm/v4/pkg/release/v1"
 )
 
-// HelmClient defines the interface for Helm operations.
-// It is kept in this package so [WithHelmFactory] tests can inject a mock
-// without importing the concrete helm package.
+// HelmClient is kept in this package so [WithHelmFactory] tests can inject a
+// mock implementation without importing the concrete helm package. Render
+// methods return [render.RenderResult] for the same reason.
 type HelmClient interface {
 	// IsReachable checks whether the configured Kubernetes cluster is reachable.
 	IsReachable() error
@@ -36,6 +37,16 @@ type HelmClient interface {
 	// is non-nil, TLS and hostname values are sourced from it rather than the
 	// raw spec.
 	InstallApp(ctx context.Context, manifest *spec.Spec, environment string, dryRun bool, resolved *spec.ResolvedSpec) error
+
+	// RenderManifests renders the chart for manifest/environment client-side,
+	// without mutating the cluster or Helm's release history. The caller must
+	// run the returned cleanup func once done with the result's ChartPath.
+	RenderManifests(ctx context.Context, manifest *spec.Spec, environment string, resolved *spec.ResolvedSpec) (*render.RenderResult, func(), error)
+
+	// RenderOffline renders the chart for manifest/environment as a fresh
+	// install, without any Kubernetes API access. The caller must run the
+	// returned cleanup func once done with the result's ChartPath.
+	RenderOffline(ctx context.Context, manifest *spec.Spec, environment string, resolved *spec.ResolvedSpec) (*render.RenderResult, func(), error)
 
 	// DeleteRelease uninstalls a Helm release. When wait is true the call
 	// blocks until all resources are fully removed using the legacy polling

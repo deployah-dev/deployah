@@ -4,7 +4,7 @@ Deploy a project to a Kubernetes cluster on a given environment
 
 ### Synopsis
 
-Deploy a project to a Kubernetes cluster on a given environment.
+Deploy a project to a Kubernetes cluster on a given environment. Shows what would change and asks for confirmation before applying, unless --yes is set.
 
 ```text
 deployah deploy <environment> [flags]
@@ -13,9 +13,10 @@ deployah deploy <environment> [flags]
 ### Options
 
 ```text
-      --dry-run                 Perform a dry run (render templates without installing)
       --explain                 Print the resolution report before cluster checks (visible even when cluster is unreachable)
       --force-hostname-change   Allow changing the resolved hostname even though it may break existing traffic (skips the hostname guard)
+      --reapply                 Upgrade the release even when the plan shows no changes
+  -y, --yes                     Apply without an interactive confirmation prompt
 ```
 
 ### Options inherited from parent commands

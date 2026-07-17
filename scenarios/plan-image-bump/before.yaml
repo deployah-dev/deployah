@@ -1,0 +1,11 @@
+# $schema: ../../internal/spec/schema/v1-alpha.2/manifest.json
+apiVersion: v1-alpha.2
+project: plan-image-bump
+components:
+  web:
+    image: nginx:1.25
+    port: 8080
+    environments: [dev]
+    resourcePreset: small
+environments:
+  dev: {}

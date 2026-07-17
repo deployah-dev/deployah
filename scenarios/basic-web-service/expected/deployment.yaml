@@ -1,51 +1,78 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: basic-web-service-dev
-  labels:
-    deployah.dev/project: basic-web-service
-    deployah.dev/component: web
-    deployah.dev/environment: dev
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      deployah.dev/project: basic-web-service
-      deployah.dev/component: web
-      deployah.dev/environment: dev
-  template:
-    metadata:
-      labels:
-        deployah.dev/project: basic-web-service
+    labels:
+        app.kubernetes.io/instance: basic-web-service-dev
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: web
         deployah.dev/component: web
         deployah.dev/environment: dev
-    spec:
-      containers:
-      - name: web
-        image: nginx:latest
-        ports:
-        - name: http
-          containerPort: 8080
-          protocol: TCP
-        startupProbe:
-          tcpSocket:
-            port: http
-          periodSeconds: 5
-          failureThreshold: 36
-          timeoutSeconds: 3
-        readinessProbe:
-          tcpSocket:
-            port: http
-          periodSeconds: 5
-          failureThreshold: 3
-          timeoutSeconds: 3
-        livenessProbe:
-          tcpSocket:
-            port: http
-          periodSeconds: 10
-          failureThreshold: 6
-          timeoutSeconds: 3
-        resources:
-          requests:
-            cpu: 100m
-            memory: 128Mi
+        deployah.dev/project: basic-web-service
+        helm.sh/chart: web-0.1.0
+    name: basic-web-service-dev
+    namespace: default
+spec:
+    replicas: 1
+    revisionHistoryLimit: 10
+    selector:
+        matchLabels:
+            app.kubernetes.io/instance: basic-web-service-dev
+            app.kubernetes.io/name: web
+    strategy:
+        type: RollingUpdate
+    template:
+        metadata:
+            annotations: null
+            labels:
+                app.kubernetes.io/instance: basic-web-service-dev
+                app.kubernetes.io/managed-by: Helm
+                app.kubernetes.io/name: web
+                deployah.dev/component: web
+                deployah.dev/environment: dev
+                deployah.dev/project: basic-web-service
+                helm.sh/chart: web-0.1.0
+        spec:
+            affinity:
+                podAntiAffinity:
+                    preferredDuringSchedulingIgnoredDuringExecution:
+                        - podAffinityTerm:
+                              labelSelector:
+                                  matchLabels:
+                                      app.kubernetes.io/instance: basic-web-service-dev
+                                      app.kubernetes.io/name: web
+                              topologyKey: kubernetes.io/hostname
+                          weight: 1
+            containers:
+                - image: docker.io/library/nginx:latest
+                  imagePullPolicy: Always
+                  livenessProbe:
+                      failureThreshold: 6
+                      periodSeconds: 10
+                      tcpSocket:
+                          port: http
+                      timeoutSeconds: 3
+                  name: web
+                  ports:
+                      - containerPort: 8080
+                        name: http
+                        protocol: TCP
+                  readinessProbe:
+                      failureThreshold: 3
+                      periodSeconds: 5
+                      tcpSocket:
+                          port: http
+                      timeoutSeconds: 3
+                  resources:
+                      limits: {}
+                      requests:
+                          cpu: 500m
+                          ephemeral-storage: 50Mi
+                          memory: 512Mi
+                  startupProbe:
+                      failureThreshold: 36
+                      periodSeconds: 5
+                      tcpSocket:
+                          port: http
+                      timeoutSeconds: 3
+            restartPolicy: Always
+            serviceAccountName: default

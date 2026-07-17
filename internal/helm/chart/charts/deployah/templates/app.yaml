@@ -17,7 +17,6 @@
 {{- end }}
 
 {{ include "deployah.tls.secrets" . }}
-{{ include "deployah.tls.selfsigned" . }}
 
 {{- if and .Values.ports .Values.service.ports }}
 {{ include "deployah.service" . }}

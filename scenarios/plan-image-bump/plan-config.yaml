@@ -1,0 +1,18 @@
+# before.yaml and deployah.yaml differ only in the web component's image
+# tag: a pure image bump on an existing Deployment, no other resources
+# affected.
+freshInstall: false
+
+changes:
+  - action: change
+    kind: Deployment
+    name: plan-image-bump-dev-web
+    fields:
+      - path: spec.template.spec.containers.web.image
+        old: "docker.io/library/nginx:1.25"
+        new: "docker.io/library/nginx:1.26"
+
+summary:
+  add: 0
+  change: 1
+  destroy: 0

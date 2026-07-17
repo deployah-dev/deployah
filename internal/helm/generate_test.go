@@ -122,9 +122,7 @@ func TestBuildProbeValues_ReadyDisabled(t *testing.T) {
 
 	// Startup is still active because liveness is on.
 	assert.Contains(t, probes, "startupProbe")
-	// Readiness is absent.
 	assert.NotContains(t, probes, "readinessProbe")
-	// Liveness defaults to TCP.
 	assert.Contains(t, probes, "livenessProbe")
 }
 
@@ -142,7 +140,6 @@ func TestBuildProbeValues_AliveDisabled(t *testing.T) {
 	// Startup is still active because readiness is on.
 	assert.Contains(t, probes, "startupProbe")
 	assert.Contains(t, probes, "readinessProbe")
-	// Liveness is absent.
 	assert.NotContains(t, probes, "livenessProbe")
 }
 
@@ -221,7 +218,6 @@ func TestBuildProbeValues_DefaultLivenessTimingWhenFieldsOmitted(t *testing.T) {
 func TestBuildProbeValues_PortName(t *testing.T) {
 	t.Parallel()
 
-	// TCP probes must reference the named port "http".
 	c := serviceComponent()
 	probes := buildProbeValues(c)
 
@@ -252,9 +248,6 @@ func TestBuildLivenessProbe_RestartAfterOnlyDefaultsInterval(t *testing.T) {
 	assert.Equal(t, 10, p["periodSeconds"])
 }
 
-// TestMapSpecToChartValues_SelfSignedTLS verifies that the selfSigned TLS mode
-// sets ingress.selfSigned:true and does not set existingSecret (the chart
-// derives the secret name from the hostname).
 // TestMapSpecToChartValues_EnvironmentFilterPrefixMatch verifies the
 // component environments filter uses the same exact-then-prefix matching as
 // spec.Resolve, so resolution and the generated chart agree on wildcard
@@ -296,8 +289,74 @@ func TestMapSpecToChartValues_EnvironmentFilterPrefixMatch(t *testing.T) {
 }
 
 // TestMapSpecToChartValues_SelfSignedTLS verifies selfSigned mode enables
-// ingress TLS without an existingSecret.
+// ingress TLS and emits a single ingress.secrets entry carrying the
+// materialized cert/key, with no selfSigned or existingSecret key (the old
+// template-side generation path is gone; certs are materialized in Go
+// before this function runs).
 func TestMapSpecToChartValues_SelfSignedTLS(t *testing.T) {
+	t.Parallel()
+
+	subdomain := "api"
+	m := &spec.Spec{
+		APIVersion: "v1-alpha.2",
+		Project:    "shop",
+		Environments: map[string]spec.Environment{
+			"local": {},
+		},
+		Components: map[string]spec.Component{
+			"api": {
+				Role:  spec.ComponentRoleService,
+				Image: "shop-api:latest",
+				Port:  8080,
+				Expose: &spec.Expose{
+					Domain:    "public",
+					Subdomain: &subdomain,
+				},
+			},
+		},
+	}
+	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.2"))
+
+	resolved := &spec.ResolvedSpec{
+		Spec: m,
+		Env:  spec.NormalizeEnv("local"),
+		Components: map[string]spec.ResolvedComponent{
+			"api": {
+				FQDN:       "api.127.0.0.1.nip.io",
+				TLSMode:    spec.TLSModeSelfSigned,
+				TLSCertPEM: []byte("-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n"),
+				TLSKeyPEM:  []byte("-----BEGIN RSA PRIVATE KEY-----\nfake\n-----END RSA PRIVATE KEY-----\n"),
+			},
+		},
+	}
+
+	vals, err := MapSpecToChartValues(m, "local", resolved)
+	require.NoError(t, err)
+
+	apiVals := mustNestedMap(t, vals, "api")
+	ingress := mustNestedMap(t, apiVals, "ingress")
+
+	assert.Equal(t, true, ingress["enabled"])
+	assert.Equal(t, "api.127.0.0.1.nip.io", ingress["hostname"])
+	assert.Equal(t, true, ingress["tls"])
+	_, hasSelfSigned := ingress["selfSigned"]
+	assert.False(t, hasSelfSigned, "selfSigned key must not be set; certs are emitted via ingress.secrets")
+	_, hasExistingSecret := ingress["existingSecret"]
+	assert.False(t, hasExistingSecret, "existingSecret must not be set for selfSigned mode")
+
+	secrets, ok := ingress["secrets"].([]map[string]any)
+	require.True(t, ok, "ingress.secrets must be a []map[string]any")
+	require.Len(t, secrets, 1)
+	assert.Equal(t, "api.127.0.0.1.nip.io-tls", secrets[0]["name"])
+	assert.Equal(t, string(resolved.Components["api"].TLSCertPEM), secrets[0]["certificate"])
+	assert.Equal(t, string(resolved.Components["api"].TLSKeyPEM), secrets[0]["key"])
+}
+
+// TestMapSpecToChartValues_SelfSignedTLS_Unmaterialized verifies that
+// MapSpecToChartValues hard-errors when a selfSigned component's cert/key
+// were never materialized, instead of silently falling back to the old
+// non-deterministic template-side generation.
+func TestMapSpecToChartValues_SelfSignedTLS_Unmaterialized(t *testing.T) {
 	t.Parallel()
 
 	subdomain := "api"
@@ -328,22 +387,14 @@ func TestMapSpecToChartValues_SelfSignedTLS(t *testing.T) {
 			"api": {
 				FQDN:    "api.127.0.0.1.nip.io",
 				TLSMode: spec.TLSModeSelfSigned,
+				// TLSCertPEM/TLSKeyPEM intentionally left empty.
 			},
 		},
 	}
 
-	vals, err := MapSpecToChartValues(m, "local", resolved)
-	require.NoError(t, err)
-
-	apiVals := mustNestedMap(t, vals, "api")
-	ingress := mustNestedMap(t, apiVals, "ingress")
-
-	assert.Equal(t, true, ingress["enabled"])
-	assert.Equal(t, "api.127.0.0.1.nip.io", ingress["hostname"])
-	assert.Equal(t, true, ingress["tls"])
-	assert.Equal(t, true, ingress["selfSigned"], "selfSigned must be true for selfSigned TLS mode")
-	_, hasExistingSecret := ingress["existingSecret"]
-	assert.False(t, hasExistingSecret, "existingSecret must not be set for selfSigned mode")
+	_, err := MapSpecToChartValues(m, "local", resolved)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not materialized")
 }
 
 // TestMapSpecToChartValues_SecretNameTLS verifies secretName mode sets

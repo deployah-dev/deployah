@@ -1,0 +1,63 @@
+{
+  "format_version": "1.0",
+  "project": "plan-mixed-changes",
+  "environment": "dev",
+  "release": "plan-mixed-changes-dev",
+  "namespace": "default",
+  "context": "",
+  "revision": null,
+  "fresh_install": false,
+  "changes": [
+    {
+      "action": "add",
+      "kind": "Deployment",
+      "api_version": "apps/v1",
+      "name": "plan-mixed-changes-dev-api",
+      "namespace": "default",
+      "fields": []
+    },
+    {
+      "action": "destroy",
+      "kind": "Deployment",
+      "api_version": "apps/v1",
+      "name": "plan-mixed-changes-dev-legacy",
+      "namespace": "default",
+      "fields": []
+    },
+    {
+      "action": "change",
+      "kind": "Deployment",
+      "api_version": "apps/v1",
+      "name": "plan-mixed-changes-dev-web",
+      "namespace": "default",
+      "fields": [
+        {
+          "path": "spec.template.spec.containers.web.image",
+          "old": "docker.io/library/nginx:1.25",
+          "new": "docker.io/library/nginx:1.26"
+        }
+      ]
+    },
+    {
+      "action": "add",
+      "kind": "Service",
+      "api_version": "v1",
+      "name": "plan-mixed-changes-dev-api",
+      "namespace": "default",
+      "fields": []
+    },
+    {
+      "action": "destroy",
+      "kind": "Service",
+      "api_version": "v1",
+      "name": "plan-mixed-changes-dev-legacy",
+      "namespace": "default",
+      "fields": []
+    }
+  ],
+  "summary": {
+    "add": 2,
+    "change": 1,
+    "destroy": 2
+  }
+}

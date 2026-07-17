@@ -31,6 +31,7 @@ deployah [flags]
 * [deployah init](deployah_init.md)  - Create a new Deployah spec for a project
 * [deployah list](deployah_list.md)  - List deployed projects
 * [deployah logs](deployah_logs.md)  - View logs for a deployed project
+* [deployah plan](deployah_plan.md)  - Preview the changes a deploy would make
 * [deployah resolve](deployah_resolve.md)  - Show the fully resolved configuration for an environment
 * [deployah shell](deployah_shell.md)  - Connect to a shell in a container
 * [deployah status](deployah_status.md)  - Display the status of a project

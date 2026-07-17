@@ -1,0 +1,16 @@
+# $schema: ../../internal/spec/schema/v1-alpha.2/manifest.json
+apiVersion: v1-alpha.2
+project: plan-resource-removed
+components:
+  web:
+    image: nginx:latest
+    port: 8080
+    environments: [dev]
+    resourcePreset: small
+  api:
+    image: my-app:1.0.0
+    port: 9090
+    environments: [dev]
+    resourcePreset: small
+environments:
+  dev: {}

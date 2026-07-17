@@ -17,11 +17,15 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"nabat.dev/logging"
 	"nabat.dev/nabat"
+	"nabat.dev/theme"
 
 	"deployah.dev/deployah/internal/cmd/cluster"
 	"deployah.dev/deployah/internal/cmd/common"
@@ -34,15 +38,22 @@ import (
 	"deployah.dev/deployah/internal/cmd/shell"
 	"deployah.dev/deployah/internal/cmd/status"
 	"deployah.dev/deployah/internal/cmd/validate"
+	"deployah.dev/deployah/internal/plan"
 	"deployah.dev/deployah/internal/session"
 	"deployah.dev/deployah/internal/spec"
+
+	planCmd "deployah.dev/deployah/internal/cmd/plan"
 )
 
 var version = "dev"
 
 // NewApp creates a new Nabat application with all subcommands registered.
 func NewApp() *nabat.App {
-	app := nabat.MustNew("deployah",
+	// app is referenced by the WithErrorHandler closure below, which only
+	// runs later (inside app.Run), by which point this assignment has
+	// completed; see the "self-referential closure" note there.
+	var app *nabat.App
+	app = nabat.MustNew("deployah",
 		nabat.WithTheme("gruvbox"),
 		nabat.WithVersion(version),
 		nabat.WithDescription("Deployah turns a spec into a running release on Kubernetes (Spec-to-Release)"),
@@ -56,6 +67,17 @@ func NewApp() *nabat.App {
 		nabat.WithFlag("context", "", nabat.WithUsage("Kubernetes context to use (overrides the current context and any environment 'context' field)"), nabat.WithPersistent()),
 		nabat.WithFlag("timeout", session.DefaultTimeout, nabat.WithShort('t'), nabat.WithUsage("Timeout for Deployah operations (install/upgrade, list, status, logs, delete)"), nabat.WithPersistent()),
 		nabat.WithExtension(logging.New(logging.WithVerboseFlag("debug"))),
+		// plan.ErrChangesPresent is a normal CI signal (exit code 2, see
+		// Execute), not a failure, so it gets no error banner. Every other
+		// error keeps the same "error: <msg>" styling nabat's default
+		// handler would have used.
+		nabat.WithErrorHandler(func(err error) {
+			if errors.Is(err, plan.ErrChangesPresent) {
+				return
+			}
+			errStyle := app.Theme().Style(theme.StatusError)
+			fmt.Fprintf(app.IO().ErrOut, "%s %s\n", errStyle.Render("error:"), err) //nolint:errcheck // best-effort diagnostic write
+		}),
 	)
 
 	// Build runtime once from global flags and store in context for all commands.
@@ -101,6 +123,7 @@ func NewApp() *nabat.App {
 	initialize.Register(app)
 	list.Register(app)
 	logs.Register(app)
+	planCmd.Register(app)
 	resolve.Register(app)
 	shell.Register(app)
 	status.Register(app)
@@ -109,10 +132,23 @@ func NewApp() *nabat.App {
 	return app
 }
 
-// Execute is the main entry point for the Deployah application.
+// Execute is the main entry point for the Deployah application. It cancels
+// the context on SIGINT/SIGTERM so a mid-flight command can unwind and clean
+// up instead of being killed outright. Exit code: 0 success, 2 when
+// `deployah plan --detailed-exitcode` found pending changes, 1 otherwise.
 func Execute() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	app := NewApp()
-	if err := app.Run(context.Background()); err != nil {
-		os.Exit(1)
+	err := app.Run(ctx)
+	// Release the signal handlers explicitly (rather than via defer) since
+	// the error paths below call os.Exit, which skips deferred calls.
+	stop()
+
+	if err == nil {
+		return
 	}
+	if errors.Is(err, plan.ErrChangesPresent) {
+		os.Exit(2)
+	}
+	os.Exit(1)
 }

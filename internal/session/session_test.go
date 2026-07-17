@@ -29,6 +29,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 
+	"deployah.dev/deployah/internal/render"
 	"deployah.dev/deployah/internal/spec"
 
 	v1 "helm.sh/helm/v4/pkg/release/v1"
@@ -39,25 +40,65 @@ type MockHelmClient struct {
 	mock.Mock
 }
 
-// IsReachable records a mock call for IsReachable.
+// IsReachable implements [HelmClient].
 func (m *MockHelmClient) IsReachable() error {
 	args := m.Called()
 	return args.Error(0)
 }
 
-// InstallApp records a mock call for InstallApp.
+// InstallApp implements [HelmClient].
 func (m *MockHelmClient) InstallApp(ctx context.Context, manifest *spec.Spec, environment string, dryRun bool, resolved *spec.ResolvedSpec) error {
 	args := m.Called(ctx, manifest, environment, dryRun, resolved)
 	return args.Error(0)
 }
 
-// DeleteRelease records a mock call for DeleteRelease.
+// RenderManifests implements [HelmClient].
+func (m *MockHelmClient) RenderManifests(ctx context.Context, manifest *spec.Spec, environment string, resolved *spec.ResolvedSpec) (*render.RenderResult, func(), error) {
+	args := m.Called(ctx, manifest, environment, resolved)
+	if err := args.Error(2); err != nil {
+		return nil, func() {}, err
+	}
+	if args.Get(0) == nil {
+		return nil, func() {}, errors.New("mock: render result not set")
+	}
+	result, ok := args.Get(0).(*render.RenderResult)
+	if !ok {
+		return nil, func() {}, fmt.Errorf("unexpected mock return type %T", args.Get(0))
+	}
+	cleanup, cleanupOK := args.Get(1).(func())
+	if !cleanupOK || cleanup == nil {
+		cleanup = func() {}
+	}
+	return result, cleanup, nil
+}
+
+// RenderOffline implements [HelmClient].
+func (m *MockHelmClient) RenderOffline(ctx context.Context, manifest *spec.Spec, environment string, resolved *spec.ResolvedSpec) (*render.RenderResult, func(), error) {
+	args := m.Called(ctx, manifest, environment, resolved)
+	if err := args.Error(2); err != nil {
+		return nil, func() {}, err
+	}
+	if args.Get(0) == nil {
+		return nil, func() {}, errors.New("mock: render result not set")
+	}
+	result, ok := args.Get(0).(*render.RenderResult)
+	if !ok {
+		return nil, func() {}, fmt.Errorf("unexpected mock return type %T", args.Get(0))
+	}
+	cleanup, cleanupOK := args.Get(1).(func())
+	if !cleanupOK || cleanup == nil {
+		cleanup = func() {}
+	}
+	return result, cleanup, nil
+}
+
+// DeleteRelease implements [HelmClient].
 func (m *MockHelmClient) DeleteRelease(ctx context.Context, project, environment string, wait bool) error {
 	args := m.Called(ctx, project, environment, wait)
 	return args.Error(0)
 }
 
-// GetRelease records a mock call for GetRelease.
+// GetRelease implements [HelmClient].
 func (m *MockHelmClient) GetRelease(ctx context.Context, project, environment string) (*v1.Release, error) {
 	args := m.Called(ctx, project, environment)
 	if err := args.Error(1); err != nil {
@@ -73,7 +114,7 @@ func (m *MockHelmClient) GetRelease(ctx context.Context, project, environment st
 	return rel, nil
 }
 
-// ListReleases records a mock call for ListReleases.
+// ListReleases implements [HelmClient].
 func (m *MockHelmClient) ListReleases(ctx context.Context, selector labels.Selector) ([]*v1.Release, error) {
 	args := m.Called(ctx, selector)
 	if err := args.Error(1); err != nil {
@@ -89,7 +130,7 @@ func (m *MockHelmClient) ListReleases(ctx context.Context, selector labels.Selec
 	return rels, nil
 }
 
-// GetReleaseHistory records a mock call for GetReleaseHistory.
+// GetReleaseHistory implements [HelmClient].
 func (m *MockHelmClient) GetReleaseHistory(ctx context.Context, project, environment string) ([]*v1.Release, error) {
 	args := m.Called(ctx, project, environment)
 	if err := args.Error(1); err != nil {
@@ -105,13 +146,13 @@ func (m *MockHelmClient) GetReleaseHistory(ctx context.Context, project, environ
 	return rels, nil
 }
 
-// RollbackRelease records a mock call for RollbackRelease.
+// RollbackRelease implements [HelmClient].
 func (m *MockHelmClient) RollbackRelease(ctx context.Context, releaseName string, revision int, timeout time.Duration) error {
 	args := m.Called(ctx, releaseName, revision, timeout)
 	return args.Error(0)
 }
 
-// TestSessionWithDependencyInjection verifies session dependency injection.
+// TestSessionWithDependencyInjection covers the named case.
 func TestSessionWithDependencyInjection(t *testing.T) {
 	t.Run("should use injected helm factory via Target", func(t *testing.T) {
 		mockHelm := &MockHelmClient{}
@@ -198,7 +239,7 @@ func TestSessionWithDependencyInjection(t *testing.T) {
 	})
 }
 
-// TestConfigurationValidation verifies session configuration validators.
+// TestConfigurationValidation covers the named case.
 func TestConfigurationValidation(t *testing.T) {
 	t.Run("should validate timeout bounds", func(t *testing.T) {
 		tests := []struct {
@@ -251,7 +292,7 @@ func TestContextOperations(t *testing.T) {
 	})
 }
 
-// TestTarget verifies the Target() context resolution logic.
+// TestTarget covers the named case.
 func TestTarget(t *testing.T) {
 	t.Run("empty env returns cluster with empty context", func(t *testing.T) {
 		sess := New()
@@ -338,7 +379,7 @@ func writeFile(path, content string) error {
 	return os.WriteFile(path, []byte(content), 0o600)
 }
 
-// TestIntegrationWithMocks demonstrates a full workflow using mock clients.
+// TestIntegrationWithMocks covers the named case.
 func TestIntegrationWithMocks(t *testing.T) {
 	t.Run("full workflow with mock helm client", func(t *testing.T) {
 		mockHelm := &MockHelmClient{}

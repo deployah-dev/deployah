@@ -1,0 +1,16 @@
+# No prior release exists, so every resource in the current render shows
+# as an addition.
+freshInstall: true
+
+changes:
+  - action: add
+    kind: Deployment
+    name: plan-fresh-install-dev-web
+  - action: add
+    kind: Service
+    name: plan-fresh-install-dev-web
+
+summary:
+  add: 2
+  change: 0
+  destroy: 0

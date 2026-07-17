@@ -14,11 +14,10 @@
 
 package spec
 
-// ResolvedSpec is the result of the full load + platform + resolution
-// pipeline for a specific environment. It is the primary input to
-// [MapSpecToChartValues], the hostname guard, and cache key generation.
+// ResolvedSpec is the load+platform+resolution result for one environment;
+// primary input to [MapSpecToChartValues], the hostname guard, and cache keys.
 //
-// The deployah.resolved block written to Helm chart values has this contract:
+// Its deployah.resolved block, written to Helm chart values, has this contract:
 //
 //	deployah:
 //	  resolved:
@@ -54,6 +53,12 @@ type ResolvedComponent struct {
 	TLSIssuer string
 	// TLSSecretName is the pre-existing TLS secret name (secretName mode only).
 	TLSSecretName string
+	// TLSCertPEM and TLSKeyPEM hold a materialized self-signed certificate
+	// (selfSigned mode only), filled in by
+	// [k8s.MaterializeSelfSignedTLS] before rendering. Never written into
+	// the deployah.resolved chart values block: only fqdn/tlsMode are.
+	TLSCertPEM []byte
+	TLSKeyPEM  []byte
 	// StorageClass is the Kubernetes storage class name resolved from the
 	// platform. Empty when the component has no storage block.
 	StorageClass string

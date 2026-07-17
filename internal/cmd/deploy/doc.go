@@ -12,11 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package deploy implements the deployah deploy command.
-//
-// The command renders a Deployah spec into a Helm chart and installs or
-// upgrades the release on the target cluster for the chosen environment.
-// A dry-run mode renders templates without mutating the cluster.
-//
-// Register the command with [Register] on a [nabat.dev/nabat.App] instance.
+// Package deploy implements the deployah deploy command, which renders a
+// Deployah spec into a Helm chart and installs or upgrades the release on
+// the target cluster. To preview changes without touching the cluster, use
+// `deployah plan` instead.
 package deploy

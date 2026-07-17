@@ -1,0 +1,35 @@
+# Showcase scenario exercising add + change + destroy in a single diff:
+# before.yaml drops "api" and adds "legacy" relative to deployah.yaml,
+# while "web" keeps its name and only bumps its image tag. Changes are
+# sorted by Kind then Name (see plan.ComputeDiff), not grouped by action,
+# so the order below interleaves add/change/destroy within each Kind.
+# This is also the only scenario with golden.txt/golden.json: regenerate
+# them with `go test -tags integration -update ./internal/testing/...`
+# after any intentional change to this scenario or the renderers.
+freshInstall: false
+
+changes:
+  - action: add
+    kind: Deployment
+    name: plan-mixed-changes-dev-api
+  - action: destroy
+    kind: Deployment
+    name: plan-mixed-changes-dev-legacy
+  - action: change
+    kind: Deployment
+    name: plan-mixed-changes-dev-web
+    fields:
+      - path: spec.template.spec.containers.web.image
+        old: "docker.io/library/nginx:1.25"
+        new: "docker.io/library/nginx:1.26"
+  - action: add
+    kind: Service
+    name: plan-mixed-changes-dev-api
+  - action: destroy
+    kind: Service
+    name: plan-mixed-changes-dev-legacy
+
+summary:
+  add: 2
+  change: 1
+  destroy: 2

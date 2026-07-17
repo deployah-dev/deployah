@@ -1,0 +1,11 @@
+# $schema: ../../internal/spec/schema/v1-alpha.2/manifest.json
+apiVersion: v1-alpha.2
+project: plan-resource-added
+components:
+  web:
+    image: nginx:latest
+    port: 8080
+    environments: [dev]
+    resourcePreset: small
+environments:
+  dev: {}

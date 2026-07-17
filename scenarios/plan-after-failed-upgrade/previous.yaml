@@ -1,0 +1,133 @@
+# Raw manifest for the last *successful* release (revision 7), shaped the
+# way Helm's release storage actually looks: it carries the bookkeeping
+# fields a live/stored object has (resourceVersion, uid, generation,
+# creationTimestamp, managedFields, status, and Helm/kubectl noise
+# annotations) that normalizeResource must strip before diffing, and
+# nothing here should be confused with a real spec-driven change. A later,
+# failed revision 8 upgrade attempt is not represented here at all: the
+# plan compares against this last-good manifest, not the failed one, so
+# the fix in deployah.yaml is the only field difference.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: plan-after-failed-upgrade-dev-web
+  namespace: default
+  resourceVersion: "12345"
+  uid: 8f14e45f-ceea-4e77-b1c4-1c6a3c3f0a1b
+  generation: 3
+  creationTimestamp: "2024-01-01T00:00:00Z"
+  managedFields:
+    - manager: helm
+      operation: Update
+  annotations:
+    meta.helm.sh/release-name: plan-after-failed-upgrade-dev
+    meta.helm.sh/release-namespace: default
+    kubectl.kubernetes.io/last-applied-configuration: "{}"
+  labels:
+    app.kubernetes.io/instance: plan-after-failed-upgrade-dev
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: web
+    deployah.dev/component: web
+    deployah.dev/environment: dev
+    deployah.dev/project: plan-after-failed-upgrade
+    helm.sh/chart: web-0.1.0
+status:
+  replicas: 1
+  availableReplicas: 1
+spec:
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: plan-after-failed-upgrade-dev
+      app.kubernetes.io/name: web
+  strategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      annotations: null
+      labels:
+        app.kubernetes.io/instance: plan-after-failed-upgrade-dev
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: web
+        deployah.dev/component: web
+        deployah.dev/environment: dev
+        deployah.dev/project: plan-after-failed-upgrade
+        helm.sh/chart: web-0.1.0
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/instance: plan-after-failed-upgrade-dev
+                    app.kubernetes.io/name: web
+                topologyKey: kubernetes.io/hostname
+              weight: 1
+      containers:
+        - image: docker.io/library/my-app:1.0.0
+          imagePullPolicy: IfNotPresent
+          livenessProbe:
+            failureThreshold: 6
+            periodSeconds: 10
+            tcpSocket:
+              port: http
+            timeoutSeconds: 3
+          name: web
+          ports:
+            - containerPort: 8080
+              name: http
+              protocol: TCP
+          readinessProbe:
+            failureThreshold: 3
+            periodSeconds: 5
+            tcpSocket:
+              port: http
+            timeoutSeconds: 3
+          resources:
+            limits: {}
+            requests:
+              cpu: 500m
+              ephemeral-storage: 50Mi
+              memory: 512Mi
+          startupProbe:
+            failureThreshold: 36
+            periodSeconds: 5
+            tcpSocket:
+              port: http
+            timeoutSeconds: 3
+      restartPolicy: Always
+      serviceAccountName: default
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: plan-after-failed-upgrade-dev-web
+  namespace: default
+  resourceVersion: "12346"
+  uid: 8f14e45f-ceea-4e77-b1c4-1c6a3c3f0a1c
+  generation: 1
+  creationTimestamp: "2024-01-01T00:00:00Z"
+  annotations:
+    meta.helm.sh/release-name: plan-after-failed-upgrade-dev
+    meta.helm.sh/release-namespace: default
+  labels:
+    app.kubernetes.io/instance: plan-after-failed-upgrade-dev
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: web
+    deployah.dev/component: web
+    deployah.dev/environment: dev
+    deployah.dev/project: plan-after-failed-upgrade
+    helm.sh/chart: web-0.1.0
+spec:
+  ports:
+    - name: http
+      port: 80
+      protocol: TCP
+      targetPort: http
+  selector:
+    app.kubernetes.io/instance: plan-after-failed-upgrade-dev
+    app.kubernetes.io/name: web
+  sessionAffinity: None
+  type: ClusterIP

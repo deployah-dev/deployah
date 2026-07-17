@@ -1,54 +1,81 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: health-check-http-dev
-  labels:
-    deployah.dev/project: health-check-http
-    deployah.dev/component: api
-    deployah.dev/environment: dev
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      deployah.dev/project: health-check-http
-      deployah.dev/component: api
-      deployah.dev/environment: dev
-  template:
-    metadata:
-      labels:
-        deployah.dev/project: health-check-http
+    labels:
+        app.kubernetes.io/instance: health-check-http-dev
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: api
         deployah.dev/component: api
         deployah.dev/environment: dev
-    spec:
-      containers:
-      - name: api
-        image: my-app:1.0.0
-        ports:
-        - name: http
-          containerPort: 8080
-          protocol: TCP
-        startupProbe:
-          httpGet:
-            path: /health
-            port: http
-          periodSeconds: 5
-          failureThreshold: 36
-          timeoutSeconds: 3
-        readinessProbe:
-          httpGet:
-            path: /health
-            port: http
-          periodSeconds: 5
-          failureThreshold: 3
-          timeoutSeconds: 3
-        livenessProbe:
-          httpGet:
-            path: /livez
-            port: http
-          periodSeconds: 10
-          failureThreshold: 6
-          timeoutSeconds: 3
-        resources:
-          requests:
-            cpu: 100m
-            memory: 128Mi
+        deployah.dev/project: health-check-http
+        helm.sh/chart: api-0.1.0
+    name: health-check-http-dev-api
+    namespace: default
+spec:
+    replicas: 1
+    revisionHistoryLimit: 10
+    selector:
+        matchLabels:
+            app.kubernetes.io/instance: health-check-http-dev
+            app.kubernetes.io/name: api
+    strategy:
+        type: RollingUpdate
+    template:
+        metadata:
+            annotations: null
+            labels:
+                app.kubernetes.io/instance: health-check-http-dev
+                app.kubernetes.io/managed-by: Helm
+                app.kubernetes.io/name: api
+                deployah.dev/component: api
+                deployah.dev/environment: dev
+                deployah.dev/project: health-check-http
+                helm.sh/chart: api-0.1.0
+        spec:
+            affinity:
+                podAntiAffinity:
+                    preferredDuringSchedulingIgnoredDuringExecution:
+                        - podAffinityTerm:
+                            labelSelector:
+                                matchLabels:
+                                    app.kubernetes.io/instance: health-check-http-dev
+                                    app.kubernetes.io/name: api
+                            topologyKey: kubernetes.io/hostname
+                          weight: 1
+            containers:
+                - image: docker.io/library/my-app:1.0.0
+                  imagePullPolicy: IfNotPresent
+                  livenessProbe:
+                    failureThreshold: 6
+                    httpGet:
+                        path: /livez
+                        port: http
+                    periodSeconds: 10
+                    timeoutSeconds: 3
+                  name: api
+                  ports:
+                    - containerPort: 8080
+                      name: http
+                      protocol: TCP
+                  readinessProbe:
+                    failureThreshold: 3
+                    httpGet:
+                        path: /health
+                        port: http
+                    periodSeconds: 5
+                    timeoutSeconds: 3
+                  resources:
+                    limits: {}
+                    requests:
+                        cpu: 500m
+                        ephemeral-storage: 50Mi
+                        memory: 512Mi
+                  startupProbe:
+                    failureThreshold: 36
+                    httpGet:
+                        path: /health
+                        port: http
+                    periodSeconds: 5
+                    timeoutSeconds: 3
+            restartPolicy: Always
+            serviceAccountName: default
