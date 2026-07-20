@@ -1,0 +1,13 @@
+# $schema: ../../internal/spec/schema/v1-alpha.2/manifest.json
+apiVersion: v1-alpha.2
+project: error-health-on-worker
+components:
+  worker:
+    image: ghcr.io/acme/worker:1.0.0
+    role: worker
+    environments: [dev]
+    health:
+      ready:
+        path: /healthz
+environments:
+  dev: {}

@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+    labels:
+        app.kubernetes.io/instance: expose-selfsigned-production
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: web
+        deployah.dev/component: web
+        deployah.dev/environment: production
+        deployah.dev/project: expose-selfsigned
+        helm.sh/chart: web-0.1.0
+    name: expose-selfsigned-production-web
+    namespace: default
+spec:
+    replicas: 1
+    revisionHistoryLimit: 10
+    selector:
+        matchLabels:
+            app.kubernetes.io/instance: expose-selfsigned-production
+            app.kubernetes.io/name: web
+    strategy:
+        type: RollingUpdate
+    template:
+        metadata:
+            annotations: null
+            labels:
+                app.kubernetes.io/instance: expose-selfsigned-production
+                app.kubernetes.io/managed-by: Helm
+                app.kubernetes.io/name: web
+                deployah.dev/component: web
+                deployah.dev/environment: production
+                deployah.dev/project: expose-selfsigned
+                helm.sh/chart: web-0.1.0
+        spec:
+            affinity:
+                podAntiAffinity:
+                    preferredDuringSchedulingIgnoredDuringExecution:
+                        - podAffinityTerm:
+                            labelSelector:
+                                matchLabels:
+                                    app.kubernetes.io/instance: expose-selfsigned-production
+                                    app.kubernetes.io/name: web
+                            topologyKey: kubernetes.io/hostname
+                          weight: 1
+            containers:
+                - image: ghcr.io/acme/web:1.0.0
+                  imagePullPolicy: IfNotPresent
+                  livenessProbe:
+                    failureThreshold: 6
+                    periodSeconds: 10
+                    tcpSocket:
+                        port: http
+                    timeoutSeconds: 3
+                  name: web
+                  ports:
+                    - containerPort: 8080
+                      name: http
+                      protocol: TCP
+                  readinessProbe:
+                    failureThreshold: 3
+                    periodSeconds: 5
+                    tcpSocket:
+                        port: http
+                    timeoutSeconds: 3
+                  resources:
+                    limits: {}
+                    requests:
+                        cpu: 500m
+                        ephemeral-storage: 50Mi
+                        memory: 512Mi
+                  startupProbe:
+                    failureThreshold: 36
+                    periodSeconds: 5
+                    tcpSocket:
+                        port: http
+                    timeoutSeconds: 3
+            restartPolicy: Always
+            serviceAccountName: default

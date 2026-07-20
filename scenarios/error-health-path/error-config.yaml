@@ -1,0 +1,2 @@
+expectedErrors:
+  - "does not match pattern '^/'"

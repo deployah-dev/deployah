@@ -1,0 +1,9 @@
+# $schema: ../../internal/spec/schema/platform/v1-alpha.1/platform.json
+apiVersion: platform/v1-alpha.1
+environments:
+  production:
+    domains:
+      public:
+        baseDomain: selfsigned.example.com
+        tls:
+          mode: selfSigned

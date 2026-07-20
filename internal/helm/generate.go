@@ -84,8 +84,9 @@ func GenerateReleaseName(projectName, environmentName string) string {
 // the prepared chart root directory (cached across calls for identical charts).
 func PrepareChart(ctx context.Context, manifest *spec.Spec, desiredEnvironment string, resolved *spec.ResolvedSpec) (string, error) {
 	// Generate comprehensive cache key based on resolved spec (or raw spec if
-	// no platform resolution was performed) and embedded chart templates.
-	cacheKey, err := GenerateCacheKey(manifest, resolved)
+	// no platform resolution was performed), the target environment, and
+	// embedded chart templates.
+	cacheKey, err := GenerateCacheKey(manifest, desiredEnvironment, resolved)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate cache key: %w", err)
 	}
@@ -176,7 +177,7 @@ func PrepareChart(ctx context.Context, manifest *spec.Spec, desiredEnvironment s
 		return "", fmt.Errorf("failed to expand embedded chart: %w", err)
 	}
 
-	if err = createComponentSubCharts(tmpDir, manifest); err != nil {
+	if err = createComponentSubCharts(tmpDir, manifest, desiredEnvironment); err != nil {
 		return "", fmt.Errorf("failed to create component sub-charts: %w", err)
 	}
 
@@ -200,14 +201,23 @@ func PrepareChart(ctx context.Context, manifest *spec.Spec, desiredEnvironment s
 	return CreateChartCopy(tmpDir)
 }
 
-// createComponentSubCharts creates sub-chart directories for each component
-func createComponentSubCharts(chartDir string, manifest *spec.Spec) error {
+// createComponentSubCharts creates sub-chart directories for each
+// component active in desiredEnvironment. A component excluded from this
+// environment gets no subchart at all: an empty subchart would still
+// render default-valued resources (e.g. a Service from app.yaml's base
+// values.yaml), leaking them into an environment the component was never
+// meant to reach.
+func createComponentSubCharts(chartDir string, manifest *spec.Spec, desiredEnvironment string) error {
 	chartsDir := filepath.Join(chartDir, "charts")
 	if err := os.MkdirAll(chartsDir, 0o750); err != nil {
 		return fmt.Errorf("failed to create charts directory: %w", err)
 	}
 
-	for componentName := range manifest.Components {
+	for componentName, component := range manifest.Components {
+		if !componentActiveInEnvironment(component, desiredEnvironment) {
+			continue
+		}
+
 		componentChartDir := filepath.Join(chartsDir, componentName)
 		if err := os.MkdirAll(componentChartDir, 0o750); err != nil {
 			return fmt.Errorf("failed to create component chart directory for %s: %w", componentName, err)
@@ -248,6 +258,20 @@ func createComponentAppTemplate(templatesDir string) error {
 	return os.WriteFile(filepath.Join(templatesDir, "app.yaml"), []byte(appTemplate), 0o600)
 }
 
+// componentActiveInEnvironment reports whether component belongs in the
+// chart for desiredEnvironment: true when it has no explicit Environments
+// filter (active everywhere), or desiredEnvironment matches one of them
+// via [spec.MatchEnvKey] (the same matcher [spec.Resolve] uses). Shared by
+// [MapSpecToChartValues] and [createComponentSubCharts] so both agree on
+// the active component set.
+func componentActiveInEnvironment(component spec.Component, desiredEnvironment string) bool {
+	if len(component.Environments) == 0 {
+		return true
+	}
+	_, ok := spec.MatchEnvKey(desiredEnvironment, component.Environments)
+	return ok
+}
+
 // resolvedSchemaVersion is the current version of the deployah.resolved values
 // block. Consumers must check this to handle future shape changes.
 const resolvedSchemaVersion = "1"
@@ -261,13 +285,11 @@ func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string, resolved *spe
 	resolvedComponents := make(map[string]any)
 
 	for componentName, component := range m.Components {
-		// Skip component if it is not deployed in the desired environment
-		// (empty filter = active everywhere). Same matcher as spec.Resolve,
-		// so wildcard deploys agree on the active component set.
-		if len(component.Environments) > 0 {
-			if _, ok := spec.MatchEnvKey(desiredEnvironment, component.Environments); !ok {
-				continue
-			}
+		// Skip component if it is not deployed in the desired environment.
+		// Same matcher as spec.Resolve, so wildcard deploys agree on the
+		// active component set.
+		if !componentActiveInEnvironment(component, desiredEnvironment) {
+			continue
 		}
 
 		componentValues := map[string]any{

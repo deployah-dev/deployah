@@ -1,0 +1,12 @@
+# $schema: ../../internal/spec/schema/v1-alpha.2/manifest.json
+apiVersion: v1-alpha.2
+project: plan-ingress-added
+components:
+  api:
+    image: ghcr.io/acme/api:1.0.0
+    port: 8080
+    resourcePreset: small
+    environments: [production]
+    expose: {}
+environments:
+  production: {}

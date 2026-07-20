@@ -1,0 +1,10 @@
+# $schema: ../../internal/spec/schema/platform/v1-alpha.1/platform.json
+apiVersion: platform/v1-alpha.1
+environments:
+  production:
+    domains:
+      public:
+        baseDomain: example.com
+        tls:
+          mode: secretName
+          secretName: wildcard-example-com-tls

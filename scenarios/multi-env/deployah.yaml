@@ -1,0 +1,17 @@
+# $schema: ../../internal/spec/schema/v1-alpha.2/manifest.json
+apiVersion: v1-alpha.2
+project: multi-env
+components:
+  web:
+    image: ghcr.io/acme/web:1.0.0
+    port: 8080
+    resourcePreset: small
+    environments: [dev, production]
+  debug-sidecar:
+    image: ghcr.io/acme/debug:1.0.0
+    port: 9000
+    resourcePreset: nano
+    environments: [dev]
+environments:
+  dev: {}
+  production: {}

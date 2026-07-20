@@ -17,7 +17,6 @@ package testing
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io/fs"
 	"os"
@@ -30,16 +29,12 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"deployah.dev/deployah/internal/helm"
+	"deployah.dev/deployah/internal/k8s"
 	"deployah.dev/deployah/internal/plan"
 	"deployah.dev/deployah/internal/spec"
 
 	v1 "helm.sh/helm/v4/pkg/release/v1"
 )
-
-// updateGolden regenerates a plan scenario's golden.txt/golden.json files
-// instead of comparing against them, following the standard Go
-// -update convention for golden files (see @go-testing.mdc).
-var updateGolden = flag.Bool("update", false, "regenerate plan scenario golden files")
 
 // PlanTestScenario describes one scenarios/plan-* directory: a before/after
 // manifest pair (however each side is sourced) that [RunPlanScenarioTest]
@@ -187,7 +182,7 @@ func resolvePreviousSide(t *testing.T, dir string, cfg PlanConfig) manifestSide 
 	}
 	beforePath := filepath.Join(dir, "before.yaml")
 	if _, err := os.Stat(beforePath); err == nil {
-		return renderManifestFile(t, beforePath)
+		return renderManifestFile(t, dir, "before.yaml")
 	}
 	if !cfg.FreshInstall {
 		t.Fatalf("scenario %s: no previous.yaml or before.yaml, and freshInstall is not set in plan-config.yaml", dir)
@@ -204,7 +199,7 @@ func resolveCurrentSide(t *testing.T, dir string) manifestSide {
 	if side, ok := readRawManifestFile(t, filepath.Join(dir, "current.yaml")); ok {
 		return side
 	}
-	return renderManifestFile(t, filepath.Join(dir, "deployah.yaml"))
+	return renderManifestFile(t, dir, "deployah.yaml")
 }
 
 // readRawManifestFile reads path as a raw, already-rendered Kubernetes
@@ -220,23 +215,42 @@ func readRawManifestFile(t *testing.T, path string) (manifestSide, bool) {
 	return manifestSide{Manifest: string(data)}, true
 }
 
-// renderManifestFile loads specPath as a Deployah spec and renders it via
-// [helm.Client.RenderOffline] (no cluster access, matching `deployah plan
-// --offline`), the same rendering path the existing render scenario suite
-// uses.
-func renderManifestFile(t *testing.T, specPath string) manifestSide {
+// renderManifestFile loads dir/filename as a Deployah spec and renders it
+// via [helm.Client.RenderOffline] (no cluster access, matching `deployah
+// plan --offline`). When dir contains a deployah.platform.yaml, the spec is
+// resolved against it so scenarios can exercise platform-dependent output
+// such as Ingress/TLS, with self-signed certs materialized offline.
+func renderManifestFile(t *testing.T, dir, filename string) manifestSide {
 	t.Helper()
 	ctx := context.Background()
+	specPath := filepath.Join(dir, filename)
 
-	manifest, err := spec.Load(ctx, specPath, "", nil)
+	var platform *spec.PlatformConfig
+	platformPath := filepath.Join(dir, spec.DefaultPlatformPath)
+	if _, statErr := os.Stat(platformPath); statErr == nil {
+		loaded, loadErr := spec.LoadPlatform(platformPath)
+		require.NoError(t, loadErr)
+		platform = loaded
+	}
+
+	manifest, err := spec.Load(ctx, specPath, "", platform)
 	require.NoError(t, err)
-	envName, _, err := spec.ResolveEnvironment(manifest.Environments, nil, "")
+	envName, _, err := spec.ResolveEnvironment(manifest.Environments, platform, "")
 	require.NoError(t, err)
+
+	var resolved *spec.ResolvedSpec
+	if platform != nil {
+		envIdentity := spec.NormalizeEnv(envName)
+		resolvedSpec, _, resolveErr := spec.Resolve(manifest, platform, envIdentity, spec.SubstitutionReport{})
+		require.NoError(t, resolveErr)
+		require.NoError(t, k8s.MaterializeSelfSignedTLS(ctx, nil, "", resolvedSpec))
+		resolved = resolvedSpec
+	}
 
 	client, err := helm.NewClient()
 	require.NoError(t, err)
 
-	result, cleanup, err := client.RenderOffline(ctx, manifest, envName, nil)
+	result, cleanup, err := client.RenderOffline(ctx, manifest, envName, resolved)
 	if cleanup != nil {
 		t.Cleanup(cleanup)
 	}
@@ -337,19 +351,4 @@ func checkJSONGolden(t *testing.T, dir string, p *plan.Plan) {
 	var buf strings.Builder
 	require.NoError(t, plan.RenderJSON(&buf, p))
 	compareOrUpdateGolden(t, goldenPath, buf.String())
-}
-
-// compareOrUpdateGolden compares actual against the contents of path, or
-// overwrites path with actual when *updateGolden is set
-// (`go test -update`).
-func compareOrUpdateGolden(t *testing.T, path, actual string) {
-	t.Helper()
-	if *updateGolden {
-		require.NoError(t, os.WriteFile(path, []byte(actual), 0o600))
-		return
-	}
-
-	want, err := os.ReadFile(path) // #nosec G304 -- path is a scenario golden file under test
-	require.NoError(t, err)
-	assert.Equal(t, string(want), actual, "golden file %s is stale; run with -update to regenerate", path)
 }

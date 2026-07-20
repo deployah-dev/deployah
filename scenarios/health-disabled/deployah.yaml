@@ -1,0 +1,14 @@
+# $schema: ../../internal/spec/schema/v1-alpha.2/manifest.json
+apiVersion: v1-alpha.2
+project: health-disabled
+components:
+  api:
+    image: ghcr.io/acme/api:1.0.0
+    port: 8080
+    resourcePreset: small
+    environments: [dev]
+    health:
+      ready: false
+      alive: false
+environments:
+  dev: {}

@@ -1,0 +1,95 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+    labels:
+        app.kubernetes.io/instance: profile-merge-production
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: api
+        deployah.dev/component: api
+        deployah.dev/environment: production
+        deployah.dev/project: profile-merge
+        helm.sh/chart: api-0.1.0
+        tier: web
+    name: profile-merge-production-api
+    namespace: default
+spec:
+    replicas: 1
+    revisionHistoryLimit: 10
+    selector:
+        matchLabels:
+            app.kubernetes.io/instance: profile-merge-production
+            app.kubernetes.io/name: api
+    strategy:
+        type: RollingUpdate
+    template:
+        metadata:
+            annotations: null
+            labels:
+                app.kubernetes.io/instance: profile-merge-production
+                app.kubernetes.io/managed-by: Helm
+                app.kubernetes.io/name: api
+                deployah.dev/component: api
+                deployah.dev/environment: production
+                deployah.dev/project: profile-merge
+                helm.sh/chart: api-0.1.0
+                tier: web
+        spec:
+            affinity:
+                podAntiAffinity:
+                    preferredDuringSchedulingIgnoredDuringExecution:
+                        - podAffinityTerm:
+                            labelSelector:
+                                matchLabels:
+                                    app.kubernetes.io/instance: profile-merge-production
+                                    app.kubernetes.io/name: api
+                            topologyKey: kubernetes.io/hostname
+                          weight: 1
+            containers:
+                - image: ghcr.io/acme/api:1.0.0
+                  imagePullPolicy: IfNotPresent
+                  livenessProbe:
+                    failureThreshold: 6
+                    periodSeconds: 10
+                    tcpSocket:
+                        port: http
+                    timeoutSeconds: 3
+                  name: api
+                  ports:
+                    - containerPort: 8080
+                      name: http
+                      protocol: TCP
+                  readinessProbe:
+                    failureThreshold: 3
+                    periodSeconds: 5
+                    tcpSocket:
+                        port: http
+                    timeoutSeconds: 3
+                  resources:
+                    limits: {}
+                    requests:
+                        cpu: 500m
+                        ephemeral-storage: 50Mi
+                        memory: 512Mi
+                  securityContext:
+                    allowPrivilegeEscalation: false
+                    readOnlyRootFilesystem: true
+                    runAsNonRoot: true
+                    runAsUser: 1001
+                  startupProbe:
+                    failureThreshold: 36
+                    periodSeconds: 5
+                    tcpSocket:
+                        port: http
+                    timeoutSeconds: 3
+            nodeSelector:
+                tier: frontend
+                workload: general
+            restartPolicy: Always
+            securityContext:
+                fsGroup: 0
+                runAsNonRoot: true
+            serviceAccountName: default
+            tolerations:
+                - effect: NoSchedule
+                  key: ingress
+                  operator: Exists

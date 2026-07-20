@@ -41,13 +41,19 @@ var (
 )
 
 // GenerateCacheKey creates a cache key from the resolved spec (or raw spec
-// when resolved is nil) and the embedded chart template hash.
+// when resolved is nil), the target environment, and the embedded chart
+// template hash.
+//
+// environment must be part of the key: [PrepareChart] bakes the
+// environment-filtered component set and environment label into the cached
+// chart's values.yaml, so rendering environment A then B for the same
+// manifest must not reuse A's cached chart for B.
 //
 // When resolved is non-nil it is hashed instead of the full raw spec: this
 // covers only the target-environment subset and ensures platform file changes
 // invalidate the cache. encoding/json sorts map keys deterministically since
 // Go 1.12, so the serialization is stable.
-func GenerateCacheKey(manifest *spec.Spec, resolved *spec.ResolvedSpec) (string, error) {
+func GenerateCacheKey(manifest *spec.Spec, environment string, resolved *spec.ResolvedSpec) (string, error) {
 	var inputBytes []byte
 	var err error
 	if resolved != nil {
@@ -66,7 +72,7 @@ func GenerateCacheKey(manifest *spec.Spec, resolved *spec.ResolvedSpec) (string,
 	}
 
 	specHash := sha256.Sum256(inputBytes)
-	combinedData := fmt.Sprintf("%s-%s", hex.EncodeToString(specHash[:]), chartHash)
+	combinedData := fmt.Sprintf("%s-%s-%s", hex.EncodeToString(specHash[:]), environment, chartHash)
 	finalHash := sha256.Sum256([]byte(combinedData))
 
 	return hex.EncodeToString(finalHash[:]), nil

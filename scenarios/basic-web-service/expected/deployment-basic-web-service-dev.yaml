@@ -36,43 +36,43 @@ spec:
                 podAntiAffinity:
                     preferredDuringSchedulingIgnoredDuringExecution:
                         - podAffinityTerm:
-                              labelSelector:
-                                  matchLabels:
-                                      app.kubernetes.io/instance: basic-web-service-dev
-                                      app.kubernetes.io/name: web
-                              topologyKey: kubernetes.io/hostname
+                            labelSelector:
+                                matchLabels:
+                                    app.kubernetes.io/instance: basic-web-service-dev
+                                    app.kubernetes.io/name: web
+                            topologyKey: kubernetes.io/hostname
                           weight: 1
             containers:
                 - image: docker.io/library/nginx:latest
                   imagePullPolicy: Always
                   livenessProbe:
-                      failureThreshold: 6
-                      periodSeconds: 10
-                      tcpSocket:
-                          port: http
-                      timeoutSeconds: 3
+                    failureThreshold: 6
+                    periodSeconds: 10
+                    tcpSocket:
+                        port: http
+                    timeoutSeconds: 3
                   name: web
                   ports:
-                      - containerPort: 8080
-                        name: http
-                        protocol: TCP
+                    - containerPort: 8080
+                      name: http
+                      protocol: TCP
                   readinessProbe:
-                      failureThreshold: 3
-                      periodSeconds: 5
-                      tcpSocket:
-                          port: http
-                      timeoutSeconds: 3
+                    failureThreshold: 3
+                    periodSeconds: 5
+                    tcpSocket:
+                        port: http
+                    timeoutSeconds: 3
                   resources:
-                      limits: {}
-                      requests:
-                          cpu: 500m
-                          ephemeral-storage: 50Mi
-                          memory: 512Mi
+                    limits: {}
+                    requests:
+                        cpu: 500m
+                        ephemeral-storage: 50Mi
+                        memory: 512Mi
                   startupProbe:
-                      failureThreshold: 36
-                      periodSeconds: 5
-                      tcpSocket:
-                          port: http
-                      timeoutSeconds: 3
+                    failureThreshold: 36
+                    periodSeconds: 5
+                    tcpSocket:
+                        port: http
+                    timeoutSeconds: 3
             restartPolicy: Always
             serviceAccountName: default

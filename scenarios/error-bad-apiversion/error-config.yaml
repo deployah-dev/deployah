@@ -1,0 +1,2 @@
+expectedErrors:
+  - "unsupported spec schema version"

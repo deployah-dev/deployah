@@ -1,0 +1,29 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+    labels:
+        app.kubernetes.io/instance: expose-selfsigned-production
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: web
+        deployah.dev/component: web
+        deployah.dev/environment: production
+        deployah.dev/project: expose-selfsigned
+        helm.sh/chart: web-0.1.0
+    name: expose-selfsigned-production-web
+    namespace: default
+spec:
+    rules:
+        - host: web.selfsigned.example.com
+          http:
+            paths:
+                - backend:
+                    service:
+                        name: expose-selfsigned-production-web
+                        port:
+                            name: http
+                  path: /
+                  pathType: ImplementationSpecific
+    tls:
+        - hosts:
+            - web.selfsigned.example.com
+          secretName: web.selfsigned.example.com-tls

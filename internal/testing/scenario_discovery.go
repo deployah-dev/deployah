@@ -20,10 +20,23 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 )
+
+// errorScenarioIndicators are name prefixes that mark a scenario as
+// expecting a load/resolve error. Every scenario matching one of these
+// must carry an error-config.yaml (see [detectErrorScenario]) so the exact
+// expected error is asserted rather than a generic default.
+var errorScenarioIndicators = []string{
+	"invalid-",
+	"error-",
+	"fail-",
+	"bad-",
+	"malformed-",
+}
 
 // DiscoverScenarios discovers test scenarios from the directory structure.
 func DiscoverScenarios(scenariosDir string) ([]TestScenario, error) {
@@ -53,7 +66,7 @@ func DiscoverScenarios(scenariosDir string) ([]TestScenario, error) {
 		}
 
 		scenarioName := info.Name()
-		scenario := TestScenario{
+		base := TestScenario{
 			Name:         scenarioName,
 			ScenarioDir:  scenarioName,
 			ManifestFile: "deployah.yaml",
@@ -64,76 +77,123 @@ func DiscoverScenarios(scenariosDir string) ([]TestScenario, error) {
 		if err != nil {
 			return err
 		}
-		scenario.EnvFiles = envFiles
+		base.EnvFiles = envFiles
 
 		platformPath := filepath.Join(path, "deployah.platform.yaml")
 		if _, statErr := os.Stat(platformPath); statErr == nil {
-			scenario.PlatformFile = "deployah.platform.yaml"
+			base.PlatformFile = "deployah.platform.yaml"
+		}
+
+		// A scenario with per-environment goldens (expected-<env>/
+		// directories) is discovered as one TestScenario per environment,
+		// instead of a single scenario with a plain "expected" directory.
+		envNames, err := findEnvironmentGoldenDirs(path)
+		if err != nil {
+			return err
+		}
+		if len(envNames) > 0 {
+			for _, envName := range envNames {
+				envScenario := base
+				envScenario.Name = fmt.Sprintf("%s[%s]", scenarioName, envName)
+				envScenario.Environment = envName
+				envScenario.ExpectedDir = filepath.Join(scenarioName, "expected-"+envName)
+
+				envScenario, detectErr := detectErrorScenario(envScenario, path)
+				if detectErr != nil {
+					return detectErr
+				}
+				scenarios = append(scenarios, envScenario)
+			}
+			return nil
 		}
 
 		// Look for expected output directory based on naming convention
 		expectedDir := filepath.Join(path, "expected")
 		if _, statErr := os.Stat(expectedDir); statErr == nil {
-			scenario.ExpectedDir = filepath.Join(scenarioName, "expected")
+			base.ExpectedDir = filepath.Join(scenarioName, "expected")
 		}
 
-		// Detect error scenarios using hybrid approach
-		scenario = detectErrorScenario(scenario, path)
+		base, err = detectErrorScenario(base, path)
+		if err != nil {
+			return err
+		}
 
-		scenarios = append(scenarios, scenario)
+		scenarios = append(scenarios, base)
 		return nil
 	})
 
 	return scenarios, err
 }
 
-// detectErrorScenario detects scenarios that test error conditions using a
-// hybrid naming and config-file approach.
-func detectErrorScenario(scenario TestScenario, scenarioPath string) TestScenario {
-	errorIndicators := []string{
-		"invalid-",
-		"error-",
-		"fail-",
-		"bad-",
-		"malformed-",
-	}
-
-	for _, indicator := range errorIndicators {
-		if strings.HasPrefix(scenario.Name, indicator) {
-			scenario.ExpectError = true
-			scenario.ExpectedErrors = []string{"validation failed"} // Default specific error
-			break
-		}
-	}
-
-	errorConfigPath := filepath.Join(scenarioPath, "error-config.yaml")
-	if _, statErr := os.Stat(errorConfigPath); statErr == nil {
-		expectedErrors, loadErr := loadErrorConfig(errorConfigPath)
-		if loadErr == nil {
-			scenario.ExpectedErrors = expectedErrors
-		}
-	}
-
-	return scenario
-}
-
-// loadErrorConfig loads error configuration from a YAML file
-func loadErrorConfig(configPath string) ([]string, error) {
-	data, err := os.ReadFile(configPath) // #nosec G304 -- scenario config under test scenarios dir
+// findEnvironmentGoldenDirs returns the sorted environment names for every
+// "expected-<env>" directory directly under scenarioPath.
+func findEnvironmentGoldenDirs(scenarioPath string) ([]string, error) {
+	entries, err := os.ReadDir(scenarioPath)
 	if err != nil {
 		return nil, err
+	}
+
+	var envNames []string
+	for _, entry := range entries {
+		if entry.IsDir() && strings.HasPrefix(entry.Name(), "expected-") {
+			envNames = append(envNames, strings.TrimPrefix(entry.Name(), "expected-"))
+		}
+	}
+	slices.Sort(envNames)
+	return envNames, nil
+}
+
+// detectErrorScenario detects scenarios that test error conditions using a
+// hybrid naming and config-file approach: a scenario.Name prefix (see
+// [errorScenarioIndicators]) requires an error-config.yaml to exist in
+// scenarioPath, naming the exact expected error substrings. This is
+// mandatory, not just a default, so an error scenario's assertion always
+// documents the specific error it exercises instead of matching the
+// generic "validation failed" against any failure.
+func detectErrorScenario(scenario TestScenario, scenarioPath string) (TestScenario, error) {
+	hasErrorIndicator := slices.ContainsFunc(errorScenarioIndicators, func(indicator string) bool {
+		return strings.HasPrefix(scenario.Name, indicator)
+	})
+
+	errorConfigPath := filepath.Join(scenarioPath, "error-config.yaml")
+	expectedErrors, hasErrorConfig, err := tryLoadErrorConfig(errorConfigPath)
+	if err != nil {
+		return scenario, fmt.Errorf("scenario %s: loading error-config.yaml: %w", scenario.Name, err)
+	}
+
+	if hasErrorIndicator && !hasErrorConfig {
+		return scenario, fmt.Errorf(
+			"scenario %s: name looks like an error scenario but has no error-config.yaml; "+
+				"add one with an expectedErrors list naming the specific error", scenario.Name)
+	}
+
+	if hasErrorConfig {
+		scenario.ExpectError = true
+		scenario.ExpectedErrors = expectedErrors
+	}
+
+	return scenario, nil
+}
+
+// tryLoadErrorConfig reads and parses configPath's expectedErrors list.
+// found is false (with a nil error) when configPath does not exist.
+func tryLoadErrorConfig(configPath string) (expectedErrors []string, found bool, err error) {
+	data, readErr := os.ReadFile(configPath) // #nosec G304 -- scenario config under test scenarios dir
+	if errors.Is(readErr, fs.ErrNotExist) {
+		return nil, false, nil
+	}
+	if readErr != nil {
+		return nil, false, readErr
 	}
 
 	var config struct {
 		ExpectedErrors []string `yaml:"expectedErrors"`
 	}
-
-	err = yaml.Unmarshal(data, &config)
-	if err != nil {
-		return nil, err
+	if unmarshalErr := yaml.Unmarshal(data, &config); unmarshalErr != nil {
+		return nil, true, unmarshalErr
 	}
 
-	return config.ExpectedErrors, nil
+	return config.ExpectedErrors, true, nil
 }
 
 // findEnvFiles finds .env files in a scenario directory based on naming convention
@@ -152,62 +212,4 @@ func findEnvFiles(scenarioPath string) ([]string, error) {
 	}
 
 	return envFiles, nil
-}
-
-// LoadScenario loads a specific scenario by name
-func LoadScenario(scenariosDir, scenarioName string) (*TestScenario, error) {
-	scenarioDir := filepath.Join(scenariosDir, scenarioName)
-
-	if _, err := os.Stat(scenarioDir); errors.Is(err, fs.ErrNotExist) {
-		return nil, fmt.Errorf("scenario directory not found: %s", scenarioDir)
-	}
-
-	manifestPath := filepath.Join(scenarioDir, "deployah.yaml")
-	if _, statErr := os.Stat(manifestPath); errors.Is(statErr, fs.ErrNotExist) {
-		return nil, fmt.Errorf("deployah.yaml not found in scenario: %s", scenarioName)
-	}
-
-	scenario := &TestScenario{
-		Name:         scenarioName,
-		ScenarioDir:  scenarioName,
-		ManifestFile: "deployah.yaml",
-	}
-
-	envFiles, err := findEnvFiles(scenarioDir)
-	if err != nil {
-		return nil, err
-	}
-	scenario.EnvFiles = envFiles
-
-	platformPath := filepath.Join(scenarioDir, "deployah.platform.yaml")
-	if _, statErr := os.Stat(platformPath); statErr == nil {
-		scenario.PlatformFile = "deployah.platform.yaml"
-	}
-
-	expectedDir := filepath.Join(scenarioDir, "expected")
-	if _, statErr := os.Stat(expectedDir); statErr == nil {
-		scenario.ExpectedDir = filepath.Join(scenarioName, "expected")
-	}
-
-	*scenario = detectErrorScenario(*scenario, scenarioDir)
-
-	return scenario, nil
-}
-
-// LoadScenarioWithEnvironment loads a scenario with a specific environment
-func LoadScenarioWithEnvironment(scenariosDir, scenarioName, environment string) (*TestScenario, error) {
-	scenario, err := LoadScenario(scenariosDir, scenarioName)
-	if err != nil {
-		return nil, err
-	}
-
-	scenario.Environment = environment
-
-	// Look for environment-specific expected output
-	expectedDir := filepath.Join(scenariosDir, scenarioName, "expected-"+environment)
-	if _, statErr := os.Stat(expectedDir); statErr == nil {
-		scenario.ExpectedDir = filepath.Join(scenarioName, "expected-"+environment)
-	}
-
-	return scenario, nil
 }

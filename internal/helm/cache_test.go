@@ -43,7 +43,7 @@ func TestPrepareChart_CacheSurvivesCallerCleanup(t *testing.T) {
 	returnedPath, err := PrepareChart(t.Context(), manifest, "production", nil)
 	require.NoError(t, err)
 
-	key, err := GenerateCacheKey(manifest, nil)
+	key, err := GenerateCacheKey(manifest, "production", nil)
 	require.NoError(t, err)
 
 	cachedPath, found := GetCachedChart(key)

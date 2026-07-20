@@ -1,0 +1,16 @@
+# $schema: ../../internal/spec/schema/v1-alpha.2/manifest.json
+apiVersion: v1-alpha.2
+project: multi-component
+components:
+  web:
+    image: ghcr.io/acme/web:1.0.0
+    port: 8080
+    resourcePreset: small
+    environments: [production]
+  api:
+    image: ghcr.io/acme/api:1.0.0
+    port: 9090
+    resourcePreset: small
+    environments: [production]
+environments:
+  production: {}

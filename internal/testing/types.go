@@ -19,9 +19,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -31,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"deployah.dev/deployah/internal/helm"
+	"deployah.dev/deployah/internal/k8s"
 	"deployah.dev/deployah/internal/spec"
 
 	yamlutil "k8s.io/apimachinery/pkg/util/yaml"
@@ -119,28 +120,25 @@ func (suite *IntegrationTestSuite) RunScenarioTest(t *testing.T, scenario TestSc
 
 		t.Chdir(testDir)
 
-		// Phase 1: Load, validate, and resolve (platform optional)
 		manifest, environment, resolved, err := suite.loadAndResolve(t, scenario)
 
-		// Hybrid error checking approach
 		if scenario.ExpectError || len(scenario.ExpectedErrors) > 0 {
 			require.Error(t, err)
-
-			if len(scenario.ExpectedErrors) > 0 {
-				for _, expectedErr := range scenario.ExpectedErrors {
-					assert.Contains(t, err.Error(), expectedErr)
-				}
+			for _, expectedErr := range scenario.ExpectedErrors {
+				assert.Contains(t, err.Error(), expectedErr)
 			}
-			return // Don't proceed to chart generation
+			return
 		}
-
 		require.NoError(t, err)
 
-		// Phase 2 & 3: Generate the Helm chart and render it to Kubernetes manifests
 		renderedManifests, err := suite.renderChart(t, manifest, environment, resolved)
 		require.NoError(t, err)
 
-		// Phase 4: Validate against expected output
+		// Every rendered object must decode cleanly into its typed
+		// Kubernetes API struct, catching wrong field names/types that a
+		// subset-only comparison would miss.
+		validateAgainstScheme(t, renderedManifests)
+
 		if scenario.ExpectedDir != "" {
 			expectedPath := filepath.Join(suite.ScenariosDir, scenario.ExpectedDir)
 			if _, statErr := os.Stat(expectedPath); statErr != nil {
@@ -149,7 +147,6 @@ func (suite *IntegrationTestSuite) RunScenarioTest(t *testing.T, scenario TestSc
 			suite.validateAgainstExpected(t, renderedManifests, scenario.ExpectedDir)
 		}
 
-		// Phase 5: Save rendered manifests for inspection (only in verbose mode)
 		if testing.Verbose() {
 			suite.saveRenderedManifests(t, renderedManifests, scenario.Name)
 		}
@@ -219,6 +216,15 @@ func (suite *IntegrationTestSuite) loadAndResolve(t *testing.T, scenario TestSce
 	if err != nil {
 		return nil, "", nil, err
 	}
+
+	// Materialize self-signed TLS certs offline (no cluster access),
+	// matching `deployah plan --offline`. Without this, a selfSigned
+	// expose scenario fails render with "certificate not materialized
+	// before render".
+	if tlsErr := k8s.MaterializeSelfSignedTLS(ctx, nil, "", resolved); tlsErr != nil {
+		return nil, "", nil, tlsErr
+	}
+
 	return manifest, envName, resolved, nil
 }
 
@@ -266,157 +272,117 @@ func parseManifestYAML(content string) ([]unstructured.Unstructured, error) {
 	return manifests, nil
 }
 
-// validateAgainstExpected validates rendered manifests against expected files
+// validateAgainstExpected compares each rendered manifest against an
+// exact golden file (dir/<kind>-<name>.yaml, lowercased kind). Run with
+// `go test -update` to regenerate every golden file from the current
+// render.
 func (suite *IntegrationTestSuite) validateAgainstExpected(t *testing.T, manifests []unstructured.Unstructured, expectedDir string) {
 	t.Helper()
 	expectedPath := filepath.Join(suite.ScenariosDir, expectedDir)
 
-	expectedManifests, err := suite.loadExpectedManifests(expectedPath)
-	require.NoError(t, err)
+	if *updateGolden {
+		suite.writeGoldenManifests(t, manifests, expectedPath)
+		return
+	}
 
-	actualMap := make(map[string]unstructured.Unstructured)
+	remainingGoldenFiles := listGoldenFiles(t, expectedPath)
+
 	for _, manifest := range manifests {
-		key := fmt.Sprintf("%s/%s", manifest.GetKind(), manifest.GetName())
-		actualMap[key] = manifest
-	}
-
-	expectedMap := make(map[string]unstructured.Unstructured)
-	for _, manifest := range expectedManifests {
-		key := fmt.Sprintf("%s/%s", manifest.GetKind(), manifest.GetName())
-		expectedMap[key] = manifest
-	}
-
-	for key, expected := range expectedMap {
-		actual, exists := actualMap[key]
-		if !exists {
-			t.Errorf("Expected resource not found: %s", key)
+		filename := goldenFilename(manifest)
+		goldenPath := filepath.Join(expectedPath, filename)
+		if _, statErr := os.Stat(goldenPath); errors.Is(statErr, fs.ErrNotExist) {
+			t.Errorf("unexpected resource generated (no golden file %s): %s/%s", filename, manifest.GetKind(), manifest.GetName())
 			continue
 		}
-
-		suite.compareManifests(t, actual, expected, key)
-		delete(actualMap, key)
+		compareOrUpdateGolden(t, goldenPath, marshalGolden(t, manifest))
+		delete(remainingGoldenFiles, filename)
 	}
 
-	// Check for unexpected resources
-	for key := range actualMap {
-		t.Errorf("Unexpected resource generated: %s", key)
+	for filename := range remainingGoldenFiles {
+		t.Errorf("expected resource not found: golden file %s has no matching rendered resource", filename)
 	}
 }
 
-// loadExpectedManifests loads expected Kubernetes manifests from files
-func (suite *IntegrationTestSuite) loadExpectedManifests(expectedDir string) ([]unstructured.Unstructured, error) {
-	var manifests []unstructured.Unstructured
-
-	err := filepath.Walk(expectedDir, func(path string, info os.FileInfo, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-
-		if !strings.HasSuffix(path, ".yaml") && !strings.HasSuffix(path, ".yml") {
-			return nil
-		}
-
-		content, err := os.ReadFile(path) // #nosec G304,G122 -- path from filepath.Walk in chart templates dir
-		if err != nil {
-			return err
-		}
-
-		fileManifests, err := parseManifestYAML(string(content))
-		if err != nil {
-			return fmt.Errorf("%s: %w", path, err)
-		}
-		manifests = append(manifests, fileManifests...)
-
-		return nil
-	})
-
-	return manifests, err
-}
-
-// compareManifests compares two Kubernetes manifests
-func (suite *IntegrationTestSuite) compareManifests(t *testing.T, actual, expected unstructured.Unstructured, key string) {
+// writeGoldenManifests regenerates expectedDir from manifests: it removes
+// every existing golden YAML file first, so a resource that stops
+// rendering doesn't leave a stale golden file behind, then writes one
+// golden file per manifest.
+func (suite *IntegrationTestSuite) writeGoldenManifests(t *testing.T, manifests []unstructured.Unstructured, expectedDir string) {
 	t.Helper()
-	assert.Equal(t, expected.GetKind(), actual.GetKind(), "Kind mismatch for %s", key)
-	assert.Equal(t, expected.GetName(), actual.GetName(), "Name mismatch for %s", key)
-
-	actualLabels := actual.GetLabels()
-	expectedLabels := expected.GetLabels()
-	for k, v := range expectedLabels {
-		assert.Equal(t, v, actualLabels[k], "Label %s mismatch for %s", k, key)
-	}
-
-	actualAnnotations := actual.GetAnnotations()
-	expectedAnnotations := expected.GetAnnotations()
-	for k, v := range expectedAnnotations {
-		assert.Equal(t, v, actualAnnotations[k], "Annotation %s mismatch for %s", k, key)
-	}
-
-	actualSpec, actualFound, err := unstructured.NestedMap(actual.Object, "spec")
+	entries, err := os.ReadDir(expectedDir)
 	require.NoError(t, err)
-	expectedSpec, expectedFound, err := unstructured.NestedMap(expected.Object, "spec")
-	require.NoError(t, err)
-
-	if expectedFound {
-		require.True(t, actualFound, "Expected spec not found for %s", key)
-		suite.compareSpecs(t, actualSpec, expectedSpec, key)
-	}
-}
-
-// compareSpecs compares the spec sections of two manifests, recursing into
-// nested maps and slices instead of comparing them with `!=` (which panics
-// at runtime for map/slice-typed interface values).
-func (suite *IntegrationTestSuite) compareSpecs(t *testing.T, actual, expected map[string]any, resourceName string) {
-	t.Helper()
-	for key, expectedValue := range expected {
-		actualValue, exists := actual[key]
-		if !exists {
-			t.Errorf("Missing spec field '%s' in resource %s", key, resourceName)
+	for _, entry := range entries {
+		if entry.IsDir() || !isYAMLFile(entry.Name()) {
 			continue
 		}
-		compareValues(t, actualValue, expectedValue, fmt.Sprintf("%s.spec.%s", resourceName, key))
+		require.NoError(t, os.Remove(filepath.Join(expectedDir, entry.Name())))
+	}
+
+	for _, manifest := range manifests {
+		goldenPath := filepath.Join(expectedDir, goldenFilename(manifest))
+		require.NoError(t, os.WriteFile(goldenPath, []byte(marshalGolden(t, manifest)), 0o600))
 	}
 }
 
-// compareValues deep-compares an actual/expected pair from decoded YAML
-// (map[string]any, []any, or a scalar), recursing field-by-field so a
-// mismatch anywhere reports its exact dotted/indexed path instead of
-// comparing whole maps or slices with `!=`, which panics at runtime for
-// non-comparable dynamic types.
-func compareValues(t *testing.T, actual, expected any, path string) {
+// listGoldenFiles returns the set of golden YAML filenames present in dir.
+func listGoldenFiles(t *testing.T, dir string) map[string]struct{} {
 	t.Helper()
-	switch expectedTyped := expected.(type) {
-	case map[string]any:
-		actualTyped, ok := actual.(map[string]any)
-		if !ok {
-			t.Errorf("%s: expected a map, got %T (%v)", path, actual, actual)
-			return
-		}
-		for key, expectedValue := range expectedTyped {
-			actualValue, exists := actualTyped[key]
-			if !exists {
-				t.Errorf("Missing field '%s'", path+"."+key)
-				continue
-			}
-			compareValues(t, actualValue, expectedValue, path+"."+key)
-		}
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
 
-	case []any:
-		actualTyped, ok := actual.([]any)
-		if !ok {
-			t.Errorf("%s: expected a list, got %T (%v)", path, actual, actual)
-			return
+	files := make(map[string]struct{}, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() && isYAMLFile(entry.Name()) {
+			files[entry.Name()] = struct{}{}
 		}
-		if len(actualTyped) != len(expectedTyped) {
-			t.Errorf("%s: length mismatch: expected %d, got %d", path, len(expectedTyped), len(actualTyped))
-			return
-		}
-		for i, expectedValue := range expectedTyped {
-			compareValues(t, actualTyped[i], expectedValue, fmt.Sprintf("%s[%d]", path, i))
-		}
+	}
+	return files
+}
 
-	default:
-		if !reflect.DeepEqual(actual, expected) {
-			t.Errorf("%s mismatch: expected %v, got %v", path, expected, actual)
+func isYAMLFile(name string) bool {
+	return strings.HasSuffix(name, ".yaml") || strings.HasSuffix(name, ".yml")
+}
+
+// goldenFilename returns the golden/rendered-output filename for manifest:
+// "<kind>-<name>.yaml", lowercased kind, e.g. "deployment-web.yaml".
+func goldenFilename(manifest unstructured.Unstructured) string {
+	return fmt.Sprintf("%s-%s.yaml", strings.ToLower(manifest.GetKind()), manifest.GetName())
+}
+
+// marshalGolden renders manifest as the deterministic YAML stored in and
+// compared against golden files: yaml.Marshal sorts map keys, and
+// maskNondeterministicFields removes values that legitimately differ
+// between runs (e.g. a freshly generated self-signed certificate).
+func marshalGolden(t *testing.T, manifest unstructured.Unstructured) string {
+	t.Helper()
+	masked := manifest.DeepCopy()
+	maskNondeterministicFields(t, masked)
+
+	data, err := yaml.Marshal(masked.Object)
+	require.NoError(t, err)
+	return string(data)
+}
+
+// maskNondeterministicFields replaces values that are allowed to differ
+// between two otherwise-identical renders, so golden comparisons don't
+// flag them as regressions. Currently: a kubernetes.io/tls Secret's
+// tls.crt/tls.key, which [k8s.MaterializeSelfSignedTLS] generates fresh
+// (a new keypair) on every offline render.
+func maskNondeterministicFields(t *testing.T, manifest *unstructured.Unstructured) {
+	t.Helper()
+	if manifest.GetKind() != "Secret" {
+		return
+	}
+	secretType, _, err := unstructured.NestedString(manifest.Object, "type")
+	require.NoError(t, err)
+	if secretType != "kubernetes.io/tls" {
+		return
+	}
+	for _, key := range []string{"tls.crt", "tls.key"} {
+		_, found, nestedErr := unstructured.NestedString(manifest.Object, "data", key)
+		require.NoError(t, nestedErr)
+		if found {
+			require.NoError(t, unstructured.SetNestedField(manifest.Object, "(masked, generated fresh on every render)", "data", key))
 		}
 	}
 }
@@ -429,15 +395,12 @@ func (suite *IntegrationTestSuite) saveRenderedManifests(t *testing.T, manifests
 	require.NoError(t, err)
 
 	for _, manifest := range manifests {
-		kind := strings.ToLower(manifest.GetKind())
-		name := manifest.GetName()
-		filename := fmt.Sprintf("%s-%s.yaml", kind, name)
-		filepath := filepath.Join(outputDir, filename)
+		path := filepath.Join(outputDir, goldenFilename(manifest))
 
 		data, marshalErr := yaml.Marshal(manifest.Object)
 		require.NoError(t, marshalErr)
 
-		marshalErr = os.WriteFile(filepath, data, 0o600)
+		marshalErr = os.WriteFile(path, data, 0o600)
 		require.NoError(t, marshalErr)
 	}
 }

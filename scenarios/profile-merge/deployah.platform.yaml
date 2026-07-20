@@ -1,3 +1,4 @@
+# $schema: ../../internal/spec/schema/platform/v1-alpha.1/platform.json
 apiVersion: platform/v1-alpha.1
 profiles:
   default:

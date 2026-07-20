@@ -1,0 +1,2 @@
+expectedErrors:
+  - "value must be one of 'cpu', 'memory'"

@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: Service
+metadata:
+    labels:
+        app.kubernetes.io/instance: multi-env-dev
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: web
+        deployah.dev/component: web
+        deployah.dev/environment: dev
+        deployah.dev/project: multi-env
+        helm.sh/chart: web-0.1.0
+    name: multi-env-dev-web
+    namespace: default
+spec:
+    ports:
+        - name: http
+          port: 80
+          protocol: TCP
+          targetPort: http
+    selector:
+        app.kubernetes.io/instance: multi-env-dev
+        app.kubernetes.io/name: web
+    sessionAffinity: None
+    type: ClusterIP

@@ -1,0 +1,10 @@
+# $schema: ../../internal/spec/schema/v1-alpha.2/manifest.json
+apiVersion: v1-alpha.99
+project: error-bad-apiversion
+components:
+  api:
+    image: ghcr.io/acme/api:1.0.0
+    port: 8080
+    environments: [dev]
+environments:
+  dev: {}

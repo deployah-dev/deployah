@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: Service
+metadata:
+    labels:
+        app.kubernetes.io/instance: profile-merge-production
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: api
+        deployah.dev/component: api
+        deployah.dev/environment: production
+        deployah.dev/project: profile-merge
+        helm.sh/chart: api-0.1.0
+        tier: web
+    name: profile-merge-production-api
+    namespace: default
+spec:
+    ports:
+        - name: http
+          port: 80
+          protocol: TCP
+          targetPort: http
+    selector:
+        app.kubernetes.io/instance: profile-merge-production
+        app.kubernetes.io/name: api
+    sessionAffinity: None
+    type: ClusterIP

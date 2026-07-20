@@ -1,0 +1,15 @@
+# before.yaml has no "expose"; deployah.yaml adds a bare "expose: {}" with a
+# secretName-mode platform domain, so the diff adds exactly one new Ingress
+# and leaves the existing Deployment/Service untouched. secretName mode (vs.
+# selfSigned) keeps the diff deterministic: no generated cert/key noise.
+freshInstall: false
+
+changes:
+  - action: add
+    kind: Ingress
+    name: plan-ingress-added-production-api
+
+summary:
+  add: 1
+  change: 0
+  destroy: 0

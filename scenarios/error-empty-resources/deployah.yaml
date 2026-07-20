@@ -1,0 +1,16 @@
+# $schema: ../../internal/spec/schema/v1-alpha.2/manifest.json
+apiVersion: v1-alpha.2
+project: error-empty-resources
+components:
+  api:
+    image: ghcr.io/acme/api:1.0.0
+    port: 8080
+    environments: [dev]
+    # An explicit zero quantity (rather than omitting the field, or "resources: {}"
+    # with no keys at all) is what actually makes component.Resources "present but
+    # empty": Resources.ResourcesPresent() checks for a non-nil pointer, and only an
+    # explicitly set field (even a zero one) sets that pointer.
+    resources:
+      cpu: 0m
+environments:
+  dev: {}

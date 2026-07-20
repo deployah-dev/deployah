@@ -1,0 +1,2 @@
+expectedErrors:
+  - "component cannot have empty 'resources' object - either specify actual resource values or remove the resources field entirely"

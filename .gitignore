@@ -1,10 +1,12 @@
 # Deployah config (keep scenario fixtures tracked for CI)
 deployah.platform.yaml
 deployah.yaml
-!scenarios/**/deployah.platform.yaml
-!scenarios/**/deployah.yaml
 .env.*
 .env
+!scenarios/**/deployah.platform.yaml
+!scenarios/**/deployah.yaml
+!scenarios/**/.env.*
+!scenarios/**/.env
 
 # Go workspace file
 go.work

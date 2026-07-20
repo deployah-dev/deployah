@@ -1,0 +1,31 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+    annotations:
+        cert-manager.io/cluster-issuer: letsencrypt-prod
+    labels:
+        app.kubernetes.io/instance: expose-apex-certmanager-production
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: api
+        deployah.dev/component: api
+        deployah.dev/environment: production
+        deployah.dev/project: expose-apex-certmanager
+        helm.sh/chart: api-0.1.0
+    name: expose-apex-certmanager-production-api
+    namespace: default
+spec:
+    rules:
+        - host: apex-example.com
+          http:
+            paths:
+                - backend:
+                    service:
+                        name: expose-apex-certmanager-production-api
+                        port:
+                            name: http
+                  path: /
+                  pathType: ImplementationSpecific
+    tls:
+        - hosts:
+            - apex-example.com
+          secretName: apex-example.com-tls

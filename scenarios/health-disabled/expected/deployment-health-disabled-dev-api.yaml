@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+    labels:
+        app.kubernetes.io/instance: health-disabled-dev
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: api
+        deployah.dev/component: api
+        deployah.dev/environment: dev
+        deployah.dev/project: health-disabled
+        helm.sh/chart: api-0.1.0
+    name: health-disabled-dev-api
+    namespace: default
+spec:
+    replicas: 1
+    revisionHistoryLimit: 10
+    selector:
+        matchLabels:
+            app.kubernetes.io/instance: health-disabled-dev
+            app.kubernetes.io/name: api
+    strategy:
+        type: RollingUpdate
+    template:
+        metadata:
+            annotations: null
+            labels:
+                app.kubernetes.io/instance: health-disabled-dev
+                app.kubernetes.io/managed-by: Helm
+                app.kubernetes.io/name: api
+                deployah.dev/component: api
+                deployah.dev/environment: dev
+                deployah.dev/project: health-disabled
+                helm.sh/chart: api-0.1.0
+        spec:
+            affinity:
+                podAntiAffinity:
+                    preferredDuringSchedulingIgnoredDuringExecution:
+                        - podAffinityTerm:
+                            labelSelector:
+                                matchLabels:
+                                    app.kubernetes.io/instance: health-disabled-dev
+                                    app.kubernetes.io/name: api
+                            topologyKey: kubernetes.io/hostname
+                          weight: 1
+            containers:
+                - image: ghcr.io/acme/api:1.0.0
+                  imagePullPolicy: IfNotPresent
+                  name: api
+                  ports:
+                    - containerPort: 8080
+                      name: http
+                      protocol: TCP
+                  resources:
+                    limits: {}
+                    requests:
+                        cpu: 500m
+                        ephemeral-storage: 50Mi
+                        memory: 512Mi
+            restartPolicy: Always
+            serviceAccountName: default

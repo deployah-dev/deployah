@@ -1,0 +1,13 @@
+# $schema: ../../internal/spec/schema/v1-alpha.2/manifest.json
+apiVersion: v1-alpha.2
+project: error-health-path
+components:
+  api:
+    image: ghcr.io/acme/api:1.0.0
+    port: 8080
+    environments: [dev]
+    health:
+      ready:
+        path: healthz
+environments:
+  dev: {}

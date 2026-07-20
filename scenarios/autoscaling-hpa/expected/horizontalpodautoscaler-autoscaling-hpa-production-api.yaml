@@ -1,0 +1,29 @@
+apiVersion: autoscaling/v2beta1
+kind: HorizontalPodAutoscaler
+metadata:
+    labels:
+        app.kubernetes.io/instance: autoscaling-hpa-production
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: api
+        deployah.dev/component: api
+        deployah.dev/environment: production
+        deployah.dev/project: autoscaling-hpa
+        helm.sh/chart: api-0.1.0
+    name: autoscaling-hpa-production-api
+    namespace: default
+spec:
+    maxReplicas: 10
+    metrics:
+        - resource:
+            name: cpu
+            targetAverageUtilization: 75
+          type: Resource
+        - resource:
+            name: memory
+            targetAverageUtilization: 80
+          type: Resource
+    minReplicas: 2
+    scaleTargetRef:
+        apiVersion: apps/v1
+        kind: Deployment
+        name: autoscaling-hpa-production-api

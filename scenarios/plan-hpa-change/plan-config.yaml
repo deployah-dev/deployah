@@ -1,0 +1,18 @@
+# before.yaml and deployah.yaml differ only in the api component's
+# autoscaling.maxReplicas (5 -> 10): a single field-level change on the
+# existing HorizontalPodAutoscaler, no other resources affected.
+freshInstall: false
+
+changes:
+  - action: change
+    kind: HorizontalPodAutoscaler
+    name: plan-hpa-change-production-api
+    fields:
+      - path: spec.maxReplicas
+        old: "5"
+        new: "10"
+
+summary:
+  add: 0
+  change: 1
+  destroy: 0

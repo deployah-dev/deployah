@@ -1,0 +1,20 @@
+# $schema: ../../internal/spec/schema/v1-alpha.2/manifest.json
+apiVersion: v1-alpha.2
+project: autoscaling-hpa
+components:
+  api:
+    image: ghcr.io/acme/api:2.3.1
+    port: 8080
+    resourcePreset: small
+    environments: [production]
+    autoscaling:
+      enabled: true
+      minReplicas: 2
+      maxReplicas: 10
+      metrics:
+        - type: cpu
+          target: 75
+        - type: memory
+          target: 80
+environments:
+  production: {}

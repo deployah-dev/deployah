@@ -1,0 +1,24 @@
+# before.yaml and deployah.yaml differ only in the api component's last args
+# entry ("--workers=2" -> "--workers=4"). args is an unnamed scalar list (no
+# identifying key like a container's "name"), so dyff can't treat this as an
+# in-place modification of one element: it reports the differing value as a
+# removal of the old entry and an addition of the new one, both anchored at
+# the whole-list path, rather than a single field.path with old/new set.
+freshInstall: false
+
+changes:
+  - action: change
+    kind: Deployment
+    name: plan-command-change-production-api
+    fields:
+      - path: spec.template.spec.containers.api.args
+        old: "- --workers=2"
+        new: ""
+      - path: spec.template.spec.containers.api.args
+        old: ""
+        new: "- --workers=4"
+
+summary:
+  add: 0
+  change: 1
+  destroy: 0

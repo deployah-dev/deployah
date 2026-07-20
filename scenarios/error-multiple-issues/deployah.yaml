@@ -1,3 +1,4 @@
+# $schema: ../../internal/spec/schema/v1-alpha.2/manifest.json
 apiVersion: v1-alpha.2
 project: error-multiple-issues
 components:

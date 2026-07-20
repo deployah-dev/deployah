@@ -1,0 +1,2 @@
+expectedErrors:
+  - "health checks are only supported for role: service components"
