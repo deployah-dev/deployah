@@ -29,6 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/rest"
 
 	"deployah.dev/deployah/internal/render"
 	"deployah.dev/deployah/internal/spec"
@@ -414,76 +415,117 @@ func writeFile(path, content string) error {
 // TestCommandPolicy verifies the WithCommandPolicy option round-trips
 // through the CommandPolicy accessor, including the unset default.
 func TestCommandPolicy(t *testing.T) {
-	t.Run("defaults to lenient when unset", func(t *testing.T) {
-		sess := New()
-		assert.Equal(t, PolicyLenient, sess.CommandPolicy())
-	})
+	t.Parallel()
 
-	t.Run("strict policy round-trips", func(t *testing.T) {
-		sess := New(WithCommandPolicy(PolicyStrict))
-		assert.Equal(t, PolicyStrict, sess.CommandPolicy())
-	})
+	tests := []struct {
+		name string
+		opts []Option
+		want CommandPolicy
+	}{
+		{name: "defaults to lenient when unset", want: PolicyLenient},
+		{name: "strict policy round-trips", opts: []Option{WithCommandPolicy(PolicyStrict)}, want: PolicyStrict},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tt.want, New(tt.opts...).CommandPolicy())
+		})
+	}
 }
 
 // TestDebugKeepTempChart verifies the WithDebug option round-trips through
 // the DebugKeepTempChart accessor.
 func TestDebugKeepTempChart(t *testing.T) {
-	t.Run("defaults to false when unset", func(t *testing.T) {
-		sess := New()
-		assert.False(t, sess.DebugKeepTempChart())
-	})
+	t.Parallel()
 
-	t.Run("true round-trips", func(t *testing.T) {
-		sess := New(WithDebug(true))
-		assert.True(t, sess.DebugKeepTempChart())
-	})
+	tests := []struct {
+		name string
+		opts []Option
+		want bool
+	}{
+		{name: "defaults to false when unset", want: false},
+		{name: "true round-trips", opts: []Option{WithDebug(true)}, want: true},
+		{name: "explicit false round-trips", opts: []Option{WithDebug(false)}, want: false},
+	}
 
-	t.Run("explicit false round-trips", func(t *testing.T) {
-		sess := New(WithDebug(false))
-		assert.False(t, sess.DebugKeepTempChart())
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tt.want, New(tt.opts...).DebugKeepTempChart())
+		})
+	}
 }
 
 // TestTimeoutAccessor verifies the Timeout accessor returns the configured
 // value, including the package default when unset.
 func TestTimeoutAccessor(t *testing.T) {
-	t.Run("defaults to package default", func(t *testing.T) {
-		sess := New()
-		assert.Equal(t, DefaultTimeout, sess.Timeout())
-	})
+	t.Parallel()
 
-	t.Run("custom timeout round-trips", func(t *testing.T) {
-		sess := New(WithTimeout(90 * time.Second))
-		assert.Equal(t, 90*time.Second, sess.Timeout())
-	})
+	tests := []struct {
+		name string
+		opts []Option
+		want time.Duration
+	}{
+		{name: "defaults to package default", want: DefaultTimeout},
+		{name: "custom timeout round-trips", opts: []Option{WithTimeout(90 * time.Second)}, want: 90 * time.Second},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tt.want, New(tt.opts...).Timeout())
+		})
+	}
 }
 
 // TestSpecPathAccessor verifies SpecPath returns the configured spec path,
 // including the empty default.
 func TestSpecPathAccessor(t *testing.T) {
-	t.Run("empty when unset", func(t *testing.T) {
-		sess := New()
-		assert.Empty(t, sess.SpecPath())
-	})
+	t.Parallel()
 
-	t.Run("returns configured path", func(t *testing.T) {
-		sess := New(WithSpecPath("/tmp/deployah.yaml"))
-		assert.Equal(t, "/tmp/deployah.yaml", sess.SpecPath())
-	})
+	tests := []struct {
+		name string
+		opts []Option
+		want string
+	}{
+		{name: "empty when unset", want: ""},
+		{name: "returns configured path", opts: []Option{WithSpecPath("/tmp/deployah.yaml")}, want: "/tmp/deployah.yaml"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tt.want, New(tt.opts...).SpecPath())
+		})
+	}
 }
 
 // TestKubeContextAccessor verifies KubeContext returns the explicit
 // override only, independent of kubeconfig resolution.
 func TestKubeContextAccessor(t *testing.T) {
-	t.Run("empty when unset", func(t *testing.T) {
-		sess := New()
-		assert.Empty(t, sess.KubeContext())
-	})
+	t.Parallel()
 
-	t.Run("returns configured override", func(t *testing.T) {
-		sess := New(WithKubeContext("staging-context"))
-		assert.Equal(t, "staging-context", sess.KubeContext())
-	})
+	tests := []struct {
+		name string
+		opts []Option
+		want string
+	}{
+		{name: "empty when unset", want: ""},
+		{name: "returns configured override", opts: []Option{WithKubeContext("staging-context")}, want: "staging-context"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tt.want, New(tt.opts...).KubeContext())
+		})
+	}
 }
 
 // TestClose verifies Close clears the memoized platform config without
@@ -513,83 +555,162 @@ environments:
 // TestSpec verifies Spec's guard clause and its happy-path loading of a
 // real manifest from disk.
 func TestSpec(t *testing.T) {
-	t.Run("errors when spec path is unset", func(t *testing.T) {
-		sess := New()
-		m, err := sess.Spec(context.Background(), "")
-		require.Error(t, err)
-		assert.Nil(t, m)
-		assert.Contains(t, err.Error(), "spec path must be set")
-	})
+	t.Parallel()
 
-	t.Run("loads a valid manifest from disk", func(t *testing.T) {
-		specPath := filepath.Join(t.TempDir(), "deployah.yaml")
-		require.NoError(t, writeFile(specPath, minimalSpecYAML))
+	tests := []struct {
+		name        string
+		setup       func(t *testing.T) *Session
+		wantErr     bool
+		errContains string
+		check       func(t *testing.T, m *spec.Spec)
+	}{
+		{
+			name:        "errors when spec path is unset",
+			setup:       func(t *testing.T) *Session { t.Helper(); return New() },
+			wantErr:     true,
+			errContains: "spec path must be set",
+		},
+		{
+			name: "loads a valid manifest from disk",
+			setup: func(t *testing.T) *Session {
+				t.Helper()
+				specPath := filepath.Join(t.TempDir(), "deployah.yaml")
+				require.NoError(t, writeFile(specPath, minimalSpecYAML))
+				return New(WithSpecPath(specPath))
+			},
+			check: func(t *testing.T, m *spec.Spec) {
+				t.Helper()
+				require.NotNil(t, m)
+				assert.Equal(t, "demo", m.Project)
+			},
+		},
+		{
+			name: "wraps the underlying load error for a missing file",
+			setup: func(t *testing.T) *Session {
+				t.Helper()
+				return New(WithSpecPath(filepath.Join(t.TempDir(), "missing.yaml")))
+			},
+			wantErr:     true,
+			errContains: "failed to load spec",
+		},
+	}
 
-		sess := New(WithSpecPath(specPath))
-		m, err := sess.Spec(context.Background(), "")
-		require.NoError(t, err)
-		require.NotNil(t, m)
-		assert.Equal(t, "demo", m.Project)
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	t.Run("wraps the underlying load error for a missing file", func(t *testing.T) {
-		sess := New(WithSpecPath(filepath.Join(t.TempDir(), "missing.yaml")))
-		m, err := sess.Spec(context.Background(), "")
-		require.Error(t, err)
-		assert.Nil(t, m)
-		assert.Contains(t, err.Error(), "failed to load spec")
-	})
+			m, err := tt.setup(t).Spec(context.Background(), "")
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Nil(t, m)
+				assert.Contains(t, err.Error(), tt.errContains)
+				return
+			}
+			require.NoError(t, err)
+			tt.check(t, m)
+		})
+	}
 }
 
 // TestParseManifest verifies ParseManifest's happy path and its behavior
 // when the underlying file cannot be read.
 func TestParseManifest(t *testing.T) {
-	t.Run("parses a valid manifest", func(t *testing.T) {
-		specPath := filepath.Join(t.TempDir(), "deployah.yaml")
-		require.NoError(t, writeFile(specPath, minimalSpecYAML))
+	t.Parallel()
 
-		sess := New(WithSpecPath(specPath))
-		m, err := sess.ParseManifest()
-		require.NoError(t, err)
-		require.NotNil(t, m)
-		assert.Equal(t, "demo", m.Project)
-	})
+	tests := []struct {
+		name    string
+		setup   func(t *testing.T) *Session
+		wantErr bool
+		check   func(t *testing.T, m *spec.Spec)
+	}{
+		{
+			name: "parses a valid manifest",
+			setup: func(t *testing.T) *Session {
+				t.Helper()
+				specPath := filepath.Join(t.TempDir(), "deployah.yaml")
+				require.NoError(t, writeFile(specPath, minimalSpecYAML))
+				return New(WithSpecPath(specPath))
+			},
+			check: func(t *testing.T, m *spec.Spec) {
+				t.Helper()
+				require.NotNil(t, m)
+				assert.Equal(t, "demo", m.Project)
+			},
+		},
+		{
+			name: "errors for a missing file",
+			setup: func(t *testing.T) *Session {
+				t.Helper()
+				return New(WithSpecPath(filepath.Join(t.TempDir(), "missing.yaml")))
+			},
+			wantErr: true,
+		},
+	}
 
-	t.Run("errors for a missing file", func(t *testing.T) {
-		sess := New(WithSpecPath(filepath.Join(t.TempDir(), "missing.yaml")))
-		m, err := sess.ParseManifest()
-		require.Error(t, err)
-		assert.Nil(t, m)
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			m, err := tt.setup(t).ParseManifest()
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Nil(t, m)
+				return
+			}
+			require.NoError(t, err)
+			tt.check(t, m)
+		})
+	}
 }
 
 // TestCurrentKubeContext verifies context resolution from an explicit
 // kubeconfig path, from extra kubeconfig paths, and the empty-string
 // fallback when no kubeconfig is readable.
 func TestCurrentKubeContext(t *testing.T) {
-	t.Run("explicit kubeconfig path resolves current context", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "kubeconfig")
-		require.NoError(t, writeFile(path, minimalKubeconfig))
+	tests := []struct {
+		name  string
+		setup func(t *testing.T) *Session
+		want  string
+	}{
+		{
+			name: "explicit kubeconfig path resolves current context",
+			setup: func(t *testing.T) *Session {
+				t.Helper()
+				path := filepath.Join(t.TempDir(), "kubeconfig")
+				require.NoError(t, writeFile(path, minimalKubeconfig))
+				return New(WithKubeconfig(path))
+			},
+			want: "test-context",
+		},
+		{
+			name: "missing kubeconfig path returns empty string",
+			setup: func(t *testing.T) *Session {
+				t.Helper()
+				return New(WithKubeconfig(filepath.Join(t.TempDir(), "missing-kubeconfig")))
+			},
+			want: "",
+		},
+		{
+			name: "extra kubeconfig paths are honored without an explicit path",
+			setup: func(t *testing.T) *Session {
+				t.Helper()
+				t.Setenv("KUBECONFIG", filepath.Join(t.TempDir(), "does-not-exist"))
+				t.Setenv("HOME", t.TempDir())
 
-		sess := New(WithKubeconfig(path))
-		assert.Equal(t, "test-context", sess.CurrentKubeContext())
-	})
+				extraPath := filepath.Join(t.TempDir(), "extra-kubeconfig")
+				require.NoError(t, writeFile(extraPath, minimalKubeconfig))
+				return New(WithExtraKubeconfigPaths(extraPath))
+			},
+			want: "test-context",
+		},
+	}
 
-	t.Run("missing kubeconfig path returns empty string", func(t *testing.T) {
-		sess := New(WithKubeconfig(filepath.Join(t.TempDir(), "missing-kubeconfig")))
-		assert.Empty(t, sess.CurrentKubeContext())
-	})
-
-	t.Run("extra kubeconfig paths are honored without an explicit path", func(t *testing.T) {
-		t.Setenv("KUBECONFIG", filepath.Join(t.TempDir(), "does-not-exist"))
-		t.Setenv("HOME", t.TempDir())
-
-		extraPath := filepath.Join(t.TempDir(), "extra-kubeconfig")
-		require.NoError(t, writeFile(extraPath, minimalKubeconfig))
-
-		sess := New(WithExtraKubeconfigPaths(extraPath))
-		assert.Equal(t, "test-context", sess.CurrentKubeContext())
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// t.Setenv in the "extra kubeconfig" case forbids t.Parallel.
+			assert.Equal(t, tt.want, tt.setup(t).CurrentKubeContext())
+		})
+	}
 }
 
 // TestClusterRESTConfig verifies Cluster.RESTConfig falls back to
@@ -597,29 +718,57 @@ func TestCurrentKubeContext(t *testing.T) {
 // case in this test environment), and that it surfaces a clear error when
 // the kubeconfig cannot be resolved either.
 func TestClusterRESTConfig(t *testing.T) {
-	t.Run("resolves from kubeconfig when reachable", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "kubeconfig")
-		require.NoError(t, writeFile(path, minimalKubeconfig))
+	t.Parallel()
 
-		sess := New(WithKubeconfig(path))
-		cluster, err := sess.Target(context.Background(), "")
-		require.NoError(t, err)
+	tests := []struct {
+		name        string
+		setup       func(t *testing.T) *Session
+		wantErr     bool
+		errContains string
+		check       func(t *testing.T, cfg *rest.Config)
+	}{
+		{
+			name: "resolves from kubeconfig when reachable",
+			setup: func(t *testing.T) *Session {
+				t.Helper()
+				path := filepath.Join(t.TempDir(), "kubeconfig")
+				require.NoError(t, writeFile(path, minimalKubeconfig))
+				return New(WithKubeconfig(path))
+			},
+			check: func(t *testing.T, cfg *rest.Config) {
+				t.Helper()
+				require.NotNil(t, cfg)
+				assert.Equal(t, "https://example.com:6443", cfg.Host)
+			},
+		},
+		{
+			name: "errors with guidance when kubeconfig is unresolvable",
+			setup: func(t *testing.T) *Session {
+				t.Helper()
+				return New(WithKubeconfig(filepath.Join(t.TempDir(), "missing-kubeconfig")))
+			},
+			wantErr:     true,
+			errContains: "failed to build kubernetes config",
+		},
+	}
 
-		cfg, err := cluster.RESTConfig()
-		require.NoError(t, err)
-		require.NotNil(t, cfg)
-		assert.Equal(t, "https://example.com:6443", cfg.Host)
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	t.Run("errors with guidance when kubeconfig is unresolvable", func(t *testing.T) {
-		sess := New(WithKubeconfig(filepath.Join(t.TempDir(), "missing-kubeconfig")))
-		cluster, err := sess.Target(context.Background(), "")
-		require.NoError(t, err)
+			cluster, err := tt.setup(t).Target(context.Background(), "")
+			require.NoError(t, err)
 
-		_, err = cluster.RESTConfig()
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to build kubernetes config")
-	})
+			cfg, err := cluster.RESTConfig()
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errContains)
+				return
+			}
+			require.NoError(t, err)
+			tt.check(t, cfg)
+		})
+	}
 }
 
 // TestIntegrationWithMocks covers the named case.

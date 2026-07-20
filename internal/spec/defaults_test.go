@@ -864,21 +864,25 @@ func TestDefaultsTestSuite(t *testing.T) {
 func TestFillSpecWithDefaults_GuardClauses(t *testing.T) {
 	t.Parallel()
 
-	t.Run("nil spec returns error", func(t *testing.T) {
-		t.Parallel()
+	tests := []struct {
+		name        string
+		spec        *Spec
+		version     string
+		errContains string
+	}{
+		{name: "nil spec returns error", spec: nil, version: "v1-alpha.2", errContains: "spec cannot be nil"},
+		{name: "empty version returns error", spec: &Spec{Project: "test"}, version: "", errContains: "version cannot be empty"},
+	}
 
-		err := FillSpecWithDefaults(nil, "v1-alpha.2")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "spec cannot be nil")
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	t.Run("empty version returns error", func(t *testing.T) {
-		t.Parallel()
-
-		err := FillSpecWithDefaults(&Spec{Project: "test"}, "")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "version cannot be empty")
-	})
+			err := FillSpecWithDefaults(tt.spec, tt.version)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.errContains)
+		})
+	}
 }
 
 // TestApplyDefaultsToMap_EdgeCases verifies applyDefaultsToMap handles
@@ -887,42 +891,67 @@ func TestFillSpecWithDefaults_GuardClauses(t *testing.T) {
 func TestApplyDefaultsToMap_EdgeCases(t *testing.T) {
 	t.Parallel()
 
-	t.Run("non-map input is a no-op", func(t *testing.T) {
-		t.Parallel()
+	tests := []struct {
+		name     string
+		value    reflect.Value
+		defaults DefaultValues
+		path     string
+		check    func(t *testing.T, value reflect.Value)
+	}{
+		{
+			name:     "non-map input is a no-op",
+			value:    reflect.ValueOf(42),
+			defaults: DefaultValues{"x": 1},
+			path:     "test",
+		},
+		{
+			name:     "map with nested map value recurses without error",
+			value:    reflect.ValueOf(map[string]map[string]string{"outer": {"inner": "value"}}),
+			defaults: DefaultValues{},
+			path:     "test",
+			check: func(t *testing.T, value reflect.Value) {
+				t.Helper()
+				m, ok := value.Interface().(map[string]map[string]string)
+				require.True(t, ok)
+				assert.Equal(t, "value", m["outer"]["inner"])
+			},
+		},
+		{
+			name:     "map with slice value recurses without error",
+			value:    reflect.ValueOf(map[string][]string{"cmd": {"echo", "hi"}}),
+			defaults: DefaultValues{},
+			path:     "test",
+			check: func(t *testing.T, value reflect.Value) {
+				t.Helper()
+				m, ok := value.Interface().(map[string][]string)
+				require.True(t, ok)
+				assert.Equal(t, []string{"echo", "hi"}, m["cmd"])
+			},
+		},
+		{
+			name: "map with pointer-to-struct value applies defaults without panicking",
+			// map[string]*Component mirrors the pointer-valued map shape
+			// used elsewhere in the codebase (real reflect.Value map
+			// entries are never addressable, so a genuine non-pointer
+			// struct entry would panic on value.Addr(); the pointer
+			// indirection sidesteps that).
+			value:    reflect.ValueOf(map[string]*Component{"web": {Image: "nginx:latest"}}),
+			defaults: DefaultValues{"components.web.role": "service"},
+			path:     "components",
+		},
+	}
 
-		err := applyDefaultsToMap(reflect.ValueOf(42), DefaultValues{"x": 1}, "test", "v1-alpha.2")
-		assert.NoError(t, err)
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	t.Run("map with nested map value recurses without error", func(t *testing.T) {
-		t.Parallel()
-
-		m := map[string]map[string]string{"outer": {"inner": "value"}}
-		err := applyDefaultsToMap(reflect.ValueOf(m), DefaultValues{}, "test", "v1-alpha.2")
-		require.NoError(t, err)
-		assert.Equal(t, "value", m["outer"]["inner"])
-	})
-
-	t.Run("map with slice value recurses without error", func(t *testing.T) {
-		t.Parallel()
-
-		m := map[string][]string{"cmd": {"echo", "hi"}}
-		err := applyDefaultsToMap(reflect.ValueOf(m), DefaultValues{}, "test", "v1-alpha.2")
-		require.NoError(t, err)
-		assert.Equal(t, []string{"echo", "hi"}, m["cmd"])
-	})
-
-	t.Run("map with pointer-to-struct value applies defaults without panicking", func(t *testing.T) {
-		t.Parallel()
-
-		// map[string]*Component mirrors the pointer-valued map shape used
-		// elsewhere in the codebase (real reflect.Value map entries are
-		// never addressable, so a genuine non-pointer struct entry would
-		// panic on value.Addr(); the pointer indirection sidesteps that).
-		m := map[string]*Component{"web": {Image: "nginx:latest"}}
-		err := applyDefaultsToMap(reflect.ValueOf(m), DefaultValues{"components.web.role": "service"}, "components", "v1-alpha.2")
-		assert.NoError(t, err)
-	})
+			err := applyDefaultsToMap(tt.value, tt.defaults, tt.path, "v1-alpha.2")
+			require.NoError(t, err)
+			if tt.check != nil {
+				tt.check(t, tt.value)
+			}
+		})
+	}
 }
 
 // TestApplyDefaultsToSlice_EdgeCases verifies applyDefaultsToSlice handles
@@ -930,44 +959,72 @@ func TestApplyDefaultsToMap_EdgeCases(t *testing.T) {
 func TestApplyDefaultsToSlice_EdgeCases(t *testing.T) {
 	t.Parallel()
 
-	t.Run("non-slice input is a no-op", func(t *testing.T) {
-		t.Parallel()
+	tests := []struct {
+		name     string
+		value    reflect.Value
+		defaults DefaultValues
+		path     string
+		check    func(t *testing.T, value reflect.Value)
+	}{
+		{
+			name:     "non-slice input is a no-op",
+			value:    reflect.ValueOf("not-a-slice"),
+			defaults: DefaultValues{"x": 1},
+			path:     "test",
+		},
+		{
+			name:     "slice with map items recurses without error",
+			value:    reflect.ValueOf([]map[string]string{{"key": "value"}}),
+			defaults: DefaultValues{},
+			path:     "test",
+			check: func(t *testing.T, value reflect.Value) {
+				t.Helper()
+				s, ok := value.Interface().([]map[string]string)
+				require.True(t, ok)
+				assert.Equal(t, "value", s[0]["key"])
+			},
+		},
+		{
+			name:  "slice with struct items applies defaults to each item",
+			value: reflect.ValueOf([]Environment{{}, {}}),
+			defaults: DefaultValues{
+				"envs[0].envFile": ".env.a",
+				"envs[1].envFile": ".env.b",
+			},
+			path: "envs",
+			check: func(t *testing.T, value reflect.Value) {
+				t.Helper()
+				s, ok := value.Interface().([]Environment)
+				require.True(t, ok)
+				assert.Equal(t, ".env.a", s[0].EnvFile)
+				assert.Equal(t, ".env.b", s[1].EnvFile)
+			},
+		},
+		{
+			name:     "slice with opaque struct items is skipped",
+			value:    reflect.ValueOf([]resource.Quantity{*MustQuantity("100m")}),
+			defaults: DefaultValues{"test[0].value": 5},
+			path:     "test",
+			check: func(t *testing.T, value reflect.Value) {
+				t.Helper()
+				s, ok := value.Interface().([]resource.Quantity)
+				require.True(t, ok)
+				assert.Equal(t, "100m", s[0].String())
+			},
+		},
+	}
 
-		err := applyDefaultsToSlice(reflect.ValueOf("not-a-slice"), DefaultValues{"x": 1}, "test", "v1-alpha.2")
-		assert.NoError(t, err)
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	t.Run("slice with map items recurses without error", func(t *testing.T) {
-		t.Parallel()
-
-		s := []map[string]string{{"key": "value"}}
-		err := applyDefaultsToSlice(reflect.ValueOf(s), DefaultValues{}, "test", "v1-alpha.2")
-		require.NoError(t, err)
-		assert.Equal(t, "value", s[0]["key"])
-	})
-
-	t.Run("slice with struct items applies defaults to each item", func(t *testing.T) {
-		t.Parallel()
-
-		s := []Environment{{}, {}}
-		defaults := DefaultValues{
-			"envs[0].envFile": ".env.a",
-			"envs[1].envFile": ".env.b",
-		}
-		err := applyDefaultsToSlice(reflect.ValueOf(s), defaults, "envs", "v1-alpha.2")
-		require.NoError(t, err)
-		assert.Equal(t, ".env.a", s[0].EnvFile)
-		assert.Equal(t, ".env.b", s[1].EnvFile)
-	})
-
-	t.Run("slice with opaque struct items is skipped", func(t *testing.T) {
-		t.Parallel()
-
-		s := []resource.Quantity{*MustQuantity("100m")}
-		err := applyDefaultsToSlice(reflect.ValueOf(s), DefaultValues{"test[0].value": 5}, "test", "v1-alpha.2")
-		require.NoError(t, err)
-		assert.Equal(t, "100m", s[0].String())
-	})
+			err := applyDefaultsToSlice(tt.value, tt.defaults, tt.path, "v1-alpha.2")
+			require.NoError(t, err)
+			if tt.check != nil {
+				tt.check(t, tt.value)
+			}
+		})
+	}
 }
 
 // TestSetFieldValue_Errors verifies setFieldValue error paths: an
@@ -977,52 +1034,69 @@ func TestApplyDefaultsToSlice_EdgeCases(t *testing.T) {
 func TestSetFieldValue_Errors(t *testing.T) {
 	t.Parallel()
 
-	t.Run("unsettable field returns error", func(t *testing.T) {
-		t.Parallel()
+	tests := []struct {
+		name        string
+		field       func() reflect.Value
+		value       any
+		wantErr     bool
+		errContains string
+		check       func(t *testing.T, field reflect.Value)
+	}{
+		{
+			name: "unsettable field returns error",
+			// reflect.ValueOf on a plain value (not obtained via a
+			// pointer's Elem()) is never settable.
+			field:       func() reflect.Value { return reflect.ValueOf("literal") },
+			value:       "x",
+			wantErr:     true,
+			errContains: "is not settable",
+		},
+		{
+			name:        "invalid resource quantity pointer returns error",
+			field:       func() reflect.Value { return reflect.New(reflect.TypeFor[*resource.Quantity]()).Elem() },
+			value:       "not-a-quantity",
+			wantErr:     true,
+			errContains: "invalid resource quantity",
+		},
+		{
+			name:  "empty string resource quantity pointer is a no-op",
+			field: func() reflect.Value { return reflect.New(reflect.TypeFor[*resource.Quantity]()).Elem() },
+			value: "",
+			check: func(t *testing.T, field reflect.Value) { t.Helper(); assert.True(t, field.IsNil()) },
+		},
+		{
+			name:        "invalid resource quantity value type returns error",
+			field:       func() reflect.Value { return reflect.New(reflect.TypeFor[resource.Quantity]()).Elem() },
+			value:       "garbage",
+			wantErr:     true,
+			errContains: "invalid resource quantity",
+		},
+		{
+			name:        "mapstructure decode failure returns wrapped error",
+			field:       func() reflect.Value { return reflect.New(reflect.TypeFor[[]int]()).Elem() },
+			value:       []any{"not-a-number"},
+			wantErr:     true,
+			errContains: "failed to decode value",
+		},
+	}
 
-		// reflect.ValueOf on a plain value (not obtained via a pointer's
-		// Elem()) is never settable.
-		v := reflect.ValueOf("literal")
-		err := setFieldValue(v, "x")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "is not settable")
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	t.Run("invalid resource quantity pointer returns error", func(t *testing.T) {
-		t.Parallel()
-
-		field := reflect.New(reflect.TypeFor[*resource.Quantity]()).Elem()
-		err := setFieldValue(field, "not-a-quantity")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid resource quantity")
-	})
-
-	t.Run("empty string resource quantity pointer is a no-op", func(t *testing.T) {
-		t.Parallel()
-
-		field := reflect.New(reflect.TypeFor[*resource.Quantity]()).Elem()
-		err := setFieldValue(field, "")
-		require.NoError(t, err)
-		assert.True(t, field.IsNil())
-	})
-
-	t.Run("invalid resource quantity value type returns error", func(t *testing.T) {
-		t.Parallel()
-
-		field := reflect.New(reflect.TypeFor[resource.Quantity]()).Elem()
-		err := setFieldValue(field, "garbage")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid resource quantity")
-	})
-
-	t.Run("mapstructure decode failure returns wrapped error", func(t *testing.T) {
-		t.Parallel()
-
-		field := reflect.New(reflect.TypeFor[[]int]()).Elem()
-		err := setFieldValue(field, []any{"not-a-number"})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to decode value")
-	})
+			field := tt.field()
+			err := setFieldValue(field, tt.value)
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errContains)
+				return
+			}
+			require.NoError(t, err)
+			if tt.check != nil {
+				tt.check(t, field)
+			}
+		})
+	}
 }
 
 // TestProcessStructField verifies each [reflect.Kind] branch of
@@ -1031,115 +1105,140 @@ func TestSetFieldValue_Errors(t *testing.T) {
 func TestProcessStructField(t *testing.T) {
 	t.Parallel()
 
-	t.Run("nil pointer field is a no-op", func(t *testing.T) {
-		t.Parallel()
+	tests := []struct {
+		name     string
+		defaults DefaultValues
+		path     string
+		// setup builds the holder-specific field/type pair and returns a
+		// verify closure that checks the holder's post-call state, since
+		// each case needs a differently shaped holder struct.
+		setup func() (field reflect.Value, fieldType reflect.StructField, verify func(t *testing.T))
+	}{
+		{
+			name:     "nil pointer field is a no-op",
+			defaults: DefaultValues{"test.autoscale.minReplicas": 2},
+			path:     "test",
+			setup: func() (reflect.Value, reflect.StructField, func(t *testing.T)) {
+				type holder struct {
+					Autoscale *Autoscaling `json:"autoscale"`
+				}
+				h := &holder{}
+				val := reflect.ValueOf(h).Elem()
+				return val.Field(0), val.Type().Field(0), func(t *testing.T) {
+					t.Helper()
+					assert.Nil(t, h.Autoscale)
+				}
+			},
+		},
+		{
+			name: "non-nil pointer to struct recurses and applies defaults",
+			defaults: DefaultValues{
+				"test.autoscale.minReplicas": 2,
+				"test.autoscale.maxReplicas": 5,
+			},
+			path: "test",
+			setup: func() (reflect.Value, reflect.StructField, func(t *testing.T)) {
+				type holder struct {
+					Autoscale *Autoscaling `json:"autoscale"`
+				}
+				h := &holder{Autoscale: &Autoscaling{}}
+				val := reflect.ValueOf(h).Elem()
+				return val.Field(0), val.Type().Field(0), func(t *testing.T) {
+					t.Helper()
+					assert.Equal(t, 2, h.Autoscale.MinReplicas)
+					assert.Equal(t, 5, h.Autoscale.MaxReplicas)
+				}
+			},
+		},
+		{
+			name:     "pointer to opaque struct is not recursed into",
+			defaults: DefaultValues{"test.q.value": 1},
+			path:     "test",
+			setup: func() (reflect.Value, reflect.StructField, func(t *testing.T)) {
+				type holder struct {
+					Q *resource.Quantity `json:"q"`
+				}
+				h := &holder{Q: MustQuantity("100m")}
+				val := reflect.ValueOf(h).Elem()
+				return val.Field(0), val.Type().Field(0), func(t *testing.T) {
+					t.Helper()
+					assert.Equal(t, "100m", h.Q.String())
+				}
+			},
+		},
+		{
+			name:     "opaque struct value field is not recursed into",
+			defaults: DefaultValues{},
+			path:     "test",
+			setup: func() (reflect.Value, reflect.StructField, func(t *testing.T)) {
+				type holder struct {
+					Q resource.Quantity `json:"q"`
+				}
+				h := &holder{Q: *MustQuantity("200m")}
+				val := reflect.ValueOf(h).Elem()
+				return val.Field(0), val.Type().Field(0), func(t *testing.T) {
+					t.Helper()
+					assert.Equal(t, "200m", h.Q.String())
+				}
+			},
+		},
+		{
+			name:     "map field delegates to applyDefaultsToMap",
+			defaults: DefaultValues{},
+			path:     "",
+			setup: func() (reflect.Value, reflect.StructField, func(t *testing.T)) {
+				type holder struct {
+					Components map[string]*Component `json:"components"`
+				}
+				h := &holder{Components: map[string]*Component{"web": {Image: "nginx:latest"}}}
+				val := reflect.ValueOf(h).Elem()
+				return val.Field(0), val.Type().Field(0), func(t *testing.T) { t.Helper() }
+			},
+		},
+		{
+			name:     "slice field delegates to applyDefaultsToSlice",
+			defaults: DefaultValues{"envs[0].envFile": ".env.prod"},
+			path:     "",
+			setup: func() (reflect.Value, reflect.StructField, func(t *testing.T)) {
+				type holder struct {
+					Envs []Environment `json:"envs"`
+				}
+				h := &holder{Envs: []Environment{{}}}
+				val := reflect.ValueOf(h).Elem()
+				return val.Field(0), val.Type().Field(0), func(t *testing.T) {
+					t.Helper()
+					assert.Equal(t, ".env.prod", h.Envs[0].EnvFile)
+				}
+			},
+		},
+		{
+			name:     "scalar field kind is a no-op",
+			defaults: DefaultValues{"test.name": "should-not-apply"},
+			path:     "test",
+			setup: func() (reflect.Value, reflect.StructField, func(t *testing.T)) {
+				type holder struct {
+					Name string `json:"name"`
+				}
+				h := &holder{Name: "unchanged"}
+				val := reflect.ValueOf(h).Elem()
+				return val.Field(0), val.Type().Field(0), func(t *testing.T) {
+					t.Helper()
+					assert.Equal(t, "unchanged", h.Name)
+				}
+			},
+		},
+	}
 
-		type holder struct {
-			Autoscale *Autoscaling `json:"autoscale"`
-		}
-		h := &holder{}
-		val := reflect.ValueOf(h).Elem()
-		fieldType := val.Type().Field(0)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-		err := processStructField(val.Field(0), fieldType, DefaultValues{"test.autoscale.minReplicas": 2}, "test", "v1-alpha.2")
-		require.NoError(t, err)
-		assert.Nil(t, h.Autoscale)
-	})
-
-	t.Run("non-nil pointer to struct recurses and applies defaults", func(t *testing.T) {
-		t.Parallel()
-
-		type holder struct {
-			Autoscale *Autoscaling `json:"autoscale"`
-		}
-		h := &holder{Autoscale: &Autoscaling{}}
-		val := reflect.ValueOf(h).Elem()
-		fieldType := val.Type().Field(0)
-
-		defaults := DefaultValues{
-			"test.autoscale.minReplicas": 2,
-			"test.autoscale.maxReplicas": 5,
-		}
-		err := processStructField(val.Field(0), fieldType, defaults, "test", "v1-alpha.2")
-		require.NoError(t, err)
-		assert.Equal(t, 2, h.Autoscale.MinReplicas)
-		assert.Equal(t, 5, h.Autoscale.MaxReplicas)
-	})
-
-	t.Run("pointer to opaque struct is not recursed into", func(t *testing.T) {
-		t.Parallel()
-
-		type holder struct {
-			Q *resource.Quantity `json:"q"`
-		}
-		h := &holder{Q: MustQuantity("100m")}
-		val := reflect.ValueOf(h).Elem()
-		fieldType := val.Type().Field(0)
-
-		err := processStructField(val.Field(0), fieldType, DefaultValues{"test.q.value": 1}, "test", "v1-alpha.2")
-		require.NoError(t, err)
-		assert.Equal(t, "100m", h.Q.String())
-	})
-
-	t.Run("opaque struct value field is not recursed into", func(t *testing.T) {
-		t.Parallel()
-
-		type holder struct {
-			Q resource.Quantity `json:"q"`
-		}
-		h := &holder{Q: *MustQuantity("200m")}
-		val := reflect.ValueOf(h).Elem()
-		fieldType := val.Type().Field(0)
-
-		err := processStructField(val.Field(0), fieldType, DefaultValues{}, "test", "v1-alpha.2")
-		require.NoError(t, err)
-		assert.Equal(t, "200m", h.Q.String())
-	})
-
-	t.Run("map field delegates to applyDefaultsToMap", func(t *testing.T) {
-		t.Parallel()
-
-		type holder struct {
-			Components map[string]*Component `json:"components"`
-		}
-		h := &holder{Components: map[string]*Component{"web": {Image: "nginx:latest"}}}
-		val := reflect.ValueOf(h).Elem()
-		fieldType := val.Type().Field(0)
-
-		err := processStructField(val.Field(0), fieldType, DefaultValues{}, "", "v1-alpha.2")
-		require.NoError(t, err)
-	})
-
-	t.Run("slice field delegates to applyDefaultsToSlice", func(t *testing.T) {
-		t.Parallel()
-
-		type holder struct {
-			Envs []Environment `json:"envs"`
-		}
-		h := &holder{Envs: []Environment{{}}}
-		val := reflect.ValueOf(h).Elem()
-		fieldType := val.Type().Field(0)
-
-		defaults := DefaultValues{"envs[0].envFile": ".env.prod"}
-		err := processStructField(val.Field(0), fieldType, defaults, "", "v1-alpha.2")
-		require.NoError(t, err)
-		assert.Equal(t, ".env.prod", h.Envs[0].EnvFile)
-	})
-
-	t.Run("scalar field kind is a no-op", func(t *testing.T) {
-		t.Parallel()
-
-		type holder struct {
-			Name string `json:"name"`
-		}
-		h := &holder{Name: "unchanged"}
-		val := reflect.ValueOf(h).Elem()
-		fieldType := val.Type().Field(0)
-
-		err := processStructField(val.Field(0), fieldType, DefaultValues{"test.name": "should-not-apply"}, "test", "v1-alpha.2")
-		require.NoError(t, err)
-		assert.Equal(t, "unchanged", h.Name)
-	})
+			field, fieldType, verify := tt.setup()
+			err := processStructField(field, fieldType, tt.defaults, tt.path, "v1-alpha.2")
+			require.NoError(t, err)
+			verify(t)
+		})
+	}
 }
 
 // TestBuildFieldPath verifies dot-notation path construction, including the

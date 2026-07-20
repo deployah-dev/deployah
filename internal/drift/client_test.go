@@ -155,31 +155,48 @@ func TestClientPredict_GetError_PropagatesAsError(t *testing.T) {
 func TestNewClient(t *testing.T) {
 	t.Parallel()
 
-	t.Run("valid config builds a client", func(t *testing.T) {
-		t.Parallel()
+	tests := []struct {
+		name        string
+		cfg         *rest.Config
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name: "valid config builds a client",
+			cfg:  &rest.Config{Host: "https://example.invalid:6443"},
+		},
+		{
+			name: "invalid config returns error",
+			// Username/password and a bearer token are mutually
+			// exclusive auth methods; client-go rejects the config
+			// before ever dialing a server.
+			cfg: &rest.Config{
+				Host:        "https://example.invalid:6443",
+				Username:    "user",
+				BearerToken: "tok",
+			},
+			wantErr:     true,
+			errContains: "build dynamic client",
+		},
+	}
 
-		c, err := NewClient(&rest.Config{Host: "https://example.invalid:6443"})
-		require.NoError(t, err)
-		require.NotNil(t, c)
-		assert.NotNil(t, c.dynamicClient)
-		assert.NotNil(t, c.mapper)
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	t.Run("invalid config returns error", func(t *testing.T) {
-		t.Parallel()
-
-		// Username/password and a bearer token are mutually exclusive
-		// auth methods; client-go rejects the config before ever dialing
-		// a server.
-		c, err := NewClient(&rest.Config{
-			Host:        "https://example.invalid:6443",
-			Username:    "user",
-			BearerToken: "tok",
+			c, err := NewClient(tt.cfg)
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Nil(t, c)
+				assert.Contains(t, err.Error(), tt.errContains)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, c)
+			assert.NotNil(t, c.dynamicClient)
+			assert.NotNil(t, c.mapper)
 		})
-		require.Error(t, err)
-		assert.Nil(t, c)
-		assert.Contains(t, err.Error(), "build dynamic client")
-	})
+	}
 }
 
 // TestClientPredict_DecodeError verifies malformed resourceYAML surfaces a
