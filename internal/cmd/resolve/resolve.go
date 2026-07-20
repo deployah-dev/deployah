@@ -143,33 +143,33 @@ func outputText(c *nabat.Context, resolved *spec.ResolvedSpec, report *spec.Reso
 	}
 	sort.Strings(names)
 
-	hasExposed := false
+	c.Println("\nComponents:")
 	for _, name := range names {
-		if resolved.Components[name].FQDN != "" {
-			hasExposed = true
-			break
+		rc := resolved.Components[name]
+		if rc.FQDN == "" && len(rc.Profiles) == 0 {
+			continue
 		}
-	}
-	if !hasExposed {
-		c.Println("Components: (none with expose blocks)")
-	} else {
-		c.Println("\nComponents:")
-		for _, name := range names {
-			rc := resolved.Components[name]
-			if rc.FQDN == "" {
-				continue
-			}
-			c.Println(fmt.Sprintf("  %s:", name))
+		c.Println(fmt.Sprintf("  %s:", name))
+		if rc.FQDN != "" {
 			c.Println(fmt.Sprintf("    hostname: %s", rc.FQDN))
-			if rc.TLSMode != "" {
-				c.Println(fmt.Sprintf("    tls.mode: %s", rc.TLSMode))
-			}
-			if rc.TLSIssuer != "" {
-				c.Println(fmt.Sprintf("    tls.issuer: %s", rc.TLSIssuer))
-			}
-			if rc.TLSSecretName != "" {
-				c.Println(fmt.Sprintf("    tls.secretName: %s", rc.TLSSecretName))
-			}
+		}
+		if rc.TLSMode != "" {
+			c.Println(fmt.Sprintf("    tls.mode: %s", rc.TLSMode))
+		}
+		if rc.TLSIssuer != "" {
+			c.Println(fmt.Sprintf("    tls.issuer: %s", rc.TLSIssuer))
+		}
+		if rc.TLSSecretName != "" {
+			c.Println(fmt.Sprintf("    tls.secretName: %s", rc.TLSSecretName))
+		}
+		if len(rc.Profiles) > 0 {
+			c.Println(fmt.Sprintf("    profiles: %s", strings.Join(rc.Profiles, ", ")))
+		}
+		if rc.MergedProfile != nil {
+			printMergedProfile(c, rc.MergedProfile)
+		}
+		if rc.StorageClass != "" {
+			c.Println(fmt.Sprintf("    storageClass: %s", rc.StorageClass))
 		}
 	}
 
@@ -195,10 +195,55 @@ type jsonResolveOutput struct {
 }
 
 type jsonComponent struct {
-	FQDN          string `json:"fqdn,omitempty"`
-	TLSMode       string `json:"tls_mode,omitempty"`
-	TLSIssuer     string `json:"tls_issuer,omitempty"`
-	TLSSecretName string `json:"tls_secret_name,omitempty"`
+	FQDN          string                `json:"fqdn,omitempty"`
+	TLSMode       string                `json:"tls_mode,omitempty"`
+	TLSIssuer     string                `json:"tls_issuer,omitempty"`
+	TLSSecretName string                `json:"tls_secret_name,omitempty"`
+	Profiles      []string              `json:"profiles,omitempty"`
+	MergedProfile *spec.PlatformProfile `json:"merged_profile,omitempty"`
+	StorageClass  string                `json:"storage_class,omitempty"`
+}
+
+// printMergedProfile writes key merged profile fields for text output.
+func printMergedProfile(c *nabat.Context, p *spec.PlatformProfile) {
+	if len(p.NodeSelector) > 0 {
+		keys := slices.Sorted(maps.Keys(p.NodeSelector))
+		parts := make([]string, 0, len(keys))
+		for _, k := range keys {
+			parts = append(parts, fmt.Sprintf("%s=%s", k, p.NodeSelector[k]))
+		}
+		c.Println(fmt.Sprintf("    nodeSelector: %s", strings.Join(parts, ", ")))
+	}
+	if len(p.Tolerations) > 0 {
+		c.Println(fmt.Sprintf("    tolerations: %d", len(p.Tolerations)))
+	}
+	if len(p.PodLabels) > 0 {
+		keys := slices.Sorted(maps.Keys(p.PodLabels))
+		parts := make([]string, 0, len(keys))
+		for _, k := range keys {
+			parts = append(parts, fmt.Sprintf("%s=%s", k, p.PodLabels[k]))
+		}
+		c.Println(fmt.Sprintf("    podLabels: %s", strings.Join(parts, ", ")))
+	}
+	if p.AllowedDomains != nil {
+		if len(p.AllowedDomains) == 0 {
+			c.Println("    allowedDomains: (none)")
+		} else {
+			c.Println(fmt.Sprintf("    allowedDomains: %s", strings.Join(p.AllowedDomains, ", ")))
+		}
+	}
+	if p.MaxResources != nil {
+		parts := make([]string, 0, 2)
+		if p.MaxResources.CPU != nil && !p.MaxResources.CPU.IsZero() {
+			parts = append(parts, "cpu="+p.MaxResources.CPU.String())
+		}
+		if p.MaxResources.Memory != nil && !p.MaxResources.Memory.IsZero() {
+			parts = append(parts, "memory="+p.MaxResources.Memory.String())
+		}
+		if len(parts) > 0 {
+			c.Println(fmt.Sprintf("    maxResources: %s", strings.Join(parts, ", ")))
+		}
+	}
 }
 
 // envOverviewRow is one environment in the --environments overview.
@@ -335,6 +380,9 @@ func outputJSON(c *nabat.Context, resolved *spec.ResolvedSpec, report *spec.Reso
 			TLSMode:       string(rc.TLSMode),
 			TLSIssuer:     rc.TLSIssuer,
 			TLSSecretName: rc.TLSSecretName,
+			Profiles:      rc.Profiles,
+			MergedProfile: rc.MergedProfile,
+			StorageClass:  rc.StorageClass,
 		}
 	}
 

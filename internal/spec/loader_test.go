@@ -372,3 +372,48 @@ func TestSave_AtomicNoLeftoverTempFiles(t *testing.T) {
 	require.NoError(t, yaml.Unmarshal(data, &got))
 	assert.Equal(t, "second-project", got.Project, "second save must fully replace, not append to, the first")
 }
+
+// TestParseManifest_ProfilesArray verifies the profiles array is parsed.
+func TestParseManifest_ProfilesArray(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "deployah.yaml")
+	content := `
+apiVersion: v1-alpha.2
+project: shop
+components:
+  web:
+    image: nginx:1.0.0
+    port: 80
+    profiles: [public-web, high-security]
+environments:
+  production: {}
+`
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+	s, _, err := ParseManifest(path)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"public-web", "high-security"}, s.Components["web"].Profiles)
+}
+
+// TestLoad_OldProfileStringRejected verifies the singular profile field is
+// rejected by the manifest schema.
+func TestLoad_OldProfileStringRejected(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	content := `
+apiVersion: v1-alpha.2
+project: shop
+components:
+  web:
+    image: nginx:1.0.0
+    port: 80
+    profile: public-web
+environments:
+  production: {}
+`
+	require.NoError(t, os.WriteFile("deployah.yaml", []byte(content), 0o600))
+	_, err := Load(t.Context(), "deployah.yaml", "production", nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "profile")
+}

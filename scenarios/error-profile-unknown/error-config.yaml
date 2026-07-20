@@ -1,0 +1,3 @@
+expectedErrors:
+  - 'does-not-exist'
+  - 'not defined in the platform file'

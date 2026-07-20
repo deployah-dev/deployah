@@ -3,8 +3,6 @@
 package testing
 
 import (
-	"errors"
-	"io/fs"
 	"os"
 	"testing"
 )
@@ -12,9 +10,8 @@ import (
 // TestPlanScenarios runs every scenarios/plan-* scenario through the plan
 // engine and checks the result against plan-config.yaml and any golden files.
 func TestPlanScenarios(t *testing.T) {
-	if _, err := os.Stat(TestScenariosDir); errors.Is(err, fs.ErrNotExist) {
-		t.Skipf("Test scenarios directory %s does not exist. Skipping plan scenario tests.", TestScenariosDir)
-		return
+	if _, err := os.Stat(TestScenariosDir); err != nil {
+		t.Fatalf("test scenarios directory %s is required: %v", TestScenariosDir, err)
 	}
 
 	scenarios, err := DiscoverPlanScenarios(TestScenariosDir)
@@ -23,8 +20,7 @@ func TestPlanScenarios(t *testing.T) {
 	}
 
 	if len(scenarios) == 0 {
-		t.Skip("No plan scenarios found in test scenarios directory")
-		return
+		t.Fatalf("no plan scenarios found under %s; tracked plan-* fixtures are required", TestScenariosDir)
 	}
 
 	t.Logf("Found %d plan scenarios", len(scenarios))

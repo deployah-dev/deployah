@@ -1,0 +1,16 @@
+apiVersion: platform/v1-alpha.1
+profiles:
+  public-only:
+    allowedDomains: [public]
+environments:
+  production:
+    context: prod-eks
+    domains:
+      public:
+        baseDomain: example.com
+        tls:
+          mode: selfSigned
+      internal:
+        baseDomain: internal.example.com
+        tls:
+          mode: selfSigned

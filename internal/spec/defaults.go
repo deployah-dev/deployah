@@ -12,9 +12,23 @@ import (
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"github.com/spf13/cast"
+	"k8s.io/apimachinery/pkg/api/resource"
 
 	"deployah.dev/deployah/internal/spec/schema"
 )
+
+// quantityType is treated as an opaque leaf by the defaults walker: its
+// unexported fields must not be reflected into.
+var quantityType = reflect.TypeFor[resource.Quantity]()
+
+// isOpaqueStruct reports types that should not be walked field-by-field
+// when applying schema defaults.
+func isOpaqueStruct(t reflect.Type) bool {
+	if t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	return t == quantityType
+}
 
 // DefaultValues represents default values extracted from a JSON schema.
 // Map keys are dot-notation paths to fields; values are defaults to apply.
@@ -398,14 +412,15 @@ func GetDefaultValues(version string, schemaType schema.SchemaType) (DefaultValu
 func resolveResourcePresets(spec *Spec) error {
 	for componentName, component := range spec.Components {
 		// Only resolve if ResourcePreset is set and Resources are empty
-		if component.ResourcePreset != "" && isZeroValue(component.Resources) {
+		if component.ResourcePreset != "" && !component.Resources.ResourcesSet() {
 			if presetResources, exists := ResourcePresetMappings[component.ResourcePreset]; exists {
-				// Use the requests values from the preset as the base resources
-				// This maintains backward compatibility with the current Helm logic
+				// Clone quantities so callers do not share mutable pointers from
+				// the package-level ResourcePresetMappings table.
+				req := presetResources["requests"]
 				component.Resources = Resources{
-					CPU:              presetResources["requests"].CPU,
-					Memory:           presetResources["requests"].Memory,
-					EphemeralStorage: presetResources["requests"].EphemeralStorage,
+					CPU:              cloneQuantity(req.CPU),
+					Memory:           cloneQuantity(req.Memory),
+					EphemeralStorage: cloneQuantity(req.EphemeralStorage),
 				}
 				// Clear the resourcePreset field after converting to resources
 				// to avoid validation conflicts
@@ -416,13 +431,14 @@ func resolveResourcePresets(spec *Spec) error {
 		}
 
 		// If neither explicit resources nor a preset is provided, apply a default preset at spec layer
-		if component.ResourcePreset == "" && isZeroValue(component.Resources) {
+		if component.ResourcePreset == "" && !component.Resources.ResourcesSet() {
 			if presetResources, exists := ResourcePresetMappings[ResourcePresetSmall]; exists {
 				component.ResourcePreset = ResourcePresetSmall
+				req := presetResources["requests"]
 				component.Resources = Resources{
-					CPU:              presetResources["requests"].CPU,
-					Memory:           presetResources["requests"].Memory,
-					EphemeralStorage: presetResources["requests"].EphemeralStorage,
+					CPU:              cloneQuantity(req.CPU),
+					Memory:           cloneQuantity(req.Memory),
+					EphemeralStorage: cloneQuantity(req.EphemeralStorage),
 				}
 				// Clear the resourcePreset field after converting to resources
 				// to avoid validation conflicts
@@ -675,13 +691,16 @@ func processStructField(field reflect.Value, fieldType reflect.StructField, defa
 	case reflect.Pointer:
 		// Handle pointer fields (only recurse into pointers to structs, e.g., *Autoscaling)
 		if !field.IsNil() {
-			if field.Elem().Kind() == reflect.Struct {
+			if field.Elem().Kind() == reflect.Struct && !isOpaqueStruct(field.Elem().Type()) {
 				if err := applyDefaultsRecursively(field.Interface(), defaults, newPath, version); err != nil {
 					return fmt.Errorf("failed to apply defaults to pointer field %s at path %s: %w", fieldName, currentPath, err)
 				}
 			}
 		}
 	case reflect.Struct:
+		if isOpaqueStruct(field.Type()) {
+			return nil
+		}
 		if err := applyDefaultsRecursively(field.Addr().Interface(), defaults, newPath, version); err != nil {
 			return fmt.Errorf("failed to apply defaults to struct field %s at path %s: %w", fieldName, currentPath, err)
 		}
@@ -916,6 +935,9 @@ func applyDefaultsToSlice(sliceVal reflect.Value, defaults DefaultValues, curren
 				return fmt.Errorf("failed to apply defaults to nested slice at index %d in path %s: %w", i, currentPath, err)
 			}
 		case reflect.Struct:
+			if isOpaqueStruct(item.Type()) {
+				continue
+			}
 			if err := applyDefaultsRecursively(item.Addr().Interface(), defaults, itemPath, version); err != nil {
 				return fmt.Errorf("failed to apply defaults to struct item at index %d in path %s: %w", i, currentPath, err)
 			}
@@ -954,6 +976,32 @@ func setFieldValue(field reflect.Value, value any) error {
 	val := reflect.ValueOf(value)
 	if val.Type().AssignableTo(field.Type()) {
 		field.Set(val)
+		return nil
+	}
+
+	// Schema defaults for resources are strings; convert into Quantity.
+	if field.Type() == reflect.TypeFor[*resource.Quantity]() {
+		s := cast.ToString(value)
+		if s == "" {
+			return nil
+		}
+		q, err := resource.ParseQuantity(s)
+		if err != nil {
+			return fmt.Errorf("invalid resource quantity %q: %w", s, err)
+		}
+		field.Set(reflect.ValueOf(&q))
+		return nil
+	}
+	if field.Type() == quantityType {
+		s := cast.ToString(value)
+		if s == "" {
+			return nil
+		}
+		q, err := resource.ParseQuantity(s)
+		if err != nil {
+			return fmt.Errorf("invalid resource quantity %q: %w", s, err)
+		}
+		field.Set(reflect.ValueOf(q))
 		return nil
 	}
 
@@ -1044,41 +1092,19 @@ func isZeroValue(val any) bool {
 	if val == nil {
 		return true
 	}
-
 	v := reflect.ValueOf(val)
-
-	// Handle pointers
-	if v.Kind() == reflect.Pointer {
-		return v.IsNil()
-	}
-
-	// Handle basic types
+	// Empty (non-nil) slices/maps are zero for defaults; IsZero only treats nil.
 	switch v.Kind() {
-	case reflect.String:
-		return v.String() == ""
-	case reflect.Bool:
-		return !v.Bool()
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		return v.Int() == 0
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		return v.Uint() == 0
-	case reflect.Float32, reflect.Float64:
-		return v.Float() == 0
-	case reflect.Slice:
-		return v.Len() == 0
-	case reflect.Map:
+	case reflect.Slice, reflect.Map:
 		return v.Len() == 0
 	case reflect.Struct:
-		// For structs, check if all fields are zero values
-		for _, field := range v.Fields() {
-			if !isZeroValue(field.Interface()) {
-				return false
-			}
+		// Quantity.IsZero is semantic; reflect field-walk is not enough.
+		if v.Type() == quantityType {
+			q, ok := v.Interface().(resource.Quantity)
+			return ok && q.IsZero()
 		}
-		return true
-	default:
-		return false
 	}
+	return v.IsZero()
 }
 
 // CreateSpecWithDefaults creates a new Spec with default values applied.

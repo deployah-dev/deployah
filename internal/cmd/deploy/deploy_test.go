@@ -150,7 +150,9 @@ func releaseWithResolvedFQDN(component, fqdn string) *v1.Release {
 	}
 }
 
-func releaseWithLegacyHostname(component, hostname string) *v1.Release {
+// releaseWithIngressHostname builds a pre-deployah.resolved release that only
+// has ingress.hostname (no longer consulted by the hostname guard).
+func releaseWithIngressHostname(component, hostname string) *v1.Release {
 	return &v1.Release{
 		Chart: &chart.Chart{
 			Values: map[string]any{
@@ -267,7 +269,7 @@ func TestRequiredAPIs(t *testing.T) {
 }
 
 // TestCheckHostnameGuard covers first-install, history errors, FQDN changes,
-// legacy values, and --force-hostname-change.
+// --force-hostname-change.
 func TestCheckHostnameGuard(t *testing.T) {
 	t.Parallel()
 
@@ -318,11 +320,9 @@ func TestCheckHostnameGuard(t *testing.T) {
 			errContains: []string{"hostname change detected", "api.old-domain.com", "api.new-domain.com", "--force-hostname-change"},
 		},
 		{
-			name:        "legacy ingress hostname blocks",
-			stub:        &stubHelmClient{release: releaseWithLegacyHostname("api", "api.old-domain.com")},
-			resolved:    resolvedAPI("api.new-domain.com"),
-			wantErr:     true,
-			errContains: []string{"hostname change detected"},
+			name:     "pre-resolved releases without deployah.resolved are not inspected",
+			stub:     &stubHelmClient{release: releaseWithIngressHostname("api", "api.old-domain.com")},
+			resolved: resolvedAPI("api.new-domain.com"),
 		},
 		{
 			name:       "force warns instead of blocking",

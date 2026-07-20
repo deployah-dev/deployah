@@ -69,11 +69,13 @@ type TestScenario struct {
 	Environment string
 	// EnvFiles lists dotenv files to copy into the test workspace.
 	EnvFiles []string
+	// PlatformFile is the platform filename within ScenarioDir when present.
+	PlatformFile string
 	// ExpectedDir is the golden output directory, relative to TestScenariosDir.
 	ExpectedDir string
-	// ExpectError requires manifest loading to fail.
+	// ExpectError requires manifest loading or resolution to fail.
 	ExpectError bool
-	// ExpectedErrors requires specific substrings in the load error message.
+	// ExpectedErrors requires specific substrings in the load/resolve error message.
 	ExpectedErrors []string
 }
 
@@ -103,8 +105,8 @@ func (suite *IntegrationTestSuite) RunScenarioTest(t *testing.T, scenario TestSc
 
 		t.Chdir(testDir)
 
-		// Phase 1: Load and validate manifest
-		manifest, environment, err := suite.loadManifest(t, scenario.ManifestFile, scenario.Environment)
+		// Phase 1: Load, validate, and resolve (platform optional)
+		manifest, environment, resolved, err := suite.loadAndResolve(t, scenario)
 
 		// Hybrid error checking approach
 		if scenario.ExpectError || len(scenario.ExpectedErrors) > 0 {
@@ -121,7 +123,7 @@ func (suite *IntegrationTestSuite) RunScenarioTest(t *testing.T, scenario TestSc
 		require.NoError(t, err)
 
 		// Phase 2 & 3: Generate the Helm chart and render it to Kubernetes manifests
-		renderedManifests, err := suite.renderChart(t, manifest, environment)
+		renderedManifests, err := suite.renderChart(t, manifest, environment, resolved)
 		require.NoError(t, err)
 
 		// Phase 4: Validate against expected output
@@ -160,30 +162,56 @@ func (suite *IntegrationTestSuite) setupScenarioEnvironment(t *testing.T, scenar
 		require.NoError(t, err)
 	}
 
+	if scenario.PlatformFile != "" {
+		platformSrc := filepath.Join(suite.ScenariosDir, scenario.ScenarioDir, scenario.PlatformFile)
+		platformDst := filepath.Join(testDir, filepath.Base(scenario.PlatformFile))
+		err = copyFile(platformSrc, platformDst)
+		require.NoError(t, err)
+	}
+
 	return testDir
 }
 
-// loadManifest loads a manifest from the current directory and resolves the
-// environment to render, mirroring [spec.Load]'s auto-selection so the caller
-// renders the same environment the spec actually validated against.
-func (suite *IntegrationTestSuite) loadManifest(t *testing.T, manifestFile, desiredEnv string) (*spec.Spec, string, error) {
+// loadAndResolve loads the manifest (and optional platform file), resolves the
+// environment, and runs [spec.Resolve] when a platform is present.
+func (suite *IntegrationTestSuite) loadAndResolve(t *testing.T, scenario TestScenario) (*spec.Spec, string, *spec.ResolvedSpec, error) {
 	t.Helper()
 	ctx := context.Background()
-	manifest, err := spec.Load(ctx, manifestFile, desiredEnv, nil)
-	if err != nil {
-		return nil, "", err
+
+	var platform *spec.PlatformConfig
+	if scenario.PlatformFile != "" {
+		loaded, err := spec.LoadPlatform(filepath.Base(scenario.PlatformFile))
+		if err != nil {
+			return nil, "", nil, err
+		}
+		platform = loaded
 	}
-	envName, _, err := spec.ResolveEnvironment(manifest.Environments, nil, desiredEnv)
+
+	manifest, err := spec.Load(ctx, scenario.ManifestFile, scenario.Environment, platform)
 	if err != nil {
-		return nil, "", err
+		return nil, "", nil, err
 	}
-	return manifest, envName, nil
+	envName, _, err := spec.ResolveEnvironment(manifest.Environments, platform, scenario.Environment)
+	if err != nil {
+		return nil, "", nil, err
+	}
+
+	if platform == nil {
+		return manifest, envName, nil, nil
+	}
+
+	envIdentity := spec.NormalizeEnv(envName)
+	resolved, _, err := spec.Resolve(manifest, platform, envIdentity, spec.SubstitutionReport{})
+	if err != nil {
+		return nil, "", nil, err
+	}
+	return manifest, envName, resolved, nil
 }
 
 // renderChart renders manifest/environment through Helm's real template
 // engine via [helm.Client.RenderOffline] (no cluster access, matching
 // `deployah plan --offline`), returning the resulting Kubernetes objects.
-func (suite *IntegrationTestSuite) renderChart(t *testing.T, manifest *spec.Spec, environment string) ([]unstructured.Unstructured, error) {
+func (suite *IntegrationTestSuite) renderChart(t *testing.T, manifest *spec.Spec, environment string, resolved *spec.ResolvedSpec) ([]unstructured.Unstructured, error) {
 	t.Helper()
 
 	client, err := helm.NewClient()
@@ -191,7 +219,7 @@ func (suite *IntegrationTestSuite) renderChart(t *testing.T, manifest *spec.Spec
 		return nil, fmt.Errorf("create helm client: %w", err)
 	}
 
-	result, cleanup, err := client.RenderOffline(context.Background(), manifest, environment, nil)
+	result, cleanup, err := client.RenderOffline(context.Background(), manifest, environment, resolved)
 	if cleanup != nil {
 		t.Cleanup(cleanup)
 	}

@@ -1,0 +1,12 @@
+apiVersion: platform/v1-alpha.1
+profiles:
+  capped:
+    maxResources:
+      cpu: 500m
+      memory: 512Mi
+environments:
+  production:
+    context: prod-eks
+    domains:
+      public:
+        baseDomain: example.com

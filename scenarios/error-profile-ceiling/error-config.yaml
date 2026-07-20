@@ -1,0 +1,2 @@
+expectedErrors:
+  - exceeds profile maxResources

@@ -60,8 +60,18 @@ type ResolvedComponent struct {
 	TLSCertPEM []byte
 	TLSKeyPEM  []byte
 	// StorageClass is the Kubernetes storage class name resolved from the
-	// platform. Empty when the component has no storage block.
+	// platform profile's storageClass reference. Empty when no profile sets
+	// a storage class.
 	StorageClass string
+	// Profiles is the ordered list of profile names applied after default
+	// prepend. Empty when no profiles apply.
+	Profiles []string
+	// MergedProfile is the left-to-right merge of Profiles. Nil when no
+	// profiles apply.
+	MergedProfile *PlatformProfile
+	// DomainKey is the logical domain key used for expose resolution.
+	// Empty when the component has no expose block.
+	DomainKey string
 }
 
 // ResolutionReport holds the provenance of each resolved field, enabling
@@ -93,17 +103,21 @@ type ResolvedField struct {
 	Source string
 }
 
-// Phase 1 error codes for use in the resolution report and JSON output.
-// CAP_EXCEEDED is deferred to Phase 2.
+// Resolution error codes for use in the resolution report and JSON output.
 const (
-	ErrCodePlatformNotFound        = "PLATFORM_NOT_FOUND"
-	ErrCodePlatformEnvNotFound     = "PLATFORM_ENV_NOT_FOUND"
-	ErrCodeDomainGap               = "DOMAIN_GAP"
-	ErrCodeFQDNCollision           = "FQDN_COLLISION"
-	ErrCodeInvalidDNS              = "INVALID_DNS"
-	ErrCodeStaticWildcardSubdomain = "STATIC_WILDCARD_SUBDOMAIN"
-	ErrCodeContextMismatch         = "CONTEXT_MISMATCH"
-	ErrCodeHostnameChanged         = "HOSTNAME_CHANGED"
+	ErrCodePlatformNotFound            = "PLATFORM_NOT_FOUND"
+	ErrCodePlatformEnvNotFound         = "PLATFORM_ENV_NOT_FOUND"
+	ErrCodeDomainGap                   = "DOMAIN_GAP"
+	ErrCodeFQDNCollision               = "FQDN_COLLISION"
+	ErrCodeInvalidDNS                  = "INVALID_DNS"
+	ErrCodeStaticWildcardSubdomain     = "STATIC_WILDCARD_SUBDOMAIN"
+	ErrCodeContextMismatch             = "CONTEXT_MISMATCH"
+	ErrCodeHostnameChanged             = "HOSTNAME_CHANGED"
+	ErrCodeProfileNotFound             = "PROFILE_NOT_FOUND"
+	ErrCodeProfileDomainNotAllowed     = "PROFILE_DOMAIN_NOT_ALLOWED"
+	ErrCodeProfileStorageClassNotFound = "PROFILE_STORAGE_CLASS_NOT_FOUND"
+	ErrCodeProfileResourceExceeded     = "PROFILE_RESOURCE_EXCEEDED"
+	ErrCodeProfileOptOutBlocked        = "PROFILE_OPT_OUT_BLOCKED"
 )
 
 // ResolutionError is a resolution error that carries a machine-readable code.

@@ -7,6 +7,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"deployah.dev/deployah/internal/spec"
+
+	corev1 "k8s.io/api/core/v1"
 )
 
 // serviceComponent returns a minimal service component for test setup.
@@ -33,7 +35,8 @@ func TestBuildProbeValues_ZeroConfig(t *testing.T) {
 	t.Parallel()
 
 	c := serviceComponent()
-	probes := buildProbeValues(c)
+	probes, err := buildProbeValues(c)
+	require.NoError(t, err)
 
 	require.Contains(t, probes, "startupProbe")
 	require.Contains(t, probes, "readinessProbe")
@@ -67,7 +70,8 @@ func TestBuildProbeValues_ReadyPathUpgradesToHTTP(t *testing.T) {
 	c.Health = &spec.Health{
 		Ready: &spec.HealthReady{Path: "/health"},
 	}
-	probes := buildProbeValues(c)
+	probes, err := buildProbeValues(c)
+	require.NoError(t, err)
 
 	require.Contains(t, probes, "startupProbe")
 	startup := mustNestedMap(t, probes, "startupProbe")
@@ -94,7 +98,8 @@ func TestBuildProbeValues_BothPaths(t *testing.T) {
 		Ready: &spec.HealthReady{Path: "/health"},
 		Alive: &spec.HealthAlive{Path: "/livez"},
 	}
-	probes := buildProbeValues(c)
+	probes, err := buildProbeValues(c)
+	require.NoError(t, err)
 
 	startup := mustNestedMap(t, probes, "startupProbe")
 	assert.Contains(t, startup, "httpGet")
@@ -118,7 +123,8 @@ func TestBuildProbeValues_ReadyDisabled(t *testing.T) {
 	c.Health = &spec.Health{
 		Ready: &spec.HealthReady{Disabled: true},
 	}
-	probes := buildProbeValues(c)
+	probes, err := buildProbeValues(c)
+	require.NoError(t, err)
 
 	// Startup is still active because liveness is on.
 	assert.Contains(t, probes, "startupProbe")
@@ -135,7 +141,8 @@ func TestBuildProbeValues_AliveDisabled(t *testing.T) {
 	c.Health = &spec.Health{
 		Alive: &spec.HealthAlive{Disabled: true},
 	}
-	probes := buildProbeValues(c)
+	probes, err := buildProbeValues(c)
+	require.NoError(t, err)
 
 	// Startup is still active because readiness is on.
 	assert.Contains(t, probes, "startupProbe")
@@ -152,7 +159,8 @@ func TestBuildProbeValues_BothDisabled(t *testing.T) {
 		Ready: &spec.HealthReady{Disabled: true},
 		Alive: &spec.HealthAlive{Disabled: true},
 	}
-	probes := buildProbeValues(c)
+	probes, err := buildProbeValues(c)
+	require.NoError(t, err)
 
 	assert.Empty(t, probes)
 }
@@ -170,7 +178,8 @@ func TestBuildProbeValues_CustomIntervalAndRestartAfter(t *testing.T) {
 			RestartAfter: "2m", // 120s / 30s = 4
 		},
 	}
-	probes := buildProbeValues(c)
+	probes, err := buildProbeValues(c)
+	require.NoError(t, err)
 
 	liveness := mustNestedMap(t, probes, "livenessProbe")
 	assert.Equal(t, 30, liveness["periodSeconds"])
@@ -190,7 +199,8 @@ func TestBuildProbeValues_RestartAfterRoundsUp(t *testing.T) {
 			RestartAfter: "65s",
 		},
 	}
-	probes := buildProbeValues(c)
+	probes, err := buildProbeValues(c)
+	require.NoError(t, err)
 
 	liveness := mustNestedMap(t, probes, "livenessProbe")
 	assert.Equal(t, 7, liveness["failureThreshold"])
@@ -206,7 +216,8 @@ func TestBuildProbeValues_DefaultLivenessTimingWhenFieldsOmitted(t *testing.T) {
 	c.Health = &spec.Health{
 		Alive: &spec.HealthAlive{Path: "/livez"},
 	}
-	probes := buildProbeValues(c)
+	probes, err := buildProbeValues(c)
+	require.NoError(t, err)
 
 	liveness := mustNestedMap(t, probes, "livenessProbe")
 	assert.Equal(t, 10, liveness["periodSeconds"])
@@ -219,7 +230,8 @@ func TestBuildProbeValues_PortName(t *testing.T) {
 	t.Parallel()
 
 	c := serviceComponent()
-	probes := buildProbeValues(c)
+	probes, err := buildProbeValues(c)
+	require.NoError(t, err)
 
 	startup := mustNestedMap(t, probes, "startupProbe")
 	tcpSocket := mustNestedMap(t, startup, "tcpSocket")
@@ -232,7 +244,8 @@ func TestBuildLivenessProbe_IntervalOnlyDefaultsRestartAfter(t *testing.T) {
 	t.Parallel()
 
 	// interval provided, restartAfter omitted -> defaults to 60s -> 60/30=2
-	p := buildLivenessProbe("", "30s", "")
+	p, err := buildLivenessProbe("", "30s", "")
+	require.NoError(t, err)
 	assert.Equal(t, 2, p["failureThreshold"])
 	assert.Equal(t, 30, p["periodSeconds"])
 }
@@ -243,7 +256,8 @@ func TestBuildLivenessProbe_RestartAfterOnlyDefaultsInterval(t *testing.T) {
 	t.Parallel()
 
 	// restartAfter provided, interval omitted -> interval defaults to 10s -> 120/10=12
-	p := buildLivenessProbe("", "", "2m")
+	p, err := buildLivenessProbe("", "", "2m")
+	require.NoError(t, err)
 	assert.Equal(t, 12, p["failureThreshold"])
 	assert.Equal(t, 10, p["periodSeconds"])
 }
@@ -493,4 +507,127 @@ func TestMapSpecToChartValues_CertManagerTLS(t *testing.T) {
 	annotations, ok := ingress["annotations"].(map[string]string)
 	require.True(t, ok)
 	assert.Equal(t, "letsencrypt-prod", annotations["cert-manager.io/cluster-issuer"])
+}
+
+// TestMapSpecToChartValues_Autoscaling maps enabled HPA settings into values.
+func TestMapSpecToChartValues_Autoscaling(t *testing.T) {
+	t.Parallel()
+
+	m := &spec.Spec{
+		APIVersion: "v1-alpha.2",
+		Project:    "shop",
+		Environments: map[string]spec.Environment{
+			"production": {},
+		},
+		Components: map[string]spec.Component{
+			"web": {
+				Role:  spec.ComponentRoleService,
+				Image: "nginx:1.0.0",
+				Port:  80,
+				Autoscaling: &spec.Autoscaling{
+					Enabled:     true,
+					MinReplicas: 2,
+					MaxReplicas: 10,
+					Metrics: []spec.Metric{
+						{Type: spec.MetricTypeCPU, Target: 70},
+						{Type: spec.MetricTypeMemory, Target: 80},
+					},
+				},
+			},
+		},
+	}
+	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.2"))
+
+	vals, err := MapSpecToChartValues(m, "production", nil)
+	require.NoError(t, err)
+
+	web := mustNestedMap(t, vals, "web")
+	as := mustNestedMap(t, web, "autoscaling")
+	assert.Equal(t, true, as["enabled"])
+	assert.Equal(t, 2, as["minReplicas"])
+	assert.Equal(t, 10, as["maxReplicas"])
+	assert.Equal(t, 70, as["targetCPU"])
+	assert.Equal(t, 80, as["targetMemory"])
+}
+
+// TestMapSpecToChartValues_Profiles verifies merged profile fields land in
+// component Helm values and the deployah.resolved block.
+func TestMapSpecToChartValues_Profiles(t *testing.T) {
+	t.Parallel()
+
+	m := &spec.Spec{
+		APIVersion: "v1-alpha.2",
+		Project:    "shop",
+		Environments: map[string]spec.Environment{
+			"production": {},
+		},
+		Components: map[string]spec.Component{
+			"web": {
+				Role:  spec.ComponentRoleService,
+				Image: "nginx:1.0.0",
+				Port:  80,
+			},
+		},
+	}
+	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.2"))
+
+	resolved := &spec.ResolvedSpec{
+		Spec: m,
+		Env:  spec.NormalizeEnv("production"),
+		Components: map[string]spec.ResolvedComponent{
+			"web": {
+				Profiles: []string{"default", "public-web"},
+				MergedProfile: &spec.PlatformProfile{
+					NodeSelector: map[string]string{"workload": "general"},
+					PodLabels:    map[string]string{"tier": "web"},
+					PodAnnotations: map[string]string{
+						"deployah.dev/profile": "public-web",
+					},
+					Tolerations: []corev1.Toleration{
+						{Key: "ingress", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule},
+					},
+					SecurityContext: &corev1.PodSecurityContext{
+						RunAsNonRoot: new(true),
+					},
+					ContainerSecurityContext: &corev1.SecurityContext{
+						ReadOnlyRootFilesystem: new(true),
+					},
+				},
+			},
+		},
+	}
+
+	vals, err := MapSpecToChartValues(m, "production", resolved)
+	require.NoError(t, err)
+
+	web := mustNestedMap(t, vals, "web")
+	assert.Equal(t, map[string]string{"workload": "general"}, web["nodeSelector"])
+	assert.Equal(t, map[string]string{"tier": "web"}, web["podLabels"])
+	assert.Equal(t, map[string]string{"deployah.dev/profile": "public-web"}, web["podAnnotations"])
+
+	labels, ok := web["commonLabels"].(map[string]string)
+	require.True(t, ok)
+	assert.Equal(t, "web", labels["tier"])
+	assert.Equal(t, "shop", labels["deployah.dev/project"])
+
+	tolerations, ok := web["tolerations"].([]any)
+	require.True(t, ok)
+	require.Len(t, tolerations, 1)
+	tol0, ok := tolerations[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "ingress", tol0["key"])
+
+	psc := mustNestedMap(t, web, "podSecurityContext")
+	assert.Equal(t, true, psc["enabled"])
+	assert.Equal(t, true, psc["runAsNonRoot"])
+
+	csc := mustNestedMap(t, web, "containerSecurityContext")
+	assert.Equal(t, true, csc["enabled"])
+	assert.Equal(t, true, csc["readOnlyRootFilesystem"])
+
+	deployah := mustNestedMap(t, vals, "deployah")
+	resolvedBlock := mustNestedMap(t, deployah, "resolved")
+	components := mustNestedMap(t, resolvedBlock, "components")
+	webResolved := mustNestedMap(t, components, "web")
+	assert.Equal(t, []string{"default", "public-web"}, webResolved["profiles"])
 }

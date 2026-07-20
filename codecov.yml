@@ -1,0 +1,43 @@
+codecov:
+  require_ci_to_pass: true
+
+coverage:
+  precision: 2
+  round: down
+  range: "60..80"
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 1%
+    patch:
+      default:
+        target: 80%
+
+parsers:
+  go:
+    partials_as_hits: true
+
+comment:
+  layout: "header, diff, flags"
+  behavior: default
+  require_changes: true
+
+flag_management:
+  default_rules:
+    carryforward: true
+    statuses:
+      - type: project
+        target: auto
+        threshold: 1%
+      - type: patch
+        target: 80%
+  individual_flags:
+    - name: unittests
+      carryforward: true
+    - name: integration
+      carryforward: true
+
+ignore:
+  - "**/examples/**"
+  - "scenarios/**"

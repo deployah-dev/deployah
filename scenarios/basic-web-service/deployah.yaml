@@ -1,0 +1,10 @@
+apiVersion: v1-alpha.2
+project: basic-web-service
+components:
+  web:
+    image: nginx:latest
+    port: 8080
+    environments: [dev]
+    resourcePreset: small
+environments:
+  dev: {}

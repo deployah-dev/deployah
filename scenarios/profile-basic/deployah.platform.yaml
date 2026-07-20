@@ -1,0 +1,24 @@
+apiVersion: platform/v1-alpha.1
+profiles:
+  public-web:
+    nodeSelector:
+      workload: general
+    podLabels:
+      tier: web
+    tolerations:
+      - key: ingress
+        operator: Exists
+        effect: NoSchedule
+    securityContext:
+      runAsNonRoot: true
+    containerSecurityContext:
+      readOnlyRootFilesystem: true
+      allowPrivilegeEscalation: false
+environments:
+  production:
+    context: prod-eks
+    domains:
+      public:
+        baseDomain: example.com
+        tls:
+          mode: selfSigned

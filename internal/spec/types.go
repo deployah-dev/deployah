@@ -19,6 +19,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+
+	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 // Spec defines the structure of the project spec.
@@ -89,8 +91,10 @@ type Component struct {
 	// Expose exposes the component via an ingress rule resolved against the
 	// platform domain configuration. Replaces the former ingress block.
 	Expose *Expose `json:"expose,omitempty" yaml:"expose,omitempty"`
-	// Profile selects a platform-defined deployment profile (Phase 3).
-	Profile string `json:"profile,omitempty" yaml:"profile,omitempty"`
+	// Profiles lists platform-defined deployment profile names. Multiple
+	// profiles are merged left to right. Requires a profiles section in the
+	// platform file.
+	Profiles []string `json:"profiles,omitempty" yaml:"profiles,omitempty"`
 	// Env sets static environment variables for the container.
 	Env map[string]string `json:"env,omitempty" yaml:"env,omitempty"`
 	// Health configures ready and alive checks for the component.
@@ -216,9 +220,9 @@ type Metric struct {
 
 // Resources defines the resource requests and limits for the component.
 type Resources struct {
-	CPU              *string `json:"cpu,omitempty" yaml:"cpu,omitempty"`
-	Memory           *string `json:"memory,omitempty" yaml:"memory,omitempty"`
-	EphemeralStorage *string `json:"ephemeralStorage,omitempty" yaml:"ephemeralStorage,omitempty"`
+	CPU              *resource.Quantity `json:"cpu,omitempty" yaml:"cpu,omitempty"`
+	Memory           *resource.Quantity `json:"memory,omitempty" yaml:"memory,omitempty"`
+	EphemeralStorage *resource.Quantity `json:"ephemeralStorage,omitempty" yaml:"ephemeralStorage,omitempty"`
 }
 
 // Expose declares that a component should be accessible via an ingress rule.

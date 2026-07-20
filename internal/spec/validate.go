@@ -131,19 +131,16 @@ func ValidateAPIVersion(specObj map[string]any) (string, error) {
 // It cannot have both resources and resourcePreset, or an empty resources
 // object.
 func ValidateComponentResources(component Component) error {
-	hasResources := (component.Resources.CPU != nil && *component.Resources.CPU != "") ||
-		(component.Resources.Memory != nil && *component.Resources.Memory != "") ||
-		(component.Resources.EphemeralStorage != nil && *component.Resources.EphemeralStorage != "")
+	hasResources := component.Resources.ResourcesSet()
 	hasPreset := component.ResourcePreset != ""
 
 	if hasResources && hasPreset {
 		return fmt.Errorf("component cannot have both 'resources' and 'resourcePreset' fields")
 	}
 
-	// Check if resources object is present but empty (resources: {})
-	// This happens when someone explicitly writes "resources: {}" in YAML
-	// With pointers, we can detect if the Resources struct was explicitly set
-	if !hasResources && (component.Resources.CPU != nil || component.Resources.Memory != nil || component.Resources.EphemeralStorage != nil) {
+	// Check if resources object is present but empty (resources: {} or
+	// zero quantities). Pointers let us detect an explicitly set block.
+	if !hasResources && component.Resources.ResourcesPresent() {
 		return fmt.Errorf("component cannot have empty 'resources' object - either specify actual resource values or remove the resources field entirely")
 	}
 
@@ -260,12 +257,26 @@ func ValidateSpecComponents(spec *Spec) error {
 		if err := ValidateComponentEnvironmentFilter(component); err != nil {
 			errs = append(errs, fmt.Errorf("component %s: %w", name, err))
 		}
+		if err := ValidateComponentProfiles(component); err != nil {
+			errs = append(errs, fmt.Errorf("component %s: %w", name, err))
+		}
 	}
 
 	if len(errs) > 0 {
 		return fmt.Errorf("component validation failed: %w", errors.Join(errs...))
 	}
 
+	return nil
+}
+
+// ValidateComponentProfiles checks that profile names in the component are
+// non-empty strings. Platform lookup happens during resolve.
+func ValidateComponentProfiles(component Component) error {
+	for i, name := range component.Profiles {
+		if strings.TrimSpace(name) == "" {
+			return fmt.Errorf("profiles[%d]: profile name must not be empty", i)
+		}
+	}
 	return nil
 }
 

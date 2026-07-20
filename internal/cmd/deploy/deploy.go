@@ -386,11 +386,11 @@ func checkHostnameGuard(c *nabat.Context, helmClient session.HelmClient, project
 }
 
 // hostnameChanges returns one "  component: old -> new" line per component
-// whose FQDN changed, checking deployah.resolved then the legacy v1-alpha.2 path.
+// whose FQDN changed in the deployah.resolved values block.
 func hostnameChanges(config map[string]any, resolved *spec.ResolvedSpec) []string {
 	deployahBlock, ok := config["deployah"]
 	if !ok {
-		return legacyHostnameChanges(config, resolved)
+		return nil
 	}
 	deployahMap, ok := deployahBlock.(map[string]any)
 	if !ok {
@@ -428,43 +428,6 @@ func hostnameChanges(config map[string]any, resolved *spec.ResolvedSpec) []strin
 	}
 	// resolved.Components is a map, so iteration order is randomized; sort
 	// for stable, comparable output across runs.
-	slices.Sort(changed)
-	return changed
-}
-
-// legacyHostnameChanges checks for hostname changes in old v1-alpha.2
-// releases that stored the hostname in the component ingress.hostname
-// values path instead of the deployah.resolved block.
-func legacyHostnameChanges(config map[string]any, resolved *spec.ResolvedSpec) []string {
-	var changed []string
-	for compName, rc := range resolved.Components {
-		if rc.FQDN == "" {
-			continue
-		}
-		compAny, exists := config[compName]
-		if !exists {
-			continue
-		}
-		compMap, ok := compAny.(map[string]any)
-		if !ok {
-			continue
-		}
-		ingressAny, exists := compMap["ingress"]
-		if !exists {
-			continue
-		}
-		ingressMap, ok := ingressAny.(map[string]any)
-		if !ok {
-			continue
-		}
-		prevHostname, hostnameOK := ingressMap["hostname"].(string)
-		if !hostnameOK {
-			continue
-		}
-		if prevHostname != "" && prevHostname != rc.FQDN {
-			changed = append(changed, fmt.Sprintf("  %s: %s -> %s", compName, prevHostname, rc.FQDN))
-		}
-	}
 	slices.Sort(changed)
 	return changed
 }

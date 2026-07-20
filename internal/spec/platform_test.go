@@ -9,6 +9,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"deployah.dev/deployah/internal/spec"
+
+	corev1 "k8s.io/api/core/v1"
 )
 
 // writeTempFile writes content to a temp file and returns its path.
@@ -610,30 +612,56 @@ func TestMissingPlatformEnvironments_FullCoverage(t *testing.T) {
 	assert.Empty(t, missing)
 }
 
-// TestPlatformEnvContext_DirectMatch verifies platform spec behavior.
-func TestPlatformEnvContext_DirectMatch(t *testing.T) {
-	p := minimalPlatform()
-	ctx := spec.PlatformEnvContext(p, "production")
-	assert.Equal(t, "prod-eks", ctx)
-}
+// TestPlatformEnvContext verifies Kubernetes context lookup from the platform
+// file, including wildcard matches and missing entries.
+func TestPlatformEnvContext(t *testing.T) {
+	t.Parallel()
 
-// TestPlatformEnvContext_WildcardMatch verifies platform spec behavior.
-func TestPlatformEnvContext_WildcardMatch(t *testing.T) {
-	platform := &spec.PlatformConfig{
+	reviewPlatform := &spec.PlatformConfig{
 		APIVersion: "platform/v1-alpha.1",
 		Environments: map[string]spec.PlatformEnvironment{
 			"review": {Context: "staging-eks"},
 		},
 	}
-	ctx := spec.PlatformEnvContext(platform, "review/pr-42")
-	assert.Equal(t, "staging-eks", ctx)
-}
 
-// TestPlatformEnvContext_NoMatch verifies platform spec behavior.
-func TestPlatformEnvContext_NoMatch(t *testing.T) {
-	p := minimalPlatform()
-	ctx := spec.PlatformEnvContext(p, "unknown")
-	assert.Empty(t, ctx)
+	tests := []struct {
+		name     string
+		platform *spec.PlatformConfig
+		env      string
+		want     string
+	}{
+		{
+			name:     "direct match",
+			platform: minimalPlatform(),
+			env:      "production",
+			want:     "prod-eks",
+		},
+		{
+			name:     "wildcard match",
+			platform: reviewPlatform,
+			env:      "review/pr-42",
+			want:     "staging-eks",
+		},
+		{
+			name:     "nil platform",
+			platform: nil,
+			env:      "production",
+			want:     "",
+		},
+		{
+			name:     "no match",
+			platform: minimalPlatform(),
+			env:      "unknown",
+			want:     "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, spec.PlatformEnvContext(tt.platform, tt.env))
+		})
+	}
 }
 
 // TestResolve_ErrorCode_PlatformNotFound verifies platform spec behavior.
@@ -782,4 +810,433 @@ func TestResolve_StaticInvalidSubdomainFailsDNS(t *testing.T) {
 	_, report, err := spec.Resolve(appSpec, platform, env, spec.SubstitutionReport{})
 	require.Error(t, err)
 	assert.Equal(t, spec.ErrCodeInvalidDNS, report.ErrorCode)
+}
+
+// --- Profile tests ---
+
+func platformWithProfiles() *spec.PlatformConfig {
+	p := minimalPlatform()
+	p.Profiles = map[string]spec.PlatformProfile{
+		"default": {
+			NodeSelector: map[string]string{"workload": "general"},
+		},
+		"public-web": {
+			PodLabels:      map[string]string{"tier": "web"},
+			AllowedDomains: []string{"public"},
+			Tolerations: []corev1.Toleration{
+				{Key: "ingress", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule},
+			},
+		},
+		"high-security": {
+			SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: new(true)},
+			ContainerSecurityContext: &corev1.SecurityContext{
+				ReadOnlyRootFilesystem:   new(true),
+				AllowPrivilegeEscalation: new(false),
+			},
+			MaxResources: &spec.ProfileMaxResources{CPU: spec.MustQuantity("1000m"), Memory: spec.MustQuantity("2Gi")},
+		},
+		"gpu": {
+			NodeSelector: map[string]string{"accelerator": "nvidia"},
+			StorageClass: "fast",
+			Tolerations: []corev1.Toleration{
+				{Key: "nvidia.com/gpu", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule},
+			},
+		},
+	}
+	prod := p.Environments["production"]
+	prod.StorageClasses = map[string]spec.PlatformStorageClass{
+		"fast": {ClassName: "fast-ssd"},
+	}
+	p.Environments["production"] = prod
+	return p
+}
+
+// TestLoadPlatform_WithProfiles verifies profiles parse from the platform file.
+func TestLoadPlatform_WithProfiles(t *testing.T) {
+	t.Parallel()
+	yaml := `
+apiVersion: platform/v1-alpha.1
+profiles:
+  default:
+    nodeSelector:
+      workload: general
+  public-web:
+    podLabels:
+      tier: web
+    allowedDomains: [public]
+    maxResources:
+      cpu: 1000m
+      memory: 2Gi
+environments:
+  production:
+    context: prod-eks
+    domains:
+      public:
+        baseDomain: example.com
+        tls:
+          mode: selfSigned
+`
+	path := writeTempFile(t, yaml)
+	p, err := spec.LoadPlatform(path)
+	require.NoError(t, err)
+	require.Contains(t, p.Profiles, "default")
+	require.Contains(t, p.Profiles, "public-web")
+	assert.Equal(t, "general", p.Profiles["default"].NodeSelector["workload"])
+	assert.Equal(t, []string{"public"}, p.Profiles["public-web"].AllowedDomains)
+	require.NotNil(t, p.Profiles["public-web"].MaxResources)
+	require.NotNil(t, p.Profiles["public-web"].MaxResources.CPU)
+	assert.Equal(t, "1", p.Profiles["public-web"].MaxResources.CPU.String())
+}
+
+// TestLoadPlatform_ProfileUnknownDomainRef verifies consistency rejects
+// unknown domains.
+func TestLoadPlatform_ProfileUnknownDomainRef(t *testing.T) {
+	t.Parallel()
+	yaml := `
+apiVersion: platform/v1-alpha.1
+profiles:
+  public-web:
+    allowedDomains: [missing]
+environments:
+  production:
+    context: prod-eks
+    domains:
+      public:
+        baseDomain: example.com
+`
+	path := writeTempFile(t, yaml)
+	_, err := spec.LoadPlatform(path)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "allowedDomains")
+	assert.Contains(t, err.Error(), "missing")
+}
+
+// TestLoadPlatform_ProfileUnknownStorageClassRef verifies consistency
+// rejects unknown storage classes.
+func TestLoadPlatform_ProfileUnknownStorageClassRef(t *testing.T) {
+	t.Parallel()
+	yaml := `
+apiVersion: platform/v1-alpha.1
+profiles:
+  gpu:
+    storageClass: missing
+environments:
+  production:
+    context: prod-eks
+    domains:
+      public:
+        baseDomain: example.com
+`
+	path := writeTempFile(t, yaml)
+	_, err := spec.LoadPlatform(path)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "storageClass")
+	assert.Contains(t, err.Error(), "missing")
+}
+
+// TestResolve_Profiles covers default prepend, merge, domain/storage/resource
+// constraints, and missing-platform errors.
+func TestResolve_Profiles(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		appSpec     *spec.Spec
+		platform    *spec.PlatformConfig
+		env         string
+		wantErrCode string
+		wantErrMsg  string
+		check       func(t *testing.T, resolved *spec.ResolvedSpec, report *spec.ResolutionReport)
+	}{
+		{
+			name: "profiles merged",
+			appSpec: func() *spec.Spec {
+				s := minimalSpec(nil)
+				comp := s.Components["api"]
+				comp.Profiles = []string{"public-web", "high-security"}
+				comp.Resources = spec.Resources{CPU: spec.MustQuantity("500m"), Memory: spec.MustQuantity("512Mi")}
+				s.Components["api"] = comp
+				return s
+			}(),
+			platform: platformWithProfiles(),
+			env:      "production",
+			check: func(t *testing.T, resolved *spec.ResolvedSpec, report *spec.ResolutionReport) {
+				t.Helper()
+				rc := resolved.Components["api"]
+				assert.Equal(t, []string{"default", "public-web", "high-security"}, rc.Profiles)
+				require.NotNil(t, rc.MergedProfile)
+				assert.Equal(t, "general", rc.MergedProfile.NodeSelector["workload"])
+				assert.Equal(t, "web", rc.MergedProfile.PodLabels["tier"])
+				require.NotNil(t, rc.MergedProfile.SecurityContext)
+				require.NotNil(t, rc.MergedProfile.SecurityContext.RunAsNonRoot)
+				assert.True(t, *rc.MergedProfile.SecurityContext.RunAsNonRoot)
+				assert.Equal(t, []string{"public"}, rc.MergedProfile.AllowedDomains)
+
+				var profilesField string
+				for _, f := range report.Fields {
+					if f.Component == "api" && f.Path == "profiles" {
+						profilesField = f.Value
+					}
+				}
+				assert.Contains(t, profilesField, "default")
+				assert.Contains(t, profilesField, "public-web")
+			},
+		},
+		{
+			name:     "default profile prepended when omitted",
+			appSpec:  minimalSpec(nil),
+			platform: platformWithProfiles(),
+			env:      "production",
+			check: func(t *testing.T, resolved *spec.ResolvedSpec, _ *spec.ResolutionReport) {
+				t.Helper()
+				rc := resolved.Components["api"]
+				assert.Equal(t, []string{"default"}, rc.Profiles)
+				require.NotNil(t, rc.MergedProfile)
+				assert.Equal(t, "general", rc.MergedProfile.NodeSelector["workload"])
+			},
+		},
+		{
+			name: "domain not allowed by profile",
+			appSpec: func() *spec.Spec {
+				s := minimalSpec(nil)
+				comp := s.Components["api"]
+				comp.Profiles = []string{"public-web"}
+				comp.Expose = &spec.Expose{Domain: "internal"}
+				s.Components["api"] = comp
+				return s
+			}(),
+			platform: func() *spec.PlatformConfig {
+				p := platformWithProfiles()
+				prod := p.Environments["production"]
+				prod.Domains["internal"] = spec.PlatformDomain{BaseDomain: "internal.example.com"}
+				p.Environments["production"] = prod
+				return p
+			}(),
+			env:         "production",
+			wantErrCode: spec.ErrCodeProfileDomainNotAllowed,
+		},
+		{
+			name: "domain ignored without expose",
+			appSpec: &spec.Spec{
+				APIVersion:   "v1-alpha.2",
+				Project:      "shop",
+				Environments: map[string]spec.Environment{"production": {}},
+				Components: map[string]spec.Component{
+					"worker": {Profiles: []string{"public-web"}},
+				},
+			},
+			platform: platformWithProfiles(),
+			env:      "production",
+			check: func(t *testing.T, resolved *spec.ResolvedSpec, _ *spec.ResolutionReport) {
+				t.Helper()
+				assert.Equal(t, []string{"default", "public-web"}, resolved.Components["worker"].Profiles)
+			},
+		},
+		{
+			name: "storage class missing in environment",
+			appSpec: &spec.Spec{
+				APIVersion:   "v1-alpha.2",
+				Project:      "shop",
+				Environments: map[string]spec.Environment{"local": {}},
+				Components: map[string]spec.Component{
+					"api": {Profiles: []string{"gpu"}},
+				},
+			},
+			platform:    platformWithProfiles(),
+			env:         "local",
+			wantErrCode: spec.ErrCodeProfileStorageClassNotFound,
+		},
+		{
+			name: "storage class resolved to className",
+			appSpec: &spec.Spec{
+				APIVersion:   "v1-alpha.2",
+				Project:      "shop",
+				Environments: map[string]spec.Environment{"production": {}},
+				Components: map[string]spec.Component{
+					"api": {Profiles: []string{"gpu"}},
+				},
+			},
+			platform: platformWithProfiles(),
+			env:      "production",
+			check: func(t *testing.T, resolved *spec.ResolvedSpec, _ *spec.ResolutionReport) {
+				t.Helper()
+				assert.Equal(t, "fast-ssd", resolved.Components["api"].StorageClass)
+			},
+		},
+		{
+			name: "resource ceiling exceeded",
+			appSpec: func() *spec.Spec {
+				s := minimalSpec(nil)
+				comp := s.Components["api"]
+				comp.Profiles = []string{"high-security"}
+				comp.Resources = spec.Resources{CPU: spec.MustQuantity("2000m"), Memory: spec.MustQuantity("512Mi")}
+				s.Components["api"] = comp
+				return s
+			}(),
+			platform:    platformWithProfiles(),
+			env:         "production",
+			wantErrCode: spec.ErrCodeProfileResourceExceeded,
+		},
+		{
+			name: "resource ceiling uses default small preset",
+			appSpec: func() *spec.Spec {
+				s := minimalSpec(nil)
+				comp := s.Components["api"]
+				comp.Profiles = []string{"high-security"}
+				// No explicit resources: effective requests are the small preset
+				// (500m / 512Mi), which exceeds a 100m ceiling.
+				s.Components["api"] = comp
+				return s
+			}(),
+			platform: func() *spec.PlatformConfig {
+				p := platformWithProfiles()
+				hs := p.Profiles["high-security"]
+				hs.MaxResources = &spec.ProfileMaxResources{CPU: spec.MustQuantity("100m")}
+				p.Profiles["high-security"] = hs
+				return p
+			}(),
+			env:         "production",
+			wantErrCode: spec.ErrCodeProfileResourceExceeded,
+		},
+		{
+			name: "resource ceiling uses named resourcePreset",
+			appSpec: func() *spec.Spec {
+				s := minimalSpec(nil)
+				comp := s.Components["api"]
+				comp.Profiles = []string{"high-security"}
+				comp.ResourcePreset = spec.ResourcePresetXLarge
+				s.Components["api"] = comp
+				return s
+			}(),
+			platform:    platformWithProfiles(),
+			env:         "production",
+			wantErrCode: spec.ErrCodeProfileResourceExceeded,
+		},
+		{
+			name: "opt-out blocked when default exists",
+			appSpec: func() *spec.Spec {
+				s := minimalSpec(nil)
+				comp := s.Components["api"]
+				comp.Profiles = []string{}
+				s.Components["api"] = comp
+				return s
+			}(),
+			platform:    platformWithProfiles(),
+			env:         "production",
+			wantErrCode: spec.ErrCodeProfileOptOutBlocked,
+		},
+		{
+			name: "named profiles without platform section",
+			appSpec: func() *spec.Spec {
+				s := minimalSpec(nil)
+				comp := s.Components["api"]
+				comp.Profiles = []string{"public-web"}
+				s.Components["api"] = comp
+				return s
+			}(),
+			platform:    minimalPlatform(),
+			env:         "production",
+			wantErrCode: spec.ErrCodeProfileNotFound,
+		},
+		{
+			name: "named profiles require platform file",
+			appSpec: func() *spec.Spec {
+				s := minimalSpec(nil)
+				comp := s.Components["api"]
+				comp.Profiles = []string{"public-web"}
+				s.Components["api"] = comp
+				return s
+			}(),
+			platform:    nil,
+			env:         "production",
+			wantErrCode: spec.ErrCodePlatformNotFound,
+			wantErrMsg:  "no platform file was found",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			env := spec.NormalizeEnv(tt.env)
+			resolved, report, err := spec.Resolve(tt.appSpec, tt.platform, env, spec.SubstitutionReport{})
+			if tt.wantErrCode != "" {
+				require.Error(t, err)
+				require.NotNil(t, report)
+				assert.Equal(t, tt.wantErrCode, report.ErrorCode)
+				if tt.wantErrMsg != "" {
+					assert.Contains(t, err.Error(), tt.wantErrMsg)
+				}
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, resolved)
+			if tt.check != nil {
+				tt.check(t, resolved, report)
+			}
+		})
+	}
+}
+
+// TestResolveForDisplay covers offline partial results and the happy path that
+// delegates to Resolve.
+func TestResolveForDisplay(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		platform    *spec.PlatformConfig
+		wantErrCode string
+		check       func(t *testing.T, appSpec *spec.Spec, resolved *spec.ResolvedSpec, report *spec.ResolutionReport)
+	}{
+		{
+			name:        "missing platform returns partial report",
+			platform:    nil,
+			wantErrCode: spec.ErrCodePlatformNotFound,
+			check: func(t *testing.T, appSpec *spec.Spec, resolved *spec.ResolvedSpec, _ *spec.ResolutionReport) {
+				t.Helper()
+				assert.Empty(t, resolved.Components)
+				assert.Equal(t, appSpec, resolved.Spec)
+			},
+		},
+		{
+			name:     "with platform delegates to Resolve",
+			platform: minimalPlatform(),
+			check: func(t *testing.T, _ *spec.Spec, resolved *spec.ResolvedSpec, report *spec.ResolutionReport) {
+				t.Helper()
+				assert.Empty(t, report.ErrorCode)
+				require.Contains(t, resolved.Components, "api")
+				assert.Equal(t, "api.example.com", resolved.Components["api"].FQDN)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			appSpec := minimalSpec(nil)
+			env := spec.NormalizeEnv("production")
+			resolved, report, err := spec.ResolveForDisplay(appSpec, tt.platform, env, spec.SubstitutionReport{})
+			require.NoError(t, err)
+			require.NotNil(t, resolved)
+			require.NotNil(t, report)
+			assert.Equal(t, tt.wantErrCode, report.ErrorCode)
+			if tt.check != nil {
+				tt.check(t, appSpec, resolved, report)
+			}
+		})
+	}
+}
+
+// TestCrossCheckPlatformReferences_UnknownProfile verifies unknown profile names.
+func TestCrossCheckPlatformReferences_UnknownProfile(t *testing.T) {
+	t.Parallel()
+	appSpec := &spec.Spec{
+		Components: map[string]spec.Component{
+			"api": {Profiles: []string{"missing"}},
+		},
+	}
+	platform := platformWithProfiles()
+	problems, _ := spec.CrossCheckPlatformReferences(appSpec, platform)
+	require.Len(t, problems, 1)
+	assert.Contains(t, problems[0], `"missing"`)
 }

@@ -1,0 +1,31 @@
+apiVersion: platform/v1-alpha.1
+profiles:
+  default:
+    nodeSelector:
+      workload: general
+  public-web:
+    nodeSelector:
+      tier: frontend
+    podLabels:
+      tier: web
+    tolerations:
+      - key: ingress
+        operator: Exists
+        effect: NoSchedule
+  high-security:
+    securityContext:
+      runAsNonRoot: true
+    containerSecurityContext:
+      readOnlyRootFilesystem: true
+      allowPrivilegeEscalation: false
+    maxResources:
+      cpu: 1000m
+      memory: 2Gi
+environments:
+  production:
+    context: prod-eks
+    domains:
+      public:
+        baseDomain: example.com
+        tls:
+          mode: selfSigned

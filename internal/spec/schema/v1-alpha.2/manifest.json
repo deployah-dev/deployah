@@ -201,12 +201,15 @@
                     "enum": ["nano", "micro", "small", "medium", "large", "xlarge", "2xlarge"],
                     "examples": ["small", "medium", "xlarge"]
                 },
-                "profile": {
-                    "type": "string",
-                    "title": "Profile",
-                    "description": "Platform profile name. Profiles ship in Phase 3; this field is parsed but not enforced in Phase 1.",
-                    "minLength": 1,
-                    "examples": ["public-web", "gpu-inference"]
+                "profiles": {
+                    "type": "array",
+                    "title": "Profiles",
+                    "description": "Logical names of platform-defined deployment profiles. Multiple profiles are merged left to right. An empty array opts out of the default profile when no default is defined; when a default profile exists, an empty array is rejected. Requires a profiles section in the platform file.",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "examples": [["public-web"], ["public-web", "high-security"]]
                 },
                 "env": {
                     "type": "object",

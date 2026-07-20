@@ -156,7 +156,49 @@ func resolveComponent(
 	rc := ResolvedComponent{}
 	result := componentResolveResult{}
 
+	var platformProfiles map[string]PlatformProfile
+	if platform != nil {
+		platformProfiles = platform.Profiles
+	}
+
+	// Profiles require a platform file when the component sets them.
+	if comp.Profiles != nil && platform == nil {
+		return rc, result, &ResolutionError{
+			Code: ErrCodePlatformNotFound,
+			Message: fmt.Sprintf(
+				"component %q sets profiles but no platform file was found; "+
+					"pass --platform-file or create %s",
+				name, DefaultPlatformPath,
+			),
+		}
+	}
+
+	profileNames, err := ResolveProfileNames(comp.Profiles, platformProfiles)
+	if err != nil {
+		return rc, result, err
+	}
+	if len(profileNames) > 0 {
+		merged, mergeErr := MergeProfiles(profileNames, platformProfiles)
+		if mergeErr != nil {
+			return rc, result, mergeErr
+		}
+		rc.Profiles = profileNames
+		rc.MergedProfile = &merged
+		result.fields = append(result.fields, ResolvedField{
+			Component: name,
+			Path:      "profiles",
+			Value:     strings.Join(profileNames, ", "),
+			Source:    "platform profiles (merged left to right)",
+		})
+	}
+
 	if comp.Expose == nil {
+		if rc.MergedProfile != nil {
+			if profileErr := ValidateProfileAgainstComponent(name, comp, *rc.MergedProfile, platformEnv, ""); profileErr != nil {
+				return rc, result, profileErr
+			}
+			applyResolvedStorageClass(&rc, &result, name, env, platformEnv)
+		}
 		return rc, result, nil
 	}
 
@@ -176,13 +218,13 @@ func resolveComponent(
 	domainKey := comp.Expose.Domain
 	domainDefaulted := false
 	if domainKey == "" {
-		key, err := defaultDomainKey(platformEnv)
-		if err != nil {
+		key, domainErr := defaultDomainKey(platformEnv)
+		if domainErr != nil {
 			return rc, result, &ResolutionError{
 				Code: ErrCodeDomainGap,
 				Message: fmt.Sprintf(
 					"component %q names no expose.domain and environment %q has %s",
-					name, env.Original, err,
+					name, env.Original, domainErr,
 				),
 			}
 		}
@@ -199,6 +241,7 @@ func resolveComponent(
 			),
 		}
 	}
+	rc.DomainKey = domainKey
 	domainSource := fmt.Sprintf("platform environments.%s.domains.%s", env.Original, domainKey)
 	if domainDefaulted {
 		domainSource += " (default domain)"
@@ -324,7 +367,42 @@ func resolveComponent(
 		}
 	}
 
+	if rc.MergedProfile != nil {
+		if profileErr := ValidateProfileAgainstComponent(name, comp, *rc.MergedProfile, platformEnv, domainKey); profileErr != nil {
+			return rc, result, profileErr
+		}
+		applyResolvedStorageClass(&rc, &result, name, env, platformEnv)
+	}
+
 	return rc, result, nil
+}
+
+// applyResolvedStorageClass copies the merged profile's logical storage class
+// key to the Kubernetes className after validation has succeeded.
+func applyResolvedStorageClass(
+	rc *ResolvedComponent,
+	result *componentResolveResult,
+	compName string,
+	env EnvIdentity,
+	platformEnv *PlatformEnvironment,
+) {
+	if rc.MergedProfile == nil || rc.MergedProfile.StorageClass == "" || platformEnv == nil {
+		return
+	}
+	sc, ok := platformEnv.StorageClasses[rc.MergedProfile.StorageClass]
+	if !ok {
+		return
+	}
+	rc.StorageClass = sc.ClassName
+	result.fields = append(result.fields, ResolvedField{
+		Component: compName,
+		Path:      "storageClass",
+		Value:     sc.ClassName,
+		Source: fmt.Sprintf(
+			"platform profiles -> storageClass %q -> environments.%s.storageClasses.%s.className",
+			rc.MergedProfile.StorageClass, env.Original, rc.MergedProfile.StorageClass,
+		),
+	})
 }
 
 // defaultDomainKey picks the domain used when a component names none: the
@@ -374,8 +452,9 @@ func unknownEnvironmentNameWarnings(appSpec *Spec, registry []string) []string {
 
 // CrossCheckPlatformReferences checks spec references against the platform
 // file without picking an environment. It returns problems (expose.domain
-// keys defined in no platform environment) and warnings (environment names
-// unknown to the registry). Domains containing ${VAR} tokens are skipped.
+// keys defined in no platform environment, unknown profile names) and
+// warnings (environment names unknown to the registry). Domains containing
+// ${VAR} tokens are skipped.
 func CrossCheckPlatformReferences(appSpec *Spec, platform *PlatformConfig) (problems, warnings []string) {
 	if appSpec == nil || platform == nil {
 		return nil, nil
@@ -390,8 +469,27 @@ func CrossCheckPlatformReferences(appSpec *Spec, platform *PlatformConfig) (prob
 		}
 	}
 	available := slices.Sorted(maps.Keys(domainKeys))
+	profileKeys := slices.Sorted(maps.Keys(platform.Profiles))
+
 	for _, name := range slices.Sorted(maps.Keys(appSpec.Components)) {
 		comp := appSpec.Components[name]
+
+		if len(comp.Profiles) > 0 {
+			if platform.Profiles == nil {
+				problems = append(problems, fmt.Sprintf(
+					"component %q sets profiles but the platform file has no profiles section",
+					name))
+			} else {
+				for _, profileName := range comp.Profiles {
+					if _, ok := platform.Profiles[profileName]; !ok {
+						problems = append(problems, fmt.Sprintf(
+							"component %q references profile %q which is not defined in the platform file (available: %s)",
+							name, profileName, joinStrings(profileKeys)))
+					}
+				}
+			}
+		}
+
 		if comp.Expose == nil || strings.Contains(comp.Expose.Domain, "${") {
 			continue
 		}

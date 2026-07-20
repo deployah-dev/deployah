@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/google/shlex"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"nabat.dev/nabat"
 
 	"deployah.dev/deployah/internal/spec"
@@ -94,10 +95,10 @@ func presetLabel(p spec.ResourcePreset) string {
 	req := spec.ResourcePresetMappings[p]["requests"]
 	cpu, memory := "?", "?"
 	if req.CPU != nil {
-		cpu = *req.CPU
+		cpu = req.CPU.String()
 	}
 	if req.Memory != nil {
-		memory = *req.Memory
+		memory = req.Memory.String()
 	}
 	return fmt.Sprintf("%s - %s CPU / %s memory", p, cpu, memory)
 }
@@ -612,13 +613,13 @@ func collectComponentCustomResources(c *nabat.Context, component *spec.Component
 
 	resources := spec.Resources{}
 	if cpu != "" {
-		resources.CPU = &cpu
+		resources.CPU = new(resource.MustParse(cpu))
 	}
 	if memory != "" {
-		resources.Memory = &memory
+		resources.Memory = new(resource.MustParse(memory))
 	}
 	if ephemeralStorage != "" {
-		resources.EphemeralStorage = &ephemeralStorage
+		resources.EphemeralStorage = new(resource.MustParse(ephemeralStorage))
 	}
 
 	component.Resources = resources

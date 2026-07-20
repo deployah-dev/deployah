@@ -1,0 +1,16 @@
+apiVersion: v1-alpha.2
+project: error-multiple-issues
+components:
+  web:
+    image: nginx:latest
+    port: 8080
+    environments: [dev]
+    resources:
+      cpu: "500m"
+    resourcePreset: small
+    autoscaling:
+      enabled: true
+      minReplicas: 10
+      maxReplicas: 5
+environments:
+  dev: {}

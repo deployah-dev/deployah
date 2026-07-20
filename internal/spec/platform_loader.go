@@ -17,6 +17,7 @@ package spec
 import (
 	"bytes"
 	"fmt"
+	"maps"
 	"os"
 	"slices"
 	"strings"
@@ -132,12 +133,15 @@ func validatePlatformYAML(raw map[string]any, schemaBytes []byte, version string
 }
 
 // validatePlatformConsistency checks internal consistency of the platform
-// config: TLS mode fields must be set correctly and domain baseDomains must
-// be non-empty.
+// config: TLS mode fields must be set correctly, domain baseDomains must be
+// non-empty, and profile references must exist in at least one environment.
 func validatePlatformConsistency(p *PlatformConfig) error {
+	allDomains := make(map[string]bool)
+	allStorageClasses := make(map[string]bool)
 	for envKey, env := range p.Environments {
 		var defaults []string
 		for domainKey, domain := range env.Domains {
+			allDomains[domainKey] = true
 			if domain.Default {
 				defaults = append(defaults, domainKey)
 			}
@@ -156,6 +160,30 @@ func validatePlatformConsistency(p *PlatformConfig) error {
 			return fmt.Errorf("environments.%s.domains: at most one domain may set default: true, got %s",
 				envKey, strings.Join(defaults, ", "))
 		}
+		for scKey := range env.StorageClasses {
+			allStorageClasses[scKey] = true
+		}
+	}
+
+	for profileName, profile := range p.Profiles {
+		for _, domainKey := range profile.AllowedDomains {
+			if !allDomains[domainKey] {
+				available := slices.Sorted(maps.Keys(allDomains))
+				return fmt.Errorf(
+					"profiles.%s.allowedDomains: %q is not defined in any environment domains (available: %s)",
+					profileName, domainKey, strings.Join(available, ", "),
+				)
+			}
+		}
+		if profile.StorageClass != "" && !allStorageClasses[profile.StorageClass] {
+			available := slices.Sorted(maps.Keys(allStorageClasses))
+			return fmt.Errorf(
+				"profiles.%s.storageClass: %q is not defined in any environment storageClasses (available: %s)",
+				profileName, profile.StorageClass, strings.Join(available, ", "),
+			)
+		}
+		// maxResources quantities are validated when unmarshaling into
+		// resource.Quantity; no extra consistency check is required.
 	}
 	return nil
 }

@@ -2,7 +2,7 @@
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://deployah.dev/schemas/platform/v1-alpha.1/platform.json",
     "title": "Deployah Platform Config",
-    "description": "Platform-owned configuration file (deployah.platform.yaml). Defines Kubernetes contexts, domain bindings, and storage classes per environment. Not subject to envsubst.",
+    "description": "Platform-owned configuration file (deployah.platform.yaml). Defines Kubernetes contexts, domain bindings, storage classes per environment, and org-wide deployment profiles. Not subject to envsubst.",
     "type": "object",
     "additionalProperties": false,
     "required": ["apiVersion", "environments"],
@@ -12,6 +12,30 @@
             "title": "API Version",
             "description": "Platform schema version. Must be 'platform/v1-alpha.1'.",
             "const": "platform/v1-alpha.1"
+        },
+        "profiles": {
+            "type": "object",
+            "title": "Profiles",
+            "description": "Map of logical profile names to deployment policy. Profiles are org-wide and applied to components that list them. A profile named 'default' is prepended automatically when a component omits profiles.",
+            "propertyNames": {
+                "type": "string",
+                "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                "minLength": 1
+            },
+            "additionalProperties": {
+                "$ref": "#/$defs/PlatformProfile"
+            },
+            "examples": [
+                {
+                    "default": {
+                        "nodeSelector": {"workload": "general"}
+                    },
+                    "public-web": {
+                        "podLabels": {"tier": "web"},
+                        "allowedDomains": ["public"]
+                    }
+                }
+            ]
         },
         "environments": {
             "type": "object",
@@ -180,11 +204,156 @@
                 {"className": "fast-ssd"},
                 {"className": "standard-hdd"}
             ]
+        },
+        "PlatformProfile": {
+            "type": "object",
+            "title": "Platform Profile",
+            "description": "Named deployment policy applied to components that select it.",
+            "additionalProperties": false,
+            "properties": {
+                "nodeSelector": {
+                    "type": "object",
+                    "title": "Node Selector",
+                    "description": "Kubernetes nodeSelector labels for pod placement.",
+                    "additionalProperties": {
+                        "type": "string"
+                    },
+                    "examples": [{"workload": "general"}]
+                },
+                "tolerations": {
+                    "type": "array",
+                    "title": "Tolerations",
+                    "description": "Kubernetes tolerations for pod scheduling.",
+                    "items": {
+                        "$ref": "#/$defs/PlatformToleration"
+                    }
+                },
+                "podLabels": {
+                    "type": "object",
+                    "title": "Pod Labels",
+                    "description": "Additional labels applied to pods.",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "podAnnotations": {
+                    "type": "object",
+                    "title": "Pod Annotations",
+                    "description": "Additional annotations applied to pods.",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "securityContext": {
+                    "type": "object",
+                    "title": "Pod Security Context",
+                    "description": "Kubernetes PodSecurityContext fields (pod-level). Passed through to the chart.",
+                    "additionalProperties": true
+                },
+                "containerSecurityContext": {
+                    "type": "object",
+                    "title": "Container Security Context",
+                    "description": "Kubernetes SecurityContext fields applied to all containers.",
+                    "additionalProperties": true
+                },
+                "storageClass": {
+                    "type": "string",
+                    "title": "Storage Class",
+                    "description": "Logical storage class key from the target environment's storageClasses map.",
+                    "minLength": 1,
+                    "examples": ["fast", "standard"]
+                },
+                "allowedDomains": {
+                    "type": "array",
+                    "title": "Allowed Domains",
+                    "description": "Logical domain keys a component using this profile may expose on. Omitted means no constraint. An empty array is deny-all: no domain is allowed.",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "examples": [["public"], ["public", "internal"], []]
+                },
+                "maxResources": {
+                    "$ref": "#/$defs/ProfileMaxResources"
+                }
+            },
+            "examples": [
+                {
+                    "nodeSelector": {"workload": "general"},
+                    "podLabels": {"tier": "web"},
+                    "allowedDomains": ["public"]
+                },
+                {
+                    "securityContext": {"runAsNonRoot": true},
+                    "containerSecurityContext": {
+                        "readOnlyRootFilesystem": true,
+                        "allowPrivilegeEscalation": false
+                    },
+                    "maxResources": {"cpu": "1000m", "memory": "2Gi"}
+                }
+            ]
+        },
+        "PlatformToleration": {
+            "type": "object",
+            "title": "Toleration",
+            "description": "A Kubernetes toleration entry.",
+            "additionalProperties": false,
+            "properties": {
+                "key": {
+                    "type": "string",
+                    "title": "Key"
+                },
+                "operator": {
+                    "type": "string",
+                    "title": "Operator",
+                    "enum": ["Equal", "Exists"]
+                },
+                "value": {
+                    "type": "string",
+                    "title": "Value"
+                },
+                "effect": {
+                    "type": "string",
+                    "title": "Effect",
+                    "enum": ["NoSchedule", "PreferNoSchedule", "NoExecute"]
+                }
+            }
+        },
+        "ProfileMaxResources": {
+            "type": "object",
+            "title": "Profile Max Resources",
+            "description": "Ceiling on component resource requests. Exceeding it is a validation error.",
+            "additionalProperties": false,
+            "properties": {
+                "cpu": {
+                    "type": "string",
+                    "title": "CPU",
+                    "description": "Maximum CPU request (Kubernetes quantity).",
+                    "minLength": 1,
+                    "examples": ["1000m", "2"]
+                },
+                "memory": {
+                    "type": "string",
+                    "title": "Memory",
+                    "description": "Maximum memory request (Kubernetes quantity).",
+                    "minLength": 1,
+                    "examples": ["2Gi", "512Mi"]
+                }
+            }
         }
     },
     "examples": [
         {
             "apiVersion": "platform/v1-alpha.1",
+            "profiles": {
+                "default": {
+                    "nodeSelector": {"workload": "general"}
+                },
+                "public-web": {
+                    "podLabels": {"tier": "web"},
+                    "allowedDomains": ["public"]
+                }
+            },
             "environments": {
                 "production": {
                     "context": "prod-eks",
@@ -193,6 +362,9 @@
                             "baseDomain": "example.com",
                             "tls": { "mode": "certManager", "issuer": "letsencrypt-prod" }
                         }
+                    },
+                    "storageClasses": {
+                        "fast": {"className": "fast-ssd"}
                     }
                 },
                 "local": {

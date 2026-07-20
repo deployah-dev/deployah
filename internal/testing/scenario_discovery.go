@@ -52,6 +52,11 @@ func DiscoverScenarios(scenariosDir string) ([]TestScenario, error) {
 		}
 		scenario.EnvFiles = envFiles
 
+		platformPath := filepath.Join(path, "deployah.platform.yaml")
+		if _, statErr := os.Stat(platformPath); statErr == nil {
+			scenario.PlatformFile = "deployah.platform.yaml"
+		}
+
 		// Look for expected output directory based on naming convention
 		expectedDir := filepath.Join(path, "expected")
 		if _, statErr := os.Stat(expectedDir); statErr == nil {
@@ -159,6 +164,11 @@ func LoadScenario(scenariosDir, scenarioName string) (*TestScenario, error) {
 		return nil, err
 	}
 	scenario.EnvFiles = envFiles
+
+	platformPath := filepath.Join(scenarioDir, "deployah.platform.yaml")
+	if _, statErr := os.Stat(platformPath); statErr == nil {
+		scenario.PlatformFile = "deployah.platform.yaml"
+	}
 
 	expectedDir := filepath.Join(scenarioDir, "expected")
 	if _, statErr := os.Stat(expectedDir); statErr == nil {

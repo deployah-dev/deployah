@@ -14,6 +14,12 @@
 
 package spec
 
+import (
+	"k8s.io/apimachinery/pkg/api/resource"
+
+	corev1 "k8s.io/api/core/v1"
+)
+
 // DefaultPlatformPath is the default filename for the platform configuration
 // file, looked up relative to the manifest.
 const DefaultPlatformPath = "deployah.platform.yaml"
@@ -28,10 +34,54 @@ const PlatformEnvVar = "DEPLOYAH_PLATFORM_FILE"
 type PlatformConfig struct {
 	// APIVersion is the platform schema version, e.g. "platform/v1-alpha.1".
 	APIVersion string `json:"apiVersion" yaml:"apiVersion"`
+	// Profiles maps logical profile names to deployment policy. Profiles are
+	// org-wide (root-level), not per-environment. A profile named "default" is
+	// prepended automatically when a component omits profiles.
+	Profiles map[string]PlatformProfile `json:"profiles,omitempty" yaml:"profiles,omitempty"`
 	// Environments is a map of environment names to their platform
 	// configuration. Wildcard matching (prefix-split on "/") is applied by
 	// [matchEnvKey].
 	Environments map[string]PlatformEnvironment `json:"environments" yaml:"environments"`
+}
+
+// DefaultProfileName is the profile name that is automatically prepended when
+// a component omits the profiles field.
+const DefaultProfileName = "default"
+
+// PlatformProfile is a named deployment policy applied to components that
+// select it. Multiple profiles merge left to right.
+type PlatformProfile struct {
+	// NodeSelector is Kubernetes nodeSelector labels for pod placement.
+	NodeSelector map[string]string `json:"nodeSelector,omitempty" yaml:"nodeSelector,omitempty"`
+	// Tolerations are Kubernetes tolerations for pod scheduling.
+	Tolerations []corev1.Toleration `json:"tolerations,omitempty" yaml:"tolerations,omitempty"`
+	// PodLabels are additional labels applied to pods.
+	PodLabels map[string]string `json:"podLabels,omitempty" yaml:"podLabels,omitempty"`
+	// PodAnnotations are additional annotations applied to pods.
+	PodAnnotations map[string]string `json:"podAnnotations,omitempty" yaml:"podAnnotations,omitempty"`
+	// SecurityContext is a Kubernetes PodSecurityContext (pod-level).
+	SecurityContext *corev1.PodSecurityContext `json:"securityContext,omitempty" yaml:"securityContext,omitempty"`
+	// ContainerSecurityContext is a Kubernetes SecurityContext applied to
+	// all containers.
+	ContainerSecurityContext *corev1.SecurityContext `json:"containerSecurityContext,omitempty" yaml:"containerSecurityContext,omitempty"`
+	// StorageClass is a logical storage class key from the target
+	// environment's storageClasses map.
+	StorageClass string `json:"storageClass,omitempty" yaml:"storageClass,omitempty"`
+	// AllowedDomains restricts which domain keys a component may expose on.
+	// nil means no constraint. A non-nil empty list means deny-all (no domain
+	// is allowed). Multiple profiles intersect. Neither JSON nor YAML uses
+	// omitempty, so deny-all serializes as [] rather than becoming nil.
+	AllowedDomains []string `json:"allowedDomains" yaml:"allowedDomains"`
+	// MaxResources is a ceiling on component resource requests.
+	MaxResources *ProfileMaxResources `json:"maxResources,omitempty" yaml:"maxResources,omitempty"`
+}
+
+// ProfileMaxResources caps component resource requests.
+type ProfileMaxResources struct {
+	// CPU is the maximum CPU request (Kubernetes quantity).
+	CPU *resource.Quantity `json:"cpu,omitempty" yaml:"cpu,omitempty"`
+	// Memory is the maximum memory request (Kubernetes quantity).
+	Memory *resource.Quantity `json:"memory,omitempty" yaml:"memory,omitempty"`
 }
 
 // PlatformEnvironment holds platform-controlled settings for one environment.

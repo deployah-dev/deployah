@@ -1,0 +1,11 @@
+apiVersion: platform/v1-alpha.1
+profiles:
+  public-web:
+    podLabels:
+      tier: web
+environments:
+  production:
+    context: prod-eks
+    domains:
+      public:
+        baseDomain: example.com

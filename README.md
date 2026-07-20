@@ -17,6 +17,7 @@ but for the deploy step: S2I builds your image, and Deployah runs your release.
 - [Concepts](#concepts)
 - [Writing your spec](#writing-your-spec)
 - [Platform file](#platform-file)
+- [Profiles](#profiles)
 - [Health checks](#health-checks)
 - [Commands](#commands)
 - [Environments and variables](#environments-and-variables)
@@ -198,6 +199,10 @@ A few words you will see often.
   in the spec's `environments` map only adds overrides for one of them.
 - **Resource preset.** A quick way to set CPU and memory without knowing
   Kubernetes units. Use `resourcePreset: small` instead of writing exact values.
+  This is not the same as a [profile](#profiles).
+- **Profile.** A named deployment policy owned by the platform team (node
+  placement, security context, domain and resource ceilings, and more).
+  Components select one or more with `profiles: [...]`. See [Profiles](#profiles).
 - **Health checks.** Deployah checks that your app is ready for traffic and
   restarts it if it gets stuck. This happens automatically for every service
   component. You can improve the checks by giving Deployah an HTTP endpoint to
@@ -297,14 +302,14 @@ Component:
 | `autoscaling` | off | `enabled`, `minReplicas`, `maxReplicas`, `metrics`. |
 | `health` | auto | Ready and alive checks. See [Health checks](#health-checks). |
 | `environments` | none | Which environments deploy this component. |
-| `profile` | none | Platform profile name. Parsed but not enforced yet. |
+| `profiles` | none | List of platform profile names. Merged left to right. See [Profiles](#profiles). |
 
 > [!IMPORTANT]
 > Not deployed yet: the schema accepts `role: worker` and `role: job`,
-> `kind: stateful`, and the `env`, `envFile`, `configFile`, and `profile`
-> fields, but Deployah does not apply them at deploy time yet. Today, deploy a
+> `kind: stateful`, and the `env`, `envFile`, and `configFile` fields, but
+> Deployah does not apply them at deploy time yet. Today, deploy a
 > `stateless` `service` using `image`, `port`, `resources` or
-> `resourcePreset`, `expose`, and `autoscaling`.
+> `resourcePreset`, `expose`, `autoscaling`, and `profiles`.
 
 Environment:
 
@@ -340,6 +345,11 @@ A few fields have specific formats:
   use the component name. Cannot be combined with `apex`.
 - **`expose.apex`**: set `true` to expose the component at the bare domain
   (e.g. `example.com`) instead of a subdomain.
+- **`profiles`**: a list of non-empty strings naming entries in the platform
+  file's root-level `profiles` map. Multiple names merge left to right.
+  Omit the field to pick up the platform `default` profile when one exists.
+  An empty list (`profiles: []`) opts out of every profile, but is rejected
+  when a `default` profile is defined.
 - **`autoscaling`**: needs `enabled`, `minReplicas`, and `maxReplicas`. Each
   metric has a `type` (`cpu` or `memory`) and a `target` percentage.
 - **`health.alive.interval`** and **`health.alive.restartAfter`**: a positive integer
@@ -488,13 +498,31 @@ environments:
 A second file, `deployah.platform.yaml`, lives next to `deployah.yaml`. It
 owns the environments: it registers which environment names exist, and maps
 each one to a real Kubernetes context, one or more domains, a TLS strategy,
-and optional storage classes. When this file is present,
-`deployah deploy <environment>` only accepts names registered here. Any
-component that uses `expose` requires it. This file is not processed with
-`${...}` substitution: it holds real values, not templates.
+and optional storage classes. It can also define org-wide [profiles](#profiles)
+at the root. When this file is present, `deployah deploy <environment>` only
+accepts names registered here. Any component that uses `expose` or `profiles`
+requires it. This file is not processed with `${...}` substitution: it holds
+real values, not templates.
 
 ```yaml
 apiVersion: platform/v1-alpha.1
+profiles:
+  default:
+    nodeSelector:
+      workload: general
+  public-web:
+    podLabels:
+      tier: web
+    allowedDomains: [public]
+  high-security:
+    securityContext:
+      runAsNonRoot: true
+    containerSecurityContext:
+      readOnlyRootFilesystem: true
+      allowPrivilegeEscalation: false
+    maxResources:
+      cpu: 1000m
+      memory: 2Gi
 environments:
   production:
     context: prod-eks
@@ -573,8 +601,122 @@ environments:
 ```
 
 > [!NOTE]
-> Deployah validates `storageClasses` today but does not use them yet. They are
-> reserved for `kind: stateful` components, which are not deployable yet.
+> Profiles can reference a logical `storageClass` from this map. Direct use by
+> `kind: stateful` components is not deployable yet.
+
+### Profiles
+
+Profiles are org-wide workload policies defined at the **root** of
+`deployah.platform.yaml` (not under an environment). A component selects one
+or more by name:
+
+```yaml
+# deployah.yaml (developer)
+components:
+  web:
+    image: ghcr.io/acme/web:1.0.0
+    port: 80
+    environments: [production]
+    expose: true
+    resourcePreset: small
+    profiles: [public-web, high-security]
+  api:
+    image: ghcr.io/acme/api:1.0.0
+    port: 8080
+    environments: [production]
+    # profiles omitted -> default profile applied when defined
+```
+
+```yaml
+# deployah.platform.yaml (platform team)
+apiVersion: platform/v1-alpha.1
+profiles:
+  default:
+    nodeSelector:
+      workload: general
+  public-web:
+    nodeSelector:
+      workload: general
+    podLabels:
+      tier: web
+    allowedDomains: [public]
+  high-security:
+    securityContext:
+      runAsNonRoot: true
+    containerSecurityContext:
+      readOnlyRootFilesystem: true
+      allowPrivilegeEscalation: false
+    maxResources:
+      cpu: 1000m
+      memory: 2Gi
+  gpu-inference:
+    nodeSelector:
+      accelerator: nvidia
+    tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
+    storageClass: fast
+environments:
+  production:
+    context: prod-eks
+    domains:
+      public:
+        baseDomain: example.com
+        tls:
+          mode: certManager
+          issuer: letsencrypt-prod
+    storageClasses:
+      fast:
+        className: fast-ssd
+```
+
+#### Profile fields
+
+| Field | Type | Notes |
+|---|---|---|
+| `nodeSelector` | map of string | Kubernetes nodeSelector labels. |
+| `tolerations` | list | Kubernetes tolerations (`key`, `operator`, `value`, `effect`). |
+| `podLabels` | map of string | Extra labels on pods. |
+| `podAnnotations` | map of string | Extra annotations on pods. |
+| `securityContext` | object | Pod-level SecurityContext (passed through to the chart). |
+| `containerSecurityContext` | object | Container SecurityContext applied to all containers. |
+| `storageClass` | string | Logical key from the target environment's `storageClasses` map. |
+| `allowedDomains` | list of string | Logical domain keys the component may expose on. Omitted (or null) means no constraint. An empty list (`[]`) is deny-all: no domain is allowed. |
+| `maxResources` | object | Ceiling on component resource **requests** (`cpu`, `memory`). Exceeding it is an error. |
+
+#### Merge rules
+
+When a component lists several profiles, Deployah merges them **left to
+right** (after prepending `default` when that profile exists):
+
+| Kind | Fields | Rule |
+|---|---|---|
+| Maps | `nodeSelector`, `podLabels`, `podAnnotations`, security contexts | Deep merge; last wins on key conflict |
+| Arrays | `tolerations` | Concatenate; identical entries are deduplicated |
+| Scalars | `storageClass` | Last non-empty wins |
+| Domains | `allowedDomains` | Intersection of profiles that set a list; omitted means no constraint; empty list is deny-all |
+| Ceilings | `maxResources` | Minimum (strictest) wins per resource |
+
+#### Default profile and opt-out
+
+- If the platform defines a profile named `default`, Deployah always prepends
+  it when the component omits `profiles` or lists other names.
+- `profiles: []` means "no profiles". That is an error when a `default`
+  profile exists (you cannot opt out of the org default).
+- Setting `profiles` when the platform file has no `profiles` section is an
+  error.
+
+#### Interaction with resources and admission
+
+- `resourcePreset` / `resources` still set the component's requests. A
+  profile's `maxResources` is only a ceiling; it does not inject defaults.
+- Profiles are complementary to cluster admission policies (Pod Security
+  Admission, Gatekeeper, and similar). Deployah does not integrate with those
+  controllers; use both when your org needs them.
+
+`deployah resolve` and `deployah plan` show the merged profile for each
+component (names and key fields such as `nodeSelector`).
 
 ### Where the platform file comes from
 
@@ -911,6 +1053,7 @@ order Deployah checks them in; the first match wins.
 | Kubernetes context | `--context` flag → `context` in the platform file for that environment → your kubeconfig's current context |
 | Expose domain | `expose.domain` in the spec → the domain marked `default: true` in the platform file → the environment's only domain |
 | Expose hostname label | `expose.apex: true` (bare domain) → `expose.subdomain` in the spec → the component name |
+| Profiles | component `profiles` list (with platform `default` prepended when defined) → merged left to right; omitted field applies only `default` when present |
 | Substitution variables (`${...}`) | shell `DPY_VAR_*` → env file `DPY_VAR_*` → the environment's `variables` in the spec |
 | Env file | explicit `envFile` in the spec → `.env.<env>` → `.deployah/.env.<env>` → `.env` → `.deployah/.env` |
 | Platform file location | `--platform-file` flag → `DEPLOYAH_PLATFORM_FILE` env var → same directory as the spec |
@@ -1226,6 +1369,12 @@ nix run . -- --help    # run without installing
 ```
 
 ### CI
+
+GitHub Actions runs flake validation, lint/fmt/tidy checks, `nix run .#test-unit`,
+and `nix run .#test-integration` on every pull request and push to `main`.
+Scenario fixtures under `scenarios/` (including `deployah.yaml` and
+`deployah.platform.yaml`) are tracked so integration tests can run on a clean
+checkout.
 
 ```sh
 nix flake check   # runs the pre-commit hooks (lint, markdownlint, tidy, nixfmt)

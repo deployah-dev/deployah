@@ -5,6 +5,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 // TestValidateComponentResources verifies ValidateComponentResources rules.
@@ -19,8 +20,8 @@ func TestValidateComponentResources(t *testing.T) {
 			name: "valid with resources only",
 			component: Component{
 				Resources: Resources{
-					CPU:    new("500m"),
-					Memory: new("512Mi"),
+					CPU:    MustQuantity("500m"),
+					Memory: MustQuantity("512Mi"),
 				},
 			},
 			expectErr: false,
@@ -44,7 +45,7 @@ func TestValidateComponentResources(t *testing.T) {
 			component: Component{
 				Image: "nginx:latest",
 				Resources: Resources{
-					CPU: new(""), // Explicitly empty string
+					CPU: &resource.Quantity{}, // Explicit zero quantity
 				},
 			},
 			expectErr: true,
@@ -54,7 +55,7 @@ func TestValidateComponentResources(t *testing.T) {
 			name: "invalid with both resources and resourcePreset",
 			component: Component{
 				Resources: Resources{
-					CPU: new("500m"),
+					CPU: MustQuantity("500m"),
 				},
 				ResourcePreset: "small",
 			},
@@ -93,7 +94,7 @@ func TestValidateSpecComponents(t *testing.T) {
 				Components: map[string]Component{
 					"web": {
 						Resources: Resources{
-							CPU: new("500m"),
+							CPU: MustQuantity("500m"),
 						},
 					},
 				},
@@ -106,7 +107,7 @@ func TestValidateSpecComponents(t *testing.T) {
 				Components: map[string]Component{
 					"web": {
 						Resources: Resources{
-							CPU: new("500m"),
+							CPU: MustQuantity("500m"),
 						},
 						ResourcePreset: "small",
 					},
@@ -121,7 +122,7 @@ func TestValidateSpecComponents(t *testing.T) {
 				Components: map[string]Component{
 					"web": {
 						Resources: Resources{
-							CPU: new("500m"),
+							CPU: MustQuantity("500m"),
 						},
 					},
 					"api": {
@@ -141,13 +142,36 @@ func TestValidateSpecComponents(t *testing.T) {
 					"web": {
 						Image: "nginx:latest",
 						Resources: Resources{
-							CPU: new(""), // Explicitly empty string
+							CPU: &resource.Quantity{}, // Explicit zero quantity
 						},
 					},
 				},
 			},
 			expectErr: true,
 			errMsg:    "component web: component cannot have empty 'resources' object - either specify actual resource values or remove the resources field entirely",
+		},
+		{
+			name: "invalid empty profile name",
+			manifest: &Spec{
+				Components: map[string]Component{
+					"web": {
+						Profiles: []string{"public-web", "  "},
+					},
+				},
+			},
+			expectErr: true,
+			errMsg:    "profiles[1]: profile name must not be empty",
+		},
+		{
+			name: "valid profiles array",
+			manifest: &Spec{
+				Components: map[string]Component{
+					"web": {
+						Profiles: []string{"public-web", "high-security"},
+					},
+				},
+			},
+			expectErr: false,
 		},
 	}
 
@@ -181,11 +205,94 @@ func TestValidateComponentExpose(t *testing.T) {
 	assert.Contains(t, err.Error(), "mutually exclusive")
 }
 
+// TestValidateComponentAutoscaling verifies replica bounds and metric types.
+func TestValidateComponentAutoscaling(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		component Component
+		wantErr   string
+	}{
+		{
+			name:      "nil autoscaling",
+			component: Component{},
+		},
+		{
+			name: "disabled autoscaling",
+			component: Component{
+				Autoscaling: &Autoscaling{Enabled: false, MinReplicas: 5, MaxReplicas: 1},
+			},
+		},
+		{
+			name: "valid cpu and memory metrics",
+			component: Component{
+				Autoscaling: &Autoscaling{
+					Enabled:     true,
+					MinReplicas: 1,
+					MaxReplicas: 5,
+					Metrics: []Metric{
+						{Type: MetricTypeCPU, Target: 70},
+						{Type: MetricTypeMemory, Target: 80},
+					},
+				},
+			},
+		},
+		{
+			name: "minReplicas greater than maxReplicas",
+			component: Component{
+				Autoscaling: &Autoscaling{Enabled: true, MinReplicas: 5, MaxReplicas: 2},
+			},
+			wantErr: "minReplicas cannot be greater than maxReplicas",
+		},
+		{
+			name: "unsupported metric type",
+			component: Component{
+				Autoscaling: &Autoscaling{
+					Enabled:     true,
+					MinReplicas: 1,
+					MaxReplicas: 2,
+					Metrics:     []Metric{{Type: MetricType("qps"), Target: 100}},
+				},
+			},
+			wantErr: `unsupported metric type "qps"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := ValidateComponentAutoscaling(tt.component)
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
+// TestValidateComponentEnvironmentFilter rejects unsupported /* suffixes.
+func TestValidateComponentEnvironmentFilter(t *testing.T) {
+	t.Parallel()
+
+	assert.NoError(t, ValidateComponentEnvironmentFilter(Component{}))
+	assert.NoError(t, ValidateComponentEnvironmentFilter(Component{
+		Environments: []string{"production", "staging"},
+	}))
+
+	err := ValidateComponentEnvironmentFilter(Component{
+		Environments: []string{"preview/*"},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `"preview/*"`)
+	assert.Contains(t, err.Error(), `use "preview"`)
+}
+
 // TestValidateComponentHealth verifies ValidateComponentHealth rules.
 func TestValidateComponentHealth(t *testing.T) {
 	t.Parallel()
-
-	strPtr := func(s string) *string { return &s }
 
 	tests := []struct {
 		name      string
@@ -354,7 +461,7 @@ func TestValidateComponentHealth(t *testing.T) {
 				Role: ComponentRoleService,
 				Port: 8080,
 				Resources: Resources{
-					CPU: strPtr("500m"),
+					CPU: MustQuantity("500m"),
 				},
 				Health: &Health{
 					Ready: &HealthReady{Path: "/health"},

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"embed"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"maps"
@@ -16,10 +17,12 @@ import (
 
 	"github.com/distribution/reference"
 	"gopkg.in/yaml.v3"
+	"k8s.io/apimachinery/pkg/util/intstr"
 
 	"deployah.dev/deployah/internal/spec"
 
 	sprig "github.com/Masterminds/sprig/v3"
+	corev1 "k8s.io/api/core/v1"
 )
 
 // ChartTemplateFS embeds the chart directory. Underscore-prefixed templates
@@ -290,9 +293,6 @@ func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string, resolved *spe
 			return nil, fmt.Errorf("stateful components are not supported yet")
 		}
 
-		if component.Autoscaling != nil && component.Autoscaling.Enabled {
-			componentValues["autoscaling"] = buildAutoscalingValues(component.Autoscaling)
-		}
 		// TODO: Add support for component env, The user can specify the environment variables for the component e.g. NODE_ENV=roduction
 
 		image := ""
@@ -308,14 +308,14 @@ func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string, resolved *spe
 		// Only set the requests keys the spec actually provides: a field left
 		// unset is genuinely absent, not an empty-string request.
 		requests := map[string]any{}
-		if component.Resources.CPU != nil && *component.Resources.CPU != "" {
-			requests["cpu"] = *component.Resources.CPU
+		if component.Resources.CPU != nil && !component.Resources.CPU.IsZero() {
+			requests["cpu"] = component.Resources.CPU.String()
 		}
-		if component.Resources.Memory != nil && *component.Resources.Memory != "" {
-			requests["memory"] = *component.Resources.Memory
+		if component.Resources.Memory != nil && !component.Resources.Memory.IsZero() {
+			requests["memory"] = component.Resources.Memory.String()
 		}
-		if component.Resources.EphemeralStorage != nil && *component.Resources.EphemeralStorage != "" {
-			requests["ephemeral-storage"] = *component.Resources.EphemeralStorage
+		if component.Resources.EphemeralStorage != nil && !component.Resources.EphemeralStorage.IsZero() {
+			requests["ephemeral-storage"] = component.Resources.EphemeralStorage.String()
 		}
 		if len(requests) > 0 {
 			resources["requests"] = requests
@@ -397,7 +397,30 @@ func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string, resolved *spe
 		}
 
 		if component.Role.IsService() {
-			maps.Copy(componentValues, buildProbeValues(component))
+			probes, probeErr := buildProbeValues(component)
+			if probeErr != nil {
+				return nil, fmt.Errorf("component %s: probes: %w", componentName, probeErr)
+			}
+			maps.Copy(componentValues, probes)
+		}
+
+		if resolved != nil {
+			if rc, ok := resolved.Components[componentName]; ok && rc.MergedProfile != nil {
+				if err := applyMergedProfile(componentValues, rc.MergedProfile); err != nil {
+					return nil, fmt.Errorf("component %s: apply profile values: %w", componentName, err)
+				}
+				entry, hasEntry := resolvedComponents[componentName].(map[string]any)
+				if !hasEntry {
+					entry = map[string]any{}
+					resolvedComponents[componentName] = entry
+				}
+				if len(rc.Profiles) > 0 {
+					entry["profiles"] = rc.Profiles
+				}
+				if rc.StorageClass != "" {
+					entry["storageClass"] = rc.StorageClass
+				}
+			}
 		}
 
 		values[componentName] = componentValues
@@ -419,7 +442,7 @@ func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string, resolved *spe
 
 // buildProbeValues builds startup/readiness/liveness probe values from the
 // component's health config.
-func buildProbeValues(component spec.Component) map[string]any {
+func buildProbeValues(component spec.Component) (map[string]any, error) {
 	h := component.Health
 
 	readyDisabled := h != nil && h.Ready != nil && h.Ready.Disabled
@@ -427,7 +450,7 @@ func buildProbeValues(component spec.Component) map[string]any {
 
 	// Nothing to emit when both sides are explicitly off.
 	if readyDisabled && aliveDisabled {
-		return nil
+		return map[string]any{}, nil
 	}
 
 	result := make(map[string]any)
@@ -445,11 +468,19 @@ func buildProbeValues(component spec.Component) map[string]any {
 	// Startup probe is active whenever at least one side is not disabled. It
 	// inherits the ready path if set (so it validates the same HTTP endpoint),
 	// otherwise falls back to TCP.
-	result["startupProbe"] = buildStartupProbe(readyPath)
+	startup, err := buildStartupProbe(readyPath)
+	if err != nil {
+		return nil, fmt.Errorf("startupProbe: %w", err)
+	}
+	result["startupProbe"] = startup
 
 	// Readiness probe.
 	if !readyDisabled {
-		result["readinessProbe"] = buildReadinessProbe(readyPath)
+		readiness, readinessErr := buildReadinessProbe(readyPath)
+		if readinessErr != nil {
+			return nil, fmt.Errorf("readinessProbe: %w", readinessErr)
+		}
+		result["readinessProbe"] = readiness
 	}
 
 	// Liveness probe.
@@ -459,51 +490,43 @@ func buildProbeValues(component spec.Component) map[string]any {
 			interval = h.Alive.Interval
 			restartAfter = h.Alive.RestartAfter
 		}
-		result["livenessProbe"] = buildLivenessProbe(alivePath, interval, restartAfter)
+		liveness, livenessErr := buildLivenessProbe(alivePath, interval, restartAfter)
+		if livenessErr != nil {
+			return nil, fmt.Errorf("livenessProbe: %w", livenessErr)
+		}
+		result["livenessProbe"] = liveness
 	}
 
-	return result
+	return result, nil
 }
 
 // buildStartupProbe constructs the startup probe map for the Helm values.
 // When path is non-empty the probe uses HTTP; otherwise it uses TCP.
-func buildStartupProbe(path string) map[string]any {
-	p := map[string]any{
-		"enabled":          true,
-		"periodSeconds":    spec.DefaultStartupProbePeriod,
-		"failureThreshold": spec.DefaultStartupProbeFailureThreshold,
-		"timeoutSeconds":   spec.DefaultStartupProbeTimeout,
-	}
-	if path != "" {
-		p["httpGet"] = map[string]any{"path": path, "port": "http"}
-	} else {
-		p["tcpSocket"] = map[string]any{"port": "http"}
-	}
-	return p
+func buildStartupProbe(path string) (map[string]any, error) {
+	return probeValues(corev1.Probe{
+		ProbeHandler:     probeHandler(path),
+		PeriodSeconds:    int32(spec.DefaultStartupProbePeriod),
+		FailureThreshold: int32(spec.DefaultStartupProbeFailureThreshold),
+		TimeoutSeconds:   int32(spec.DefaultStartupProbeTimeout),
+	})
 }
 
 // buildReadinessProbe constructs the readiness probe map for the Helm values.
 // When path is non-empty the probe uses HTTP; otherwise it uses TCP.
-func buildReadinessProbe(path string) map[string]any {
-	p := map[string]any{
-		"enabled":          true,
-		"periodSeconds":    spec.DefaultReadinessProbePeriod,
-		"failureThreshold": spec.DefaultReadinessProbeFailureThreshold,
-		"timeoutSeconds":   spec.DefaultReadinessProbeTimeout,
-	}
-	if path != "" {
-		p["httpGet"] = map[string]any{"path": path, "port": "http"}
-	} else {
-		p["tcpSocket"] = map[string]any{"port": "http"}
-	}
-	return p
+func buildReadinessProbe(path string) (map[string]any, error) {
+	return probeValues(corev1.Probe{
+		ProbeHandler:     probeHandler(path),
+		PeriodSeconds:    int32(spec.DefaultReadinessProbePeriod),
+		FailureThreshold: int32(spec.DefaultReadinessProbeFailureThreshold),
+		TimeoutSeconds:   int32(spec.DefaultReadinessProbeTimeout),
+	})
 }
 
 // buildLivenessProbe constructs the liveness probe map for the Helm values.
 // When path is non-empty the probe uses HTTP; otherwise it uses TCP.
 // interval and restartAfter are duration strings; each defaults when empty.
 // failureThreshold = ceil(restartAfterSec / intervalSec).
-func buildLivenessProbe(path, interval, restartAfter string) map[string]any {
+func buildLivenessProbe(path, interval, restartAfter string) (map[string]any, error) {
 	if interval == "" {
 		interval = spec.DefaultLivenessInterval
 	}
@@ -523,20 +546,37 @@ func buildLivenessProbe(path, interval, restartAfter string) map[string]any {
 	}
 
 	// Round up so the real restart window is never shorter than requested.
-	failureThreshold := max(int(math.Ceil(float64(restartSec)/float64(intervalSec))), 1)
+	failureThreshold := min(max(int(math.Ceil(float64(restartSec)/float64(intervalSec))), 1), math.MaxInt32)
 
-	p := map[string]any{
-		"enabled":          true,
-		"periodSeconds":    intervalSec,
-		"failureThreshold": failureThreshold,
-		"timeoutSeconds":   spec.DefaultLivenessProbeTimeout,
-	}
+	return probeValues(corev1.Probe{
+		ProbeHandler:  probeHandler(path),
+		PeriodSeconds: int32(intervalSec),
+		// failureThreshold is clamped to math.MaxInt32 above.
+		FailureThreshold: int32(failureThreshold), //nolint:gosec
+		TimeoutSeconds:   int32(spec.DefaultLivenessProbeTimeout),
+	})
+}
+
+func probeHandler(path string) corev1.ProbeHandler {
+	port := intstr.FromString("http")
 	if path != "" {
-		p["httpGet"] = map[string]any{"path": path, "port": "http"}
-	} else {
-		p["tcpSocket"] = map[string]any{"port": "http"}
+		return corev1.ProbeHandler{
+			HTTPGet: &corev1.HTTPGetAction{Path: path, Port: port},
+		}
 	}
-	return p
+	return corev1.ProbeHandler{
+		TCPSocket: &corev1.TCPSocketAction{Port: port},
+	}
+}
+
+// probeValues converts a corev1.Probe into Helm values and sets enabled.
+func probeValues(probe corev1.Probe) (map[string]any, error) {
+	m, err := toValuesMap(probe)
+	if err != nil {
+		return nil, err
+	}
+	m["enabled"] = true
+	return m, nil
 }
 
 // buildAutoscalingValues translates the spec Autoscaling configuration into
@@ -558,4 +598,112 @@ func buildAutoscalingValues(a *spec.Autoscaling) map[string]any {
 		}
 	}
 	return v
+}
+
+// applyMergedProfile writes resolved profile fields into component Helm values.
+func applyMergedProfile(componentValues map[string]any, profile *spec.PlatformProfile) error {
+	if profile == nil {
+		return nil
+	}
+	if len(profile.NodeSelector) > 0 {
+		componentValues["nodeSelector"] = maps.Clone(profile.NodeSelector)
+	}
+	if len(profile.Tolerations) > 0 {
+		vals, err := toValuesSlice(profile.Tolerations)
+		if err != nil {
+			return fmt.Errorf("tolerations: %w", err)
+		}
+		componentValues["tolerations"] = vals
+	}
+	if len(profile.PodLabels) > 0 {
+		labels, ok := componentValues["commonLabels"].(map[string]string)
+		if !ok {
+			labels = map[string]string{}
+		} else {
+			labels = maps.Clone(labels)
+		}
+		maps.Copy(labels, profile.PodLabels)
+		componentValues["commonLabels"] = labels
+		componentValues["podLabels"] = maps.Clone(profile.PodLabels)
+	}
+	if len(profile.PodAnnotations) > 0 {
+		componentValues["podAnnotations"] = maps.Clone(profile.PodAnnotations)
+	}
+	if profile.SecurityContext != nil {
+		psc, err := toValuesMap(profile.SecurityContext)
+		if err != nil {
+			return fmt.Errorf("securityContext: %w", err)
+		}
+		psc["enabled"] = true
+		componentValues["podSecurityContext"] = psc
+	}
+	if profile.ContainerSecurityContext != nil {
+		csc, err := toValuesMap(profile.ContainerSecurityContext)
+		if err != nil {
+			return fmt.Errorf("containerSecurityContext: %w", err)
+		}
+		csc["enabled"] = true
+		componentValues["containerSecurityContext"] = csc
+	}
+	return nil
+}
+
+// toValuesMap JSON-roundtrips v into a Helm-friendly map[string]any.
+func toValuesMap(v any) (map[string]any, error) {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	var out map[string]any
+	if unmarshalErr := json.Unmarshal(data, &out); unmarshalErr != nil {
+		return nil, unmarshalErr
+	}
+	if out == nil {
+		out = map[string]any{}
+	}
+	normalizeJSONNumbers(out)
+	return out, nil
+}
+
+// toValuesSlice JSON-roundtrips v into a Helm-friendly []any.
+func toValuesSlice(v any) ([]any, error) {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	var out []any
+	if unmarshalErr := json.Unmarshal(data, &out); unmarshalErr != nil {
+		return nil, unmarshalErr
+	}
+	normalizeJSONNumbers(out)
+	return out, nil
+}
+
+// normalizeJSONNumbers converts JSON float64 whole numbers to int so Helm
+// values match the previous hand-built maps (periodSeconds: 5, not 5.0).
+func normalizeJSONNumbers(v any) {
+	switch t := v.(type) {
+	case map[string]any:
+		for k, child := range t {
+			switch n := child.(type) {
+			case float64:
+				if n == float64(int(n)) {
+					t[k] = int(n)
+				}
+			default:
+				normalizeJSONNumbers(child)
+			}
+		}
+	case []any:
+		for i, child := range t {
+			switch n := child.(type) {
+			case float64:
+				if n == float64(int(n)) {
+					t[i] = int(n)
+				}
+			default:
+				normalizeJSONNumbers(child)
+			}
+		}
+	}
 }
