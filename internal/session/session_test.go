@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -34,6 +35,37 @@ import (
 
 	v1 "helm.sh/helm/v4/pkg/release/v1"
 )
+
+// minimalKubeconfig is a self-contained kubeconfig fixture used by tests
+// that resolve the current context or a REST config, so they never touch
+// the developer's real ~/.kube/config or KUBECONFIG env var.
+const minimalKubeconfig = `apiVersion: v1
+kind: Config
+current-context: test-context
+clusters:
+- name: test-cluster
+  cluster:
+    server: https://example.com:6443
+contexts:
+- name: test-context
+  context:
+    cluster: test-cluster
+    user: test-user
+users:
+- name: test-user
+  user:
+    token: fake-token
+`
+
+// minimalSpecYAML is a self-contained spec fixture with a valid apiVersion
+// and a single component, reused by Spec/ParseManifest tests.
+const minimalSpecYAML = `apiVersion: v1-alpha.2
+project: demo
+components:
+  web:
+    image: nginx:1.27
+    port: 8080
+`
 
 // MockHelmClient is a mock implementation of [HelmClient] for testing.
 type MockHelmClient struct {
@@ -377,6 +409,217 @@ environments:
 
 func writeFile(path, content string) error {
 	return os.WriteFile(path, []byte(content), 0o600)
+}
+
+// TestCommandPolicy verifies the WithCommandPolicy option round-trips
+// through the CommandPolicy accessor, including the unset default.
+func TestCommandPolicy(t *testing.T) {
+	t.Run("defaults to lenient when unset", func(t *testing.T) {
+		sess := New()
+		assert.Equal(t, PolicyLenient, sess.CommandPolicy())
+	})
+
+	t.Run("strict policy round-trips", func(t *testing.T) {
+		sess := New(WithCommandPolicy(PolicyStrict))
+		assert.Equal(t, PolicyStrict, sess.CommandPolicy())
+	})
+}
+
+// TestDebugKeepTempChart verifies the WithDebug option round-trips through
+// the DebugKeepTempChart accessor.
+func TestDebugKeepTempChart(t *testing.T) {
+	t.Run("defaults to false when unset", func(t *testing.T) {
+		sess := New()
+		assert.False(t, sess.DebugKeepTempChart())
+	})
+
+	t.Run("true round-trips", func(t *testing.T) {
+		sess := New(WithDebug(true))
+		assert.True(t, sess.DebugKeepTempChart())
+	})
+
+	t.Run("explicit false round-trips", func(t *testing.T) {
+		sess := New(WithDebug(false))
+		assert.False(t, sess.DebugKeepTempChart())
+	})
+}
+
+// TestTimeoutAccessor verifies the Timeout accessor returns the configured
+// value, including the package default when unset.
+func TestTimeoutAccessor(t *testing.T) {
+	t.Run("defaults to package default", func(t *testing.T) {
+		sess := New()
+		assert.Equal(t, DefaultTimeout, sess.Timeout())
+	})
+
+	t.Run("custom timeout round-trips", func(t *testing.T) {
+		sess := New(WithTimeout(90 * time.Second))
+		assert.Equal(t, 90*time.Second, sess.Timeout())
+	})
+}
+
+// TestSpecPathAccessor verifies SpecPath returns the configured spec path,
+// including the empty default.
+func TestSpecPathAccessor(t *testing.T) {
+	t.Run("empty when unset", func(t *testing.T) {
+		sess := New()
+		assert.Empty(t, sess.SpecPath())
+	})
+
+	t.Run("returns configured path", func(t *testing.T) {
+		sess := New(WithSpecPath("/tmp/deployah.yaml"))
+		assert.Equal(t, "/tmp/deployah.yaml", sess.SpecPath())
+	})
+}
+
+// TestKubeContextAccessor verifies KubeContext returns the explicit
+// override only, independent of kubeconfig resolution.
+func TestKubeContextAccessor(t *testing.T) {
+	t.Run("empty when unset", func(t *testing.T) {
+		sess := New()
+		assert.Empty(t, sess.KubeContext())
+	})
+
+	t.Run("returns configured override", func(t *testing.T) {
+		sess := New(WithKubeContext("staging-context"))
+		assert.Equal(t, "staging-context", sess.KubeContext())
+	})
+}
+
+// TestClose verifies Close clears the memoized platform config without
+// error, so a subsequent Platform call re-resolves rather than returning a
+// stale cached value.
+func TestClose(t *testing.T) {
+	platformPath := filepath.Join(t.TempDir(), "deployah.platform.yaml")
+	platformYAML := `apiVersion: platform/v1-alpha.1
+environments:
+  production:
+    domains:
+      main:
+        baseDomain: example.com
+`
+	require.NoError(t, writeFile(platformPath, platformYAML))
+
+	sess := New(WithPlatformFile(platformPath))
+
+	_, err := sess.Platform()
+	require.NoError(t, err)
+	require.NotNil(t, sess.platform, "platform should be memoized after first load")
+
+	require.NoError(t, sess.Close())
+	assert.Nil(t, sess.platform, "Close should clear the memoized platform config")
+}
+
+// TestSpec verifies Spec's guard clause and its happy-path loading of a
+// real manifest from disk.
+func TestSpec(t *testing.T) {
+	t.Run("errors when spec path is unset", func(t *testing.T) {
+		sess := New()
+		m, err := sess.Spec(context.Background(), "")
+		require.Error(t, err)
+		assert.Nil(t, m)
+		assert.Contains(t, err.Error(), "spec path must be set")
+	})
+
+	t.Run("loads a valid manifest from disk", func(t *testing.T) {
+		specPath := filepath.Join(t.TempDir(), "deployah.yaml")
+		require.NoError(t, writeFile(specPath, minimalSpecYAML))
+
+		sess := New(WithSpecPath(specPath))
+		m, err := sess.Spec(context.Background(), "")
+		require.NoError(t, err)
+		require.NotNil(t, m)
+		assert.Equal(t, "demo", m.Project)
+	})
+
+	t.Run("wraps the underlying load error for a missing file", func(t *testing.T) {
+		sess := New(WithSpecPath(filepath.Join(t.TempDir(), "missing.yaml")))
+		m, err := sess.Spec(context.Background(), "")
+		require.Error(t, err)
+		assert.Nil(t, m)
+		assert.Contains(t, err.Error(), "failed to load spec")
+	})
+}
+
+// TestParseManifest verifies ParseManifest's happy path and its behavior
+// when the underlying file cannot be read.
+func TestParseManifest(t *testing.T) {
+	t.Run("parses a valid manifest", func(t *testing.T) {
+		specPath := filepath.Join(t.TempDir(), "deployah.yaml")
+		require.NoError(t, writeFile(specPath, minimalSpecYAML))
+
+		sess := New(WithSpecPath(specPath))
+		m, err := sess.ParseManifest()
+		require.NoError(t, err)
+		require.NotNil(t, m)
+		assert.Equal(t, "demo", m.Project)
+	})
+
+	t.Run("errors for a missing file", func(t *testing.T) {
+		sess := New(WithSpecPath(filepath.Join(t.TempDir(), "missing.yaml")))
+		m, err := sess.ParseManifest()
+		require.Error(t, err)
+		assert.Nil(t, m)
+	})
+}
+
+// TestCurrentKubeContext verifies context resolution from an explicit
+// kubeconfig path, from extra kubeconfig paths, and the empty-string
+// fallback when no kubeconfig is readable.
+func TestCurrentKubeContext(t *testing.T) {
+	t.Run("explicit kubeconfig path resolves current context", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "kubeconfig")
+		require.NoError(t, writeFile(path, minimalKubeconfig))
+
+		sess := New(WithKubeconfig(path))
+		assert.Equal(t, "test-context", sess.CurrentKubeContext())
+	})
+
+	t.Run("missing kubeconfig path returns empty string", func(t *testing.T) {
+		sess := New(WithKubeconfig(filepath.Join(t.TempDir(), "missing-kubeconfig")))
+		assert.Empty(t, sess.CurrentKubeContext())
+	})
+
+	t.Run("extra kubeconfig paths are honored without an explicit path", func(t *testing.T) {
+		t.Setenv("KUBECONFIG", filepath.Join(t.TempDir(), "does-not-exist"))
+		t.Setenv("HOME", t.TempDir())
+
+		extraPath := filepath.Join(t.TempDir(), "extra-kubeconfig")
+		require.NoError(t, writeFile(extraPath, minimalKubeconfig))
+
+		sess := New(WithExtraKubeconfigPaths(extraPath))
+		assert.Equal(t, "test-context", sess.CurrentKubeContext())
+	})
+}
+
+// TestClusterRESTConfig verifies Cluster.RESTConfig falls back to
+// kubeconfig resolution when no in-cluster config is available (always the
+// case in this test environment), and that it surfaces a clear error when
+// the kubeconfig cannot be resolved either.
+func TestClusterRESTConfig(t *testing.T) {
+	t.Run("resolves from kubeconfig when reachable", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "kubeconfig")
+		require.NoError(t, writeFile(path, minimalKubeconfig))
+
+		sess := New(WithKubeconfig(path))
+		cluster, err := sess.Target(context.Background(), "")
+		require.NoError(t, err)
+
+		cfg, err := cluster.RESTConfig()
+		require.NoError(t, err)
+		require.NotNil(t, cfg)
+		assert.Equal(t, "https://example.com:6443", cfg.Host)
+	})
+
+	t.Run("errors with guidance when kubeconfig is unresolvable", func(t *testing.T) {
+		sess := New(WithKubeconfig(filepath.Join(t.TempDir(), "missing-kubeconfig")))
+		cluster, err := sess.Target(context.Background(), "")
+		require.NoError(t, err)
+
+		_, err = cluster.RESTConfig()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to build kubernetes config")
+	})
 }
 
 // TestIntegrationWithMocks covers the named case.

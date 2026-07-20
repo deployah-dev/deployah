@@ -631,3 +631,229 @@ func TestMapSpecToChartValues_Profiles(t *testing.T) {
 	webResolved := mustNestedMap(t, components, "web")
 	assert.Equal(t, []string{"default", "public-web"}, webResolved["profiles"])
 }
+
+// TestParseContainerImage verifies repository/tag/digest extraction across
+// bare names, tagged references, digest references, and malformed input.
+func TestParseContainerImage(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		imageRef   string
+		wantRepo   string
+		wantTagDig string
+	}{
+		{name: "empty string returns empty repo and tag", imageRef: "", wantRepo: "", wantTagDig: ""},
+		{name: "bare name normalizes to docker.io/library and has no tag", imageRef: "nginx", wantRepo: "docker.io/library/nginx", wantTagDig: ""},
+		{name: "name with tag", imageRef: "nginx:1.25", wantRepo: "docker.io/library/nginx", wantTagDig: "1.25"},
+		{name: "full registry path with tag", imageRef: "ghcr.io/org/repo:v1", wantRepo: "ghcr.io/org/repo", wantTagDig: "v1"},
+		{
+			name:       "digest reference prefers digest over tag",
+			imageRef:   "nginx@sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+			wantRepo:   "docker.io/library/nginx",
+			wantTagDig: "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+		},
+		{
+			name:       "unparseable reference falls back to raw string with empty tag",
+			imageRef:   "InvalidUPPERCASE",
+			wantRepo:   "InvalidUPPERCASE",
+			wantTagDig: "",
+		},
+		{
+			name:       "garbage input falls back to raw string with empty tag",
+			imageRef:   "not a valid ref!!",
+			wantRepo:   "not a valid ref!!",
+			wantTagDig: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			repo, tagOrDigest := parseContainerImage(tt.imageRef)
+			assert.Equal(t, tt.wantRepo, repo)
+			assert.Equal(t, tt.wantTagDig, tagOrDigest)
+		})
+	}
+}
+
+// TestGenerateReleaseName verifies release name composition, including
+// normalization of wildcard "/" environment names to their k8s-safe form.
+func TestGenerateReleaseName(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name            string
+		projectName     string
+		environmentName string
+		want            string
+	}{
+		{name: "plain names", projectName: "shop", environmentName: "production", want: "shop-production"},
+		{name: "wildcard environment normalized", projectName: "shop", environmentName: "review/pr-42", want: "shop-review-pr-42"},
+		{name: "empty environment", projectName: "shop", environmentName: "", want: "shop-"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := GenerateReleaseName(tt.projectName, tt.environmentName)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+// TestToValuesMap verifies JSON round-tripping of arbitrary structs and maps
+// into Helm-friendly map[string]any, including nil, marshal-failure, and
+// nested-value cases.
+func TestToValuesMap(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nil input yields empty map", func(t *testing.T) {
+		t.Parallel()
+
+		out, err := toValuesMap(nil)
+		require.NoError(t, err)
+		assert.Empty(t, out)
+	})
+
+	t.Run("struct with nested fields round-trips", func(t *testing.T) {
+		t.Parallel()
+
+		type nested struct {
+			Value int `json:"value"`
+		}
+		type outer struct {
+			Name   string `json:"name"`
+			Nested nested `json:"nested"`
+		}
+
+		out, err := toValuesMap(outer{Name: "x", Nested: nested{Value: 5}})
+		require.NoError(t, err)
+		assert.Equal(t, "x", out["name"])
+		inner, ok := out["nested"].(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, 5, inner["value"])
+	})
+
+	t.Run("unmarshalable value returns error", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := toValuesMap(struct{ C chan int }{C: make(chan int)})
+		require.Error(t, err)
+	})
+
+	t.Run("empty struct yields empty map, not nil", func(t *testing.T) {
+		t.Parallel()
+
+		out, err := toValuesMap(struct{}{})
+		require.NoError(t, err)
+		assert.NotNil(t, out)
+		assert.Empty(t, out)
+	})
+}
+
+// TestToValuesSlice verifies JSON round-tripping of arbitrary slices into
+// []any, including nil, empty, nested, and marshal-failure cases.
+func TestToValuesSlice(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nil input yields nil slice", func(t *testing.T) {
+		t.Parallel()
+
+		out, err := toValuesSlice(nil)
+		require.NoError(t, err)
+		assert.Nil(t, out)
+	})
+
+	t.Run("empty slice round-trips to empty slice", func(t *testing.T) {
+		t.Parallel()
+
+		out, err := toValuesSlice([]int{})
+		require.NoError(t, err)
+		assert.Empty(t, out)
+	})
+
+	t.Run("slice of structs round-trips nested objects", func(t *testing.T) {
+		t.Parallel()
+
+		type item struct {
+			Key string `json:"key"`
+		}
+		out, err := toValuesSlice([]item{{Key: "a"}, {Key: "b"}})
+		require.NoError(t, err)
+		require.Len(t, out, 2)
+		first, ok := out[0].(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, "a", first["key"])
+	})
+
+	t.Run("unmarshalable value returns error", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := toValuesSlice([]chan int{make(chan int)})
+		require.Error(t, err)
+	})
+}
+
+// TestNormalizeJSONNumbers verifies whole-number float64 values from JSON
+// decoding are converted to int, while fractional values and other types
+// are left untouched, across nested maps and slices.
+func TestNormalizeJSONNumbers(t *testing.T) {
+	t.Parallel()
+
+	t.Run("whole float in map becomes int", func(t *testing.T) {
+		t.Parallel()
+
+		m := map[string]any{"periodSeconds": 5.0}
+		normalizeJSONNumbers(m)
+		assert.Equal(t, 5, m["periodSeconds"])
+	})
+
+	t.Run("fractional float in map is untouched", func(t *testing.T) {
+		t.Parallel()
+
+		m := map[string]any{"cpu": 2.5}
+		normalizeJSONNumbers(m)
+		assert.InDelta(t, 2.5, m["cpu"], 0)
+	})
+
+	t.Run("nested maps are normalized recursively", func(t *testing.T) {
+		t.Parallel()
+
+		m := map[string]any{
+			"outer": map[string]any{"inner": 3.0},
+		}
+		normalizeJSONNumbers(m)
+		inner, ok := m["outer"].(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, 3, inner["inner"])
+	})
+
+	t.Run("nested slices are normalized recursively", func(t *testing.T) {
+		t.Parallel()
+
+		m := map[string]any{
+			"items": []any{1.0, 2.5, map[string]any{"count": 4.0}},
+		}
+		normalizeJSONNumbers(m)
+		items, ok := m["items"].([]any)
+		require.True(t, ok)
+		assert.Equal(t, 1, items[0])
+		assert.InDelta(t, 2.5, items[1], 0)
+		nestedMap, ok := items[2].(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, 4, nestedMap["count"])
+	})
+
+	t.Run("non-numeric types are untouched", func(t *testing.T) {
+		t.Parallel()
+
+		m := map[string]any{"name": "web", "enabled": true, "count": nil}
+		normalizeJSONNumbers(m)
+		assert.Equal(t, "web", m["name"])
+		assert.Equal(t, true, m["enabled"])
+		assert.Nil(t, m["count"])
+	})
+}

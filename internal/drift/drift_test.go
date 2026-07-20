@@ -187,6 +187,16 @@ func TestComputeDrift(t *testing.T) {
 			wantIncomplete: 1,
 			incompleteHas:  []string{label, "forbidden"},
 		},
+		{
+			name: "malformed live YAML marks incomplete via diff error",
+			stub: &stubPredictor{
+				predicted: map[string]string{label: driftDeployment},
+				live:      map[string]string{label: "not: valid: yaml: ["},
+			},
+			specPlan:       &planengine.Plan{},
+			wantIncomplete: 1,
+			incompleteHas:  []string{label, "parsing"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -206,6 +216,44 @@ func TestComputeDrift(t *testing.T) {
 			if tt.check != nil {
 				tt.check(t, result)
 			}
+		})
+	}
+}
+
+// TestComputeDrift_MalformedManifest verifies a currentManifest that fails
+// to split into resources surfaces a wrapped error instead of a panic or a
+// silently empty result.
+func TestComputeDrift_MalformedManifest(t *testing.T) {
+	t.Parallel()
+
+	result, err := ComputeDrift(t.Context(), &stubPredictor{}, &planengine.Plan{}, "not: valid: yaml: [")
+	require.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "split rendered manifest")
+}
+
+// TestResourceLabel verifies both the namespaced and cluster-scoped label
+// formats, matching [planengine.SplitResources]'s [planengine.ResourceYAML.Label].
+func TestResourceLabel(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		kind      string
+		namespace string
+		resource  string
+		want      string
+	}{
+		{name: "namespaced resource", kind: "Deployment", namespace: "default", resource: "web", want: "Deployment/default/web"},
+		{name: "cluster-scoped resource has no namespace segment", kind: "ClusterRole", namespace: "", resource: "admin", want: "ClusterRole/admin"},
+		{name: "empty kind and name still format consistently", kind: "", namespace: "", resource: "", want: "/"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tt.want, resourceLabel(tt.kind, tt.namespace, tt.resource))
 		})
 	}
 }

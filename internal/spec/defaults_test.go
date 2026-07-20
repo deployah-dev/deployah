@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+	"k8s.io/apimachinery/pkg/api/resource"
 
 	"deployah.dev/deployah/internal/spec/schema"
 )
@@ -855,4 +856,314 @@ func (s *DefaultsTestSuite) TestDefaultValuesCopy() {
 // TestDefaultsTestSuite runs the defaults test suite
 func TestDefaultsTestSuite(t *testing.T) {
 	suite.Run(t, new(DefaultsTestSuite))
+}
+
+// TestFillSpecWithDefaults_GuardClauses verifies the nil-spec and
+// empty-version guard clauses, which the table-driven suite test above does
+// not exercise.
+func TestFillSpecWithDefaults_GuardClauses(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nil spec returns error", func(t *testing.T) {
+		t.Parallel()
+
+		err := FillSpecWithDefaults(nil, "v1-alpha.2")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "spec cannot be nil")
+	})
+
+	t.Run("empty version returns error", func(t *testing.T) {
+		t.Parallel()
+
+		err := FillSpecWithDefaults(&Spec{Project: "test"}, "")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "version cannot be empty")
+	})
+}
+
+// TestApplyDefaultsToMap_EdgeCases verifies applyDefaultsToMap handles
+// non-map input, and maps whose values are maps, slices, or pointers to
+// structs, without panicking.
+func TestApplyDefaultsToMap_EdgeCases(t *testing.T) {
+	t.Parallel()
+
+	t.Run("non-map input is a no-op", func(t *testing.T) {
+		t.Parallel()
+
+		err := applyDefaultsToMap(reflect.ValueOf(42), DefaultValues{"x": 1}, "test", "v1-alpha.2")
+		assert.NoError(t, err)
+	})
+
+	t.Run("map with nested map value recurses without error", func(t *testing.T) {
+		t.Parallel()
+
+		m := map[string]map[string]string{"outer": {"inner": "value"}}
+		err := applyDefaultsToMap(reflect.ValueOf(m), DefaultValues{}, "test", "v1-alpha.2")
+		require.NoError(t, err)
+		assert.Equal(t, "value", m["outer"]["inner"])
+	})
+
+	t.Run("map with slice value recurses without error", func(t *testing.T) {
+		t.Parallel()
+
+		m := map[string][]string{"cmd": {"echo", "hi"}}
+		err := applyDefaultsToMap(reflect.ValueOf(m), DefaultValues{}, "test", "v1-alpha.2")
+		require.NoError(t, err)
+		assert.Equal(t, []string{"echo", "hi"}, m["cmd"])
+	})
+
+	t.Run("map with pointer-to-struct value applies defaults without panicking", func(t *testing.T) {
+		t.Parallel()
+
+		// map[string]*Component mirrors the pointer-valued map shape used
+		// elsewhere in the codebase (real reflect.Value map entries are
+		// never addressable, so a genuine non-pointer struct entry would
+		// panic on value.Addr(); the pointer indirection sidesteps that).
+		m := map[string]*Component{"web": {Image: "nginx:latest"}}
+		err := applyDefaultsToMap(reflect.ValueOf(m), DefaultValues{"components.web.role": "service"}, "components", "v1-alpha.2")
+		assert.NoError(t, err)
+	})
+}
+
+// TestApplyDefaultsToSlice_EdgeCases verifies applyDefaultsToSlice handles
+// non-slice input, and slices of maps, structs, and opaque structs.
+func TestApplyDefaultsToSlice_EdgeCases(t *testing.T) {
+	t.Parallel()
+
+	t.Run("non-slice input is a no-op", func(t *testing.T) {
+		t.Parallel()
+
+		err := applyDefaultsToSlice(reflect.ValueOf("not-a-slice"), DefaultValues{"x": 1}, "test", "v1-alpha.2")
+		assert.NoError(t, err)
+	})
+
+	t.Run("slice with map items recurses without error", func(t *testing.T) {
+		t.Parallel()
+
+		s := []map[string]string{{"key": "value"}}
+		err := applyDefaultsToSlice(reflect.ValueOf(s), DefaultValues{}, "test", "v1-alpha.2")
+		require.NoError(t, err)
+		assert.Equal(t, "value", s[0]["key"])
+	})
+
+	t.Run("slice with struct items applies defaults to each item", func(t *testing.T) {
+		t.Parallel()
+
+		s := []Environment{{}, {}}
+		defaults := DefaultValues{
+			"envs[0].envFile": ".env.a",
+			"envs[1].envFile": ".env.b",
+		}
+		err := applyDefaultsToSlice(reflect.ValueOf(s), defaults, "envs", "v1-alpha.2")
+		require.NoError(t, err)
+		assert.Equal(t, ".env.a", s[0].EnvFile)
+		assert.Equal(t, ".env.b", s[1].EnvFile)
+	})
+
+	t.Run("slice with opaque struct items is skipped", func(t *testing.T) {
+		t.Parallel()
+
+		s := []resource.Quantity{*MustQuantity("100m")}
+		err := applyDefaultsToSlice(reflect.ValueOf(s), DefaultValues{"test[0].value": 5}, "test", "v1-alpha.2")
+		require.NoError(t, err)
+		assert.Equal(t, "100m", s[0].String())
+	})
+}
+
+// TestSetFieldValue_Errors verifies setFieldValue error paths: an
+// unsettable field, an invalid resource quantity, and a mapstructure
+// decode failure. The table-driven suite test above only covers the
+// happy path for this function.
+func TestSetFieldValue_Errors(t *testing.T) {
+	t.Parallel()
+
+	t.Run("unsettable field returns error", func(t *testing.T) {
+		t.Parallel()
+
+		// reflect.ValueOf on a plain value (not obtained via a pointer's
+		// Elem()) is never settable.
+		v := reflect.ValueOf("literal")
+		err := setFieldValue(v, "x")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "is not settable")
+	})
+
+	t.Run("invalid resource quantity pointer returns error", func(t *testing.T) {
+		t.Parallel()
+
+		field := reflect.New(reflect.TypeFor[*resource.Quantity]()).Elem()
+		err := setFieldValue(field, "not-a-quantity")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid resource quantity")
+	})
+
+	t.Run("empty string resource quantity pointer is a no-op", func(t *testing.T) {
+		t.Parallel()
+
+		field := reflect.New(reflect.TypeFor[*resource.Quantity]()).Elem()
+		err := setFieldValue(field, "")
+		require.NoError(t, err)
+		assert.True(t, field.IsNil())
+	})
+
+	t.Run("invalid resource quantity value type returns error", func(t *testing.T) {
+		t.Parallel()
+
+		field := reflect.New(reflect.TypeFor[resource.Quantity]()).Elem()
+		err := setFieldValue(field, "garbage")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid resource quantity")
+	})
+
+	t.Run("mapstructure decode failure returns wrapped error", func(t *testing.T) {
+		t.Parallel()
+
+		field := reflect.New(reflect.TypeFor[[]int]()).Elem()
+		err := setFieldValue(field, []any{"not-a-number"})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to decode value")
+	})
+}
+
+// TestProcessStructField verifies each [reflect.Kind] branch of
+// processStructField: nil and non-nil pointers, opaque and non-opaque
+// structs, maps, slices, and unhandled scalar kinds.
+func TestProcessStructField(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nil pointer field is a no-op", func(t *testing.T) {
+		t.Parallel()
+
+		type holder struct {
+			Autoscale *Autoscaling `json:"autoscale"`
+		}
+		h := &holder{}
+		val := reflect.ValueOf(h).Elem()
+		fieldType := val.Type().Field(0)
+
+		err := processStructField(val.Field(0), fieldType, DefaultValues{"test.autoscale.minReplicas": 2}, "test", "v1-alpha.2")
+		require.NoError(t, err)
+		assert.Nil(t, h.Autoscale)
+	})
+
+	t.Run("non-nil pointer to struct recurses and applies defaults", func(t *testing.T) {
+		t.Parallel()
+
+		type holder struct {
+			Autoscale *Autoscaling `json:"autoscale"`
+		}
+		h := &holder{Autoscale: &Autoscaling{}}
+		val := reflect.ValueOf(h).Elem()
+		fieldType := val.Type().Field(0)
+
+		defaults := DefaultValues{
+			"test.autoscale.minReplicas": 2,
+			"test.autoscale.maxReplicas": 5,
+		}
+		err := processStructField(val.Field(0), fieldType, defaults, "test", "v1-alpha.2")
+		require.NoError(t, err)
+		assert.Equal(t, 2, h.Autoscale.MinReplicas)
+		assert.Equal(t, 5, h.Autoscale.MaxReplicas)
+	})
+
+	t.Run("pointer to opaque struct is not recursed into", func(t *testing.T) {
+		t.Parallel()
+
+		type holder struct {
+			Q *resource.Quantity `json:"q"`
+		}
+		h := &holder{Q: MustQuantity("100m")}
+		val := reflect.ValueOf(h).Elem()
+		fieldType := val.Type().Field(0)
+
+		err := processStructField(val.Field(0), fieldType, DefaultValues{"test.q.value": 1}, "test", "v1-alpha.2")
+		require.NoError(t, err)
+		assert.Equal(t, "100m", h.Q.String())
+	})
+
+	t.Run("opaque struct value field is not recursed into", func(t *testing.T) {
+		t.Parallel()
+
+		type holder struct {
+			Q resource.Quantity `json:"q"`
+		}
+		h := &holder{Q: *MustQuantity("200m")}
+		val := reflect.ValueOf(h).Elem()
+		fieldType := val.Type().Field(0)
+
+		err := processStructField(val.Field(0), fieldType, DefaultValues{}, "test", "v1-alpha.2")
+		require.NoError(t, err)
+		assert.Equal(t, "200m", h.Q.String())
+	})
+
+	t.Run("map field delegates to applyDefaultsToMap", func(t *testing.T) {
+		t.Parallel()
+
+		type holder struct {
+			Components map[string]*Component `json:"components"`
+		}
+		h := &holder{Components: map[string]*Component{"web": {Image: "nginx:latest"}}}
+		val := reflect.ValueOf(h).Elem()
+		fieldType := val.Type().Field(0)
+
+		err := processStructField(val.Field(0), fieldType, DefaultValues{}, "", "v1-alpha.2")
+		require.NoError(t, err)
+	})
+
+	t.Run("slice field delegates to applyDefaultsToSlice", func(t *testing.T) {
+		t.Parallel()
+
+		type holder struct {
+			Envs []Environment `json:"envs"`
+		}
+		h := &holder{Envs: []Environment{{}}}
+		val := reflect.ValueOf(h).Elem()
+		fieldType := val.Type().Field(0)
+
+		defaults := DefaultValues{"envs[0].envFile": ".env.prod"}
+		err := processStructField(val.Field(0), fieldType, defaults, "", "v1-alpha.2")
+		require.NoError(t, err)
+		assert.Equal(t, ".env.prod", h.Envs[0].EnvFile)
+	})
+
+	t.Run("scalar field kind is a no-op", func(t *testing.T) {
+		t.Parallel()
+
+		type holder struct {
+			Name string `json:"name"`
+		}
+		h := &holder{Name: "unchanged"}
+		val := reflect.ValueOf(h).Elem()
+		fieldType := val.Type().Field(0)
+
+		err := processStructField(val.Field(0), fieldType, DefaultValues{"test.name": "should-not-apply"}, "test", "v1-alpha.2")
+		require.NoError(t, err)
+		assert.Equal(t, "unchanged", h.Name)
+	})
+}
+
+// TestBuildFieldPath verifies dot-notation path construction, including the
+// empty-parent and empty-field-name boundary cases.
+func TestBuildFieldPath(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		currentPath string
+		fieldName   string
+		want        string
+	}{
+		{name: "empty parent returns bare field name", currentPath: "", fieldName: "project", want: "project"},
+		{name: "empty field name appends trailing dot", currentPath: "components.web", fieldName: "", want: "components.web."},
+		{name: "both populated joins with a dot", currentPath: "components.web", fieldName: "port", want: "components.web.port"},
+		{name: "both empty returns empty string", currentPath: "", fieldName: "", want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tt.want, buildFieldPath(tt.currentPath, tt.fieldName))
+		})
+	}
 }

@@ -26,6 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/rest"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -146,6 +147,83 @@ func TestClientPredict_GetError_PropagatesAsError(t *testing.T) {
 
 	_, _, err := c.Predict(context.Background(), clientTestDeployment)
 	assert.Error(t, err)
+}
+
+// TestNewClient verifies [NewClient] builds a [Client] from a REST config
+// without contacting a server (dynamic and discovery client construction
+// is purely local), and that an invalid config surfaces as an error.
+func TestNewClient(t *testing.T) {
+	t.Parallel()
+
+	t.Run("valid config builds a client", func(t *testing.T) {
+		t.Parallel()
+
+		c, err := NewClient(&rest.Config{Host: "https://example.invalid:6443"})
+		require.NoError(t, err)
+		require.NotNil(t, c)
+		assert.NotNil(t, c.dynamicClient)
+		assert.NotNil(t, c.mapper)
+	})
+
+	t.Run("invalid config returns error", func(t *testing.T) {
+		t.Parallel()
+
+		// Username/password and a bearer token are mutually exclusive
+		// auth methods; client-go rejects the config before ever dialing
+		// a server.
+		c, err := NewClient(&rest.Config{
+			Host:        "https://example.invalid:6443",
+			Username:    "user",
+			BearerToken: "tok",
+		})
+		require.Error(t, err)
+		assert.Nil(t, c)
+		assert.Contains(t, err.Error(), "build dynamic client")
+	})
+}
+
+// TestClientPredict_DecodeError verifies malformed resourceYAML surfaces a
+// decode error instead of a panic or a silent no-op.
+func TestClientPredict_DecodeError(t *testing.T) {
+	t.Parallel()
+
+	c := newTestClient(t)
+	_, _, err := c.Predict(context.Background(), "not: valid: yaml: [")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "decode resource")
+}
+
+// TestClientPredict_UnmappedKind_ReturnsError verifies a resource whose
+// GroupVersionKind the REST mapper does not recognize surfaces a clear
+// "resolve resource mapping" error rather than a bare mapper error.
+func TestClientPredict_UnmappedKind_ReturnsError(t *testing.T) {
+	t.Parallel()
+
+	c := newTestClient(t)
+	unknownKindYAML := `
+apiVersion: totally.unknown/v1
+kind: FrobnicatorWidget
+metadata:
+  name: x
+`
+	_, _, err := c.Predict(context.Background(), unknownKindYAML)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "resolve resource mapping")
+}
+
+// TestToYAML_MarshalError verifies an object that cannot be marshaled to
+// JSON (e.g. a channel value smuggled into the map) surfaces a wrapped
+// error rather than a panic.
+func TestToYAML_MarshalError(t *testing.T) {
+	t.Parallel()
+
+	obj := &unstructured.Unstructured{Object: map[string]any{
+		"badField": make(chan int),
+	}}
+	s, err := toYAML(obj)
+	require.Error(t, err)
+	assert.Empty(t, s)
+	assert.Contains(t, err.Error(), "encode resource to YAML")
 }
 
 // TestClientPredict_DryRunAndForceOptionsAreSet verifies every predict
