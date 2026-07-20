@@ -1,5 +1,7 @@
 # Deployah
 
+[![codecov](https://codecov.io/gh/deployah-dev/deployah/graph/badge.svg)](https://codecov.io/gh/deployah-dev/deployah)
+
 Deployah is a CLI tool that makes deploying apps easy. It uses Helm under the
 hood, so you do not need to know Kubernetes or Helm, or even install the `helm`,
 `kubectl`, or `kind` tools. It is a single binary.
