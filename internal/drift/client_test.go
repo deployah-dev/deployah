@@ -15,7 +15,6 @@
 package drift
 
 import (
-	"context"
 	"errors"
 	"testing"
 
@@ -101,7 +100,7 @@ func TestClientPredict_ExistingResource_ReturnsPredictedAndLive(t *testing.T) {
 	live := unstructuredDeployment("web", "default", 5)
 	c := newTestClient(t, live)
 
-	predicted, liveYAML, err := c.Predict(context.Background(), clientTestDeployment)
+	predicted, liveYAML, err := c.Predict(t.Context(), clientTestDeployment)
 	require.NoError(t, err)
 
 	var predictedDoc, liveDoc map[string]any
@@ -124,7 +123,7 @@ func TestClientPredict_ResourceNotFound_ReturnsEmptyLive(t *testing.T) {
 	t.Parallel()
 	c := newTestClient(t) // no live objects seeded
 
-	predicted, liveYAML, err := c.Predict(context.Background(), clientTestDeployment)
+	predicted, liveYAML, err := c.Predict(t.Context(), clientTestDeployment)
 	require.NoError(t, err)
 	assert.Empty(t, liveYAML)
 	assert.NotEmpty(t, predicted)
@@ -145,7 +144,7 @@ func TestClientPredict_GetError_PropagatesAsError(t *testing.T) {
 	mapper := testrestmapper.TestOnlyStaticRESTMapper(clientgoscheme.Scheme)
 	c := newClient(fakeClient, mapper)
 
-	_, _, err := c.Predict(context.Background(), clientTestDeployment)
+	_, _, err := c.Predict(t.Context(), clientTestDeployment)
 	assert.Error(t, err)
 }
 
@@ -205,7 +204,7 @@ func TestClientPredict_DecodeError(t *testing.T) {
 	t.Parallel()
 
 	c := newTestClient(t)
-	_, _, err := c.Predict(context.Background(), "not: valid: yaml: [")
+	_, _, err := c.Predict(t.Context(), "not: valid: yaml: [")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "decode resource")
 }
@@ -223,7 +222,7 @@ kind: FrobnicatorWidget
 metadata:
   name: x
 `
-	_, _, err := c.Predict(context.Background(), unknownKindYAML)
+	_, _, err := c.Predict(t.Context(), unknownKindYAML)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "resolve resource mapping")
 }
@@ -273,7 +272,7 @@ func TestClientPredict_DryRunAndForceOptionsAreSet(t *testing.T) {
 	mapper := testrestmapper.TestOnlyStaticRESTMapper(clientgoscheme.Scheme)
 	c := newClient(fakeClient, mapper)
 
-	_, _, err := c.Predict(context.Background(), clientTestDeployment)
+	_, _, err := c.Predict(t.Context(), clientTestDeployment)
 	require.NoError(t, err)
 	require.NotNil(t, captured)
 	assert.Equal(t, FieldManager, captured.FieldManager)

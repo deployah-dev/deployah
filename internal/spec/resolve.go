@@ -103,7 +103,7 @@ func Resolve(
 			}
 		}
 
-		rc, compFields, err := resolveComponent(compName, comp, platformEnv, env, substReport, platform, fqdnOwners)
+		rc, compFields, err := resolveComponent(compName, comp, platformEnv, env, substReport, platform)
 		if err != nil {
 			var re *ResolutionError
 			if errors.As(err, &re) {
@@ -151,7 +151,6 @@ func resolveComponent(
 	env EnvIdentity,
 	substReport SubstitutionReport,
 	platform *PlatformConfig,
-	fqdnOwners map[string]string,
 ) (ResolvedComponent, componentResolveResult, error) {
 	rc := ResolvedComponent{}
 	result := componentResolveResult{}

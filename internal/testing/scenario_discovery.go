@@ -1,3 +1,17 @@
+// Copyright 2025 The Deployah Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package testing
 
 import (
@@ -46,7 +60,7 @@ func DiscoverScenarios(scenariosDir string) ([]TestScenario, error) {
 		}
 
 		// Look for environment files based on naming convention
-		envFiles, err := findEnvFiles(scenariosDir, path)
+		envFiles, err := findEnvFiles(path)
 		if err != nil {
 			return err
 		}
@@ -123,7 +137,7 @@ func loadErrorConfig(configPath string) ([]string, error) {
 }
 
 // findEnvFiles finds .env files in a scenario directory based on naming convention
-func findEnvFiles(scenariosDir, scenarioPath string) ([]string, error) {
+func findEnvFiles(scenarioPath string) ([]string, error) {
 	var envFiles []string
 
 	entries, err := os.ReadDir(scenarioPath)
@@ -159,7 +173,7 @@ func LoadScenario(scenariosDir, scenarioName string) (*TestScenario, error) {
 		ManifestFile: "deployah.yaml",
 	}
 
-	envFiles, err := findEnvFiles(scenariosDir, scenarioDir)
+	envFiles, err := findEnvFiles(scenarioDir)
 	if err != nil {
 		return nil, err
 	}

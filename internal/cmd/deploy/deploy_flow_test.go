@@ -15,7 +15,6 @@
 package deploy
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -47,7 +46,7 @@ func newClusterWithStub(t *testing.T, stub *stubHelmClient, k8sClient kubernetes
 			return k8sClient, nil
 		}),
 	)
-	cluster, err := sess.Target(context.Background(), "production")
+	cluster, err := sess.Target(t.Context(), "production")
 	require.NoError(t, err)
 	return cluster
 }

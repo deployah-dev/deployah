@@ -62,7 +62,7 @@ func TestOpen_localFile_absolutePath(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, f.Close())
 
-	rc, err := Open(context.Background(), f.Name())
+	rc, err := Open(t.Context(), f.Name())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, rc.Close()) })
 
@@ -77,7 +77,7 @@ func TestOpen_localFile_suffix(t *testing.T) {
 	path := filepath.Join(dir, "image.tar")
 	require.NoError(t, os.WriteFile(path, []byte("data"), 0o600))
 
-	rc, err := Open(context.Background(), path)
+	rc, err := Open(t.Context(), path)
 	require.NoError(t, err)
 	require.NoError(t, rc.Close())
 }
@@ -88,7 +88,7 @@ func TestOpen_existingFileWithoutSuffix(t *testing.T) {
 	path := filepath.Join(dir, "myimage") // no extension
 	require.NoError(t, os.WriteFile(path, []byte("bytes"), 0o600))
 
-	rc, err := Open(context.Background(), path)
+	rc, err := Open(t.Context(), path)
 	require.NoError(t, err)
 	require.NoError(t, rc.Close())
 }
@@ -102,7 +102,7 @@ func TestOpen_registryRefThatLooksLikeFile(t *testing.T) {
 		daemon:   failOpener(errFakeDaemon),
 		registry: successOpener([]byte("reg-content")),
 	}
-	rc, err := openWith(context.Background(), "registry.example.com/myapp:latest", op)
+	rc, err := openWith(t.Context(), "registry.example.com/myapp:latest", op)
 	require.NoError(t, err)
 	require.NoError(t, rc.Close())
 }
@@ -114,7 +114,7 @@ func TestOpen_joinsBothErrors(t *testing.T) {
 		daemon:   failOpener(errFakeDaemon),
 		registry: failOpener(errFakeRegistry),
 	}
-	_, err := openWith(context.Background(), "ubuntu:22.04", op)
+	_, err := openWith(t.Context(), "ubuntu:22.04", op)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, errFakeDaemon), "daemon error should be in chain")
 	assert.True(t, errors.Is(err, errFakeRegistry), "registry error should be in chain")
@@ -126,7 +126,7 @@ func TestOpen_daemonSuccess(t *testing.T) {
 		daemon:   successOpener([]byte("from-daemon")),
 		registry: failOpener(errFakeRegistry),
 	}
-	rc, err := openWith(context.Background(), "ubuntu:22.04", op)
+	rc, err := openWith(t.Context(), "ubuntu:22.04", op)
 	require.NoError(t, err)
 	got, err := io.ReadAll(rc)
 	require.NoError(t, err)
@@ -140,7 +140,7 @@ func TestOpen_fallsBackToRegistry(t *testing.T) {
 		daemon:   failOpener(errFakeDaemon),
 		registry: successOpener([]byte("from-registry")),
 	}
-	rc, err := openWith(context.Background(), "ubuntu:22.04", op)
+	rc, err := openWith(t.Context(), "ubuntu:22.04", op)
 	require.NoError(t, err)
 	got, err := io.ReadAll(rc)
 	require.NoError(t, err)
@@ -154,7 +154,7 @@ func TestOpen_invalidReference(t *testing.T) {
 		daemon:   failOpener(errFakeDaemon),
 		registry: failOpener(errFakeRegistry),
 	}
-	_, err := openWith(context.Background(), ":::invalid:::", op)
+	_, err := openWith(t.Context(), ":::invalid:::", op)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "imageref:")
 }

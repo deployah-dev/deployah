@@ -1,3 +1,17 @@
+// Copyright 2025 The Deployah Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package spec
 
 import (
@@ -8,19 +22,15 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/stretchr/testify/suite"
 	"k8s.io/apimachinery/pkg/api/resource"
 
 	"deployah.dev/deployah/internal/spec/schema"
 )
 
-// DefaultsTestSuite is a test suite for the defaults package
-type DefaultsTestSuite struct {
-	suite.Suite
-}
-
 // TestExtractDefaultsFromSchemaData tests extractDefaultsFromSchemaData.
-func (s *DefaultsTestSuite) TestExtractDefaultsFromSchemaData() {
+func TestExtractDefaultsFromSchemaData(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		schema   map[string]any
@@ -104,7 +114,9 @@ func (s *DefaultsTestSuite) TestExtractDefaultsFromSchemaData() {
 	}
 
 	for _, tt := range tests {
-		s.T().Run(tt.name, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			defaults := make(DefaultValues)
 			w := &defaultsWalker{root: tt.schema, visited: make(map[string]bool)}
 			w.walk(tt.schema, tt.path, defaults)
@@ -114,7 +126,9 @@ func (s *DefaultsTestSuite) TestExtractDefaultsFromSchemaData() {
 }
 
 // TestGetDefaultValues tests the GetDefaultValues function
-func (s *DefaultsTestSuite) TestGetDefaultValues() {
+func TestGetDefaultValues(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name       string
 		version    string
@@ -148,7 +162,9 @@ func (s *DefaultsTestSuite) TestGetDefaultValues() {
 	}
 
 	for _, tt := range tests {
-		s.T().Run(tt.name, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			defaults, err := GetDefaultValues(tt.version, tt.schemaType)
 			if tt.expectErr {
 				assert.Error(t, err)
@@ -167,7 +183,9 @@ func (s *DefaultsTestSuite) TestGetDefaultValues() {
 }
 
 // TestFillSpecWithDefaults tests the FillSpecWithDefaults function
-func (s *DefaultsTestSuite) TestFillSpecWithDefaults() {
+func TestFillSpecWithDefaults(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name      string
 		manifest  *Spec
@@ -224,7 +242,9 @@ func (s *DefaultsTestSuite) TestFillSpecWithDefaults() {
 	}
 
 	for _, tt := range tests {
-		s.T().Run(tt.name, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			err := FillSpecWithDefaults(tt.manifest, tt.version)
 			if tt.expectErr {
 				assert.Error(t, err)
@@ -240,7 +260,9 @@ func (s *DefaultsTestSuite) TestFillSpecWithDefaults() {
 }
 
 // TestApplyDefaultsRecursively tests the applyDefaultsRecursively function
-func (s *DefaultsTestSuite) TestApplyDefaultsRecursively() {
+func TestApplyDefaultsRecursively(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		obj      any
@@ -359,7 +381,9 @@ func (s *DefaultsTestSuite) TestApplyDefaultsRecursively() {
 	}
 
 	for _, tt := range tests {
-		s.T().Run(tt.name, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			require.NoError(t, applyDefaultsRecursively(tt.obj, tt.defaults, tt.path, "v1-alpha.2"))
 			assert.Equal(t, tt.expected, tt.obj)
 		})
@@ -367,7 +391,9 @@ func (s *DefaultsTestSuite) TestApplyDefaultsRecursively() {
 }
 
 // TestApplyDefaultsToMap tests the applyDefaultsToMap function
-func (s *DefaultsTestSuite) TestApplyDefaultsToMap() {
+func TestApplyDefaultsToMap(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		mapVal   reflect.Value
@@ -396,7 +422,9 @@ func (s *DefaultsTestSuite) TestApplyDefaultsToMap() {
 	}
 
 	for _, tt := range tests {
-		s.T().Run(tt.name, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			// This test mainly ensures the function doesn't panic
 			require.NoError(t, applyDefaultsToMap(tt.mapVal, tt.defaults, tt.path, "v1-alpha.2"))
 			// No specific assertions as this is mainly testing for panics
@@ -405,7 +433,9 @@ func (s *DefaultsTestSuite) TestApplyDefaultsToMap() {
 }
 
 // TestApplyDefaultsToSlice tests the applyDefaultsToSlice function
-func (s *DefaultsTestSuite) TestApplyDefaultsToSlice() {
+func TestApplyDefaultsToSlice(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		sliceVal reflect.Value
@@ -431,7 +461,9 @@ func (s *DefaultsTestSuite) TestApplyDefaultsToSlice() {
 	}
 
 	for _, tt := range tests {
-		s.T().Run(tt.name, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			// This test mainly ensures the function doesn't panic
 			require.NoError(t, applyDefaultsToSlice(tt.sliceVal, tt.defaults, tt.path, "v1-alpha.2"))
 			// No specific assertions as this is mainly testing for panics
@@ -440,7 +472,9 @@ func (s *DefaultsTestSuite) TestApplyDefaultsToSlice() {
 }
 
 // TestSetFieldValue uses [reflect.New] to get settable values for primitives.
-func (s *DefaultsTestSuite) TestSetFieldValue() {
+func TestSetFieldValue(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		field    reflect.Value
@@ -491,7 +525,9 @@ func (s *DefaultsTestSuite) TestSetFieldValue() {
 		},
 	}
 	for _, tt := range tests {
-		s.T().Run(tt.name, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			require.NoError(t, setFieldValue(tt.field, tt.value))
 			assert.Equal(t, tt.expected, tt.field.Interface())
 		})
@@ -499,7 +535,9 @@ func (s *DefaultsTestSuite) TestSetFieldValue() {
 }
 
 // TestIsZeroValue tests the isZeroValue function
-func (s *DefaultsTestSuite) TestIsZeroValue() {
+func TestIsZeroValue(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		value    any
@@ -599,7 +637,9 @@ func (s *DefaultsTestSuite) TestIsZeroValue() {
 	}
 
 	for _, tt := range tests {
-		s.T().Run(tt.name, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			result := isZeroValue(tt.value)
 			assert.Equal(t, tt.expected, result)
 		})
@@ -607,7 +647,9 @@ func (s *DefaultsTestSuite) TestIsZeroValue() {
 }
 
 // TestCreateSpecWithDefaults tests the CreateSpecWithDefaults function
-func (s *DefaultsTestSuite) TestCreateSpecWithDefaults() {
+func TestCreateSpecWithDefaults(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name        string
 		projectName string
@@ -629,7 +671,9 @@ func (s *DefaultsTestSuite) TestCreateSpecWithDefaults() {
 	}
 
 	for _, tt := range tests {
-		s.T().Run(tt.name, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			manifest, err := CreateSpecWithDefaults(tt.projectName, tt.version)
 			if tt.expectErr {
 				assert.Error(t, err)
@@ -646,7 +690,9 @@ func (s *DefaultsTestSuite) TestCreateSpecWithDefaults() {
 }
 
 // TestGetJSONFieldName tests the getJSONFieldName function
-func (s *DefaultsTestSuite) TestGetJSONFieldName() {
+func TestGetJSONFieldName(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		field    reflect.StructField
@@ -679,7 +725,9 @@ func (s *DefaultsTestSuite) TestGetJSONFieldName() {
 	}
 
 	for _, tt := range tests {
-		s.T().Run(tt.name, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			result := getJSONFieldName(tt.field)
 			assert.Equal(t, tt.expected, result)
 		})
@@ -687,7 +735,9 @@ func (s *DefaultsTestSuite) TestGetJSONFieldName() {
 }
 
 // TestIsComponentPath tests the isComponentPath function
-func (s *DefaultsTestSuite) TestIsComponentPath() {
+func TestIsComponentPath(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		path     string
@@ -721,7 +771,9 @@ func (s *DefaultsTestSuite) TestIsComponentPath() {
 	}
 
 	for _, tt := range tests {
-		s.T().Run(tt.name, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			result := isComponentPath(tt.path)
 			assert.Equal(t, tt.expected, result)
 		})
@@ -729,8 +781,12 @@ func (s *DefaultsTestSuite) TestIsComponentPath() {
 }
 
 // TestIntegration tests integration scenarios with real schema defaults
-func (s *DefaultsTestSuite) TestIntegration() {
-	s.T().Run("create manifest with defaults and verify component defaults", func(t *testing.T) {
+func TestIntegration(t *testing.T) {
+	t.Parallel()
+
+	t.Run("create manifest with defaults and verify component defaults", func(t *testing.T) {
+		t.Parallel()
+
 		manifest, err := CreateSpecWithDefaults("test-project", "v1-alpha.2")
 		assert.NoError(t, err)
 		assert.NotNil(t, manifest)
@@ -750,7 +806,9 @@ func (s *DefaultsTestSuite) TestIntegration() {
 		assert.Equal(t, 8080, webComponent.Port)
 	})
 
-	s.T().Run("verify autoscaling defaults", func(t *testing.T) {
+	t.Run("verify autoscaling defaults", func(t *testing.T) {
+		t.Parallel()
+
 		manifest := &Spec{
 			APIVersion: "v1-alpha.2",
 			Project:    "test-project",
@@ -776,7 +834,9 @@ func (s *DefaultsTestSuite) TestIntegration() {
 		assert.Equal(t, 75, apiComponent.Autoscaling.Metrics[0].Target)
 	})
 
-	s.T().Run("verify environment defaults", func(t *testing.T) {
+	t.Run("verify environment defaults", func(t *testing.T) {
+		t.Parallel()
+
 		manifest := &Spec{
 			APIVersion: "v1-alpha.2",
 			Project:    "test-project",
@@ -796,8 +856,12 @@ func (s *DefaultsTestSuite) TestIntegration() {
 	})
 }
 
-// Fix for TestDefaultValuesJSON: compare after normalizing int/float types
-func (s *DefaultsTestSuite) TestDefaultValuesJSON() {
+// TestDefaultValuesJSON verifies DefaultValues round-trips through JSON,
+// comparing after normalizing int/float types (JSON numbers decode as
+// float64).
+func TestDefaultValuesJSON(t *testing.T) {
+	t.Parallel()
+
 	defaults := DefaultValues{
 		"components.web.role": "service",
 		"components.web.port": 8080,
@@ -806,13 +870,13 @@ func (s *DefaultsTestSuite) TestDefaultValuesJSON() {
 
 	// Test marshaling
 	jsonData, err := json.Marshal(defaults)
-	assert.NoError(s.T(), err)
-	assert.NotEmpty(s.T(), jsonData)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, jsonData)
 
 	// Test unmarshaling
 	var unmarshaled DefaultValues
 	err = json.Unmarshal(jsonData, &unmarshaled)
-	assert.NoError(s.T(), err)
+	assert.NoError(t, err)
 
 	// Normalize types for comparison
 	normalize := func(m DefaultValues) map[string]any {
@@ -832,11 +896,13 @@ func (s *DefaultsTestSuite) TestDefaultValuesJSON() {
 		}
 		return n
 	}
-	assert.Equal(s.T(), normalize(defaults), normalize(unmarshaled))
+	assert.Equal(t, normalize(defaults), normalize(unmarshaled))
 }
 
 // TestDefaultValuesCopy tests copying of DefaultValues
-func (s *DefaultsTestSuite) TestDefaultValuesCopy() {
+func TestDefaultValuesCopy(t *testing.T) {
+	t.Parallel()
+
 	original := DefaultValues{
 		"key1": "value1",
 		"key2": 42,
@@ -846,20 +912,15 @@ func (s *DefaultsTestSuite) TestDefaultValuesCopy() {
 	// Test using maps.Copy for independent map copies.
 	copied := make(DefaultValues)
 	maps.Copy(copied, original)
-	assert.Equal(s.T(), original, copied)
+	assert.Equal(t, original, copied)
 
 	// Verify they are independent
 	copied["key4"] = "new-value"
-	assert.NotEqual(s.T(), original, copied)
-}
-
-// TestDefaultsTestSuite runs the defaults test suite
-func TestDefaultsTestSuite(t *testing.T) {
-	suite.Run(t, new(DefaultsTestSuite))
+	assert.NotEqual(t, original, copied)
 }
 
 // TestFillSpecWithDefaults_GuardClauses verifies the nil-spec and
-// empty-version guard clauses, which the table-driven suite test above does
+// empty-version guard clauses, which [TestFillSpecWithDefaults] above does
 // not exercise.
 func TestFillSpecWithDefaults_GuardClauses(t *testing.T) {
 	t.Parallel()
@@ -1029,8 +1090,8 @@ func TestApplyDefaultsToSlice_EdgeCases(t *testing.T) {
 
 // TestSetFieldValue_Errors verifies setFieldValue error paths: an
 // unsettable field, an invalid resource quantity, and a mapstructure
-// decode failure. The table-driven suite test above only covers the
-// happy path for this function.
+// decode failure. [TestSetFieldValue] above only covers the happy path
+// for this function.
 func TestSetFieldValue_Errors(t *testing.T) {
 	t.Parallel()
 

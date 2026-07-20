@@ -1,3 +1,17 @@
+// Copyright 2025 The Deployah Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package spec
 
 import (
@@ -43,14 +57,9 @@ func isOpaqueStruct(t reflect.Type) bool {
 //     (specific environment)
 type DefaultValues map[string]any
 
-// Constants for path construction and validation.
-// These constants define the structure and patterns used for navigating
-// and applying defaults to nested spec structures.
-const (
-	// Computed lengths for efficient string operations
-	componentsPrefixLength   = len(ComponentsPrefix)   // 11 - avoids repeated len() calls
-	environmentsPrefixLength = len(EnvironmentsPrefix) // 13 - avoids repeated len() calls
-)
+// componentsPrefixLength avoids repeated len(ComponentsPrefix) calls in
+// isComponentPath and tryComponentPatternPath.
+const componentsPrefixLength = len(ComponentsPrefix)
 
 // Global caches for schema compilation and pattern extraction.
 // These caches improve performance by avoiding repeated schema compilation
@@ -84,26 +93,9 @@ type schemaInfo struct {
 	rawData  map[string]any     // Raw schema data for default value extraction
 }
 
-// getCachedSchemaInfo retrieves cached schema info or loads and compiles it.
-// This function implements a thread-safe cache for compiled JSON schemas.
-//
-// Parameters:
-//   - version: Schema version (e.g., "v1-alpha.2")
-//   - schemaType: Type of schema ([schema.SchemaTypeManifest] or
-//     [schema.SchemaTypeEnvironments])
-//
-// Returns:
-//   - *schemaInfo: Contains both compiled schema and raw data
-//   - error: If schema loading, parsing, or compilation fails
-//
-// Example:
-//
-//	info, err := getCachedSchemaInfo("v1-alpha.2", schema.SchemaTypeManifest)
-//	if err != nil {
-//		return nil, fmt.Errorf("failed to get schema: %w", err)
-//	}
-//	// info.compiled can be used for validation
-//	// info.rawData can be used for extracting defaults
+// getCachedSchemaInfo returns the compiled schema and raw data for version
+// and schemaType, compiling and caching it on first use. It is safe for
+// concurrent use.
 func getCachedSchemaInfo(version string, schemaType schema.SchemaType) (*schemaInfo, error) {
 	cacheKey := fmt.Sprintf("%s-%s", version, schemaType)
 
@@ -170,13 +162,6 @@ func getCachedSchemaInfo(version string, schemaType schema.SchemaType) (*schemaI
 // ClearSchemaCache clears all cached schemas and patterns. Call it between
 // tests that mutate schema caches, or to release memory in long-running
 // processes.
-//
-// Example usage in tests:
-//
-//	func TestSchemaDefaults(t *testing.T) {
-//		defer ClearSchemaCache() // Clean up after test
-//		// ... test code that modifies schemas
-//	}
 func ClearSchemaCache() {
 	schemaMutex.Lock()
 	defer schemaMutex.Unlock()
@@ -184,24 +169,8 @@ func ClearSchemaCache() {
 	patternCache = make(map[string]string)
 }
 
-// extractDefaultsFromSchemaInfo recursively extracts default values from
-// schema info. It walks the schema structure and builds a map of paths to
-// default values.
-//
-// Parameters:
-//   - schemaInfo: Contains compiled schema and raw schema data
-//   - path: Current path in the schema (empty string for root)
-//
-// Returns:
-//   - DefaultValues: Map of dot-notation paths to default values
-//
-// Example output:
-//
-//	{
-//		"components.[^[a-zA-Z0-9_-]+$].role": "service",
-//		"components.[^[a-zA-Z0-9_-]+$].port": 8080,
-//		"environments.[0].envFile": ".env.{name}",
-//	}
+// extractDefaultsFromSchemaInfo walks schemaInfo's raw schema data starting
+// at path and returns a map of dot-notation paths to their default values.
 func extractDefaultsFromSchemaInfo(schemaInfo *schemaInfo, path string) DefaultValues {
 	defaults := make(DefaultValues)
 
@@ -241,26 +210,10 @@ func (w *defaultsWalker) resolveRef(ref string) (map[string]any, bool) {
 	return m, ok
 }
 
-// extractDefaultsFromSchemaData recursively processes schema data.
-// It traverses JSON Schema structures to find "default" properties and builds
-// path-to-value mappings.
-//
-// Parameters:
-//   - schemaData: Raw schema data (typically map[string]any from JSON)
-//   - path: Current dot-notation path (e.g., "components.web")
-//   - defaults: Map to populate with discovered defaults (modified in-place)
-//
-// Handles these JSON Schema structures:
-//   - "default" properties: Direct default values
-//   - "properties": Object property definitions
-//   - "patternProperties": Dynamic property patterns (e.g., component names)
-//   - "items": Array item schemas
-//
-// Example schema processing:
-//
-//	// Input schema: {"properties": {"port": {"default": 8080}}}
-//	// Input path: "components.web"
-//	// Result: defaults["components.web.port"] = 8080
+// walk recursively traverses schemaData looking for "default" properties,
+// following "properties", "patternProperties", "additionalProperties", and
+// "items" schema keywords, and records each one found in defaults under its
+// dot-notation path.
 func (w *defaultsWalker) walk(schemaData any, path string, defaults DefaultValues) {
 	schemaMap, ok := schemaData.(map[string]any)
 	if !ok {
@@ -350,65 +303,26 @@ func (w *defaultsWalker) walk(schemaData any, path string, defaults DefaultValue
 	}
 }
 
-// GetDefaultValues extracts all default values from a JSON schema. This is the
-// main entry point for schema-based defaults for a version and type.
-//
-// version is the schema version identifier (e.g. "v1-alpha.2"). schemaType
-// selects the spec or environments schema. Returns a map of dot-notation
-// paths to default values, or an error if schema loading or processing fails.
-//
-// Example usage:
-//
-//	defaults, err := GetDefaultValues("v1-alpha.2", schema.SchemaTypeManifest)
-//	if err != nil {
-//		return err
-//	}
-//	// defaults now contains:
-//	// "components.[^[a-zA-Z0-9_-]+$].role" -> "service"
-//	// "components.[^[a-zA-Z0-9_-]+$].port" -> 8080
-//	// etc.
+// GetDefaultValues returns all default values declared by the schema for
+// version and schemaType, keyed by dot-notation path. It is the main entry
+// point for schema-based defaults.
 func GetDefaultValues(version string, schemaType schema.SchemaType) (DefaultValues, error) {
-	// Get cached or compile schema
 	schemaInfo, err := getCachedSchemaInfo(version, schemaType)
 	if err != nil {
 		return nil, err
 	}
 
-	// Extract defaults from schema info
 	defaults := extractDefaultsFromSchemaInfo(schemaInfo, "")
 
 	return defaults, nil
 }
 
-// resolveResourcePresets resolves resource presets into actual resource values.
-// This function converts high-level resource presets (like "small", "medium") into
-// concrete CPU and memory specifications.
-//
-// Note: Currently only applies "requests" values from presets to maintain
-// backward compatibility. The "limits" values from ResourcePresetMappings are
-// not used in this implementation.
-// This is by design to keep the Resources struct simple, but users should be aware
-// that preset limits are not automatically applied.
-//
-// Parameters:
-//   - spec: Spec to process (modified in-place)
-//
-// Returns:
-//   - error: If preset resolution fails
-//
-// Example transformation:
-//
-//	// Before:
-//	component := Component{
-//		ResourcePreset: "small",
-//		Resources: Resources{}, // empty
-//	}
-//	// After resolveResourcePresets:
-//	component.Resources = Resources{
-//		CPU:    "500m",
-//		Memory: "512Mi",
-//		EphemeralStorage: "50Mi",
-//	}
+// resolveResourcePresets converts each component's ResourcePreset into
+// concrete Resources, then clears ResourcePreset so it does not conflict
+// with the now-populated Resources during validation. Components that
+// already set Resources are left untouched; components with neither
+// Resources nor a preset get [ResourcePresetSmall]. Only the preset's
+// "requests" values are applied; "limits" are not used.
 func resolveResourcePresets(spec *Spec) error {
 	for componentName, component := range spec.Components {
 		// Only resolve if ResourcePreset is set and Resources are empty
@@ -450,37 +364,12 @@ func resolveResourcePresets(spec *Spec) error {
 	return nil
 }
 
-// FillSpecWithDefaults fills a [Spec] with defaults from JSON
-// schemas. It applies spec and environment schema defaults, resolves
-// resource presets, and supports environment-specific placeholder substitution.
-//
-// The function processes defaults in this order:
-//  1. Apply spec schema defaults to components
-//  2. Resolve resource presets to concrete values
-//  3. Merge spec and environment defaults
-//  4. Apply merged defaults to environments with placeholder substitution
-//
-// spec is updated in place. version selects the schema version for default
-// extraction. Returns an error if schema loading, default extraction, or
-// application fails.
-//
-// Example:
-//
-//	spec := &Spec{
-//		APIVersion: "v1-alpha.2",
-//		Project:    "my-app",
-//		Components: map[string]Component{
-//			"web": {Image: "nginx:latest"}, // Only image specified
-//		},
-//		Environments: []Environment{
-//			{Name: "production"}, // Only name specified
-//		},
-//	}
-//	err := FillSpecWithDefaults(spec, "v1-alpha.2")
-//	// After filling:
-//	// spec.Components["web"].Role = "service"
-//	// spec.Components["web"].Port = 8080
-//	// spec.Environments[0].EnvFile = ".env.production"
+// FillSpecWithDefaults fills spec with defaults from the JSON schemas for
+// version, in this order: apply spec schema defaults to components, resolve
+// resource presets to concrete values, merge spec and environment defaults,
+// then apply the merged defaults to environments with placeholder
+// substitution. spec is updated in place. It returns an error if schema
+// loading, default extraction, or application fails.
 func FillSpecWithDefaults(spec *Spec, version string) error {
 	if spec == nil {
 		return fmt.Errorf("spec cannot be nil")
@@ -540,22 +429,9 @@ func FillSpecWithDefaults(spec *Spec, version string) error {
 	return nil
 }
 
-// substitutePlaceholders replaces placeholders in string values with actual
-// environment names. It enables environment-specific configuration by
-// replacing {name} placeholders with the actual environment name.
-//
-// Parameters:
-//   - value: Value to process (typically a string with placeholders)
-//   - envName: Environment name to substitute (may include suffixes like "/*")
-//
-// Returns:
-//   - any: Processed value with placeholders replaced
-//
-// Examples:
-//
-//	substitutePlaceholders(".env.{name}", "production") -> ".env.production"
-//	substitutePlaceholders("config.{name}.yaml", "staging/*") -> "config.staging.yaml"
-//	substitutePlaceholders(42, "production") -> 42 (non-strings unchanged)
+// substitutePlaceholders replaces [PlaceholderName] ("{name}") in value with
+// the cleaned form of envName (see [cleanEnvironmentName]). It returns value
+// unchanged if value is not a non-empty string.
 func substitutePlaceholders(value any, envName string) any {
 	cleanEnvName := cleanEnvironmentName(envName)
 	str := cast.ToString(value)
@@ -565,31 +441,11 @@ func substitutePlaceholders(value any, envName string) any {
 	return value
 }
 
-// applyDefaultsToField applies default values to a single struct field.
-// It checks whether a field needs defaults (zero-value and settable) and
-// attempts to find appropriate defaults using multiple fallback strategies.
-//
-// Parameters:
-//   - field: Reflection value of the field to set
-//   - fieldType: Reflection type information for the field
-//   - defaults: Map of available default values
-//   - currentPath: Current dot-notation path (e.g., "components.web")
-//   - version: Schema version for pattern extraction
-//   - envName: Environment name for placeholder substitution
-//
-// Returns:
-//   - error: If field setting fails
-//
-// Default resolution strategy:
-//  1. Try direct path: "components.web.port" -> 8080
-//  2. Try environment index: "environments.[0].envFile" -> ".env.{name}"
-//  3. Try component pattern: "components.[^pattern$].port" -> 8080
-//
-// Example:
-//
-//	// Field: web component's Port field (currently 0)
-//	// Path: "components.web"
-//	// Result: Sets Port to 8080 from schema defaults
+// applyDefaultsToField sets field to its default value from defaults if the
+// field is settable and currently zero. It tries the field's direct
+// dot-notation path first, then falls back to an environment index path or
+// a component pattern path (see [tryAlternativeDefaultPaths]) depending on
+// currentPath.
 func applyDefaultsToField(field reflect.Value, fieldType reflect.StructField, defaults DefaultValues, currentPath, version, envName string) error {
 	if !field.CanSet() || !isZeroValue(field.Interface()) {
 		return nil // Skip non-settable or non-zero fields
@@ -611,26 +467,9 @@ func applyDefaultsToField(field reflect.Value, fieldType reflect.StructField, de
 	return nil
 }
 
-// applyFieldValue applies a default value to a field with placeholder
-// substitution.
-// This function processes the default value for environment-specific placeholders
-// and then sets the field using type-safe conversion.
-//
-// Parameters:
-//   - field: Reflection value to set
-//   - defaultVal: Default value to apply
-//   - envName: Environment name for placeholder substitution
-//   - fieldName: Name of the field being set (for error messages)
-//   - currentPath: Current path for error context
-//
-// Returns:
-//   - error: If value setting fails
-//
-// Example:
-//
-//	// defaultVal: ".env.{name}"
-//	// envName: "production"
-//	// Result: Field set to ".env.production"
+// applyFieldValue substitutes envName into defaultVal's placeholders (see
+// [substitutePlaceholders]) and sets field to the result. fieldName and
+// currentPath are used only to name the field in a returned error.
 func applyFieldValue(field reflect.Value, defaultVal any, envName, fieldName, currentPath string) error {
 	processedVal := substitutePlaceholders(defaultVal, envName)
 	if err := setFieldValue(field, processedVal); err != nil {
@@ -651,14 +490,14 @@ func tryAlternativeDefaultPaths(field reflect.Value, fieldName, currentPath stri
 
 	// Try pattern property path for components
 	if isComponentPath(currentPath) {
-		return tryComponentPatternPath(field, fieldName, currentPath, defaults, version, envName)
+		return tryComponentPatternPath(field, fieldName, currentPath, defaults, version)
 	}
 
 	return nil
 }
 
 // tryComponentPatternPath tries to apply defaults using component pattern paths
-func tryComponentPatternPath(field reflect.Value, fieldName, currentPath string, defaults DefaultValues, version, envName string) error {
+func tryComponentPatternPath(field reflect.Value, fieldName, currentPath string, defaults DefaultValues, version string) error {
 	// Extract the field path after "components."
 	fieldPath := currentPath[componentsPrefixLength:]
 	parts := strings.Split(fieldPath, ".")
@@ -752,71 +591,30 @@ func applyDefaultsRecursively(obj any, defaults DefaultValues, currentPath, vers
 	return nil
 }
 
-// isComponentPath checks if the current path is a component path.
-// Component paths start with "components." and are used to identify
-// when component-specific default resolution should be applied.
-//
-// Examples:
-//
-//	isComponentPath("components.web") -> true
-//	isComponentPath("components.web.port") -> true
-//	isComponentPath("environments.prod") -> false
-//	isComponentPath("project") -> false
+// isComponentPath reports whether path is under the "components." prefix
+// with at least one path segment after it (a bare "components." prefix with
+// nothing after it does not count).
 func isComponentPath(path string) bool {
-	return len(path) > componentsPrefixLength && path[:componentsPrefixLength] == ComponentsPrefix
+	return len(path) > componentsPrefixLength && strings.HasPrefix(path, ComponentsPrefix)
 }
 
-// isEnvironmentPath checks if the current path is an environment path.
-// Environment paths start with "environments." and are used to identify
-// when environment-specific default resolution should be applied.
-//
-// Examples:
-//
-//	isEnvironmentPath("environments.production") -> true
-//	isEnvironmentPath("environments.staging.envFile") -> true
-//	isEnvironmentPath("components.web") -> false
+// isEnvironmentPath reports whether path is under the "environments."
+// prefix.
 func isEnvironmentPath(path string) bool {
 	return strings.HasPrefix(path, EnvironmentsPrefix)
 }
 
-// buildFieldPath constructs a field path by combining current path and field name.
-// This utility function handles the dot-notation path building used throughout
-// the default application process.
-//
-// Parameters:
-//   - currentPath: Current path context (may be empty for root)
-//   - fieldName: Name of the field to append
-//
-// Returns:
-//   - string: Combined path using dot notation
-//
-// Examples:
-//
-//	buildFieldPath("components.web", "port") -> "components.web.port"
-//	buildFieldPath("", "project") -> "project"
-//	buildFieldPath("environments.prod", "envFile") -> "environments.prod.envFile"
+// buildFieldPath joins currentPath and fieldName with a dot, or returns
+// fieldName alone if currentPath is empty.
 func buildFieldPath(currentPath, fieldName string) string {
 	if currentPath == "" {
 		return fieldName
 	}
-	return fmt.Sprintf("%s.%s", currentPath, fieldName)
+	return currentPath + "." + fieldName
 }
 
-// extractEnvironmentName extracts the environment name from an environment path.
-// This function parses environment paths to get the environment name for
-// placeholder substitution.
-//
-// Parameters:
-//   - path: Full path to parse
-//
-// Returns:
-//   - string: Environment name, or empty string if not an environment path
-//
-// Examples:
-//
-//	extractEnvironmentName("environments.production.envFile") -> "production"
-//	extractEnvironmentName("environments.staging") -> "staging"
-//	extractEnvironmentName("components.web") -> "" (not environment path)
+// extractEnvironmentName returns the environment name from an
+// "environments.<name>..." path, or "" if path is not an environment path.
 func extractEnvironmentName(path string) string {
 	if !isEnvironmentPath(path) {
 		return ""
@@ -828,20 +626,8 @@ func extractEnvironmentName(path string) string {
 	return ""
 }
 
-// cleanEnvironmentName removes suffix patterns from environment names.
-// This function cleans environment names by removing common suffixes
-// that may be added during processing.
-//
-// Parameters:
-//   - envName: Environment name that may contain suffixes
-//
-// Returns:
-//   - string: Cleaned environment name
-//
-// Examples:
-//
-//	cleanEnvironmentName("production/*") -> "production"
-//	cleanEnvironmentName("staging") -> "staging" (no change)
+// cleanEnvironmentName strips the [EnvFileSuffix] suffix from envName, if
+// present.
 func cleanEnvironmentName(envName string) string {
 	if before, ok := strings.CutSuffix(envName, EnvFileSuffix); ok {
 		return before
@@ -849,25 +635,10 @@ func cleanEnvironmentName(envName string) string {
 	return envName
 }
 
-// buildComponentPatternPath constructs a pattern-based path for components.
-// It builds schema paths that use pattern properties for dynamic component
-// names, enabling defaults for any component name matching the pattern.
-//
-// Parameters:
-//   - pattern: Regular expression pattern from schema (e.g., "^[a-zA-Z0-9_-]+$")
-//   - restPath: Path after component name (may be empty for direct fields)
-//   - fieldName: Name of the field
-//
-// Returns:
-//   - string: Pattern-based path for schema lookup
-//
-// Examples:
-//
-//	buildComponentPatternPath("^[a-zA-Z0-9_-]+$", "", "port")
-//	-> "components.[^[a-zA-Z0-9_-]+$].port"
-//
-//	buildComponentPatternPath("^[a-zA-Z0-9_-]+$", "autoscaling", "enabled")
-//	-> "components.[^[a-zA-Z0-9_-]+$].autoscaling.enabled"
+// buildComponentPatternPath builds the pattern-property schema path for
+// fieldName, e.g. "components.[<pattern>].port" for a direct field or
+// "components.[<pattern>].<restPath>.<fieldName>" for a nested one. This
+// lets any component name matching pattern share the same schema default.
 func buildComponentPatternPath(pattern, restPath, fieldName string) string {
 	if restPath == "" {
 		// Direct component field (e.g., role, kind, port)
@@ -946,27 +717,10 @@ func applyDefaultsToSlice(sliceVal reflect.Value, defaults DefaultValues, curren
 	return nil
 }
 
-// setFieldValue sets a [reflect.Value] to a value, converting types if needed.
-// It provides robust type conversion between schema values (typically from
-// JSON) and Go struct fields.
-//
-// The function attempts conversion in this order:
-//  1. Direct assignment if types are compatible
-//  2. Simple type conversion using cast package (string, bool, int, float)
-//  3. Complex type conversion using mapstructure for structs, slices, maps
-//
-// Parameters:
-//   - field: Reflection value to set (must be settable)
-//   - value: Value to assign (any type from schema)
-//
-// Returns:
-//   - error: If field is not settable or conversion fails
-//
-// Examples:
-//
-//	setFieldValue(stringField, "hello") // Direct string assignment
-//	setFieldValue(intField, 42.0) // float64 to int conversion
-//	setFieldValue(sliceField, []any{"a", "b"}) // []any to []string conversion
+// setFieldValue sets field to value, converting types as needed: direct
+// assignment when the types already match, [resource.Quantity] parsing for
+// resource fields, [github.com/spf13/cast] for basic scalar kinds, and
+// mapstructure for structs, slices, and maps. field must be settable.
 func setFieldValue(field reflect.Value, value any) error {
 	if !field.CanSet() {
 		return fmt.Errorf("field of type %s is not settable", field.Type())
@@ -1063,31 +817,9 @@ func setFieldValue(field reflect.Value, value any) error {
 	return nil
 }
 
-// isZeroValue checks if a value is the zero value for its type.
-// This function determines whether a field should receive default values
-// by checking if it contains the Go zero value for its type.
-//
-// Zero values by type:
-//   - Pointers: nil
-//   - Strings: empty string ("")
-//   - Numbers: 0
-//   - Booleans: false
-//   - Slices/Maps: empty (length 0)
-//   - Structs: all fields are zero values
-//
-// Parameters:
-//   - val: Value to check
-//
-// Returns:
-//   - bool: true if val is a zero value
-//
-// Examples:
-//
-//	isZeroValue("") -> true
-//	isZeroValue("hello") -> false
-//	isZeroValue(0) -> true
-//	isZeroValue([]string{}) -> true
-//	isZeroValue(struct{Name string}{}) -> true (empty struct)
+// isZeroValue reports whether val is the Go zero value for its type. A nil
+// val, and an empty (but non-nil) slice or map, both count as zero; a
+// [resource.Quantity] is zero when [resource.Quantity.IsZero] reports true.
 func isZeroValue(val any) bool {
 	if val == nil {
 		return true
@@ -1107,23 +839,8 @@ func isZeroValue(val any) bool {
 	return v.IsZero()
 }
 
-// CreateSpecWithDefaults creates a new Spec with default values applied.
-// This is a convenience function that creates a minimal spec structure and
-// then applies all relevant defaults from the specified schema version.
-//
-// projectName names the new project. version selects the schema version for
-// defaults. Returns a new spec with defaults applied, or an error if
-// creation or default application fails.
-//
-// Example:
-//
-//	spec, err := CreateSpecWithDefaults("my-app", "v1-alpha.2")
-//	// Returns:
-//	// &Spec{
-//	//     APIVersion: "v1-alpha.2",
-//	//     Project:    "my-app",
-//	//     Components: map[string]Component{}, // Empty but initialized
-//	// }
+// CreateSpecWithDefaults creates a minimal [Spec] for projectName and fills
+// it with the defaults declared by version's schema.
 func CreateSpecWithDefaults(projectName, version string) (*Spec, error) {
 	if projectName == "" {
 		return nil, fmt.Errorf("project name cannot be empty")
@@ -1146,24 +863,10 @@ func CreateSpecWithDefaults(projectName, version string) (*Spec, error) {
 	return spec, nil
 }
 
-// extractComponentPattern extracts the component name pattern from the spec
-// schema.
-// This function retrieves the regular expression pattern used in patternProperties
-// for component definitions, enabling dynamic component name matching.
-//
-// The pattern is cached per version to avoid repeated schema parsing.
-//
-// Parameters:
-//   - version: Schema version to extract pattern from
-//
-// Returns:
-//   - string: Regular expression pattern, or empty string if not found
-//
-// Example:
-//
-//	pattern := extractComponentPattern("v1-alpha.2")
-//	// Returns: "^[a-zA-Z0-9_-]+$"
-//	// This pattern matches component names like "web", "api-server", "worker_1"
+// extractComponentPattern returns the regular expression pattern that
+// component names must match under version's schema (e.g.
+// "^[a-zA-Z0-9_-]+$"), or "" if the schema declares none. The result is
+// cached per version.
 func extractComponentPattern(version string) string {
 	// Check cache first
 	schemaMutex.RLock()

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -201,7 +202,7 @@ func (c *Client) InstallApp(ctx context.Context, manifest *spec.Spec, environmen
 	if !c.debug {
 		defer func() {
 			if removeErr := os.RemoveAll(chartPath); removeErr != nil {
-				fmt.Printf("Warning: failed to cleanup chart temp dir %s: %v\n", chartPath, removeErr)
+				slog.WarnContext(ctx, "failed to cleanup chart temp dir", "path", chartPath, "err", removeErr)
 			}
 		}()
 	}
@@ -388,22 +389,24 @@ func releaserListToV1(rs []release.Releaser) ([]*v1.Release, error) {
 	return out, nil
 }
 
-// wrapHelmError provides better error messages for common Helm errors.
+// wrapHelmError provides better error messages for common Helm errors. The
+// sentinel branches wrap both the sentinel and the original err (via two
+// %w verbs) so callers can match on either the sentinel with [errors.Is]
+// or inspect the underlying Helm/Kubernetes error text.
 func (c *Client) wrapHelmError(operation, releaseName string, err error) error {
 	if errors.Is(err, driver.ErrReleaseNotFound) {
-		return fmt.Errorf("release '%s': %w", releaseName, ErrReleaseNotFound)
+		return fmt.Errorf("release '%s': %w: %w", releaseName, ErrReleaseNotFound, err)
 	}
 	errMsg := err.Error()
 
 	// Check for common error patterns and provide helpful messages.
 	// Helm and Kubernetes internals do not expose typed sentinels for most of
-	// these cases, so string matching is the only option; we always wrap the
-	// original error with %w so callers can still unwrap the chain.
+	// these cases, so string matching is the only option.
 	switch {
 	case strings.Contains(errMsg, "not found"):
-		return fmt.Errorf("release '%s': %w", releaseName, ErrReleaseNotFound)
+		return fmt.Errorf("release '%s': %w: %w", releaseName, ErrReleaseNotFound, err)
 	case strings.Contains(errMsg, "another operation") || strings.Contains(errMsg, "pending"):
-		return fmt.Errorf("release '%s': %w", releaseName, ErrReleasePending)
+		return fmt.Errorf("release '%s': %w: %w", releaseName, ErrReleasePending, err)
 	case strings.Contains(errMsg, "timeout"):
 		return fmt.Errorf("operation timed out for release '%s': %w", releaseName, err)
 	case strings.Contains(errMsg, "connection refused") || strings.Contains(errMsg, "dial"):
@@ -411,7 +414,7 @@ func (c *Client) wrapHelmError(operation, releaseName string, err error) error {
 	case strings.Contains(errMsg, "forbidden") || strings.Contains(errMsg, "unauthorized"):
 		return fmt.Errorf("insufficient permissions for %s operation on release '%s': %w", operation, releaseName, err)
 	case strings.Contains(errMsg, "already exists"):
-		return fmt.Errorf("release '%s': %w", releaseName, ErrReleaseAlreadyExists)
+		return fmt.Errorf("release '%s': %w: %w", releaseName, ErrReleaseAlreadyExists, err)
 	default:
 		return fmt.Errorf("helm %s failed for release '%s': %w", operation, releaseName, err)
 	}

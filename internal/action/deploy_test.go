@@ -41,21 +41,21 @@ var testManifest = &spec.Spec{
 func TestDeploy_Run(t *testing.T) {
 	t.Run("succeeds when deployer and loader succeed", func(t *testing.T) {
 		d := action.NewDeploy(&mockDeployer{}, &mockSpecLoader{m: testManifest})
-		m, err := d.Run(context.Background(), "prod", false)
+		m, err := d.Run(t.Context(), "prod", false)
 		require.NoError(t, err)
 		assert.Equal(t, "my-app", m.Project)
 	})
 
 	t.Run("returns error when manifest loader fails", func(t *testing.T) {
 		d := action.NewDeploy(&mockDeployer{}, &mockSpecLoader{err: fmt.Errorf("not found")})
-		_, err := d.Run(context.Background(), "prod", false)
+		_, err := d.Run(t.Context(), "prod", false)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "load spec")
 	})
 
 	t.Run("returns error when deployer fails", func(t *testing.T) {
 		d := action.NewDeploy(&mockDeployer{err: fmt.Errorf("helm error")}, &mockSpecLoader{m: testManifest})
-		_, err := d.Run(context.Background(), "prod", false)
+		_, err := d.Run(t.Context(), "prod", false)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "install")
 	})

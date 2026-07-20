@@ -36,7 +36,7 @@ func (m *mockDeleter) DeleteRelease(_ context.Context, _, _ string, wait bool) e
 // Check returns ErrReleaseNotFound when the release is missing and yes is false.
 func TestDelete_Check_NotFoundWithoutYes(t *testing.T) {
 	del := action.NewDelete(&mockDeleter{getErr: fmt.Errorf("release 'x-prod': %w", helm.ErrReleaseNotFound)})
-	_, err := del.Check(context.Background(), action.DeleteParams{Project: "x", Environment: "prod", Yes: false})
+	_, err := del.Check(t.Context(), action.DeleteParams{Project: "x", Environment: "prod", Yes: false})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, helm.ErrReleaseNotFound)
 }
@@ -44,7 +44,7 @@ func TestDelete_Check_NotFoundWithoutYes(t *testing.T) {
 // Check succeeds with NotFound when the release is missing and yes is true.
 func TestDelete_Check_NotFoundWithYes(t *testing.T) {
 	del := action.NewDelete(&mockDeleter{getErr: fmt.Errorf("release 'x-prod': %w", helm.ErrReleaseNotFound)})
-	result, err := del.Check(context.Background(), action.DeleteParams{Project: "x", Environment: "prod", Yes: true})
+	result, err := del.Check(t.Context(), action.DeleteParams{Project: "x", Environment: "prod", Yes: true})
 	require.NoError(t, err)
 	assert.True(t, result.NotFound)
 }
@@ -53,7 +53,7 @@ func TestDelete_Check_NotFoundWithYes(t *testing.T) {
 func TestDelete_Check_Found(t *testing.T) {
 	rel := &v1.Release{Name: "x-prod"}
 	del := action.NewDelete(&mockDeleter{release: rel})
-	result, err := del.Check(context.Background(), action.DeleteParams{Project: "x", Environment: "prod"})
+	result, err := del.Check(t.Context(), action.DeleteParams{Project: "x", Environment: "prod"})
 	require.NoError(t, err)
 	assert.Equal(t, rel, result.Release)
 	assert.False(t, result.NotFound)
@@ -62,14 +62,14 @@ func TestDelete_Check_Found(t *testing.T) {
 // Execute deletes the release successfully.
 func TestDelete_Execute_Success(t *testing.T) {
 	del := action.NewDelete(&mockDeleter{})
-	err := del.Execute(context.Background(), "x", "prod", false)
+	err := del.Execute(t.Context(), "x", "prod", false)
 	require.NoError(t, err)
 }
 
 // Execute wraps deleter errors.
 func TestDelete_Execute_Error(t *testing.T) {
 	del := action.NewDelete(&mockDeleter{delErr: fmt.Errorf("helm delete failed")})
-	err := del.Execute(context.Background(), "x", "prod", false)
+	err := del.Execute(t.Context(), "x", "prod", false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "delete release")
 }
@@ -78,7 +78,7 @@ func TestDelete_Execute_Error(t *testing.T) {
 func TestDelete_Execute_WaitFalse(t *testing.T) {
 	m := &mockDeleter{}
 	del := action.NewDelete(m)
-	err := del.Execute(context.Background(), "x", "prod", false)
+	err := del.Execute(t.Context(), "x", "prod", false)
 	require.NoError(t, err)
 	assert.False(t, m.gotWait, "expected wait=false to be forwarded to deleter")
 }
@@ -87,7 +87,7 @@ func TestDelete_Execute_WaitFalse(t *testing.T) {
 func TestDelete_Execute_WaitTrue(t *testing.T) {
 	m := &mockDeleter{}
 	del := action.NewDelete(m)
-	err := del.Execute(context.Background(), "x", "prod", true)
+	err := del.Execute(t.Context(), "x", "prod", true)
 	require.NoError(t, err)
 	assert.True(t, m.gotWait, "expected wait=true to be forwarded to deleter")
 }

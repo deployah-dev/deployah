@@ -193,7 +193,7 @@ func TestSessionWithDependencyInjection(t *testing.T) {
 			return mockHelm, nil
 		}))
 
-		cluster, err := sess.Target(context.Background(), "")
+		cluster, err := sess.Target(t.Context(), "")
 		assert.NoError(t, err)
 
 		helmClient, err := cluster.Helm()
@@ -207,7 +207,7 @@ func TestSessionWithDependencyInjection(t *testing.T) {
 			return fakeCS, nil
 		}))
 
-		cluster, err := sess.Target(context.Background(), "")
+		cluster, err := sess.Target(t.Context(), "")
 		assert.NoError(t, err)
 
 		k8sClient, err := cluster.Kubernetes()
@@ -245,7 +245,7 @@ func TestSessionWithDependencyInjection(t *testing.T) {
 			return mockHelm, nil
 		}))
 
-		cluster, err := sess.Target(context.Background(), "")
+		cluster, err := sess.Target(t.Context(), "")
 		require.NoError(t, err)
 		c1, err1 := cluster.Helm()
 		c2, err2 := cluster.Helm()
@@ -262,7 +262,7 @@ func TestSessionWithDependencyInjection(t *testing.T) {
 			return nil, expectedError
 		}))
 
-		cluster, err := sess.Target(context.Background(), "")
+		cluster, err := sess.Target(t.Context(), "")
 		require.NoError(t, err)
 		client, err := cluster.Helm()
 
@@ -316,12 +316,12 @@ func TestConfigurationValidation(t *testing.T) {
 func TestContextOperations(t *testing.T) {
 	t.Run("should store and retrieve session from context", func(t *testing.T) {
 		sess := New()
-		ctx := WithContext(context.Background(), sess)
+		ctx := WithContext(t.Context(), sess)
 		assert.Equal(t, sess, FromContext(ctx))
 	})
 
 	t.Run("should return nil for context without session", func(t *testing.T) {
-		assert.Nil(t, FromContext(context.Background()))
+		assert.Nil(t, FromContext(t.Context()))
 	})
 }
 
@@ -329,7 +329,7 @@ func TestContextOperations(t *testing.T) {
 func TestTarget(t *testing.T) {
 	t.Run("empty env returns cluster with empty context", func(t *testing.T) {
 		sess := New()
-		cluster, err := sess.Target(context.Background(), "")
+		cluster, err := sess.Target(t.Context(), "")
 		assert.NoError(t, err)
 		assert.NotNil(t, cluster)
 		assert.Equal(t, "", cluster.kubeContext)
@@ -337,14 +337,14 @@ func TestTarget(t *testing.T) {
 
 	t.Run("global context flag wins over platform", func(t *testing.T) {
 		sess := New(WithKubeContext("my-context"))
-		cluster, err := sess.Target(context.Background(), "prod")
+		cluster, err := sess.Target(t.Context(), "prod")
 		assert.NoError(t, err)
 		assert.Equal(t, "my-context", cluster.kubeContext)
 	})
 
 	t.Run("no platform file falls back to default context", func(t *testing.T) {
 		sess := New(WithSpecPath("/nonexistent/path/deployah.yaml"))
-		cluster, err := sess.Target(context.Background(), "prod")
+		cluster, err := sess.Target(t.Context(), "prod")
 		assert.NoError(t, err)
 		assert.NotNil(t, cluster)
 		assert.Equal(t, "", cluster.kubeContext)
@@ -365,7 +365,7 @@ environments:
 		require.NoError(t, writeFile(platformPath, platformYAML))
 
 		sess := New(WithPlatformFile(platformPath))
-		cluster, err := sess.Target(context.Background(), "production")
+		cluster, err := sess.Target(t.Context(), "production")
 		assert.NoError(t, err)
 		assert.Equal(t, "prod-eks", cluster.kubeContext)
 	})
@@ -388,21 +388,21 @@ environments:
 			WithPlatformFile(platformPath),
 			WithKubeContext("my-override"),
 		)
-		cluster, err := sess.Target(context.Background(), "production")
+		cluster, err := sess.Target(t.Context(), "production")
 		assert.NoError(t, err)
 		assert.Equal(t, "my-override", cluster.kubeContext)
 	})
 
 	t.Run("cluster namespace falls back to default", func(t *testing.T) {
 		sess := New()
-		cluster, err := sess.Target(context.Background(), "")
+		cluster, err := sess.Target(t.Context(), "")
 		require.NoError(t, err)
 		assert.Equal(t, DefaultNamespace, cluster.Namespace())
 	})
 
 	t.Run("cluster namespace uses session value", func(t *testing.T) {
 		sess := New(WithNamespace("my-ns"))
-		cluster, err := sess.Target(context.Background(), "")
+		cluster, err := sess.Target(t.Context(), "")
 		require.NoError(t, err)
 		assert.Equal(t, "my-ns", cluster.Namespace())
 	})
@@ -599,7 +599,7 @@ func TestSpec(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			m, err := tt.setup(t).Spec(context.Background(), "")
+			m, err := tt.setup(t).Spec(t.Context(), "")
 			if tt.wantErr {
 				require.Error(t, err)
 				assert.Nil(t, m)
@@ -756,7 +756,7 @@ func TestClusterRESTConfig(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			cluster, err := tt.setup(t).Target(context.Background(), "")
+			cluster, err := tt.setup(t).Target(t.Context(), "")
 			require.NoError(t, err)
 
 			cfg, err := cluster.RESTConfig()
@@ -783,13 +783,13 @@ func TestIntegrationWithMocks(t *testing.T) {
 			return mockHelm, nil
 		}))
 
-		cluster, err := sess.Target(context.Background(), "")
+		cluster, err := sess.Target(t.Context(), "")
 		assert.NoError(t, err)
 
 		helmClient, err := cluster.Helm()
 		assert.NoError(t, err)
 
-		err = helmClient.InstallApp(context.Background(), testManifest, "production", false, nil)
+		err = helmClient.InstallApp(t.Context(), testManifest, "production", false, nil)
 		assert.NoError(t, err)
 		mockHelm.AssertExpectations(t)
 	})

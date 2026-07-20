@@ -1,7 +1,6 @@
 package initialize
 
 import (
-	"context"
 	"path/filepath"
 	"testing"
 
@@ -71,7 +70,7 @@ func TestShowSummaryAndSave_RoleAwareComponentsProduceValidSpec(t *testing.T) {
 
 	// Load runs the same schema and cross-field validation as
 	// "deployah validate", catching gaps saving alone would miss.
-	loaded, err := spec.Load(context.Background(), outputPath, "", nil)
+	loaded, err := spec.Load(t.Context(), outputPath, "", nil)
 	require.NoError(t, err)
 	require.NotNil(t, loaded)
 	assert.Equal(t, "shop", loaded.Project)
@@ -111,7 +110,7 @@ func TestShowSummaryAndSave_ServiceHealthCheckWithoutPortIsValid(t *testing.T) {
 	c := nabatContext(t)
 	require.NoError(t, showSummaryAndSave(c, config))
 
-	loaded, err := spec.Load(context.Background(), outputPath, "", nil)
+	loaded, err := spec.Load(t.Context(), outputPath, "", nil)
 	require.NoError(t, err)
 	assert.Equal(t, 8080, loaded.Components["web"].Port)
 }

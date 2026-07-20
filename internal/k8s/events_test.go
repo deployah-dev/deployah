@@ -92,7 +92,7 @@ func TestWatchDeployEvents_MatchingPrefixForwarded(t *testing.T) {
 		return true, fw, nil
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	ch, err := WatchDeployEvents(ctx, cs, testNamespace, testReleasePrefix)
@@ -120,7 +120,7 @@ func TestWatchDeployEvents_NonMatchingPrefixFiltered(t *testing.T) {
 		return true, fw, nil
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	ch, err := WatchDeployEvents(ctx, cs, testNamespace, testReleasePrefix)
@@ -146,7 +146,7 @@ func TestWatchDeployEvents_ModifiedEventForwarded(t *testing.T) {
 		return true, fw, nil
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	ch, err := WatchDeployEvents(ctx, cs, testNamespace, testReleasePrefix)
@@ -170,7 +170,7 @@ func TestWatchDeployEvents_ChannelClosedOnContextCancel(t *testing.T) {
 		return true, fw, nil
 	})
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 
 	ch, err := WatchDeployEvents(ctx, cs, testNamespace, testReleasePrefix)
 	require.NoError(t, err)
@@ -195,7 +195,7 @@ func TestWatchDeployEvents_FieldTranslation(t *testing.T) {
 		return true, fw, nil
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	ch, err := WatchDeployEvents(ctx, cs, testNamespace, testReleasePrefix)

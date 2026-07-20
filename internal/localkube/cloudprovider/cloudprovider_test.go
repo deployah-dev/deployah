@@ -15,7 +15,6 @@
 package cloudprovider
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -29,7 +28,7 @@ import (
 // socket is mounted via a file-sharing layer (e.g. Lima) that loses ownership.
 func TestStart_RunsAsRoot(t *testing.T) {
 	eng := currustest.New()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	ctrl := New(eng, Config{})
 	require.NoError(t, ctrl.Start(ctx))
@@ -48,7 +47,7 @@ func TestStart_RunsAsRoot(t *testing.T) {
 // created before the check.
 func TestStart_RejectsRootless(t *testing.T) {
 	eng := currustest.New(currustest.WithCaps(currus.Caps{Rootless: true}))
-	ctx := context.Background()
+	ctx := t.Context()
 
 	ctrl := New(eng, Config{})
 	err := ctrl.Start(ctx)
@@ -64,7 +63,7 @@ func TestStart_RejectsRootless(t *testing.T) {
 // cloud-provider container and gateway sidecar containers for the cluster.
 func TestStop_RemovesGatewayContainers(t *testing.T) {
 	eng := currustest.New()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Simulate a running cloud-provider-kind container.
 	cpID, err := eng.CreateContainer(ctx, currus.ContainerSpec{
@@ -100,7 +99,7 @@ func TestStop_RemovesGatewayContainers(t *testing.T) {
 // containers belonging to other clusters or unrelated containers.
 func TestStop_LeavesUnrelatedContainers(t *testing.T) {
 	eng := currustest.New()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Gateway container for a different cluster.
 	otherID, err := eng.CreateContainer(ctx, currus.ContainerSpec{
@@ -133,7 +132,7 @@ func TestStop_LeavesUnrelatedContainers(t *testing.T) {
 // are left alone when ClusterName is not set in the config.
 func TestStop_NoClusterName_SkipsGatewayCleanup(t *testing.T) {
 	eng := currustest.New()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Gateway container exists but ClusterName is empty — should be left alone.
 	gwID, err := eng.CreateContainer(ctx, currus.ContainerSpec{
@@ -177,7 +176,7 @@ func TestBuildArgs_IncludesLBPortMapping(t *testing.T) {
 // containers, keyed by container port.
 func TestGatewayPorts(t *testing.T) {
 	eng := currustest.New()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Gateway container for the cluster with published HTTP and HTTPS ports.
 	gwID, err := eng.CreateContainer(ctx, currus.ContainerSpec{
@@ -209,7 +208,7 @@ func TestGatewayPorts(t *testing.T) {
 // are not included in the port map.
 func TestGatewayPorts_WrongCluster(t *testing.T) {
 	eng := currustest.New()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	_, err := eng.CreateContainer(ctx, currus.ContainerSpec{
 		Image: "envoyproxy/envoy:v1.33.2",
@@ -232,14 +231,14 @@ func TestGatewayPorts_WrongCluster(t *testing.T) {
 func TestGatewayPorts_NoClusterName(t *testing.T) {
 	eng := currustest.New()
 	ctrl := New(eng, Config{})
-	assert.Nil(t, ctrl.GatewayPorts(context.Background()))
+	assert.Nil(t, ctrl.GatewayPorts(t.Context()))
 }
 
 // TestStop_MultipleGatewayContainers verifies that Stop removes all gateway
 // containers for the cluster, not just the first one found.
 func TestStop_MultipleGatewayContainers(t *testing.T) {
 	eng := currustest.New()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Two gateway containers for the same cluster.
 	for _, name := range []string{"kindccm-gw-aaa", "kindccm-gw-bbb"} {

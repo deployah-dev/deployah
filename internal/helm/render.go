@@ -17,6 +17,7 @@ package helm
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 
 	"helm.sh/helm/v4/pkg/action"
@@ -107,7 +108,7 @@ func (c *Client) prepareAndLoadChart(ctx context.Context, manifest *spec.Spec, e
 	if !c.debug {
 		cleanup = func() {
 			if removeErr := os.RemoveAll(chartPath); removeErr != nil {
-				fmt.Printf("Warning: failed to cleanup chart temp dir %s: %v\n", chartPath, removeErr)
+				slog.WarnContext(ctx, "failed to cleanup chart temp dir", "path", chartPath, "err", removeErr)
 			}
 		}
 	}

@@ -15,7 +15,6 @@
 package helm
 
 import (
-	"context"
 	"os"
 	"testing"
 
@@ -41,7 +40,7 @@ func TestPrepareChart_CacheSurvivesCallerCleanup(t *testing.T) {
 	}
 	require.NoError(t, spec.FillSpecWithDefaults(manifest, "v1-alpha.2"))
 
-	returnedPath, err := PrepareChart(context.Background(), manifest, "production", nil)
+	returnedPath, err := PrepareChart(t.Context(), manifest, "production", nil)
 	require.NoError(t, err)
 
 	key, err := GenerateCacheKey(manifest, nil)

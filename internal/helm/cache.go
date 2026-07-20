@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -165,7 +166,7 @@ func CleanupExpiredCharts() {
 			// Remove expired chart directory
 			if err := os.RemoveAll(cache.Path); err != nil {
 				// Log error but continue cleanup
-				fmt.Printf("Warning: failed to cleanup expired chart cache at %s: %v\n", cache.Path, err)
+				slog.Warn("failed to cleanup expired chart cache", "path", cache.Path, "err", err)
 			}
 			delete(chartCache, key)
 		}

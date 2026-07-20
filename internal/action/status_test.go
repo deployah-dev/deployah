@@ -1,7 +1,6 @@
 package action_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -15,7 +14,7 @@ import (
 // Run returns an error when no releases match the project.
 func TestStatus_Run_NotFound(t *testing.T) {
 	s := action.NewStatus(&mockLister{releases: nil})
-	_, err := s.Run(context.Background(), action.StatusParams{Project: "ghost"})
+	_, err := s.Run(t.Context(), action.StatusParams{Project: "ghost"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no releases found")
 }
@@ -27,7 +26,7 @@ func TestStatus_Run_FoundAndSorted(t *testing.T) {
 		{Name: "my-app-prod"},
 	}
 	s := action.NewStatus(&mockLister{releases: rels})
-	releases, err := s.Run(context.Background(), action.StatusParams{Project: "my-app"})
+	releases, err := s.Run(t.Context(), action.StatusParams{Project: "my-app"})
 	require.NoError(t, err)
 	require.Len(t, releases, 2)
 	assert.Equal(t, "my-app-prod", releases[0].Name)
@@ -37,7 +36,7 @@ func TestStatus_Run_FoundAndSorted(t *testing.T) {
 // Run includes the environment in the not-found error message.
 func TestStatus_Run_WithEnvironmentFilter(t *testing.T) {
 	s := action.NewStatus(&mockLister{releases: nil})
-	_, err := s.Run(context.Background(), action.StatusParams{Project: "my-app", Environment: "prod"})
+	_, err := s.Run(t.Context(), action.StatusParams{Project: "my-app", Environment: "prod"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "in environment 'prod'")
 }

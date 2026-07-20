@@ -168,7 +168,7 @@ func TestCreate_success(t *testing.T) {
 	fp := &fakeProvider{}
 	m := newTestManager(t, fp)
 
-	err := m.Create(context.Background(), "mycluster")
+	err := m.Create(t.Context(), "mycluster")
 	require.NoError(t, err)
 	assert.Equal(t, 1, fp.createCalls)
 }
@@ -178,7 +178,7 @@ func TestCreate_alreadyExists_withoutFlag(t *testing.T) {
 	fp := &fakeProvider{createErr: ErrAlreadyExists}
 	m := newTestManager(t, fp)
 
-	err := m.Create(context.Background(), "mycluster")
+	err := m.Create(t.Context(), "mycluster")
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrAlreadyExists))
 }
@@ -189,7 +189,7 @@ func TestCreate_alreadyExists_withCreateIfMissing(t *testing.T) {
 	fp := &fakeProvider{createErr: ErrAlreadyExists}
 	m := newTestManager(t, fp)
 
-	err := m.Create(context.Background(), "mycluster", WithCreateIfMissing())
+	err := m.Create(t.Context(), "mycluster", WithCreateIfMissing())
 	require.NoError(t, err)
 }
 
@@ -200,7 +200,7 @@ func TestCreate_emitsEvents(t *testing.T) {
 	m := newTestManager(t, fp)
 	m.cfg.eventFunc = func(e Event) { events = append(events, e) }
 
-	require.NoError(t, m.Create(context.Background(), "dev"))
+	require.NoError(t, m.Create(t.Context(), "dev"))
 
 	require.Len(t, events, 2)
 	assert.Equal(t, StepCreating, events[0].Step)
@@ -217,7 +217,7 @@ func TestCreate_emitsFailed_onError(t *testing.T) {
 	m := newTestManager(t, fp)
 	m.cfg.eventFunc = func(e Event) { events = append(events, e) }
 
-	err := m.Create(context.Background(), "dev")
+	err := m.Create(t.Context(), "dev")
 	require.Error(t, err)
 
 	require.Len(t, events, 2)
@@ -229,7 +229,7 @@ func TestCreate_emitsFailed_onError(t *testing.T) {
 // TestCreate_canceled_emitsFailedEvent asserts that a StepFailed event is
 // emitted when the context is canceled during Create.
 func TestCreate_canceled_emitsFailedEvent(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel() // already canceled
 
 	fp := &fakeProvider{createErr: context.Canceled}
@@ -256,7 +256,7 @@ func TestCreate_canceled_waitsForProviderBeforeCleanup(t *testing.T) {
 		deleteErr:     nil,
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	m := newTestManager(t, fp)
@@ -287,7 +287,7 @@ func TestDelete_success(t *testing.T) {
 	fp := &fakeProvider{}
 	m := newTestManager(t, fp)
 
-	err := m.Delete(context.Background(), "dev")
+	err := m.Delete(t.Context(), "dev")
 	require.NoError(t, err)
 	assert.Equal(t, 1, fp.deleteCalls)
 }
@@ -297,7 +297,7 @@ func TestDelete_notFound_withoutFlag(t *testing.T) {
 	fp := &fakeProvider{deleteErr: ErrNotFound}
 	m := newTestManager(t, fp)
 
-	err := m.Delete(context.Background(), "dev")
+	err := m.Delete(t.Context(), "dev")
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrNotFound))
 }
@@ -307,7 +307,7 @@ func TestDelete_notFound_withIgnoreMissing(t *testing.T) {
 	fp := &fakeProvider{deleteErr: ErrNotFound}
 	m := newTestManager(t, fp)
 
-	err := m.Delete(context.Background(), "dev", WithIgnoreMissing())
+	err := m.Delete(t.Context(), "dev", WithIgnoreMissing())
 	require.NoError(t, err)
 }
 
@@ -320,7 +320,7 @@ func TestDeleteEventHandler_fansOut(t *testing.T) {
 	m.cfg.eventFunc = func(e Event) { mgr = append(mgr, e) }
 
 	var perCall []Event
-	err := m.Delete(context.Background(), "dev",
+	err := m.Delete(t.Context(), "dev",
 		WithDeleteEventHandler(func(e Event) { perCall = append(perCall, e) }))
 	require.NoError(t, err)
 
@@ -337,7 +337,7 @@ func TestRecreate(t *testing.T) {
 	fp := &fakeProvider{}
 	m := newTestManager(t, fp)
 
-	err := m.Recreate(context.Background(), "dev")
+	err := m.Recreate(t.Context(), "dev")
 	require.NoError(t, err)
 	assert.Equal(t, 1, fp.deleteCalls)
 	assert.Equal(t, 1, fp.createCalls)
@@ -348,7 +348,7 @@ func TestRecreate_survivesClusterNotExisting(t *testing.T) {
 	fp := &fakeProvider{deleteErr: ErrNotFound}
 	m := newTestManager(t, fp)
 
-	err := m.Recreate(context.Background(), "dev")
+	err := m.Recreate(t.Context(), "dev")
 	require.NoError(t, err)
 	assert.Equal(t, 1, fp.createCalls)
 }
@@ -359,7 +359,7 @@ func TestGet_notFound(t *testing.T) {
 	fp := &fakeProvider{inspectErr: ErrNotFound}
 	m := newTestManager(t, fp)
 
-	_, err := m.Get(context.Background(), "unknown")
+	_, err := m.Get(t.Context(), "unknown")
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrNotFound))
 }
@@ -373,7 +373,7 @@ func TestGet_success(t *testing.T) {
 	}}
 	m := newTestManager(t, fp)
 
-	c, err := m.Get(context.Background(), "dev")
+	c, err := m.Get(t.Context(), "dev")
 	require.NoError(t, err)
 	assert.Equal(t, "dev", c.Name)
 	assert.Equal(t, 3, c.Nodes)
@@ -391,7 +391,7 @@ func TestList_respectsManagerTimeout(t *testing.T) {
 	m.cfg.timeout = 50 * time.Millisecond
 	m.prov = &blockingListProvider{blockCh: blockCh, fakeProvider: &fakeProvider{}}
 
-	_, err := m.List(context.Background())
+	_, err := m.List(t.Context())
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, context.DeadlineExceeded))
 }
@@ -417,7 +417,7 @@ func TestList_sortedByName(t *testing.T) {
 	fp := &fakeProvider{listResult: []string{"charlie", "alice", "bob"}, inspectResult: &backendInfo{Nodes: 1}}
 	m := newTestManager(t, fp)
 
-	clusters, err := m.List(context.Background())
+	clusters, err := m.List(t.Context())
 	require.NoError(t, err)
 	require.Len(t, clusters, 3)
 	assert.Equal(t, "alice", clusters[0].Name)
@@ -432,7 +432,7 @@ func TestStatus_propagatesProviderError(t *testing.T) {
 	fp := &fakeProvider{statusResult: StatusStopped, statusErr: provErr}
 	m := newTestManager(t, fp)
 
-	status, err := m.Status(context.Background(), "dev")
+	status, err := m.Status(t.Context(), "dev")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, provErr)
 	assert.Equal(t, StatusStopped, status)
@@ -443,7 +443,7 @@ func TestStatus_returnsRunningWithNoError(t *testing.T) {
 	fp := &fakeProvider{statusResult: StatusRunning}
 	m := newTestManager(t, fp)
 
-	status, err := m.Status(context.Background(), "dev")
+	status, err := m.Status(t.Context(), "dev")
 	require.NoError(t, err)
 	assert.Equal(t, StatusRunning, status)
 }
@@ -455,7 +455,7 @@ func TestKubeConfig_writesFileAndReturnsStruct(t *testing.T) {
 	fp := &fakeProvider{kubeconfigResult: raw}
 	m := newTestManager(t, fp)
 
-	kc, err := m.KubeConfig(context.Background(), "dev")
+	kc, err := m.KubeConfig(t.Context(), "dev")
 	require.NoError(t, err)
 
 	assert.Equal(t, raw, kc.Bytes())
@@ -474,7 +474,7 @@ func TestKubeConfig_BytesIsCopy(t *testing.T) {
 	fp := &fakeProvider{kubeconfigResult: raw}
 	m := newTestManager(t, fp)
 
-	kc, err := m.KubeConfig(context.Background(), "dev")
+	kc, err := m.KubeConfig(t.Context(), "dev")
 	require.NoError(t, err)
 
 	b1 := kc.Bytes()
@@ -496,7 +496,7 @@ func TestLoadImageArchive_delegatesToProvider(t *testing.T) {
 	m := newTestManager(t, fp)
 
 	payload := []byte("fake-image-bytes")
-	err := m.LoadImageArchive(context.Background(), "dev", bytes.NewReader(payload))
+	err := m.LoadImageArchive(t.Context(), "dev", bytes.NewReader(payload))
 	require.NoError(t, err)
 
 	assert.Equal(t, 1, fp.loadCalls)
@@ -518,7 +518,7 @@ func TestInvalidClusterName_allEntryPoints(t *testing.T) {
 	badNames := []string{"", "..", "../x", "a/b"}
 	fp := &fakeProvider{}
 	m := newTestManager(t, fp)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	for _, name := range badNames {
 		t.Run(name, func(t *testing.T) {
@@ -545,7 +545,7 @@ func TestClose_waitsForBackgroundCleanup(t *testing.T) {
 		createBlockCh: blockCh,
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	m := newTestManager(t, fp)
