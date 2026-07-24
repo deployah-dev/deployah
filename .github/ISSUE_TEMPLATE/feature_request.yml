@@ -1,0 +1,34 @@
+name: Feature request
+description: Suggest a small improvement or new capability without a full design.
+title: "feature: "
+labels:
+  - kind/feature
+  - needs-triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For larger changes that need design agreement, use **Proposal** instead.
+        Search [existing issues](https://github.com/deployah-dev/deployah/issues) first.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: What do you want?
+      description: Describe the desired behavior. Examples help.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: false

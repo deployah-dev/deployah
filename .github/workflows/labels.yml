@@ -1,0 +1,52 @@
+# Declare and sync repository labels.
+# Inspired by https://til.simonwillison.net/github-actions/creating-github-labels
+name: Update repository labels
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/labels.yml"
+      - ".github/labels.yml"
+  workflow_dispatch:
+
+jobs:
+  sync-labels:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/checkout@v6
+
+      # yq is pre-installed on GitHub-hosted Ubuntu runners.
+      # https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2404-Readme.md
+      - name: Convert labels YAML to JSON
+        run: yq -o=json '.' .github/labels.yml > /tmp/labels.json
+
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const labels = JSON.parse(fs.readFileSync('/tmp/labels.json', 'utf8'));
+            for (const label of labels) {
+              const params = {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name: label.name,
+                description: label.description || '',
+                color: label.color,
+              };
+              try {
+                await github.rest.issues.createLabel(params);
+                console.log(`Created label '${label.name}'.`);
+              } catch (error) {
+                if (error.status === 422) {
+                  await github.rest.issues.updateLabel(params);
+                  console.log(`Updated label '${label.name}'.`);
+                } else {
+                  console.error(`Error syncing label '${label.name}': ${error}`);
+                  throw error;
+                }
+              }
+            }

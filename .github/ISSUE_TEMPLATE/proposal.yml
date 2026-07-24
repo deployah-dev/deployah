@@ -1,0 +1,96 @@
+name: Proposal
+description: Propose a design for a new feature or a meaningful change.
+title: "proposal: "
+labels:
+  - kind/proposal
+  - needs-triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for designs that change user-facing behavior, config shape, or deploy semantics.
+        For a small idea without a design, use **Feature request** instead.
+        Search [existing issues](https://github.com/deployah-dev/deployah/issues) first.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What pain or gap does this address? Who hits it?
+      placeholder: |
+        Example: I need NetworkPolicies and CRDs that deployah.yaml cannot express yet.
+    validations:
+      required: true
+
+  - type: textarea
+    id: goals
+    attributes:
+      label: Goals
+      description: What must be true when this ships?
+      placeholder: |
+        - Users can ship arbitrary manifests with a release
+        - Plan shows extras in the diff
+    validations:
+      required: true
+
+  - type: textarea
+    id: non-goals
+    attributes:
+      label: Non-goals
+      description: What is explicitly out of scope for this proposal?
+      placeholder: |
+        - Full GitOps reconciliation
+        - Replacing Helm
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed design
+      description: Concrete shape (paths, flags, config keys, CLI flow). Include examples.
+      placeholder: |
+        ### User experience
+        ### Config / layout
+        ### Behavior on plan and deploy
+        ### Failure modes
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other options and why you rejected them.
+    validations:
+      required: false
+
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility and migration
+      description: Breaking changes, defaults, migration path (if any).
+    validations:
+      required: false
+
+  - type: textarea
+    id: test-plan
+    attributes:
+      label: Test plan
+      description: Unit, integration scenarios, manual checks.
+      placeholder: |
+        - [ ] Unit tests
+        - [ ] Scenario under scenarios/
+        - [ ] Manual plan + deploy smoke
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues and discussions
+          required: true
+        - label: This includes enough design detail for implementation (not only a wish)
+          required: true

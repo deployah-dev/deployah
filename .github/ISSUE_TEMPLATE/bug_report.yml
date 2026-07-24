@@ -1,0 +1,59 @@
+name: Bug report
+description: Report something that does not work as expected.
+title: "bug: "
+labels:
+  - kind/bug
+  - needs-triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug. Search [existing issues](https://github.com/deployah-dev/deployah/issues) first.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Clear description of the unexpected behavior.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: Minimal steps, commands, and relevant config snippets.
+      placeholder: |
+        1. Create deployah.yaml with ...
+        2. Run `deployah plan -e dev`
+        3. See error ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: version
+    attributes:
+      label: Version and environment
+      description: Deployah version, OS, Kubernetes version (if relevant).
+      placeholder: |
+        deployah version: ...
+        OS: ...
+        Kubernetes: ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or output
+      description: Paste relevant CLI output. Redact secrets.
+      render: text
+    validations:
+      required: false

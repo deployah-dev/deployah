@@ -1,0 +1,77 @@
+# Source of truth for repository labels.
+# Synced by .github/workflows/labels.yml
+- name: kind/bug
+  color: "d73a4a"
+  description: Something is broken
+- name: kind/feature
+  color: "a2eeef"
+  description: New capability
+- name: kind/proposal
+  color: "0052cc"
+  description: Design discussion before or during implementation
+- name: kind/docs
+  color: "0075ca"
+  description: Documentation only
+- name: kind/chore
+  color: "fef2c0"
+  description: Cleanup, deps, CI, or refactor with no user-facing change
+- name: kind/question
+  color: "d876e3"
+  description: Support or clarification
+
+- name: area/cli
+  color: "c5def5"
+  description: Commands, flags, UX copy
+- name: area/spec
+  color: "c5def5"
+  description: deployah.yaml schema or loading
+- name: area/helm
+  color: "c5def5"
+  description: Chart render, release, post-render
+- name: area/deploy
+  color: "c5def5"
+  description: Deploy and plan session flow
+- name: area/extras
+  color: "c5def5"
+  description: Custom manifests and CRDs under .deployah/
+- name: area/testing
+  color: "c5def5"
+  description: Scenarios, harness, goldens
+- name: area/ci
+  color: "c5def5"
+  description: GitHub Actions and release packaging
+
+- name: priority/high
+  color: "b60205"
+  description: Blocks users or a release
+- name: priority/medium
+  color: "fbca04"
+  description: Important, not urgent
+- name: priority/low
+  color: "0e8a16"
+  description: Nice to have
+
+- name: needs-triage
+  color: "ededed"
+  description: New, not yet categorized
+- name: needs-design
+  color: "5319e7"
+  description: Needs a clearer proposal before coding
+- name: needs-info
+  color: "d93f0b"
+  description: Waiting on reporter
+- name: good first issue
+  color: "7057ff"
+  description: Scoped for new contributors
+- name: help wanted
+  color: "008672"
+  description: Ready for outside PRs
+- name: blocked
+  color: "b60205"
+  description: Waiting on a dependency or decision
+- name: wontfix
+  color: "ffffff"
+  description: Declined
+- name: duplicate
+  color: "cfd3d7"
+  description: Already tracked elsewhere
