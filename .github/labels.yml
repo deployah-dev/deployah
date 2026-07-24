@@ -1,5 +1,5 @@
 # Source of truth for repository labels.
-# Synced by .github/workflows/labels.yml
+# Synced by .github/workflows/labels.yml (create, update, and prune extras).
 - name: kind/bug
   color: "d73a4a"
   description: Something is broken

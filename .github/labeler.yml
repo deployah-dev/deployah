@@ -1,0 +1,26 @@
+# PR path → label rules for actions/labeler.
+# Label definitions live in .github/labels.yml.
+area/cli:
+  - changed-files:
+      - any-glob-to-any-file: "internal/cmd/**"
+area/spec:
+  - changed-files:
+      - any-glob-to-any-file: "internal/spec/**"
+area/helm:
+  - changed-files:
+      - any-glob-to-any-file: "internal/helm/**"
+area/deploy:
+  - changed-files:
+      - any-glob-to-any-file: ["internal/action/**", "internal/session/**", "internal/plan/**"]
+area/extras:
+  - changed-files:
+      - any-glob-to-any-file: "internal/extras/**"
+area/testing:
+  - changed-files:
+      - any-glob-to-any-file: ["internal/testing/**", "scenarios/**"]
+area/ci:
+  - changed-files:
+      - any-glob-to-any-file: [".github/**", "flake.nix", "flake.lock"]
+kind/docs:
+  - changed-files:
+      - any-glob-to-any-file: ["docs/**", "README.md", "**/*.md"]
