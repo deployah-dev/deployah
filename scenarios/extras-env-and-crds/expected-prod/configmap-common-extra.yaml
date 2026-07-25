@@ -1,0 +1,13 @@
+apiVersion: v1
+data:
+    scope: all-environments
+kind: ConfigMap
+metadata:
+    annotations:
+        deployah.dev/project: extras-env-and-crds
+        deployah.dev/source: manifests
+    labels:
+        deployah.dev/environment: prod
+        deployah.dev/project: extras-env-and-crds
+    name: common-extra
+    namespace: default

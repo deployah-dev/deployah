@@ -3,6 +3,8 @@ kind: Ingress
 metadata:
     annotations:
         cert-manager.io/cluster-issuer: letsencrypt-prod
+        deployah.dev/project: expose-apex-certmanager
+        deployah.dev/source: spec
     labels:
         app.kubernetes.io/instance: expose-apex-certmanager-production
         app.kubernetes.io/managed-by: Helm

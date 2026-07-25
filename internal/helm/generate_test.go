@@ -610,6 +610,11 @@ func TestMapSpecToChartValues_Profiles(t *testing.T) {
 	assert.Equal(t, "web", labels["tier"])
 	assert.Equal(t, "shop", labels["deployah.dev/project"])
 
+	annotations, ok := web["commonAnnotations"].(map[string]string)
+	require.True(t, ok)
+	assert.Equal(t, spec.SourceSpec, annotations[spec.AnnotationSource])
+	assert.Equal(t, "shop", annotations[spec.AnnotationProject])
+
 	tolerations, ok := web["tolerations"].([]any)
 	require.True(t, ok)
 	require.Len(t, tolerations, 1)

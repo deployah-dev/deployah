@@ -30,8 +30,9 @@ flag_management:
       - type: project
         target: auto
         threshold: 1%
-      - type: patch
-        target: 80%
+      # Patch coverage is gated once under coverage.status.patch. Flags only
+      # report project trends so unit and integration uploads are not each
+      # held to a separate patch target.
   individual_flags:
     - name: unittests
       carryforward: true

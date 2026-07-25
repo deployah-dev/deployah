@@ -1,6 +1,9 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
+    annotations:
+        deployah.dev/project: expose-selfsigned
+        deployah.dev/source: spec
     labels:
         app.kubernetes.io/instance: expose-selfsigned-production
         app.kubernetes.io/managed-by: Helm

@@ -1,6 +1,9 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
+    annotations:
+        deployah.dev/project: command-args-resources
+        deployah.dev/source: spec
     labels:
         app.kubernetes.io/instance: command-args-resources-production
         app.kubernetes.io/managed-by: Helm

@@ -24,18 +24,24 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 )
 
-// unregisteredSchemeKinds lists kinds the embedded chart can emit that
-// [validateAgainstScheme] cannot check against [scheme.Scheme]:
+// unregisteredSchemeKinds lists kinds the chart or .deployah/ extras can
+// emit that [validateAgainstScheme] cannot check against [scheme.Scheme]:
 //
-//   - ServiceMonitor, PodMonitor: Prometheus Operator CRDs, not core
-//     Kubernetes types. No scenario renders them today.
+//   - ServiceMonitor, PodMonitor, PrometheusRule: Prometheus Operator CRDs.
+//   - ClusterWidget: fixture CRD used by extras scenarios.
 //   - HorizontalPodAutoscaler: [helm.Client.RenderOffline] has no live
 //     cluster, so Capabilities.KubeVersion falls back to Helm's pre-1.23
 //     default, making the chart select the removed autoscaling/v2beta1 API
 //     instead of autoscaling/v2. This affects `deployah plan --offline` for
 //     any autoscaling component; the real fix belongs in the render
 //     pipeline (a modern default KubeVersion), not here.
-var unregisteredSchemeKinds = []string{"ServiceMonitor", "PodMonitor", "HorizontalPodAutoscaler"}
+var unregisteredSchemeKinds = []string{
+	"ServiceMonitor",
+	"PodMonitor",
+	"PrometheusRule",
+	"ClusterWidget",
+	"HorizontalPodAutoscaler",
+}
 
 // schemeDecoder is a strict (unknown-field-rejecting) decoder against the
 // client-go built-in scheme, shared across scenarios.

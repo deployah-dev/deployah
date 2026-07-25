@@ -13,6 +13,7 @@ import (
 	"helm.sh/helm/v4/pkg/chart/v2/loader"
 	"helm.sh/helm/v4/pkg/cli"
 	"helm.sh/helm/v4/pkg/kube"
+	"helm.sh/helm/v4/pkg/postrenderer"
 	"helm.sh/helm/v4/pkg/release"
 	"helm.sh/helm/v4/pkg/storage/driver"
 	"k8s.io/apimachinery/pkg/labels"
@@ -161,6 +162,16 @@ func NewClient(opts ...Option) (*Client, error) {
 	return c, nil
 }
 
+// Namespace returns the release namespace Helm will use for installs and
+// offline renders (from WithNamespace, HELM_NAMESPACE, or the kubeconfig
+// context default).
+func (c *Client) Namespace() string {
+	if c == nil || c.settings == nil {
+		return ""
+	}
+	return c.settings.Namespace()
+}
+
 // IsReachable reports whether the configured Kubernetes cluster is reachable.
 // Also works around helm/helm#32183: Helm v4.2.0 panics on a second
 // IsReachable call after the first one fails (typed-nil cached in
@@ -176,10 +187,11 @@ func (c *Client) IsReachable() error {
 // InstallApp installs or upgrades the app using the embedded chart, using
 // resolved (if non-nil) for platform-resolved FQDN/TLS values. When dryRun
 // is true, it renders client-side via [Client.RenderManifests] instead of
-// touching the cluster.
-func (c *Client) InstallApp(ctx context.Context, manifest *spec.Spec, environment string, dryRun bool, resolved *spec.ResolvedSpec) error {
+// touching the cluster. postRenderer, when non-nil, is applied to rendered
+// manifests before they are installed or upgraded.
+func (c *Client) InstallApp(ctx context.Context, manifest *spec.Spec, environment string, dryRun bool, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) error {
 	if dryRun {
-		_, cleanup, err := c.RenderManifests(ctx, manifest, environment, resolved)
+		_, cleanup, err := c.RenderManifests(ctx, manifest, environment, resolved, postRenderer)
 		if cleanup != nil {
 			defer cleanup()
 		}
@@ -230,6 +242,7 @@ func (c *Client) InstallApp(ctx context.Context, manifest *spec.Spec, environmen
 		install.WaitStrategy = kube.StatusWatcherStrategy
 		install.RollbackOnFailure = true
 		install.Labels = labels
+		install.PostRenderer = postRenderer
 
 		if _, runErr := install.RunWithContext(ctx, ch, values); runErr != nil {
 			return c.wrapHelmError("install", GenerateReleaseName(manifest.Project, environment), runErr)
@@ -244,6 +257,7 @@ func (c *Client) InstallApp(ctx context.Context, manifest *spec.Spec, environmen
 	upgrade.RollbackOnFailure = true
 	upgrade.WaitStrategy = kube.StatusWatcherStrategy
 	upgrade.Labels = labels
+	upgrade.PostRenderer = postRenderer
 	_, err = upgrade.RunWithContext(ctx, GenerateReleaseName(manifest.Project, environment), ch, values)
 	if err != nil {
 		return c.wrapHelmError("upgrade", GenerateReleaseName(manifest.Project, environment), err)

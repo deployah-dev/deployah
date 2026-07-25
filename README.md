@@ -21,6 +21,7 @@ but for the deploy step: S2I builds your image, and Deployah runs your release.
 - [Platform file](#platform-file)
 - [Profiles](#profiles)
 - [Health checks](#health-checks)
+- [Custom manifests and CRDs](#custom-manifests-and-crds)
 - [Commands](#commands)
 - [Environments and variables](#environments-and-variables)
 - [Precedence rules](#precedence-rules)
@@ -828,6 +829,133 @@ components:
       alive: false
 ```
 
+## Custom manifests and CRDs
+
+Deployah can ship raw Kubernetes YAML next to the generated Helm chart. Use
+this for resources Deployah does not generate (for example a `PrometheusRule`,
+a `NetworkPolicy`, or a CRD your app needs).
+
+Extra **manifests** join the same Helm release as your generated resources
+(via a Helm post-renderer). Extra **CRDs** are applied to the cluster first,
+outside the release, then Deployah waits for each CRD to become
+`Established` before installing or upgrading the chart.
+
+### Layout
+
+Place files under `.deployah/` next to your `deployah.yaml`. `deployah init`
+creates `.deployah/manifests/` and `.deployah/crds/` with short README files:
+
+```text
+.deployah/
+  manifests/
+    common-networkpolicy.yaml   # every environment
+    prod/
+      extra-ingress.yaml        # only when deploying to prod (or prod/*)
+  crds/
+    my-crd.yaml                 # shared; no per-environment subdirs
+```
+
+Rules:
+
+- Only `*.yaml` / `*.yml` are loaded. `README*` and markdown files are skipped.
+  Dotfiles (including `.old.yaml`) are skipped. Any other visible non-YAML file
+  is an error.
+- Subdirectories under `manifests/` must be declared environment keys. A
+  subdirectory named `review` also applies when you deploy `review/pr-123`.
+- Unknown directories under `manifests/` fail the deploy.
+- Nested directories under a manifests env dir (or under `crds/`) are not
+  allowed.
+- `CustomResourceDefinition` belongs in `.deployah/crds/`, not under
+  `manifests/`. CRDs must use `apiVersion: apiextensions.k8s.io/v1`.
+
+### Literal YAML
+
+Extra manifests are applied **literally**. There is no Helm templating, no
+Sprig, and no environment-variable substitution. Content such as
+`{{ $labels.instance }}` in a PrometheusRule is left untouched.
+
+### Example
+
+```yaml
+# .deployah/manifests/web-alerts.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: web-alerts
+spec:
+  groups:
+    - name: web
+      rules:
+        - alert: WebDown
+          expr: up == 0
+          annotations:
+            summary: instance {{ $labels.instance }} is down
+```
+
+```sh
+deployah plan prod          # extras appear in the plan diff
+deployah deploy prod -y     # CRDs (if any) first, then the release
+```
+
+### Labels and annotations
+
+Deployah merges identity metadata into `metadata.labels` /
+`metadata.annotations` only (never into selectors or pod templates), and never
+rewrites object names:
+
+| Object | Labels | Annotations |
+|---|---|---|
+| Generated (from the spec) | `deployah.dev/project`, `deployah.dev/environment`, `deployah.dev/component`, ... | `deployah.dev/source=spec`, `deployah.dev/project` |
+| Extra manifests | `deployah.dev/project`, `deployah.dev/environment` | `deployah.dev/source=manifests`, `deployah.dev/project` |
+| Extra CRDs | project only (no environment) | `deployah.dev/source=crds`, `deployah.dev/project` |
+
+Reserved `deployah.dev/*` keys that Deployah does not own are stripped from
+extras so they cannot impersonate managed metadata. Your other labels and
+annotations are kept.
+
+Empty `metadata.namespace` on namespaced extras is filled with the release
+namespace. A different namespace is an error. Cluster-scoped objects must omit
+namespace.
+
+### Validation and collisions
+
+- Each document needs `apiVersion`, `kind`, and `metadata.name`.
+- Duplicate identities (same apiVersion/kind/namespace/name) across extras
+  files fail the load.
+- An extra that collides with a generated chart object fails the render
+  (Deployah will not overwrite chart resources).
+- Custom resource kinds must be known: put their CRD under `.deployah/crds/`,
+  or have the type installed on the cluster. A small offline allowlist covers
+  common operator APIs (cert-manager and prometheus-operator). With
+  `deployah plan --offline`, unknown kinds are allowed so you can still
+  preview; scope defaults to namespaced unless an in-repo CRD says otherwise.
+
+### Plan vs deploy
+
+- `deployah plan` includes extra manifests in the rendered diff. It does not
+  apply CRDs; when `.deployah/crds/` is non-empty it prints how many CRDs are
+  pending.
+- `deployah deploy` applies CRDs first (see below), then the Helm release
+  with extras attached.
+
+### CRD policy
+
+```sh
+deployah deploy prod                  # --crds create (default): install if missing
+deployah deploy prod --crds create-replace
+```
+
+| Policy | Behavior |
+|---|---|
+| `create` (default) | Create the CRD when it is missing; leave an existing CRD unchanged. |
+| `create-replace` | Create when missing, or server-side-apply over an existing CRD (force ownership). |
+
+Deployah waits for each CRD to report `Established` (bounded by `--timeout`),
+then applies the Helm release. If the Helm plan has no changes but
+`.deployah/crds/` is non-empty, Deployah still applies those CRDs (the chart is
+left alone). CRDs are never pruned and are never deleted on uninstall. Extra
+manifests leave with the release.
+
 ## Commands
 
 Run `deployah <command> --help` for the full details of any command. A complete,
@@ -855,13 +983,13 @@ These work with every command:
 
 | Command | What it does |
 |---|---|
-| `deployah init` | Create a new spec and platform file by answering a few questions. Use `-o` to set the output file, `--force` to overwrite an existing one, or `--dry-run` to preview. Non-interactive: `--project`, `--environments`, `--set key=value`, or `--defaults` to skip every prompt. |
+| `deployah init` | Create a new spec and platform file by answering a few questions. Also scaffolds `.deployah/manifests/` and `.deployah/crds/` for [custom manifests and CRDs](#custom-manifests-and-crds). Use `-o` to set the output file, `--force` to overwrite an existing one, or `--dry-run` to preview. Non-interactive: `--project`, `--environments`, `--set key=value`, or `--defaults` to skip every prompt. |
 | `deployah validate` | Check the manifest schema (offline). When a platform file exists, also cross-check `expose.domain` keys and environment names against it. |
 | `deployah validate <environment>` | Also load the platform file and check the resolved configuration for that environment. |
 | `deployah resolve <environment>` | Preview the fully resolved hostname, TLS mode, and context, offline. Use `--output json` for machine-readable output. |
 | `deployah resolve --environments` | List every environment from both files: where it is registered, its context (or the kubeconfig fallback), domains, and overrides. |
-| `deployah plan <environment>` | Preview what a deploy would change, without applying anything. Use `--offline` to render and validate with no cluster access, `--drift` to also compare against live cluster state, or `--output json` for CI. |
-| `deployah deploy <environment>` | Deploy your project. Shows the plan and asks for confirmation before applying; use `-y`/`--yes` to skip the prompt, `--reapply` to upgrade even with no changes, `--explain` to print the resolution report first, or `--force-hostname-change` to bypass the hostname guard. |
+| `deployah plan <environment>` | Preview what a deploy would change, without applying anything. Extra manifests from `.deployah/manifests/` appear in the diff; pending CRDs are reported but not applied. Use `--offline` to render with no cluster access, `--drift` to also compare against live cluster state, or `--output json` for CI. |
+| `deployah deploy <environment>` | Deploy your project. Shows the plan and asks for confirmation before applying; use `-y`/`--yes` to skip the prompt, `--reapply` to upgrade even with no changes, `--crds` for [CRD install policy](#crd-policy) (`create` or `create-replace`), `--explain` to print the resolution report first, or `--force-hostname-change` to bypass the hostname guard. |
 | `deployah status <project>` | Show the status of a deployed project. Use `--detailed` for pod details, `-e` for an environment. |
 | `deployah logs <project>` | Stream logs. Filter with `--component`, `-e`, `--container`, `--since`, `--tail`. Use `--no-follow` for a one-off read. |
 | `deployah shell <project>` | Open a shell in a running container. Choose with `--component` and `--container`. |
@@ -1175,6 +1303,26 @@ error: unable to connect to Kubernetes cluster
 Check that your cluster is reachable with `kubectl cluster-info`. For a local
 cluster, run `deployah cluster up` and deploy with the `local` environment (or
 pass `--context kind-deployah`).
+
+### Custom manifests and CRDs
+
+**Unknown type / add its CRD under `.deployah/crds/`.**
+
+The kind is not a built-in type, not on the small operator allowlist, and not
+declared by an in-repo CRD. Put the `CustomResourceDefinition` under
+`.deployah/crds/`, or install that API on the cluster before deploying. See
+[Custom manifests and CRDs](#custom-manifests-and-crds).
+
+**Extra collides with a generated object.**
+
+An object in `.deployah/manifests/` has the same apiVersion, kind, namespace,
+and name as something the chart already generates. Rename the extra, or stop
+generating that resource from the spec.
+
+**CRD must use `apiVersion: apiextensions.k8s.io/v1`.**
+
+Older `apiextensions.k8s.io/v1beta1` CRDs are rejected. Convert the document to
+v1.
 
 ### Deploy succeeds but the app returns 503 / times out over HTTPS
 

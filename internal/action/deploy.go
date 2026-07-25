@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 
+	"helm.sh/helm/v4/pkg/postrenderer"
+
 	"deployah.dev/deployah/internal/spec"
 )
 
 // Deployer abstracts Helm install/upgrade operations.
 type Deployer interface {
-	InstallApp(ctx context.Context, m *spec.Spec, environment string, dryRun bool, resolved *spec.ResolvedSpec) error
+	InstallApp(ctx context.Context, m *spec.Spec, environment string, dryRun bool, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) error
 }
 
 // SpecLoader loads and validates a spec for an environment.
@@ -34,7 +36,7 @@ func (d *Deploy) Run(ctx context.Context, environment string, dryRun bool) (*spe
 	if err != nil {
 		return nil, fmt.Errorf("load spec: %w", err)
 	}
-	if err = d.deployer.InstallApp(ctx, m, environment, dryRun, nil); err != nil {
+	if err = d.deployer.InstallApp(ctx, m, environment, dryRun, nil, nil); err != nil {
 		return nil, fmt.Errorf("install: %w", err)
 	}
 	return m, nil

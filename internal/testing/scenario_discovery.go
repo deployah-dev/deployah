@@ -24,6 +24,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"deployah.dev/deployah/internal/spec"
 )
 
 // errorScenarioIndicators are name prefixes that mark a scenario as
@@ -52,12 +54,17 @@ func DiscoverScenarios(scenariosDir string) ([]TestScenario, error) {
 			return nil
 		}
 
+		// .deployah holds extras fixtures, not nested scenarios.
+		if info.Name() == spec.DeployahConfigDir || strings.HasPrefix(info.Name(), ".") {
+			return filepath.SkipDir
+		}
+
 		// plan-* directories hold plan-config.yaml scenarios (see
 		// plan_scenarios.go), not render/golden-file scenarios: skip them
 		// here so they never get treated as a render scenario missing its
 		// expected/ directory.
 		if strings.HasPrefix(info.Name(), "plan-") {
-			return nil
+			return filepath.SkipDir
 		}
 
 		manifestPath := filepath.Join(path, "deployah.yaml")

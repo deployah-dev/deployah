@@ -22,6 +22,7 @@ import (
 
 	"helm.sh/helm/v4/pkg/action"
 	"helm.sh/helm/v4/pkg/chart/v2/loader"
+	"helm.sh/helm/v4/pkg/postrenderer"
 
 	"deployah.dev/deployah/internal/render"
 	"deployah.dev/deployah/internal/spec"
@@ -38,7 +39,7 @@ import (
 //
 // Callers must invoke the returned cleanup func; ChartPath is not removed
 // automatically so callers like deploy can reuse it for the real apply.
-func (c *Client) RenderManifests(ctx context.Context, manifest *spec.Spec, environment string, resolved *spec.ResolvedSpec) (result *render.RenderResult, cleanup func(), err error) {
+func (c *Client) RenderManifests(ctx context.Context, manifest *spec.Spec, environment string, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) (result *render.RenderResult, cleanup func(), err error) {
 	releaseName := GenerateReleaseName(manifest.Project, environment)
 
 	ch, chartPath, cleanup, err := c.prepareAndLoadChart(ctx, manifest, environment, resolved)
@@ -54,9 +55,9 @@ func (c *Client) RenderManifests(ctx context.Context, manifest *spec.Spec, envir
 		// Not found -> fresh install. Any other history error is treated
 		// the same way InstallApp does: fall through to an install attempt,
 		// which will surface a clearer error if something else is wrong.
-		result, err = c.renderInstall(ctx, releaseName, ch, values, labels)
+		result, err = c.renderInstall(ctx, releaseName, ch, values, labels, postRenderer)
 	} else {
-		result, err = c.renderUpgrade(ctx, releaseName, ch, values, labels)
+		result, err = c.renderUpgrade(ctx, releaseName, ch, values, labels, postRenderer)
 	}
 	if err != nil {
 		cleanup()
@@ -73,7 +74,7 @@ func (c *Client) RenderManifests(ctx context.Context, manifest *spec.Spec, envir
 // fresh install (IsUpgrade false, Revision 1) even when a release already
 // exists, so it can't be diffed against a prior release like
 // [Client.RenderManifests] can; use that instead when cluster access is fine.
-func (c *Client) RenderOffline(ctx context.Context, manifest *spec.Spec, environment string, resolved *spec.ResolvedSpec) (result *render.RenderResult, cleanup func(), err error) {
+func (c *Client) RenderOffline(ctx context.Context, manifest *spec.Spec, environment string, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) (result *render.RenderResult, cleanup func(), err error) {
 	releaseName := GenerateReleaseName(manifest.Project, environment)
 
 	ch, chartPath, cleanup, err := c.prepareAndLoadChart(ctx, manifest, environment, resolved)
@@ -83,7 +84,7 @@ func (c *Client) RenderOffline(ctx context.Context, manifest *spec.Spec, environ
 
 	values, labels := renderInputs(manifest, environment)
 
-	result, err = c.renderInstall(ctx, releaseName, ch, values, labels)
+	result, err = c.renderInstall(ctx, releaseName, ch, values, labels, postRenderer)
 	if err != nil {
 		cleanup()
 		return nil, nil, err
@@ -179,7 +180,7 @@ func restoreCapabilitiesForDryRun(cfg *action.Configuration) func() {
 	}
 }
 
-func (c *Client) renderInstall(ctx context.Context, releaseName string, ch *chart.Chart, values map[string]any, labels map[string]string) (*render.RenderResult, error) {
+func (c *Client) renderInstall(ctx context.Context, releaseName string, ch *chart.Chart, values map[string]any, labels map[string]string, postRenderer postrenderer.PostRenderer) (*render.RenderResult, error) {
 	// See restoreCapabilitiesForDryRun: a client-side dry-run install swaps
 	// cfg.KubeClient, cfg.Releases, and cfg.Capabilities. Restore them once
 	// this render is done so only this call is affected.
@@ -192,6 +193,7 @@ func (c *Client) renderInstall(ctx context.Context, releaseName string, ch *char
 	install.DryRunStrategy = action.DryRunClient
 	install.DisableOpenAPIValidation = true
 	install.Labels = labels
+	install.PostRenderer = postRenderer
 
 	rel, runErr := install.RunWithContext(ctx, ch, values)
 	if runErr != nil {
@@ -211,7 +213,7 @@ func (c *Client) renderInstall(ctx context.Context, releaseName string, ch *char
 	}, nil
 }
 
-func (c *Client) renderUpgrade(ctx context.Context, releaseName string, ch *chart.Chart, values map[string]any, labels map[string]string) (*render.RenderResult, error) {
+func (c *Client) renderUpgrade(ctx context.Context, releaseName string, ch *chart.Chart, values map[string]any, labels map[string]string, postRenderer postrenderer.PostRenderer) (*render.RenderResult, error) {
 	// Upgrade's dry-run path doesn't swap KubeClient/Releases as of Helm
 	// v4.2.1; restoring defensively guards against a future version adding
 	// the short-circuit Install already has. Capabilities is deliberately
@@ -224,6 +226,7 @@ func (c *Client) renderUpgrade(ctx context.Context, releaseName string, ch *char
 	upgrade.DryRunStrategy = action.DryRunClient
 	upgrade.DisableOpenAPIValidation = true
 	upgrade.Labels = labels
+	upgrade.PostRenderer = postRenderer
 
 	rel, runErr := upgrade.RunWithContext(ctx, releaseName, ch, values)
 	if runErr != nil {

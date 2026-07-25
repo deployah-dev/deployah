@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: reserved-labels
+  labels:
+    app: keep-me
+    deployah.dev/project: wrong
+    deployah.dev/component: should-strip
+    deployah.dev/managed-by: impostor
+    deployah.dev/version: "99"
+  annotations:
+    note: keep
+    deployah.dev/source: forged
+    deployah.dev/fakekey: strip-me
+data:
+  key: value

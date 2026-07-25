@@ -30,6 +30,7 @@ import (
 	"gopkg.in/yaml.v3"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
+	"deployah.dev/deployah/internal/extras"
 	"deployah.dev/deployah/internal/helm"
 	"deployah.dev/deployah/internal/k8s"
 	"deployah.dev/deployah/internal/spec"
@@ -120,7 +121,7 @@ func (suite *IntegrationTestSuite) RunScenarioTest(t *testing.T, scenario TestSc
 
 		t.Chdir(testDir)
 
-		manifest, environment, resolved, err := suite.loadAndResolve(t, scenario)
+		manifest, environment, resolved, platform, err := suite.loadAndResolve(t, scenario)
 
 		if scenario.ExpectError || len(scenario.ExpectedErrors) > 0 {
 			require.Error(t, err)
@@ -131,7 +132,7 @@ func (suite *IntegrationTestSuite) RunScenarioTest(t *testing.T, scenario TestSc
 		}
 		require.NoError(t, err)
 
-		renderedManifests, err := suite.renderChart(t, manifest, environment, resolved)
+		renderedManifests, err := suite.renderChart(t, testDir, manifest, environment, resolved, platform)
 		require.NoError(t, err)
 
 		// Every rendered object must decode cleanly into its typed
@@ -180,12 +181,17 @@ func (suite *IntegrationTestSuite) setupScenarioEnvironment(t *testing.T, scenar
 		require.NoError(t, err)
 	}
 
+	extrasSrc := filepath.Join(suite.ScenariosDir, scenario.ScenarioDir, spec.DeployahConfigDir)
+	if _, statErr := os.Stat(extrasSrc); statErr == nil {
+		require.NoError(t, copyDir(extrasSrc, filepath.Join(testDir, spec.DeployahConfigDir)))
+	}
+
 	return testDir
 }
 
 // loadAndResolve loads the manifest (and optional platform file), resolves the
 // environment, and runs [spec.Resolve] when a platform is present.
-func (suite *IntegrationTestSuite) loadAndResolve(t *testing.T, scenario TestScenario) (*spec.Spec, string, *spec.ResolvedSpec, error) {
+func (suite *IntegrationTestSuite) loadAndResolve(t *testing.T, scenario TestScenario) (*spec.Spec, string, *spec.ResolvedSpec, *spec.PlatformConfig, error) {
 	t.Helper()
 	ctx := context.Background()
 
@@ -193,28 +199,28 @@ func (suite *IntegrationTestSuite) loadAndResolve(t *testing.T, scenario TestSce
 	if scenario.PlatformFile != "" {
 		loaded, err := spec.LoadPlatform(filepath.Base(scenario.PlatformFile))
 		if err != nil {
-			return nil, "", nil, err
+			return nil, "", nil, nil, err
 		}
 		platform = loaded
 	}
 
 	manifest, err := spec.Load(ctx, scenario.ManifestFile, scenario.Environment, platform)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, "", nil, platform, err
 	}
 	envName, _, err := spec.ResolveEnvironment(manifest.Environments, platform, scenario.Environment)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, "", nil, platform, err
 	}
 
 	if platform == nil {
-		return manifest, envName, nil, nil
+		return manifest, envName, nil, nil, nil
 	}
 
 	envIdentity := spec.NormalizeEnv(envName)
 	resolved, _, err := spec.Resolve(manifest, platform, envIdentity, spec.SubstitutionReport{})
 	if err != nil {
-		return nil, "", nil, err
+		return nil, "", nil, platform, err
 	}
 
 	// Materialize self-signed TLS certs offline (no cluster access),
@@ -222,24 +228,34 @@ func (suite *IntegrationTestSuite) loadAndResolve(t *testing.T, scenario TestSce
 	// expose scenario fails render with "certificate not materialized
 	// before render".
 	if tlsErr := k8s.MaterializeSelfSignedTLS(ctx, nil, "", resolved); tlsErr != nil {
-		return nil, "", nil, tlsErr
+		return nil, "", nil, platform, tlsErr
 	}
 
-	return manifest, envName, resolved, nil
+	return manifest, envName, resolved, platform, nil
 }
 
 // renderChart renders manifest/environment through Helm's real template
 // engine via [helm.Client.RenderOffline] (no cluster access, matching
 // `deployah plan --offline`), returning the resulting Kubernetes objects.
-func (suite *IntegrationTestSuite) renderChart(t *testing.T, manifest *spec.Spec, environment string, resolved *spec.ResolvedSpec) ([]unstructured.Unstructured, error) {
+// Extra manifests from .deployah/ under testDir are appended via the Helm
+// post-renderer.
+func (suite *IntegrationTestSuite) renderChart(t *testing.T, testDir string, manifest *spec.Spec, environment string, resolved *spec.ResolvedSpec, platform *spec.PlatformConfig) ([]unstructured.Unstructured, error) {
 	t.Helper()
 
-	client, err := helm.NewClient()
+	// Pin the release namespace so goldens stay stable regardless of
+	// HELM_NAMESPACE or the ambient kubeconfig context.
+	client, err := helm.NewClient(helm.WithNamespace("default"))
 	if err != nil {
 		return nil, fmt.Errorf("create helm client: %w", err)
 	}
 
-	result, cleanup, err := client.RenderOffline(context.Background(), manifest, environment, resolved)
+	specPath := filepath.Join(testDir, "deployah.yaml")
+	bundle, loadErr := extras.LoadFromSpec(specPath, manifest, platform, environment, client.Namespace(), nil)
+	if loadErr != nil {
+		return nil, fmt.Errorf("load extras: %w", loadErr)
+	}
+
+	result, cleanup, err := client.RenderOffline(context.Background(), manifest, environment, resolved, bundle.PostRendererFor())
 	if cleanup != nil {
 		t.Cleanup(cleanup)
 	}
@@ -430,4 +446,29 @@ func copyFile(src, dst string) error {
 		return srcCloseErr
 	}
 	return dstCloseErr
+}
+
+// copyDir recursively copies src into dst. dst is created if missing.
+func copyDir(src, dst string) error {
+	if err := os.MkdirAll(dst, 0o750); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		from := filepath.Join(src, e.Name())
+		to := filepath.Join(dst, e.Name())
+		if e.IsDir() {
+			if copyErr := copyDir(from, to); copyErr != nil {
+				return copyErr
+			}
+			continue
+		}
+		if copyErr := copyFile(from, to); copyErr != nil {
+			return copyErr
+		}
+	}
+	return nil
 }

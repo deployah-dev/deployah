@@ -1,0 +1,19 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+    annotations:
+        deployah.dev/project: extras-manifest
+        deployah.dev/source: manifests
+    labels:
+        deployah.dev/environment: dev
+        deployah.dev/project: extras-manifest
+    name: web-alerts
+    namespace: default
+spec:
+    groups:
+        - name: web
+          rules:
+            - alert: WebDown
+              annotations:
+                summary: instance {{ $labels.instance }} is down
+              expr: up == 0

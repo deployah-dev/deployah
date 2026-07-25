@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"helm.sh/helm/v4/pkg/postrenderer"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
@@ -80,14 +81,14 @@ func (m *MockHelmClient) IsReachable() error {
 }
 
 // InstallApp implements [HelmClient].
-func (m *MockHelmClient) InstallApp(ctx context.Context, manifest *spec.Spec, environment string, dryRun bool, resolved *spec.ResolvedSpec) error {
-	args := m.Called(ctx, manifest, environment, dryRun, resolved)
+func (m *MockHelmClient) InstallApp(ctx context.Context, manifest *spec.Spec, environment string, dryRun bool, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) error {
+	args := m.Called(ctx, manifest, environment, dryRun, resolved, postRenderer)
 	return args.Error(0)
 }
 
 // RenderManifests implements [HelmClient].
-func (m *MockHelmClient) RenderManifests(ctx context.Context, manifest *spec.Spec, environment string, resolved *spec.ResolvedSpec) (*render.RenderResult, func(), error) {
-	args := m.Called(ctx, manifest, environment, resolved)
+func (m *MockHelmClient) RenderManifests(ctx context.Context, manifest *spec.Spec, environment string, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) (*render.RenderResult, func(), error) {
+	args := m.Called(ctx, manifest, environment, resolved, postRenderer)
 	if err := args.Error(2); err != nil {
 		return nil, func() {}, err
 	}
@@ -106,8 +107,8 @@ func (m *MockHelmClient) RenderManifests(ctx context.Context, manifest *spec.Spe
 }
 
 // RenderOffline implements [HelmClient].
-func (m *MockHelmClient) RenderOffline(ctx context.Context, manifest *spec.Spec, environment string, resolved *spec.ResolvedSpec) (*render.RenderResult, func(), error) {
-	args := m.Called(ctx, manifest, environment, resolved)
+func (m *MockHelmClient) RenderOffline(ctx context.Context, manifest *spec.Spec, environment string, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) (*render.RenderResult, func(), error) {
+	args := m.Called(ctx, manifest, environment, resolved, postRenderer)
 	if err := args.Error(2); err != nil {
 		return nil, func() {}, err
 	}
@@ -777,7 +778,7 @@ func TestIntegrationWithMocks(t *testing.T) {
 		mockHelm := &MockHelmClient{}
 		testManifest := &spec.Spec{Project: "test-project"}
 
-		mockHelm.On("InstallApp", mock.Anything, testManifest, "production", false, mock.Anything).Return(nil)
+		mockHelm.On("InstallApp", mock.Anything, testManifest, "production", false, mock.Anything, mock.Anything).Return(nil)
 
 		sess := New(WithHelmFactory(func(s *Session) (HelmClient, error) {
 			return mockHelm, nil
@@ -789,7 +790,7 @@ func TestIntegrationWithMocks(t *testing.T) {
 		helmClient, err := cluster.Helm()
 		assert.NoError(t, err)
 
-		err = helmClient.InstallApp(t.Context(), testManifest, "production", false, nil)
+		err = helmClient.InstallApp(t.Context(), testManifest, "production", false, nil, nil)
 		assert.NoError(t, err)
 		mockHelm.AssertExpectations(t)
 	})

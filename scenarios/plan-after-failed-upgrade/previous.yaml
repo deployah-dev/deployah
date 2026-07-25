@@ -20,6 +20,8 @@ metadata:
     - manager: helm
       operation: Update
   annotations:
+    deployah.dev/project: plan-after-failed-upgrade
+    deployah.dev/source: spec
     meta.helm.sh/release-name: plan-after-failed-upgrade-dev
     meta.helm.sh/release-namespace: default
     kubectl.kubernetes.io/last-applied-configuration: "{}"
@@ -110,6 +112,8 @@ metadata:
   generation: 1
   creationTimestamp: "2024-01-01T00:00:00Z"
   annotations:
+    deployah.dev/project: plan-after-failed-upgrade
+    deployah.dev/source: spec
     meta.helm.sh/release-name: plan-after-failed-upgrade-dev
     meta.helm.sh/release-namespace: default
   labels:

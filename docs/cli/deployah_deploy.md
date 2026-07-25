@@ -13,6 +13,7 @@ deployah deploy <environment> [flags]
 ### Options
 
 ```text
+      --crds string             CRD install policy: create (install if missing) or create-replace (default "create")
       --explain                 Print the resolution report before cluster checks (visible even when cluster is unreachable)
       --force-hostname-change   Allow changing the resolved hostname even though it may break existing traffic (skips the hostname guard)
       --reapply                 Upgrade the release even when the plan shows no changes

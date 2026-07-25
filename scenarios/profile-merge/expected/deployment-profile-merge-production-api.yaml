@@ -1,6 +1,9 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
+    annotations:
+        deployah.dev/project: profile-merge
+        deployah.dev/source: spec
     labels:
         app.kubernetes.io/instance: profile-merge-production
         app.kubernetes.io/managed-by: Helm

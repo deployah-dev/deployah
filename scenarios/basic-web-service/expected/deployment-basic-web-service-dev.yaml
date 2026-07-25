@@ -1,6 +1,9 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
+    annotations:
+        deployah.dev/project: basic-web-service
+        deployah.dev/source: spec
     labels:
         app.kubernetes.io/instance: basic-web-service-dev
         app.kubernetes.io/managed-by: Helm

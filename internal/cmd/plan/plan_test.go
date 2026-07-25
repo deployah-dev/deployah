@@ -17,11 +17,14 @@ package plan
 import (
 	"bytes"
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"helm.sh/helm/v4/pkg/postrenderer"
 	"helm.sh/helm/v4/pkg/release/common"
 	"k8s.io/apimachinery/pkg/labels"
 	"nabat.dev/nabat"
@@ -56,14 +59,14 @@ type stubHelmClient struct {
 
 func (s *stubHelmClient) IsReachable() error { return s.reachableErr }
 
-func (s *stubHelmClient) RenderManifests(context.Context, *spec.Spec, string, *spec.ResolvedSpec) (*render.RenderResult, func(), error) {
+func (s *stubHelmClient) RenderManifests(context.Context, *spec.Spec, string, *spec.ResolvedSpec, postrenderer.PostRenderer) (*render.RenderResult, func(), error) {
 	if s.renderErr != nil {
 		return nil, nil, s.renderErr
 	}
 	return s.renderResult, func() {}, nil
 }
 
-func (s *stubHelmClient) RenderOffline(context.Context, *spec.Spec, string, *spec.ResolvedSpec) (*render.RenderResult, func(), error) {
+func (s *stubHelmClient) RenderOffline(context.Context, *spec.Spec, string, *spec.ResolvedSpec, postrenderer.PostRenderer) (*render.RenderResult, func(), error) {
 	if s.offlineErr != nil {
 		return nil, nil, s.offlineErr
 	}
@@ -77,7 +80,7 @@ func (s *stubHelmClient) GetReleaseHistory(context.Context, string, string) ([]*
 	return s.history, nil
 }
 
-func (s *stubHelmClient) InstallApp(context.Context, *spec.Spec, string, bool, *spec.ResolvedSpec) error {
+func (s *stubHelmClient) InstallApp(context.Context, *spec.Spec, string, bool, *spec.ResolvedSpec, postrenderer.PostRenderer) error {
 	panic("unexpected InstallApp call")
 }
 
@@ -309,7 +312,7 @@ func TestRunOnline(t *testing.T) {
 			opts := testOptions()
 			opts.DetailedExitCode = tt.detailed
 
-			err := runOnline(c, sess, testManifest(), opts, nil, theme.ResolvedTheme{})
+			err := runOnline(c, sess, nil, testManifest(), opts, nil, theme.ResolvedTheme{})
 			if tt.wantErrIs != nil {
 				require.Error(t, err)
 				assert.ErrorIs(t, err, tt.wantErrIs)
@@ -349,7 +352,7 @@ func TestRunOnline_DriftOnFreshInstall_NoStdoutFootprint(t *testing.T) {
 
 	opts := testOptions()
 	opts.Drift = true
-	err := runOnline(captured, sess, testManifest(), opts, nil, theme.ResolvedTheme{})
+	err := runOnline(captured, sess, nil, testManifest(), opts, nil, theme.ResolvedTheme{})
 	require.NoError(t, err, "checkDrift must short-circuit cleanly without a working cluster config")
 
 	assert.NotContains(t, out.String(), "Drift (cluster changed outside deployah):",
@@ -373,9 +376,123 @@ func TestRunOffline_RendersResourceCount(t *testing.T) {
 
 	opts := testOptions()
 	opts.Offline = true
-	err := runOffline(c, testManifest(), opts, nil)
+	err := runOffline(c, sess, nil, testManifest(), opts, nil)
 
 	require.NoError(t, err)
 	assert.Contains(t, out.String(), "Rendered 2 resources for environment 'production' (no cluster comparison).")
 	assert.Contains(t, out.String(), "validation: OK")
+}
+
+func writePlanExtras(t *testing.T, dir, relative, content string) {
+	t.Helper()
+	path := filepath.Join(dir, relative)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o750))
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+}
+
+// TestRunOffline_PrintsPendingCRDs notes CRDs that plan will not apply.
+func TestRunOffline_PrintsPendingCRDs(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	specPath := filepath.Join(dir, "deployah.yaml")
+	writePlanExtras(t, dir, "deployah.yaml", "apiVersion: deployah.dev/v1-alpha.2\nproject: web\n")
+	writePlanExtras(t, dir, ".deployah/crds/widget.yaml", `
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: widgets.example.com
+spec:
+  group: example.com
+  scope: Namespaced
+  names:
+    kind: Widget
+    plural: widgets
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+`)
+	stub := &stubHelmClient{offlineResult: renderResult(deploymentV1)}
+	sess := session.New(
+		session.WithSpecPath(specPath),
+		session.WithHelmFactory(func(*session.Session) (session.HelmClient, error) {
+			return stub, nil
+		}),
+	)
+	c, out := nabatContext(t)
+	opts := testOptions()
+	opts.Offline = true
+
+	err := runOffline(c, sess, nil, testManifest(), opts, nil)
+	require.NoError(t, err)
+	assert.Contains(t, out.String(), "CRDs: 1 pending from .deployah/crds/")
+}
+
+// TestRunOffline_LoadExtrasError fails when .deployah YAML is invalid.
+func TestRunOffline_LoadExtrasError(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	specPath := filepath.Join(dir, "deployah.yaml")
+	writePlanExtras(t, dir, "deployah.yaml", "apiVersion: deployah.dev/v1-alpha.2\nproject: web\n")
+	writePlanExtras(t, dir, ".deployah/manifests/bad.yaml", "not: [valid")
+	stub := &stubHelmClient{offlineResult: renderResult(deploymentV1)}
+	sess := session.New(
+		session.WithSpecPath(specPath),
+		session.WithHelmFactory(func(*session.Session) (session.HelmClient, error) {
+			return stub, nil
+		}),
+	)
+	c, _ := nabatContext(t)
+	opts := testOptions()
+	opts.Offline = true
+
+	err := runOffline(c, sess, nil, testManifest(), opts, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "load extras")
+}
+
+// TestRunOnline_PrintsPendingCRDs notes CRDs ahead of the plan diff.
+func TestRunOnline_PrintsPendingCRDs(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	specPath := filepath.Join(dir, "deployah.yaml")
+	writePlanExtras(t, dir, "deployah.yaml", "apiVersion: deployah.dev/v1-alpha.2\nproject: web\n")
+	writePlanExtras(t, dir, ".deployah/crds/widget.yaml", `
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: widgets.example.com
+spec:
+  group: example.com
+  scope: Namespaced
+  names:
+    kind: Widget
+    plural: widgets
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+`)
+	stub := &stubHelmClient{
+		historyErr:   helm.ErrReleaseNotFound,
+		renderResult: renderResult(deploymentV1),
+	}
+	sess := session.New(
+		session.WithSpecPath(specPath),
+		session.WithHelmFactory(func(*session.Session) (session.HelmClient, error) {
+			return stub, nil
+		}),
+	)
+	c, out := nabatContext(t)
+	c.SetContext(session.WithContext(c.Context(), sess))
+
+	err := runOnline(c, sess, nil, testManifest(), testOptions(), nil, theme.ResolvedTheme{})
+	require.NoError(t, err)
+	assert.Contains(t, out.String(), "CRDs: 1 pending from .deployah/crds/")
 }
