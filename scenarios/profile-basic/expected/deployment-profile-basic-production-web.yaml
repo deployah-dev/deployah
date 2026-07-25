@@ -1,6 +1,9 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
+    annotations:
+        deployah.dev/project: profile-basic
+        deployah.dev/source: spec
     labels:
         app.kubernetes.io/instance: profile-basic-production
         app.kubernetes.io/managed-by: Helm

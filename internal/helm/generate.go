@@ -294,9 +294,13 @@ func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string, resolved *spe
 
 		componentValues := map[string]any{
 			"commonLabels": map[string]string{
-				"deployah.dev/project":     m.Project,
-				"deployah.dev/component":   componentName,
-				"deployah.dev/environment": spec.NormalizeEnv(desiredEnvironment).K8sSafe,
+				spec.LabelProject:     m.Project,
+				spec.LabelComponent:   componentName,
+				spec.LabelEnvironment: spec.NormalizeEnv(desiredEnvironment).K8sSafe,
+			},
+			"commonAnnotations": map[string]string{
+				spec.AnnotationSource:  spec.SourceSpec,
+				spec.AnnotationProject: m.Project,
 			},
 		}
 

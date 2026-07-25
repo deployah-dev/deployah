@@ -1,0 +1,18 @@
+# Fresh install: generated resources plus the extra NetworkPolicy appear as adds.
+freshInstall: true
+
+changes:
+  - action: add
+    kind: Deployment
+    name: plan-extras-fresh-install-dev-web
+  - action: add
+    kind: NetworkPolicy
+    name: plan-extras-deny
+  - action: add
+    kind: Service
+    name: plan-extras-fresh-install-dev-web
+
+summary:
+  add: 3
+  change: 0
+  destroy: 0

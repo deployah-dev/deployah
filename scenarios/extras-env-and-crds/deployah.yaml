@@ -1,0 +1,12 @@
+# $schema: ../../internal/spec/schema/v1-alpha.2/manifest.json
+apiVersion: v1-alpha.2
+project: extras-env-and-crds
+components:
+  web:
+    image: nginx:latest
+    port: 8080
+    environments: [dev, prod]
+    resourcePreset: small
+environments:
+  dev: {}
+  prod: {}

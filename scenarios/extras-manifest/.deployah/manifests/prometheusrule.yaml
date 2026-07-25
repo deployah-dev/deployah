@@ -1,0 +1,12 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: web-alerts
+spec:
+  groups:
+    - name: web
+      rules:
+        - alert: WebDown
+          expr: up == 0
+          annotations:
+            summary: instance {{ $labels.instance }} is down

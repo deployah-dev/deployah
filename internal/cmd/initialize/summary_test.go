@@ -82,6 +82,13 @@ func TestShowSummaryAndSave_RoleAwareComponentsProduceValidSpec(t *testing.T) {
 	require.NoError(t, loadErr)
 	_, hasLocal := platform.Environments["local"]
 	assert.True(t, hasLocal, "the local environment should have a full platform entry")
+
+	manifestsDir := filepath.Join(dir, spec.DeployahConfigDir, spec.ManifestsDir)
+	crdsDir := filepath.Join(dir, spec.DeployahConfigDir, spec.CRDsDir)
+	require.DirExists(t, manifestsDir)
+	require.DirExists(t, crdsDir)
+	require.FileExists(t, filepath.Join(manifestsDir, "README.md"))
+	require.FileExists(t, filepath.Join(crdsDir, "README.md"))
 }
 
 // TestShowSummaryAndSave_ServiceHealthCheckWithoutPortIsValid locks in the

@@ -22,6 +22,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"helm.sh/helm/v4/pkg/postrenderer"
 	"helm.sh/helm/v4/pkg/release/common"
 	"k8s.io/apimachinery/pkg/labels"
 	"nabat.dev/nabat"
@@ -56,14 +57,14 @@ type stubHelmClient struct {
 
 func (s *stubHelmClient) IsReachable() error { return s.reachableErr }
 
-func (s *stubHelmClient) RenderManifests(context.Context, *spec.Spec, string, *spec.ResolvedSpec) (*render.RenderResult, func(), error) {
+func (s *stubHelmClient) RenderManifests(context.Context, *spec.Spec, string, *spec.ResolvedSpec, postrenderer.PostRenderer) (*render.RenderResult, func(), error) {
 	if s.renderErr != nil {
 		return nil, nil, s.renderErr
 	}
 	return s.renderResult, func() {}, nil
 }
 
-func (s *stubHelmClient) RenderOffline(context.Context, *spec.Spec, string, *spec.ResolvedSpec) (*render.RenderResult, func(), error) {
+func (s *stubHelmClient) RenderOffline(context.Context, *spec.Spec, string, *spec.ResolvedSpec, postrenderer.PostRenderer) (*render.RenderResult, func(), error) {
 	if s.offlineErr != nil {
 		return nil, nil, s.offlineErr
 	}
@@ -77,7 +78,7 @@ func (s *stubHelmClient) GetReleaseHistory(context.Context, string, string) ([]*
 	return s.history, nil
 }
 
-func (s *stubHelmClient) InstallApp(context.Context, *spec.Spec, string, bool, *spec.ResolvedSpec) error {
+func (s *stubHelmClient) InstallApp(context.Context, *spec.Spec, string, bool, *spec.ResolvedSpec, postrenderer.PostRenderer) error {
 	panic("unexpected InstallApp call")
 }
 
@@ -309,7 +310,7 @@ func TestRunOnline(t *testing.T) {
 			opts := testOptions()
 			opts.DetailedExitCode = tt.detailed
 
-			err := runOnline(c, sess, testManifest(), opts, nil, theme.ResolvedTheme{})
+			err := runOnline(c, sess, nil, testManifest(), opts, nil, theme.ResolvedTheme{})
 			if tt.wantErrIs != nil {
 				require.Error(t, err)
 				assert.ErrorIs(t, err, tt.wantErrIs)
@@ -349,7 +350,7 @@ func TestRunOnline_DriftOnFreshInstall_NoStdoutFootprint(t *testing.T) {
 
 	opts := testOptions()
 	opts.Drift = true
-	err := runOnline(captured, sess, testManifest(), opts, nil, theme.ResolvedTheme{})
+	err := runOnline(captured, sess, nil, testManifest(), opts, nil, theme.ResolvedTheme{})
 	require.NoError(t, err, "checkDrift must short-circuit cleanly without a working cluster config")
 
 	assert.NotContains(t, out.String(), "Drift (cluster changed outside deployah):",
@@ -373,7 +374,7 @@ func TestRunOffline_RendersResourceCount(t *testing.T) {
 
 	opts := testOptions()
 	opts.Offline = true
-	err := runOffline(c, testManifest(), opts, nil)
+	err := runOffline(c, sess, nil, testManifest(), opts, nil)
 
 	require.NoError(t, err)
 	assert.Contains(t, out.String(), "Rendered 2 resources for environment 'production' (no cluster comparison).")

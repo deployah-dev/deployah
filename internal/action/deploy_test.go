@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"helm.sh/helm/v4/pkg/postrenderer"
 
 	"deployah.dev/deployah/internal/action"
 	"deployah.dev/deployah/internal/spec"
@@ -16,7 +17,7 @@ type mockDeployer struct {
 	err error
 }
 
-func (m *mockDeployer) InstallApp(_ context.Context, _ *spec.Spec, _ string, _ bool, _ *spec.ResolvedSpec) error {
+func (m *mockDeployer) InstallApp(_ context.Context, _ *spec.Spec, _ string, _ bool, _ *spec.ResolvedSpec, _ postrenderer.PostRenderer) error {
 	return m.err
 }
 

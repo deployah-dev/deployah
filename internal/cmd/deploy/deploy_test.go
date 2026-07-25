@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"helm.sh/helm/v4/pkg/postrenderer"
 	"helm.sh/helm/v4/pkg/release/common"
 	"k8s.io/apimachinery/pkg/labels"
 	"nabat.dev/nabat"
@@ -45,11 +46,11 @@ type stubHelmClient struct {
 
 func (s *stubHelmClient) IsReachable() error { return nil }
 
-func (s *stubHelmClient) InstallApp(context.Context, *spec.Spec, string, bool, *spec.ResolvedSpec) error {
+func (s *stubHelmClient) InstallApp(context.Context, *spec.Spec, string, bool, *spec.ResolvedSpec, postrenderer.PostRenderer) error {
 	return s.installErr
 }
 
-func (s *stubHelmClient) RenderManifests(context.Context, *spec.Spec, string, *spec.ResolvedSpec) (*render.RenderResult, func(), error) {
+func (s *stubHelmClient) RenderManifests(context.Context, *spec.Spec, string, *spec.ResolvedSpec, postrenderer.PostRenderer) (*render.RenderResult, func(), error) {
 	if s.renderErr != nil {
 		return nil, func() {}, s.renderErr
 	}
@@ -61,7 +62,7 @@ func (s *stubHelmClient) RenderManifests(context.Context, *spec.Spec, string, *s
 	return s.renderResults[i], func() {}, nil
 }
 
-func (s *stubHelmClient) RenderOffline(context.Context, *spec.Spec, string, *spec.ResolvedSpec) (*render.RenderResult, func(), error) {
+func (s *stubHelmClient) RenderOffline(context.Context, *spec.Spec, string, *spec.ResolvedSpec, postrenderer.PostRenderer) (*render.RenderResult, func(), error) {
 	panic("unexpected RenderOffline call")
 }
 

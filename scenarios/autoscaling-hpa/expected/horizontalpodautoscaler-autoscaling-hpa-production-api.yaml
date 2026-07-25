@@ -1,6 +1,9 @@
 apiVersion: autoscaling/v2beta1
 kind: HorizontalPodAutoscaler
 metadata:
+    annotations:
+        deployah.dev/project: autoscaling-hpa
+        deployah.dev/source: spec
     labels:
         app.kubernetes.io/instance: autoscaling-hpa-production
         app.kubernetes.io/managed-by: Helm

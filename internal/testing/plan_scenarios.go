@@ -28,6 +28,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 
+	"deployah.dev/deployah/internal/extras"
 	"deployah.dev/deployah/internal/helm"
 	"deployah.dev/deployah/internal/k8s"
 	"deployah.dev/deployah/internal/plan"
@@ -247,10 +248,15 @@ func renderManifestFile(t *testing.T, dir, filename string) manifestSide {
 		resolved = resolvedSpec
 	}
 
-	client, err := helm.NewClient()
+	// Pin the release namespace so goldens stay stable regardless of
+	// HELM_NAMESPACE or the ambient kubeconfig context.
+	client, err := helm.NewClient(helm.WithNamespace("default"))
 	require.NoError(t, err)
 
-	result, cleanup, err := client.RenderOffline(ctx, manifest, envName, resolved)
+	bundle, loadErr := extras.LoadFromSpec(specPath, manifest, platform, envName, client.Namespace(), nil)
+	require.NoError(t, loadErr)
+
+	result, cleanup, err := client.RenderOffline(ctx, manifest, envName, resolved, bundle.PostRendererFor())
 	if cleanup != nil {
 		t.Cleanup(cleanup)
 	}

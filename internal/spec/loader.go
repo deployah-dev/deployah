@@ -75,6 +75,14 @@ func environmentRegistry(environments map[string]Environment, platform *Platform
 	return slices.Sorted(maps.Keys(environments)), "the spec"
 }
 
+// DeclaredEnvironments returns the sorted registry of environment names that
+// may be deployed to. The platform config owns the registry when present;
+// otherwise the spec's environments map is used.
+func DeclaredEnvironments(environments map[string]Environment, platform *PlatformConfig) []string {
+	names, _ := environmentRegistry(environments, platform)
+	return names
+}
+
 // ResolveEnvironment selects the target environment and returns its name and
 // developer-owned overrides. Which names are valid (the registry) is owned by
 // the platform config when one exists; the spec's environments map supplies

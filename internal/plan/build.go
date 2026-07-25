@@ -18,6 +18,8 @@ import (
 	"context"
 	"fmt"
 
+	"helm.sh/helm/v4/pkg/postrenderer"
+
 	"deployah.dev/deployah/internal/render"
 	"deployah.dev/deployah/internal/spec"
 
@@ -31,7 +33,7 @@ import (
 // internal/session and tests can inject a minimal fake.
 type BuildClient interface {
 	historyClient
-	RenderManifests(ctx context.Context, manifest *spec.Spec, environment string, resolved *spec.ResolvedSpec) (*render.RenderResult, func(), error)
+	RenderManifests(ctx context.Context, manifest *spec.Spec, environment string, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) (*render.RenderResult, func(), error)
 }
 
 // BuildPlan renders manifest for environment via client and diffs the
@@ -43,9 +45,10 @@ type BuildClient interface {
 // The caller must invoke the returned cleanup func once done with
 // result.ChartPath (same contract as [helm.Client.RenderManifests]). On
 // error, cleanup is still returned when a chart was prepared and must be
-// called.
-func BuildPlan(ctx context.Context, client BuildClient, manifest *spec.Spec, environment, clusterContext string, resolved *spec.ResolvedSpec) (*Plan, *render.RenderResult, func(), error) {
-	result, cleanup, err := client.RenderManifests(ctx, manifest, environment, resolved)
+// called. postRenderer, when non-nil, is forwarded to RenderManifests so
+// extras appear in the diff.
+func BuildPlan(ctx context.Context, client BuildClient, manifest *spec.Spec, environment, clusterContext string, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) (*Plan, *render.RenderResult, func(), error) {
+	result, cleanup, err := client.RenderManifests(ctx, manifest, environment, resolved, postRenderer)
 	if cleanup == nil {
 		cleanup = func() {}
 	}

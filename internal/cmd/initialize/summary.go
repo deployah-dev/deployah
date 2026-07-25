@@ -73,12 +73,79 @@ func showSummaryAndSave(c *nabat.Context, config *ProjectConfig) error {
 	}
 	printPlatformEnvironmentGuidance(c, platformPath, envNames)
 
+	createdExtras, scaffoldErr := scaffoldExtrasDirs(filepath.Dir(config.OutputPath))
+	switch {
+	case scaffoldErr != nil:
+		c.Warn(fmt.Sprintf("failed to create .deployah extras directories: %v", scaffoldErr))
+	case createdExtras:
+		c.Success("Created .deployah/manifests/ and .deployah/crds/")
+	default:
+		c.Info(".deployah/manifests/ and .deployah/crds/ already exist; no changes made.")
+	}
+
 	c.Println("Next steps:")
 	c.Println("  1. Review: cat " + config.OutputPath)
 	c.Println("  2. Validate: deployah validate")
 	c.Println("  3. Deploy: deployah deploy")
 
 	return nil
+}
+
+const (
+	manifestsREADME = `# Extra manifests
+
+Put raw Kubernetes YAML here. Deployah loads it into the same Helm release
+as your generated resources.
+
+- Common files (all environments): place *.yaml / *.yml in this directory
+- Per environment: use a subdirectory named after a declared environment
+  key (for example manifests/prod/extra.yaml)
+- Files are applied literally: no Helm templating and no env substitution
+- CustomResourceDefinition belongs in ../crds/, not here
+`
+	crdsREADME = `# Extra CRDs
+
+Put CustomResourceDefinition YAML here. Deployah applies these to the
+cluster before the Helm release, then waits for each CRD to become
+Established.
+
+- Shared across all environments (no per-env subdirectories)
+- Install policy: deployah deploy --crds create|create-replace
+- CRDs are never deleted on uninstall
+`
+)
+
+// scaffoldExtrasDirs creates .deployah/manifests and .deployah/crds with
+// short README files. Returns whether anything new was written.
+func scaffoldExtrasDirs(specDir string) (created bool, err error) {
+	root := filepath.Join(specDir, spec.DeployahConfigDir)
+	entries := []struct {
+		dir  string
+		file string
+		body string
+	}{
+		{filepath.Join(root, spec.ManifestsDir), "README.md", manifestsREADME},
+		{filepath.Join(root, spec.CRDsDir), "README.md", crdsREADME},
+	}
+	for _, e := range entries {
+		if _, statErr := os.Stat(e.dir); os.IsNotExist(statErr) {
+			created = true
+		}
+		if mkdirErr := os.MkdirAll(e.dir, 0o750); mkdirErr != nil {
+			return false, fmt.Errorf("create %s: %w", e.dir, mkdirErr)
+		}
+		path := filepath.Join(e.dir, e.file)
+		if _, statErr := os.Stat(path); statErr == nil {
+			continue
+		} else if !os.IsNotExist(statErr) {
+			return false, fmt.Errorf("stat %s: %w", path, statErr)
+		}
+		if writeErr := os.WriteFile(path, []byte(e.body), 0o600); writeErr != nil {
+			return false, fmt.Errorf("write %s: %w", path, writeErr)
+		}
+		created = true
+	}
+	return created, nil
 }
 
 // printPlatformEnvironmentGuidance reports env names with no entry in the

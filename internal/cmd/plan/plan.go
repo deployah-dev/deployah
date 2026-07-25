@@ -23,6 +23,7 @@ import (
 
 	"deployah.dev/deployah/internal/cmd/common"
 	"deployah.dev/deployah/internal/drift"
+	"deployah.dev/deployah/internal/extras"
 	"deployah.dev/deployah/internal/k8s"
 	"deployah.dev/deployah/internal/session"
 	"deployah.dev/deployah/internal/spec"
@@ -160,17 +161,15 @@ func runPlan(c *nabat.Context, resolvedTheme theme.ResolvedTheme) error {
 	}
 
 	if opts.Offline {
-		return runOffline(c, manifest, opts, resolvedSpec)
+		return runOffline(c, sess, platform, manifest, opts, resolvedSpec)
 	}
-	return runOnline(c, sess, manifest, opts, resolvedSpec, resolvedTheme)
+	return runOnline(c, sess, platform, manifest, opts, resolvedSpec, resolvedTheme)
 }
 
 // runOffline renders the chart without contacting the cluster and prints a
 // resource count instead of a diff: there is no reachable release history to
 // compare against.
-func runOffline(c *nabat.Context, manifest *spec.Spec, opts *Options, resolvedSpec *spec.ResolvedSpec) error {
-	sess := session.FromContext(c)
-
+func runOffline(c *nabat.Context, sess *session.Session, platform *spec.PlatformConfig, manifest *spec.Spec, opts *Options, resolvedSpec *spec.ResolvedSpec) error {
 	cluster, err := sess.Target(c, opts.Environment)
 	if err != nil {
 		return fmt.Errorf("target cluster: %w", err)
@@ -190,7 +189,13 @@ func runOffline(c *nabat.Context, manifest *spec.Spec, opts *Options, resolvedSp
 		}
 	}
 
-	result, cleanup, err := helmClient.RenderOffline(c, manifest, opts.Environment, resolvedSpec)
+	bundle, err := extras.LoadFromSpec(sess.SpecPath(), manifest, platform, opts.Environment, cluster.Namespace(), nil)
+	if err != nil {
+		return fmt.Errorf("load extras: %w", err)
+	}
+	postRenderer := bundle.PostRendererFor()
+
+	result, cleanup, err := helmClient.RenderOffline(c, manifest, opts.Environment, resolvedSpec, postRenderer)
 	if cleanup != nil {
 		defer cleanup()
 	}
@@ -204,13 +209,16 @@ func runOffline(c *nabat.Context, manifest *spec.Spec, opts *Options, resolvedSp
 	}
 
 	c.Println(fmt.Sprintf("Rendered %d resources for environment '%s' (no cluster comparison).", count, opts.Environment))
+	if n := len(bundle.CRDs); n > 0 {
+		c.Printf("CRDs: %d pending from .deployah/crds/ (not applied in plan)\n", n)
+	}
 	c.Println("validation: OK")
 	return nil
 }
 
 // runOnline renders the chart, diffs it against the last successful
 // release, and displays the resulting plan.
-func runOnline(c *nabat.Context, sess *session.Session, manifest *spec.Spec, opts *Options, resolvedSpec *spec.ResolvedSpec, resolvedTheme theme.ResolvedTheme) error {
+func runOnline(c *nabat.Context, sess *session.Session, platform *spec.PlatformConfig, manifest *spec.Spec, opts *Options, resolvedSpec *spec.ResolvedSpec, resolvedTheme theme.ResolvedTheme) error {
 	cluster, err := sess.Target(c, opts.Environment)
 	if err != nil {
 		return fmt.Errorf("target cluster: %w", err)
@@ -240,10 +248,24 @@ func runOnline(c *nabat.Context, sess *session.Session, manifest *spec.Spec, opt
 		}
 	}
 
-	p, result, cleanup, err := planengine.BuildPlan(c, helmClient, manifest, opts.Environment, cluster.Context(), resolvedSpec)
+	restCfg, restErr := cluster.RESTConfig()
+	if restErr != nil {
+		c.Logger().Debug("rest config unavailable for extras scope discovery", "err", restErr)
+	}
+	bundle, err := extras.LoadFromSpec(sess.SpecPath(), manifest, platform, opts.Environment, cluster.Namespace(), restCfg)
+	if err != nil {
+		return fmt.Errorf("load extras: %w", err)
+	}
+	postRenderer := bundle.PostRendererFor()
+
+	p, result, cleanup, err := planengine.BuildPlan(c, helmClient, manifest, opts.Environment, cluster.Context(), resolvedSpec, postRenderer)
 	defer cleanup()
 	if err != nil {
 		return fmt.Errorf("%w%s", err, common.ClusterHint(err))
+	}
+
+	if n := len(bundle.CRDs); n > 0 {
+		c.Printf("CRDs: %d pending from .deployah/crds/ (not applied in plan)\n", n)
 	}
 
 	if opts.Drift {
