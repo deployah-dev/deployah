@@ -30,9 +30,9 @@ flag_management:
       - type: project
         target: auto
         threshold: 1%
-      # Patch is gated once under coverage.status.patch (union of uploads).
-      # Per-flag patch is not used: integration scenarios mostly render and
-      # never exercise deploy/ApplyCRDs, so a second 80% bar fails large PRs.
+      # Patch coverage is gated once under coverage.status.patch. Flags only
+      # report project trends so unit and integration uploads are not each
+      # held to a separate patch target.
   individual_flags:
     - name: unittests
       carryforward: true
