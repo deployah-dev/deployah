@@ -17,6 +17,8 @@ package plan
 import (
 	"bytes"
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -379,4 +381,118 @@ func TestRunOffline_RendersResourceCount(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out.String(), "Rendered 2 resources for environment 'production' (no cluster comparison).")
 	assert.Contains(t, out.String(), "validation: OK")
+}
+
+func writePlanExtras(t *testing.T, dir, relative, content string) {
+	t.Helper()
+	path := filepath.Join(dir, relative)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o750))
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+}
+
+// TestRunOffline_PrintsPendingCRDs notes CRDs that plan will not apply.
+func TestRunOffline_PrintsPendingCRDs(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	specPath := filepath.Join(dir, "deployah.yaml")
+	writePlanExtras(t, dir, "deployah.yaml", "apiVersion: deployah.dev/v1-alpha.2\nproject: web\n")
+	writePlanExtras(t, dir, ".deployah/crds/widget.yaml", `
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: widgets.example.com
+spec:
+  group: example.com
+  scope: Namespaced
+  names:
+    kind: Widget
+    plural: widgets
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+`)
+	stub := &stubHelmClient{offlineResult: renderResult(deploymentV1)}
+	sess := session.New(
+		session.WithSpecPath(specPath),
+		session.WithHelmFactory(func(*session.Session) (session.HelmClient, error) {
+			return stub, nil
+		}),
+	)
+	c, out := nabatContext(t)
+	opts := testOptions()
+	opts.Offline = true
+
+	err := runOffline(c, sess, nil, testManifest(), opts, nil)
+	require.NoError(t, err)
+	assert.Contains(t, out.String(), "CRDs: 1 pending from .deployah/crds/")
+}
+
+// TestRunOffline_LoadExtrasError fails when .deployah YAML is invalid.
+func TestRunOffline_LoadExtrasError(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	specPath := filepath.Join(dir, "deployah.yaml")
+	writePlanExtras(t, dir, "deployah.yaml", "apiVersion: deployah.dev/v1-alpha.2\nproject: web\n")
+	writePlanExtras(t, dir, ".deployah/manifests/bad.yaml", "not: [valid")
+	stub := &stubHelmClient{offlineResult: renderResult(deploymentV1)}
+	sess := session.New(
+		session.WithSpecPath(specPath),
+		session.WithHelmFactory(func(*session.Session) (session.HelmClient, error) {
+			return stub, nil
+		}),
+	)
+	c, _ := nabatContext(t)
+	opts := testOptions()
+	opts.Offline = true
+
+	err := runOffline(c, sess, nil, testManifest(), opts, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "load extras")
+}
+
+// TestRunOnline_PrintsPendingCRDs notes CRDs ahead of the plan diff.
+func TestRunOnline_PrintsPendingCRDs(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	specPath := filepath.Join(dir, "deployah.yaml")
+	writePlanExtras(t, dir, "deployah.yaml", "apiVersion: deployah.dev/v1-alpha.2\nproject: web\n")
+	writePlanExtras(t, dir, ".deployah/crds/widget.yaml", `
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: widgets.example.com
+spec:
+  group: example.com
+  scope: Namespaced
+  names:
+    kind: Widget
+    plural: widgets
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+`)
+	stub := &stubHelmClient{
+		historyErr:   helm.ErrReleaseNotFound,
+		renderResult: renderResult(deploymentV1),
+	}
+	sess := session.New(
+		session.WithSpecPath(specPath),
+		session.WithHelmFactory(func(*session.Session) (session.HelmClient, error) {
+			return stub, nil
+		}),
+	)
+	c, out := nabatContext(t)
+	c.SetContext(session.WithContext(c.Context(), sess))
+
+	err := runOnline(c, sess, nil, testManifest(), testOptions(), nil, theme.ResolvedTheme{})
+	require.NoError(t, err)
+	assert.Contains(t, out.String(), "CRDs: 1 pending from .deployah/crds/")
 }

@@ -16,6 +16,7 @@ package extras_test
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -117,4 +118,67 @@ func TestPostRenderer_NilOrEmptyPassthrough(t *testing.T) {
 	out, err = (&extras.PostRenderer{}).Run(in)
 	require.NoError(t, err)
 	assert.Equal(t, in.String(), out.String())
+}
+
+// TestPostRenderer_InvalidRenderedYAML fails when Helm output cannot be parsed.
+func TestPostRenderer_InvalidRenderedYAML(t *testing.T) {
+	t.Parallel()
+	pr := &extras.PostRenderer{Manifests: []extras.Object{{
+		Path: "extra.yaml",
+		Raw:  []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: x\n"),
+		Obj: &unstructured.Unstructured{Object: map[string]any{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata":   map[string]any{"name": "x"},
+		}},
+	}}}
+	_, err := pr.Run(bytes.NewBufferString("not: [valid"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "parse rendered manifests")
+}
+
+// TestPostRenderer_EmptyRawSkipped ignores whitespace-only extras.
+func TestPostRenderer_EmptyRawSkipped(t *testing.T) {
+	t.Parallel()
+	extra := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1",
+		"kind":       "ConfigMap",
+		"metadata":   map[string]any{"name": "extra", "namespace": "apps"},
+	}}
+	pr := &extras.PostRenderer{Manifests: []extras.Object{
+		{Path: "empty.yaml", Raw: []byte("   \n"), Obj: extra},
+	}}
+	out, err := pr.Run(bytes.NewBufferString(""))
+	require.NoError(t, err)
+	assert.Empty(t, out.String())
+}
+
+// TestPostRenderer_AddsTrailingNewline inserts a newline before extras.
+func TestPostRenderer_AddsTrailingNewline(t *testing.T) {
+	t.Parallel()
+	extra := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1",
+		"kind":       "ConfigMap",
+		"metadata":   map[string]any{"name": "extra", "namespace": "apps"},
+	}}
+	raw, err := (&extras.Object{Obj: extra}).MarshalYAML()
+	require.NoError(t, err)
+	raw = bytes.TrimRight(raw, "\n")
+
+	pr := &extras.PostRenderer{Manifests: []extras.Object{
+		{Path: "extra.yaml", Raw: raw, Obj: extra},
+	}}
+	out, err := pr.Run(bytes.NewBufferString("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: base\n  namespace: apps"))
+	require.NoError(t, err)
+	body := out.String()
+	assert.Contains(t, body, "name: base")
+	assert.Contains(t, body, "name: extra")
+	assert.True(t, strings.HasSuffix(body, "\n"))
+}
+
+// TestIdentity_StringClusterScoped uses (cluster) when namespace is empty.
+func TestIdentity_StringClusterScoped(t *testing.T) {
+	t.Parallel()
+	id := extras.Identity{APIVersion: "v1", Kind: "Namespace", Name: "demo"}
+	assert.Equal(t, "v1/Namespace (cluster)/demo", id.String())
 }

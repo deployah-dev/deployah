@@ -41,12 +41,14 @@ type stubHelmClient struct {
 	renderErr       error
 	renderCallCount int
 
-	installErr error
+	installErr       error
+	installCallCount int
 }
 
 func (s *stubHelmClient) IsReachable() error { return nil }
 
 func (s *stubHelmClient) InstallApp(context.Context, *spec.Spec, string, bool, *spec.ResolvedSpec, postrenderer.PostRenderer) error {
+	s.installCallCount++
 	return s.installErr
 }
 

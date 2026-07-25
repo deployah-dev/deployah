@@ -21,6 +21,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"deployah.dev/deployah/internal/extras"
 	"deployah.dev/deployah/internal/spec"
@@ -501,4 +502,240 @@ spec:
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "apiextensions.k8s.io/v1")
 	assert.Contains(t, err.Error(), "example.com/v1")
+}
+
+// TestLoad_RequiresScopeAndProject rejects incomplete LoadConfig.
+func TestLoad_RequiresScopeAndProject(t *testing.T) {
+	t.Parallel()
+	_, err := extras.Load(extras.LoadConfig{Project: "demo"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ScopeResolver is required")
+
+	_, err = extras.Load(extras.LoadConfig{Scope: &extras.TableResolver{}})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "Project is required")
+}
+
+// TestLoad_NonCRDUnderCRDsFails rejects ordinary objects in .deployah/crds/.
+func TestLoad_NonCRDUnderCRDsFails(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".deployah", "crds", "cm.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nope
+`)
+	_, err := extras.Load(extras.LoadConfig{
+		SpecDir:          dir,
+		Project:          "demo",
+		Environment:      "prod",
+		DeclaredEnvs:     []string{"prod"},
+		ReleaseNamespace: "default",
+		Scope:            &extras.TableResolver{},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "only CustomResourceDefinition")
+}
+
+// TestLoad_CRDSubdirForbidden rejects nested dirs under .deployah/crds/.
+func TestLoad_CRDSubdirForbidden(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".deployah", "crds", "nested", "x.yaml"), `
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: widgets.example.com
+spec:
+  group: example.com
+  scope: Namespaced
+  names:
+    kind: Widget
+    plural: widgets
+  versions:
+    - name: v1
+      served: true
+      storage: true
+`)
+	_, err := extras.Load(extras.LoadConfig{
+		SpecDir:          dir,
+		Project:          "demo",
+		Environment:      "prod",
+		DeclaredEnvs:     []string{"prod"},
+		ReleaseNamespace: "default",
+		Scope:            &extras.TableResolver{},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "subdirectories are not allowed")
+}
+
+// TestLoad_NestedManifestDirFails rejects nesting under an env subdir.
+func TestLoad_NestedManifestDirFails(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".deployah", "manifests", "prod", "nested", "x.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: x
+`)
+	_, err := extras.Load(extras.LoadConfig{
+		SpecDir:          dir,
+		Project:          "demo",
+		Environment:      "prod",
+		DeclaredEnvs:     []string{"prod"},
+		ReleaseNamespace: "default",
+		Scope:            &extras.TableResolver{},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nested directories are not allowed")
+}
+
+// TestLoad_InvalidYAMLFails surfaces parse errors with the file path.
+func TestLoad_InvalidYAMLFails(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".deployah", "manifests", "bad.yaml"), "not: [valid")
+	_, err := extras.Load(extras.LoadConfig{
+		SpecDir:          dir,
+		Project:          "demo",
+		Environment:      "prod",
+		DeclaredEnvs:     []string{"prod"},
+		ReleaseNamespace: "default",
+		Scope:            &extras.TableResolver{},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "bad.yaml")
+}
+
+// TestLoad_EmptyReleaseNamespaceFails when a namespaced object needs a fill.
+func TestLoad_EmptyReleaseNamespaceFails(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".deployah", "manifests", "cm.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: data
+`)
+	_, err := extras.Load(extras.LoadConfig{
+		SpecDir:          dir,
+		Project:          "demo",
+		Environment:      "prod",
+		DeclaredEnvs:     []string{"prod"},
+		ReleaseNamespace: "",
+		Scope:            &extras.TableResolver{},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no release namespace")
+}
+
+type rejectAllScope struct{}
+
+func (rejectAllScope) Known(schema.GroupVersionKind) (bool, error) { return false, nil }
+func (rejectAllScope) Namespaced(schema.GroupVersionKind) (bool, error) {
+	return true, nil
+}
+
+// TestLoad_ChainedScopeFromCustomResolver covers withCRDScope's default branch.
+func TestLoad_ChainedScopeFromCustomResolver(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".deployah", "crds", "widget.yaml"), `
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: widgets.example.com
+spec:
+  group: example.com
+  scope: Namespaced
+  names:
+    kind: Widget
+    plural: widgets
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+`)
+	writeFile(t, filepath.Join(dir, ".deployah", "manifests", "w.yaml"), `
+apiVersion: example.com/v1
+kind: Widget
+metadata:
+  name: one
+`)
+	bundle, err := extras.Load(extras.LoadConfig{
+		SpecDir:          dir,
+		Project:          "demo",
+		Environment:      "prod",
+		DeclaredEnvs:     []string{"prod"},
+		ReleaseNamespace: "apps",
+		Scope:            rejectAllScope{},
+	})
+	require.NoError(t, err)
+	require.Len(t, bundle.Manifests, 1)
+	assert.Equal(t, "apps", bundle.Manifests[0].Obj.GetNamespace())
+}
+
+// TestLoad_DiscoveryResolverMergesCRDScope covers the DiscoveryResolver branch
+// of withCRDScope (mapper nil falls back to the table + CRD scope).
+func TestLoad_DiscoveryResolverMergesCRDScope(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".deployah", "crds", "widget.yaml"), `
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: widgets.example.com
+spec:
+  group: example.com
+  scope: Namespaced
+  names:
+    kind: Widget
+    plural: widgets
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+`)
+	writeFile(t, filepath.Join(dir, ".deployah", "manifests", "w.yaml"), `
+apiVersion: example.com/v1
+kind: Widget
+metadata:
+  name: one
+`)
+	bundle, err := extras.Load(extras.LoadConfig{
+		SpecDir:          dir,
+		Project:          "demo",
+		Environment:      "prod",
+		DeclaredEnvs:     []string{"prod"},
+		ReleaseNamespace: "apps",
+		Scope:            &extras.DiscoveryResolver{},
+	})
+	require.NoError(t, err)
+	require.Len(t, bundle.Manifests, 1)
+}
+
+// TestLoadFromSpec_Offline loads extras without a rest.Config.
+func TestLoadFromSpec_Offline(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	specPath := filepath.Join(dir, "deployah.yaml")
+	writeFile(t, specPath, "apiVersion: deployah.dev/v1-alpha.2\nproject: demo\n")
+	writeFile(t, filepath.Join(dir, ".deployah", "manifests", "cm.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: data
+`)
+	bundle, err := extras.LoadFromSpec(specPath, &spec.Spec{Project: "demo"}, nil, "prod", "apps", nil)
+	require.NoError(t, err)
+	require.Len(t, bundle.Manifests, 1)
+	assert.NotNil(t, bundle.PostRendererFor())
 }

@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/rest"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -44,6 +45,9 @@ type fakeCRDClient struct {
 	// failGetAfter, when > 0, makes Get return an API error after that many calls.
 	failGetAfter int
 	lastPatch    []byte
+	createErr    error
+	applyErr     error
+	getErr       error
 }
 
 func newFakeCRDClient() *fakeCRDClient {
@@ -56,6 +60,9 @@ func newFakeCRDClient() *fakeCRDClient {
 func (f *fakeCRDClient) Create(_ context.Context, crd *apiextensionsv1.CustomResourceDefinition, _ metav1.CreateOptions) (*apiextensionsv1.CustomResourceDefinition, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.createErr != nil {
+		return nil, f.createErr
+	}
 	if _, ok := f.objects[crd.Name]; ok {
 		return nil, apierrors.NewAlreadyExists(schema.GroupResource{Group: "apiextensions.k8s.io", Resource: "customresourcedefinitions"}, crd.Name)
 	}
@@ -68,6 +75,9 @@ func (f *fakeCRDClient) Create(_ context.Context, crd *apiextensionsv1.CustomRes
 func (f *fakeCRDClient) Apply(_ context.Context, name string, patch []byte) (*apiextensionsv1.CustomResourceDefinition, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.applyErr != nil {
+		return nil, f.applyErr
+	}
 	var obj map[string]any
 	if err := json.Unmarshal(patch, &obj); err != nil {
 		return nil, err
@@ -96,6 +106,9 @@ func (f *fakeCRDClient) Get(_ context.Context, name string, _ metav1.GetOptions)
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.getCalls++
+	if f.getErr != nil {
+		return nil, f.getErr
+	}
 	if f.failGetAfter > 0 && f.getCalls > f.failGetAfter {
 		return nil, errors.New("api unavailable")
 	}
@@ -308,4 +321,103 @@ func TestSSAPatchFromObject_StripsServerFields(t *testing.T) {
 	spec, ok := obj["spec"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "example.com", spec["group"])
+}
+
+// TestApplyCRDs_ExportedGuards covers the public ApplyCRDs entry points that
+// never reach the fake client.
+func TestApplyCRDs_ExportedGuards(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	crd := sampleCRDObject(t, "widgets.example.com")
+
+	stats, err := ApplyCRDs(ctx, nil, nil, PolicyCreate, time.Second)
+	require.NoError(t, err)
+	assert.Equal(t, CRDStats{}, stats)
+
+	_, err = ApplyCRDs(ctx, nil, []Object{crd}, PolicyCreate, time.Second)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cluster configuration is required")
+
+	_, err = ApplyCRDs(ctx, &rest.Config{Host: "https://127.0.0.1:1"}, []Object{crd}, Policy("nope"), time.Second)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown CRD policy")
+}
+
+// TestApplyCRDs_DecodeAndClientErrors covers decode/get/create/apply failures.
+func TestApplyCRDs_DecodeAndClientErrors(t *testing.T) {
+	t.Parallel()
+
+	t.Run("decode error", func(t *testing.T) {
+		t.Parallel()
+		client := newFakeCRDClient()
+		_, err := applyCRDs(t.Context(), client, []Object{{
+			Path: "bad.yaml",
+			Raw:  []byte("not: [valid"),
+		}}, PolicyCreate, time.Second)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "decode CRD")
+	})
+
+	t.Run("empty name", func(t *testing.T) {
+		t.Parallel()
+		client := newFakeCRDClient()
+		_, err := applyCRDs(t.Context(), client, []Object{{
+			Path: "noname.yaml",
+			Raw: []byte(`apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata: {}
+spec:
+  group: example.com
+`),
+		}}, PolicyCreate, time.Second)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "metadata.name is empty")
+	})
+
+	t.Run("get error", func(t *testing.T) {
+		t.Parallel()
+		client := newFakeCRDClient()
+		client.getErr = errors.New("forbidden")
+		_, err := applyCRDs(t.Context(), client, []Object{
+			sampleCRDObject(t, "widgets.example.com"),
+		}, PolicyCreate, time.Second)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "get CRD")
+	})
+
+	t.Run("create error", func(t *testing.T) {
+		t.Parallel()
+		client := newFakeCRDClient()
+		client.createErr = errors.New("quota exceeded")
+		_, err := applyCRDs(t.Context(), client, []Object{
+			sampleCRDObject(t, "widgets.example.com"),
+		}, PolicyCreate, time.Second)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "create CRD")
+	})
+
+	t.Run("apply error on missing", func(t *testing.T) {
+		t.Parallel()
+		client := newFakeCRDClient()
+		client.applyErr = errors.New("ssa rejected")
+		_, err := applyCRDs(t.Context(), client, []Object{
+			sampleCRDObject(t, "widgets.example.com"),
+		}, PolicyCreateReplace, time.Second)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "apply CRD")
+	})
+
+	t.Run("replace error on existing", func(t *testing.T) {
+		t.Parallel()
+		client := newFakeCRDClient()
+		client.objects["widgets.example.com"] = &apiextensionsv1.CustomResourceDefinition{
+			ObjectMeta: metav1.ObjectMeta{Name: "widgets.example.com"},
+		}
+		client.applyErr = errors.New("ssa rejected")
+		_, err := applyCRDs(t.Context(), client, []Object{
+			sampleCRDObject(t, "widgets.example.com"),
+		}, PolicyCreateReplace, time.Second)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "replace CRD")
+	})
 }

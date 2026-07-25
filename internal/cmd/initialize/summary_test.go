@@ -1,6 +1,7 @@
 package initialize
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -153,4 +154,54 @@ func TestShowSummaryAndSave_NonLocalOnlyRegistersEmptyEntry(t *testing.T) {
 	production, hasProduction := platform.Environments["production"]
 	require.True(t, hasProduction, "production must be registered in the platform file")
 	assert.Empty(t, production.Context)
+}
+
+// TestScaffoldExtrasDirs_Idempotent reports already-exist when dirs are present.
+func TestScaffoldExtrasDirs_Idempotent(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	created, err := scaffoldExtrasDirs(dir)
+	require.NoError(t, err)
+	assert.True(t, created)
+
+	created, err = scaffoldExtrasDirs(dir)
+	require.NoError(t, err)
+	assert.False(t, created)
+}
+
+// TestShowSummaryAndSave_ExtrasAlreadyExist prints the Info branch for extras.
+func TestShowSummaryAndSave_ExtrasAlreadyExist(t *testing.T) {
+	dir := t.TempDir()
+	outputPath := filepath.Join(dir, "deployah.yaml")
+	manifestsDir := filepath.Join(dir, spec.DeployahConfigDir, spec.ManifestsDir)
+	crdsDir := filepath.Join(dir, spec.DeployahConfigDir, spec.CRDsDir)
+	require.NoError(t, os.MkdirAll(manifestsDir, 0o750))
+	require.NoError(t, os.MkdirAll(crdsDir, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(manifestsDir, "README.md"), []byte("x"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(crdsDir, "README.md"), []byte("x"), 0o600))
+
+	config := &ProjectConfig{
+		Name:             "shop",
+		EnvironmentNames: []string{"local"},
+		Components: map[string]spec.Component{
+			"web": {
+				Role:           spec.ComponentRoleService,
+				Image:          "nginx:1.28.0-alpine",
+				Port:           8080,
+				ResourcePreset: spec.ResourcePresetSmall,
+			},
+		},
+		OutputPath: outputPath,
+	}
+
+	io, _, _, errOut := nabattest.NewIO()
+	var captured *nabat.Context
+	app := nabat.MustNew("test", nabat.WithIO(io))
+	app.MustCommand("run", nabat.WithRun(func(c *nabat.Context) error {
+		captured = c
+		return nil
+	}))
+	require.NoError(t, nabattest.Run(t, app, []string{"run"}))
+	require.NoError(t, showSummaryAndSave(captured, config))
+	assert.Contains(t, errOut.String(), ".deployah/manifests/ and .deployah/crds/ already exist")
 }

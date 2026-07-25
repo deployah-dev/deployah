@@ -20,6 +20,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"deployah.dev/deployah/internal/extras"
@@ -173,4 +175,74 @@ metadata:
 	require.NoError(t, err)
 	require.Len(t, bundle.Manifests, 1)
 	assert.Empty(t, bundle.Manifests[0].Obj.GetNamespace())
+}
+
+// TestNewDiscoveryResolver_NilConfig returns a table-only resolver.
+func TestNewDiscoveryResolver_NilConfig(t *testing.T) {
+	t.Parallel()
+	scope, err := extras.NewDiscoveryResolver(nil, map[string]bool{"example.com/widget": true})
+	require.NoError(t, err)
+	known, err := scope.Known(schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "Widget"})
+	require.NoError(t, err)
+	assert.True(t, known)
+}
+
+// TestDiscoveryResolver_MapperHitAndFallback covers mapper hits and table
+// fallback.
+func TestDiscoveryResolver_MapperHitAndFallback(t *testing.T) {
+	t.Parallel()
+	mapper := meta.NewDefaultRESTMapper([]schema.GroupVersion{{Group: "example.com", Version: "v1"}})
+	mapper.Add(schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "Widget"}, meta.RESTScopeNamespace)
+	mapper.Add(schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "ClusterWidget"}, meta.RESTScopeRoot)
+
+	r := &extras.DiscoveryResolver{
+		Mapper: mapper,
+		Table:  extras.TableResolver{CRDScope: map[string]bool{"other.io/thing": true}},
+	}
+
+	known, err := r.Known(schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "Widget"})
+	require.NoError(t, err)
+	assert.True(t, known)
+
+	ns, err := r.Namespaced(schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "Widget"})
+	require.NoError(t, err)
+	assert.True(t, ns)
+
+	ns, err = r.Namespaced(schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "ClusterWidget"})
+	require.NoError(t, err)
+	assert.False(t, ns)
+
+	known, err = r.Known(schema.GroupVersionKind{Group: "other.io", Version: "v1", Kind: "Thing"})
+	require.NoError(t, err)
+	assert.True(t, known, "unknown to mapper still known via table CRDScope")
+}
+
+// TestGroupVersionsFromCRDs_MalformedSkipped ignores incomplete CRD objects.
+func TestGroupVersionsFromCRDs_MalformedSkipped(t *testing.T) {
+	t.Parallel()
+	crds := []extras.Object{
+		{Obj: &unstructured.Unstructured{Object: map[string]any{
+			"spec": map[string]any{"group": "example.com"},
+		}}},
+		{Obj: &unstructured.Unstructured{Object: map[string]any{
+			"spec": map[string]any{
+				"group":    "example.com",
+				"versions": []any{"v1", map[string]any{"name": ""}},
+			},
+		}}},
+		{Obj: &unstructured.Unstructured{Object: map[string]any{
+			"spec": map[string]any{
+				"group": "ok.io",
+				"versions": []any{
+					map[string]any{"name": "v1"},
+					map[string]any{"name": "v2beta1"},
+				},
+			},
+		}}},
+	}
+	gvs := extras.GroupVersionsFromCRDs(crds)
+	assert.Equal(t, map[string]struct{}{
+		"ok.io/v1":      {},
+		"ok.io/v2beta1": {},
+	}, gvs)
 }

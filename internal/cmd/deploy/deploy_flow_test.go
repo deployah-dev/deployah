@@ -15,10 +15,12 @@
 package deploy
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 
@@ -331,4 +333,98 @@ func TestApplyCRDsOnly_ReportsSuccessAndReadiness(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, stderr.String(), "CRDs ready (0 already present). Release web-production unchanged (revision 3).")
 	assert.Contains(t, stdout.String(), "Readiness:")
+}
+
+func sampleBundleCRD(t *testing.T) *extras.Bundle {
+	t.Helper()
+	obj := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "apiextensions.k8s.io/v1",
+		"kind":       "CustomResourceDefinition",
+		"metadata":   map[string]any{"name": "widgets.example.com"},
+		"spec": map[string]any{
+			"group": "example.com",
+			"scope": "Namespaced",
+			"names": map[string]any{"kind": "Widget", "plural": "widgets"},
+			"versions": []any{
+				map[string]any{"name": "v1", "served": true, "storage": true},
+			},
+		},
+	}}
+	o := extras.Object{Path: "widget.yaml", Obj: obj}
+	raw, err := o.MarshalYAML()
+	require.NoError(t, err)
+	o.Raw = raw
+	return &extras.Bundle{CRDs: []extras.Object{o}}
+}
+
+// TestApplyBundleCRDs_RESTConfigError surfaces kubeconfig failures before apply.
+func TestApplyBundleCRDs_RESTConfigError(t *testing.T) {
+	t.Parallel()
+	stub := &stubHelmClient{}
+	sess := session.New(
+		session.WithKubeconfig(filepath.Join(t.TempDir(), "missing-kubeconfig")),
+		session.WithHelmFactory(func(*session.Session) (session.HelmClient, error) {
+			return stub, nil
+		}),
+	)
+	cluster, err := sess.Target(t.Context(), "production")
+	require.NoError(t, err)
+	c := nabatContext(t)
+	opts := &Options{Environment: "production", CRDs: string(extras.PolicyCreate)}
+
+	_, err = applyBundleCRDs(c, sess, cluster, sampleBundleCRD(t), opts)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "rest config for CRDs")
+}
+
+// TestApplyDeploy_CallsInstallAfterEmptyCRDs applies Helm when CRD list is empty.
+func TestApplyDeploy_CallsInstallAfterEmptyCRDs(t *testing.T) {
+	t.Parallel()
+	manifest := deployFlowManifestV1
+	stub := &stubHelmClient{
+		renderResults: []*render.RenderResult{testRenderResult(manifest)},
+	}
+	cluster := newClusterWithStub(t, stub, nil)
+	sess := cluster.Session
+	planned := &deployPlan{
+		diff:    &planengine.Plan{Header: planengine.Header{Release: "web-production", Revision: 1}},
+		result:  testRenderResult(manifest),
+		cleanup: func() {},
+	}
+	c, _, _, stderr := nabatContextWithIO(t)
+	opts := &Options{Environment: "production", CRDs: string(extras.PolicyCreate)}
+
+	err := applyDeploy(c, sess, cluster, stub, nil, &spec.Spec{Project: "web"}, opts, nil, planned, nil, assertNever{}, &extras.Bundle{}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, stub.installCallCount)
+	assert.Contains(t, stderr.String(), "Deployed")
+}
+
+// TestApplyDeploy_PropagatesCRDApplyError skips InstallApp when CRDs fail.
+func TestApplyDeploy_PropagatesCRDApplyError(t *testing.T) {
+	t.Parallel()
+	manifest := deployFlowManifestV1
+	stub := &stubHelmClient{
+		renderResults: []*render.RenderResult{testRenderResult(manifest)},
+	}
+	sess := session.New(
+		session.WithKubeconfig(filepath.Join(t.TempDir(), "missing-kubeconfig")),
+		session.WithHelmFactory(func(*session.Session) (session.HelmClient, error) {
+			return stub, nil
+		}),
+	)
+	cluster, err := sess.Target(t.Context(), "production")
+	require.NoError(t, err)
+	planned := &deployPlan{
+		diff:    &planengine.Plan{},
+		result:  testRenderResult(manifest),
+		cleanup: func() {},
+	}
+	c := nabatContext(t)
+	opts := &Options{Environment: "production", CRDs: string(extras.PolicyCreate)}
+
+	err = applyDeploy(c, sess, cluster, stub, nil, &spec.Spec{Project: "web"}, opts, nil, planned, nil, nil, sampleBundleCRD(t), nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "rest config for CRDs")
+	assert.Equal(t, 0, stub.installCallCount)
 }
