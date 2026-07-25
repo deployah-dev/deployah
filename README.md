@@ -1,6 +1,7 @@
 # Deployah
 
 [![codecov](https://codecov.io/gh/deployah-dev/deployah/graph/badge.svg)](https://codecov.io/gh/deployah-dev/deployah)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/deployah-dev/deployah)
 
 **Zero Helm knowledge. Zero cluster-side setup. One binary.**
 
