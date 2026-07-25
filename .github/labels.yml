@@ -19,6 +19,13 @@
   color: "d876e3"
   description: Support or clarification
 
+- name: breaking-change
+  color: "b60205"
+  description: Breaking change; call out in release notes
+- name: skip-changelog
+  color: "ffffff"
+  description: Exclude this PR from release notes
+
 - name: area/cli
   color: "c5def5"
   description: Commands, flags, UX copy
