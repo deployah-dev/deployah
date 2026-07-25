@@ -23,6 +23,14 @@ Fixes #
 - [ ] `nix run .#lint` / pre-commit clean
 - [ ] Manual smoke (command + expected result), if user-facing
 
+## Labels
+
+<!-- Release notes group merged PRs by these labels (.github/release.yml). -->
+
+- [ ] One of: `kind/feature`, `kind/bug`, `kind/docs`, `kind/chore`
+- [ ] Add `breaking-change` if this breaks existing CLI or config behavior
+- [ ] Add `skip-changelog` for internal-only PRs that should not appear in notes
+
 ## Checklist
 
 - [ ] Title is short and imperative (matches commit style)

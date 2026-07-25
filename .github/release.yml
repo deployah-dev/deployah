@@ -1,0 +1,32 @@
+# Categories for GitHub automatically generated release notes.
+# Used when softprops/action-gh-release sets generate_release_notes: true,
+# or when creating a release with gh release create --generate-notes.
+# Docs: https://docs.github.com/en/repositories/releasing-projects-on-github/automatically-generated-release-notes
+changelog:
+  exclude:
+    labels:
+      - kind/chore
+      - kind/question
+      - skip-changelog
+    authors:
+      - dependabot[bot]
+      - renovate[bot]
+  categories:
+    - title: Breaking Changes
+      labels:
+        - breaking-change
+    - title: Features
+      labels:
+        - kind/feature
+      exclude:
+        labels:
+          - breaking-change
+    - title: Bug Fixes
+      labels:
+        - kind/bug
+    - title: Documentation
+      labels:
+        - kind/docs
+    - title: Other Changes
+      labels:
+        - "*"
