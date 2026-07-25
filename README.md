@@ -2,9 +2,12 @@
 
 [![codecov](https://codecov.io/gh/deployah-dev/deployah/graph/badge.svg)](https://codecov.io/gh/deployah-dev/deployah)
 
-Deployah is a CLI tool that makes deploying apps easy. It uses Helm under the
-hood, so you do not need to know Kubernetes or Helm, or even install the `helm`,
-`kubectl`, or `kind` tools. It is a single binary.
+**Zero Helm knowledge. Zero cluster-side setup. One binary.**
+
+Deployah is a CLI that deploys apps to Kubernetes. It sits in the gap between
+tools that still ask you to write Helm and tools that need a heavy in-cluster
+platform. It uses Helm under the hood, embeds `helm`, `kubectl`, and `kind` as
+libraries, and installs nothing in your cluster.
 
 You write a short **spec**. Deployah turns it into a running **release** on
 Kubernetes. We call this **Spec-to-Release**. It is like Source-to-Image (S2I),
@@ -61,7 +64,8 @@ go install deployah.dev/deployah@latest
 
 Deployah is a single binary. You do **not** need the `helm`, `kubectl`, or `kind`
 command-line tools. Deployah includes Helm, the Kubernetes client, and Kind as
-libraries, so it talks to your cluster by itself.
+libraries, so it talks to your cluster by itself. That removes a whole class of
+"works on my machine" problems caused by missing or mismatched CLI tools.
 
 - **Deploy to a cluster you already have:** you only need access to it (a
   kubeconfig). No container runtime is required.
@@ -219,7 +223,9 @@ A few words you will see often.
 Your spec is a file named `deployah.yaml`. It has three required parts:
 `apiVersion`, `project`, and `components`. You also define your `environments`.
 
-Deployah splits configuration across two files, each with a different owner:
+Deployah splits configuration across two files, each with a different owner.
+Developers describe *what* to run. Platform teams map *where* it runs. No
+shared server is required.
 
 - **`deployah.yaml`** (this section). Owned by the developer. Describes what
   to run: image, port, resources, health checks, and which logical domain to

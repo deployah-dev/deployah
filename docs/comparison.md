@@ -8,7 +8,8 @@ For Deployah, one question matters most:
 
 > **How much Helm and Kubernetes knowledge do you need?**
 
-Deployah's goal is **none**, with **nothing to install** in your cluster.
+Deployah's goal: **zero Helm knowledge**, **zero cluster-side setup**, and
+**one binary**.
 
 ## The Helm-knowledge question
 
@@ -154,7 +155,8 @@ full platform with a server and a UI, while Deployah is a small CLI with no serv
 
 Choose **Deployah** if you want:
 
-- To deploy with **no Helm or Kubernetes knowledge**, and **nothing to install**.
+- To deploy with **zero Helm knowledge**, **zero cluster-side setup**, and
+  **one binary**.
 - To **start a local cluster** with one command and try things fast.
 - A **short spec** for a project with **many components** (service, worker, job)
   across **many environments** (each with its own cluster and settings).
