@@ -1,1 +1,11 @@
 blank_issues_enabled: false
+contact_links:
+  - name: Questions and help
+    url: https://github.com/deployah-dev/deployah/discussions/categories/q-a
+    about: Ask how to use Deployah, write a spec, or debug a plan or deploy.
+  - name: Ideas and early feedback
+    url: https://github.com/deployah-dev/deployah/discussions/categories/ideas
+    about: Share rough ideas before opening a feature request or proposal.
+  - name: Show and tell
+    url: https://github.com/deployah-dev/deployah/discussions/categories/show-and-tell
+    about: Share a deployah.yaml, blog post, or integration you built.

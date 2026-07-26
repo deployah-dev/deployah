@@ -1,0 +1,102 @@
+title: "q: "
+labels:
+  - kind/question
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ask for help with Deployah. Search [existing discussions](https://github.com/deployah-dev/deployah/discussions) and [issues](https://github.com/deployah-dev/deployah/issues) first.
+
+        For bugs, use a [bug report](https://github.com/deployah-dev/deployah/issues/new?template=bug_report.yml).
+        For a scoped feature, use a [feature request](https://github.com/deployah-dev/deployah/issues/new?template=feature_request.yml).
+        For a design change, use a [proposal](https://github.com/deployah-dev/deployah/issues/new?template=proposal.yml).
+
+        Redact secrets: kubeconfig tokens, registry credentials, passwords, and private hostnames.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: What are you trying to do?
+      description: Goal in one or two sentences, plus what already failed or confused you.
+      placeholder: |
+        I want to deploy a web app with a Postgres addon on a local Kind cluster,
+        but `deployah plan` fails when resolving the image.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: topic
+    attributes:
+      label: Topic
+      description: Pick the closest area so others can find this later.
+      options:
+        - Spec (deployah.yaml)
+        - Plan or deploy
+        - Local cluster (deployah cluster)
+        - Profiles or environments
+        - Health checks
+        - Custom manifests or CRDs
+        - Installation or packaging
+        - Docs or examples
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: version
+    attributes:
+      label: Version and environment
+      description: Paste `deployah version` and note OS plus cluster type.
+      placeholder: |
+        deployah version: ...
+        OS: Linux / macOS / Windows
+        Cluster: deployah cluster (Kind) / existing kubeconfig
+        Kubernetes: ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: commands
+    attributes:
+      label: Commands you ran
+      description: Exact commands, in order. Include flags and environment names.
+      placeholder: |
+        deployah init
+        deployah plan local
+        deployah deploy local
+      render: bash
+    validations:
+      required: true
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant config
+      description: Minimal deployah.yaml (and platform file if used). Redact secrets.
+      placeholder: |
+        apiVersion: v1-alpha.2
+        project: my-first-app
+        components:
+          web:
+            image: ...
+      render: yaml
+    validations:
+      required: false
+
+  - type: textarea
+    id: output
+    attributes:
+      label: Output or error
+      description: Paste the relevant CLI output. Redact secrets.
+      render: text
+    validations:
+      required: false
+
+  - type: checkboxes
+    attributes:
+      label: Before posting
+      options:
+        - label: I searched existing discussions and issues
+          required: true
+        - label: I redacted secrets from config and logs
+          required: true
