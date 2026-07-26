@@ -33,6 +33,7 @@ but for the deploy step: S2I builds your image, and Deployah runs your release.
 - [Local cluster networking](#local-cluster-networking)
 - [Troubleshooting](#troubleshooting)
 - [Schema reference](#schema-reference)
+- [Community](#community)
 - [Development](#development)
 
 ## Installation
@@ -1484,6 +1485,17 @@ Deployah validates your spec and platform file with JSON Schema.
 
 For the latest schema and examples, see the
 [schema directory](internal/spec/schema/) in the repository.
+
+## Community
+
+Use [GitHub Discussions](https://github.com/deployah-dev/deployah/discussions)
+for questions, early ideas, and showcases. Use
+[Issues](https://github.com/deployah-dev/deployah/issues) for bugs, feature
+requests, and design proposals.
+
+- **Questions:** [Q&A](https://github.com/deployah-dev/deployah/discussions/categories/q-a)
+- **Ideas:** [Ideas](https://github.com/deployah-dev/deployah/discussions/categories/ideas)
+- **Start here:** [Welcome to Deployah Discussions](https://github.com/deployah-dev/deployah/discussions/36)
 
 ## Development
 
