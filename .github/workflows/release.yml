@@ -8,6 +8,7 @@ on:
 permissions:
   contents: write
   packages: write
+  discussions: write
 
 jobs:
   release:
@@ -105,6 +106,7 @@ jobs:
         with:
           draft: true
           generate_release_notes: true
+          discussion_category_name: Announcements
           # TODO: add dist/*.zip once windows targets are enabled.
           files: |
             dist/*.tar.gz
