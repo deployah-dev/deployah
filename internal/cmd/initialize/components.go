@@ -88,10 +88,20 @@ var presetOrder = []spec.ResourcePreset{
 // manual CPU/memory/storage form instead of picking a preset.
 const customResourcesLabel = "Custom... (enter CPU/memory/storage manually)"
 
-// presetLabel formats a resource preset with its request values for
-// display in the merged resources select, e.g. "small - 500m CPU / 512Mi
-// memory".
-func presetLabel(p spec.ResourcePreset) string {
+// presetLabels maps each resource preset to its display label. Built once at
+// init so concurrent callers never race on Quantity.String against the shared
+// [spec.ResourcePresetMappings] quantities.
+var presetLabels = func() map[spec.ResourcePreset]string {
+	m := make(map[spec.ResourcePreset]string, len(presetOrder))
+	for _, p := range presetOrder {
+		m[p] = formatPresetLabel(p)
+	}
+	return m
+}()
+
+// formatPresetLabel formats a resource preset with its request values, e.g.
+// "small - 500m CPU / 512Mi memory".
+func formatPresetLabel(p spec.ResourcePreset) string {
 	req := spec.ResourcePresetMappings[p]["requests"]
 	cpu, memory := "?", "?"
 	if req.CPU != nil {
@@ -103,11 +113,19 @@ func presetLabel(p spec.ResourcePreset) string {
 	return fmt.Sprintf("%s - %s CPU / %s memory", p, cpu, memory)
 }
 
+// presetLabel returns the display label for a resource preset.
+func presetLabel(p spec.ResourcePreset) string {
+	if label, ok := presetLabels[p]; ok {
+		return label
+	}
+	return formatPresetLabel(p)
+}
+
 // presetFromLabel reverses presetLabel. It reports false when label does not
 // match any known preset (i.e. the caller picked customResourcesLabel).
 func presetFromLabel(label string) (spec.ResourcePreset, bool) {
 	for _, p := range presetOrder {
-		if presetLabel(p) == label {
+		if presetLabels[p] == label {
 			return p, true
 		}
 	}

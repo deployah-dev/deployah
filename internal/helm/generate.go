@@ -16,7 +16,7 @@ import (
 	"text/template"
 
 	"github.com/distribution/reference"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
 	"deployah.dev/deployah/internal/spec"

@@ -23,6 +23,7 @@ import (
 	"github.com/gonvenience/ytbx"
 	"github.com/homeport/dyff/pkg/dyff"
 
+	// TODO(#14): migrate native YAML to go.yaml.in/yaml/v4 once dyff/ytbx do.
 	yamlv3 "go.yaml.in/yaml/v3"
 	v1 "helm.sh/helm/v4/pkg/release/v1"
 )

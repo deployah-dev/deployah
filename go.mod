@@ -25,7 +25,6 @@ require (
 	golang.org/x/sync v0.21.0
 	golang.org/x/term v0.44.0
 	gopherly.dev/currus v0.8.0
-	gopkg.in/yaml.v3 v3.0.1
 	helm.sh/helm/v4 v4.2.1
 	k8s.io/api v0.36.2
 	k8s.io/apiextensions-apiserver v0.36.2
@@ -217,6 +216,7 @@ require (
 	gopherly.dev/termio v0.3.0 // indirect
 	gopkg.in/evanphx/json-patch.v4 v4.13.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/apiserver v0.36.2 // indirect
 	k8s.io/cli-runtime v0.36.2 // indirect
 	k8s.io/component-base v0.36.2 // indirect
