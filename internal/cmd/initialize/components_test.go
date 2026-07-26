@@ -27,6 +27,18 @@ func TestPresetLabel(t *testing.T) {
 	}
 }
 
+// TestPresetLabel_UnknownFallsBackToFormat covers the presetLabel path when
+// the preset is not in the precomputed map (for example a typo or a new
+// preset not yet added to presetOrder).
+func TestPresetLabel_UnknownFallsBackToFormat(t *testing.T) {
+	t.Parallel()
+
+	unknown := spec.ResourcePreset("not-a-real-preset")
+	got := presetLabel(unknown)
+	assert.Equal(t, formatPresetLabel(unknown), got)
+	assert.Equal(t, "not-a-real-preset - ? CPU / ? memory", got)
+}
+
 // TestPresetFromLabel verifies presetLabel and presetFromLabel are inverse
 // operations for every known preset, and that presetFromLabel rejects the
 // "Custom..." label and arbitrary strings.

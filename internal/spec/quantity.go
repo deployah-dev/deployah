@@ -20,8 +20,15 @@ import (
 
 // MustQuantity parses s as a Kubernetes quantity pointer. Panics on invalid
 // input; use only for compile-time constants such as resource presets.
+//
+// The returned value has its String cache warmed. resource.Quantity.String
+// writes that cache on first use, so concurrent String calls on shared
+// package-level quantities (for example [ResourcePresetMappings]) would
+// otherwise race.
 func MustQuantity(s string) *resource.Quantity {
-	return new(resource.MustParse(s))
+	q := resource.MustParse(s)
+	_ = q.String()
+	return &q
 }
 
 // quantitySet reports whether q is a non-nil, non-zero quantity.
