@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
-FROM --platform=$BUILDPLATFORM tonistiigi/xx:1.6.1 AS xx
+FROM --platform=$BUILDPLATFORM tonistiigi/xx:1.6.1@sha256:923441d7c25f1e2eb5789f82d987693c47b8ed987c4ab3b075d6ed2b5d6779a3 AS xx
 
-FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS base
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 AS base
 ENV GO111MODULE=on
 ENV CGO_ENABLED=0
 COPY --from=xx / /
@@ -40,7 +40,7 @@ RUN --mount=from=binary,target=/build \
 FROM scratch AS artifact
 COPY --from=releaser /out /
 
-FROM alpine:3.22
+FROM alpine:3.22@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce
 RUN apk add --update --no-cache ca-certificates tzdata
 COPY --from=binary /deployah /usr/bin/deployah
 ENTRYPOINT ["deployah"]

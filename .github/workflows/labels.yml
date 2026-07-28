@@ -11,20 +11,24 @@ on:
       - ".github/labels.yml"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   sync-labels:
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       issues: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       # yq is pre-installed on GitHub-hosted Ubuntu runners.
       # https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2404-Readme.md
       - name: Convert labels YAML to JSON
         run: yq -o=json '.' .github/labels.yml > /tmp/labels.json
 
-      - uses: actions/github-script@v9
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
           script: |
             const fs = require('fs');

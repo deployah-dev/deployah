@@ -6,22 +6,25 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: write
-  packages: write
-  discussions: write
+  contents: read
 
 jobs:
   release:
     name: Release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      discussions: write
+      id-token: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
 
       - name: Docker metadata
         id: meta
-        uses: docker/metadata-action@v6
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
           images: deployah/deployah
           # 'latest' only on stable tags (no pre-release suffix like -alpha, -beta, -rc)
@@ -35,14 +38,14 @@ jobs:
             latest=false
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
         with:
           buildkitd-config-inline: |
             [worker.oci]
             max-parallelism = 10
 
       - name: Login to Docker Hub
-        uses: docker/login-action@v4
+        uses: docker/login-action@371161bbe7024a29a25c5e19bfcbc0804fe9ad2c # v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -53,7 +56,7 @@ jobs:
 
       - name: Build artifacts
         if: startsWith(github.ref, 'refs/tags/')
-        uses: docker/bake-action@v7
+        uses: docker/bake-action@d3418bd7d0e9324001bca92fa8ba175ea7e6dc9b # v7
         with:
           targets: artifact
           provenance: false
@@ -71,14 +74,29 @@ jobs:
 
       - name: Upload artifacts
         if: startsWith(github.ref, 'refs/tags/')
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: deployah-artifacts
           path: ./dist/*
           if-no-files-found: error
 
+      - name: Install Cosign
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: sigstore/cosign-installer@fb28c2b6339dcd94da6e4cbcbc5e888961f6f8c3 # v3.9.0
+
+      - name: Sign release artifacts
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          COSIGN_YES: "true"
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for f in dist/*.tar.gz dist/*.sha256sum dist/SHA256SUMS; do
+            cosign sign-blob --yes --bundle "${f}.sigstore.json" "$f"
+          done
+
       - name: Build and push image
-        uses: docker/bake-action@v7
+        uses: docker/bake-action@d3418bd7d0e9324001bca92fa8ba175ea7e6dc9b # v7
         with:
           targets: image
           push: true
@@ -92,7 +110,7 @@ jobs:
             image.cache-to=type=gha,mode=max,scope=image
 
       - name: Sync Docker Hub description
-        uses: peter-evans/dockerhub-description@v5
+        uses: peter-evans/dockerhub-description@1b9a80c056b620d92cedb9d9b5a223409c68ddfa # v5
         if: github.ref_name == github.event.repository.default_branch
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -101,7 +119,7 @@ jobs:
           short-description: ${{ github.event.repository.description }}
 
       - name: GitHub Release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
         if: startsWith(github.ref, 'refs/tags/')
         with:
           draft: true
@@ -112,5 +130,6 @@ jobs:
             dist/*.tar.gz
             dist/*.sha256sum
             dist/SHA256SUMS
+            dist/*.sigstore.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
