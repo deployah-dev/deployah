@@ -48,12 +48,14 @@ import (
 var version = "dev"
 
 // NewApp creates a new Nabat application with all subcommands registered.
-func NewApp() *nabat.App {
+// Caller options are appended after the defaults so nabat's last-wins
+// semantics let tests override construction-time settings such as IO.
+func NewApp(opts ...nabat.Option) *nabat.App {
 	// app is referenced by the WithErrorHandler closure below, which only
 	// runs later (inside app.Run), by which point this assignment has
 	// completed; see the "self-referential closure" note there.
 	var app *nabat.App
-	app = nabat.MustNew("deployah",
+	app = nabat.MustNew("deployah", append([]nabat.Option{
 		nabat.WithTheme("gruvbox"),
 		nabat.WithVersion(version),
 		nabat.WithDescription("Deployah turns a spec into a running release on Kubernetes (Spec-to-Release)"),
@@ -78,7 +80,7 @@ func NewApp() *nabat.App {
 			errStyle := app.Theme().Style(theme.StatusError)
 			fmt.Fprintf(app.IO().ErrOut, "%s %s\n", errStyle.Render("error:"), err) //nolint:errcheck // best-effort diagnostic write
 		}),
-	)
+	}, opts...)...)
 
 	// Build runtime once from global flags and store in context for all commands.
 	if err := app.OnPreRun(func(c *nabat.Context) error {

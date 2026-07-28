@@ -1,0 +1,22 @@
+env: dev
+namespace: default
+deployments:
+  - name: basic-web-service-dev
+    replicas: 1
+    image: docker.io/library/nginx:latest
+    portName: http
+    labels:
+      deployah.dev/project: basic-web-service
+      deployah.dev/environment: dev
+      deployah.dev/component: web
+services:
+  - name: basic-web-service-dev
+    port: 80
+    targetPortName: http
+    selector:
+      app.kubernetes.io/instance: basic-web-service-dev
+      app.kubernetes.io/name: web
+pods:
+  labelSelector: "deployah.dev/project=basic-web-service,deployah.dev/environment=dev"
+  minCount: 1
+  phase: Running

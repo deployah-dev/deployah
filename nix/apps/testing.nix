@@ -1,4 +1,4 @@
-# Test runner apps: test-unit, test-integration
+# Test runner apps: test-unit, test-integration, test-e2e
 { lib }:
 
 {
@@ -15,5 +15,15 @@
     tags = "integration";
     coverProfile = "coverage-integration.out";
     testPackages = "./internal/testing";
+  };
+
+  test-e2e = lib.mkTaggedRaceTest {
+    name = "test-e2e";
+    description = "Run e2e tests against a live Kind cluster; write coverage-e2e.out";
+    tags = "e2e";
+    coverProfile = "coverage-e2e.out";
+    testPackages = "./internal/e2e";
+    timeout = "15m";
+    race = false; # the work is a live cluster, not concurrent Go
   };
 }

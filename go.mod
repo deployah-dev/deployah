@@ -31,6 +31,7 @@ require (
 	k8s.io/apimachinery v0.36.3
 	k8s.io/client-go v0.36.3
 	nabat.dev v0.6.3
+	sigs.k8s.io/e2e-framework v0.7.0
 	sigs.k8s.io/kind v0.32.0
 	sigs.k8s.io/yaml v1.6.0
 )

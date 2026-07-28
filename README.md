@@ -1530,6 +1530,17 @@ nix run .#test-integration   # scenario tests in internal/testing
 Coverage profiles are written to `coverage-unit.out` and
 `coverage-integration.out`.
 
+### Running e2e tests locally
+
+Requires Docker. Creates and destroys a Kind cluster named `deployah`.
+
+```sh
+DEPLOYAH_E2E_FORCE=1 nix run .#test-e2e
+```
+
+Skips automatically when no container engine is found (unless `CI=true`).
+Set `DEPLOYAH_E2E_DUMP=1` with `-v` to print live objects when adding a scenario.
+
 ### Build and run
 
 ```sh
@@ -1540,10 +1551,11 @@ nix run . -- --help    # run without installing
 ### CI
 
 GitHub Actions runs flake validation, lint/fmt/tidy checks, `nix run .#test-unit`,
-and `nix run .#test-integration` on every pull request and push to `main`.
-Scenario fixtures under `scenarios/` (including `deployah.yaml` and
-`deployah.platform.yaml`) are tracked so integration tests can run on a clean
-checkout.
+`nix run .#test-integration`, and `nix run .#test-e2e` on every pull request and
+push to `main`.
+Scenario fixtures under `scenarios/` and e2e fixtures under
+`internal/e2e/testdata/` (including `deployah.yaml`, `deployah.platform.yaml`,
+and `.deployah/`) are tracked so tests can run on a clean checkout.
 
 ```sh
 nix flake check   # runs the pre-commit hooks (lint, markdownlint, tidy, nixfmt)
