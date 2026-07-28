@@ -1,12 +1,19 @@
-# Deployah config (keep scenario fixtures tracked for CI)
+# Deployah config (keep scenario and e2e fixtures tracked for CI)
 deployah.platform.yaml
 deployah.yaml
 .env.*
 .env
+# Only the repo-root scaffold; fixture trees under scenarios/ and
+# internal/e2e/testdata/ keep their .deployah/ contents tracked.
+/.deployah/
 !scenarios/**/deployah.platform.yaml
 !scenarios/**/deployah.yaml
 !scenarios/**/.env.*
 !scenarios/**/.env
+!internal/e2e/testdata/**/deployah.platform.yaml
+!internal/e2e/testdata/**/deployah.yaml
+!internal/e2e/testdata/**/.env.*
+!internal/e2e/testdata/**/.env
 
 # Go workspace file
 go.work

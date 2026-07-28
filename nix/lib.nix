@@ -31,6 +31,8 @@ rec {
       tags,
       coverProfile,
       testPackages ? "./...",
+      timeout ? "10m",
+      race ? true,
     }:
     mkApp {
       inherit name description;
@@ -49,8 +51,9 @@ rec {
           echo "go list: no test packages after filters (tags=${tags})" >&2
           exit 1
         fi
-        exec "$go/bin/go" test -tags=${tags} -race -shuffle=on -covermode=atomic \
-          -coverpkg=./... -coverprofile=${coverProfile} -timeout 10m "''${testpkgs[@]}"
+        exec "$go/bin/go" test -tags=${tags} ${pkgs.lib.optionalString race "-race"} \
+          -shuffle=on -covermode=atomic \
+          -coverpkg=./... -coverprofile=${coverProfile} -timeout ${timeout} "''${testpkgs[@]}"
       '';
     };
 }
