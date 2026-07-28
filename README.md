@@ -1491,11 +1491,16 @@ For the latest schema and examples, see the
 Use [GitHub Discussions](https://github.com/deployah-dev/deployah/discussions)
 for questions, early ideas, and showcases. Use
 [Issues](https://github.com/deployah-dev/deployah/issues) for bugs, feature
-requests, and design proposals.
+requests, and design proposals. See [CONTRIBUTING.md](CONTRIBUTING.md) for how
+to contribute code and docs. Report security issues privately using
+[SECURITY.md](SECURITY.md).
 
 - **Questions:** [Q&A](https://github.com/deployah-dev/deployah/discussions/categories/q-a)
 - **Ideas:** [Ideas](https://github.com/deployah-dev/deployah/discussions/categories/ideas)
 - **Start here:** [Welcome to Deployah Discussions](https://github.com/deployah-dev/deployah/discussions/36)
+- **Contributing:** [CONTRIBUTING.md](CONTRIBUTING.md)
+- **Security:** [SECURITY.md](SECURITY.md)
+- **Code of conduct:** [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 
 ## Development
 
