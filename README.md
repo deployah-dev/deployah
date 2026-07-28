@@ -1,6 +1,8 @@
 # Deployah
 
 [![codecov](https://codecov.io/gh/deployah-dev/deployah/graph/badge.svg)](https://codecov.io/gh/deployah-dev/deployah)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/13862/badge)](https://www.bestpractices.dev/projects/13862)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/deployah-dev/deployah/badge)](https://scorecard.dev/viewer/?uri=github.com/deployah-dev/deployah)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/deployah-dev/deployah)
 
 **Zero Helm knowledge. Zero cluster-side setup. One binary.**
