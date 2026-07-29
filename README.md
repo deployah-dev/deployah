@@ -5,6 +5,12 @@
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/deployah-dev/deployah/badge)](https://scorecard.dev/viewer/?uri=github.com/deployah-dev/deployah)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/deployah-dev/deployah)
 
+<!-- markdownlint-disable MD033 -->
+<p align="center">
+  <img src="https://deployah.dev/demos/nginx.gif" alt="Deployah: write a short nginx spec, deploy to a local cluster, get a URL" width="800">
+</p>
+<!-- markdownlint-enable MD033 -->
+
 **Zero Helm knowledge. Zero cluster-side setup. One binary.**
 
 Deployah is a CLI that deploys apps to Kubernetes. It sits in the gap between
@@ -21,6 +27,7 @@ but for the deploy step: S2I builds your image, and Deployah runs your release.
 - [Installation](#installation)
 - [Requirements](#requirements)
 - [Quick start](#quick-start)
+- [Examples](#examples)
 - [How Deployah works](#how-deployah-works)
 - [Concepts](#concepts)
 - [Writing your spec](#writing-your-spec)
@@ -152,6 +159,12 @@ deployah delete my-first-app local
 # Stop and delete the local cluster
 deployah cluster down
 ```
+
+## Examples
+
+Runnable specs live under [`examples/`](examples/). Start with
+[`examples/nginx`](examples/nginx): the same flow as the quick start, ready to
+copy.
 
 ## How Deployah works
 
@@ -1553,6 +1566,8 @@ Set `DEPLOYAH_E2E_DUMP=1` with `-v` to print live objects when adding a scenario
 ```sh
 nix build              # build the deployah binary
 nix run . -- --help    # run without installing
+nix run .#demo         # render docs/demo/tapes into docs/assets/ (see docs/demo)
+nix run .#publish-demo # sync docs/assets/ to R2 (needs R2_* env vars)
 ```
 
 ### CI

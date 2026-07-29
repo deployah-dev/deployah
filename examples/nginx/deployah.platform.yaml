@@ -1,0 +1,9 @@
+apiVersion: platform/v1-alpha.1
+environments:
+  local:
+    context: kind-deployah
+    domains:
+      public:
+        baseDomain: 127.0.0.1.nip.io
+        tls:
+          mode: selfSigned

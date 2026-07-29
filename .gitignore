@@ -1,10 +1,10 @@
-# Deployah config (keep scenario and e2e fixtures tracked for CI)
+# Deployah config (keep scenario, e2e, and example fixtures tracked)
 deployah.platform.yaml
 deployah.yaml
 .env.*
 .env
-# Only the repo-root scaffold; fixture trees under scenarios/ and
-# internal/e2e/testdata/ keep their .deployah/ contents tracked.
+# Only the repo-root scaffold; fixture trees under scenarios/,
+# internal/e2e/testdata/, and examples/ keep their tracked contents.
 /.deployah/
 !scenarios/**/deployah.platform.yaml
 !scenarios/**/deployah.yaml
@@ -14,6 +14,15 @@ deployah.yaml
 !internal/e2e/testdata/**/deployah.yaml
 !internal/e2e/testdata/**/.env.*
 !internal/e2e/testdata/**/.env
+!examples/**/deployah.yaml
+!examples/**/deployah.platform.yaml
+!examples/**/.env.*
+!examples/**/.env
+
+# VHS demo renders (regenerate with: nix run .#demo)
+docs/assets/*.gif
+docs/assets/*.mp4
+docs/assets/*.webm
 
 # Go workspace file
 go.work
