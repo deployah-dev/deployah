@@ -11,6 +11,7 @@ let
   quality = import ./quality.nix { inherit pkgs lib; };
   testing = import ./testing.nix { inherit lib; };
   vendor = import ./vendor.nix { inherit pkgs system; };
+  demo = import ./demo.nix { inherit pkgs lib deployah; };
 in
 {
   default = flake-utils.lib.mkApp {
@@ -21,3 +22,4 @@ in
 // quality
 // testing
 // vendor
+// demo

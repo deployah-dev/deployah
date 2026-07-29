@@ -20,6 +20,11 @@ let
     kubernetes-helm
     jq
     yq-go
+    vhs
+    gifsicle
+    bat
+    xclip
+    xvfb-run
   ];
 in
 pkgs.mkShell {
