@@ -20,7 +20,8 @@ area/testing:
       - any-glob-to-any-file: ["internal/testing/**", "scenarios/**"]
 area/ci:
   - changed-files:
-      - any-glob-to-any-file: [".github/**", "flake.nix", "flake.lock"]
+      - any-glob-to-any-file:
+          [".github/**", "flake.nix", "flake.lock", "Dockerfile", "docker-bake.hcl"]
 kind/docs:
   - changed-files:
       - any-glob-to-any-file: ["docs/**", "README.md", "**/*.md"]

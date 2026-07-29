@@ -5,15 +5,24 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 10
+    labels:
+      - kind/chore
+      - area/ci
 
   - package-ecosystem: gomod
     directory: /
     schedule:
       interval: weekly
     open-pull-requests-limit: 10
+    labels:
+      - kind/chore
+      - area/ci
 
   - package-ecosystem: docker
     directory: /
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    labels:
+      - kind/chore
+      - area/ci
