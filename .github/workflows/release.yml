@@ -92,7 +92,6 @@ jobs:
     needs: [osv-container-scan]
     permissions:
       contents: write
-      packages: write
       discussions: write
       id-token: write
     steps:
