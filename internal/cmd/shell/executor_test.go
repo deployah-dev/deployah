@@ -22,6 +22,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/client-go/tools/remotecommand"
 )
 
 // TestShellQuote verifies POSIX-safe quoting via shellQuote.
@@ -150,4 +151,54 @@ func TestTerminalSizeFromWH(t *testing.T) {
 	sz = terminalSizeFromWH(-1, 1<<20)
 	assert.Equal(t, uint16(0), sz.Width)
 	assert.Equal(t, uint16(^uint16(0)), sz.Height)
+}
+
+// TestTerminalSizeQueue_Next verifies Next returns sizes until the channel
+// closes, then returns nil.
+func TestTerminalSizeQueue_Next(t *testing.T) {
+	t.Parallel()
+	q := &terminalSizeQueue{ch: make(chan remotecommand.TerminalSize, 1)}
+	q.ch <- remotecommand.TerminalSize{Width: 80, Height: 24}
+
+	sz := q.Next()
+	require.NotNil(t, sz)
+	assert.Equal(t, uint16(80), sz.Width)
+	assert.Equal(t, uint16(24), sz.Height)
+
+	close(q.ch)
+	assert.Nil(t, q.Next())
+}
+
+// TestStartTerminalResizeWatch_SeedsAndStops verifies the watch seeds an
+// initial size and that stop closes the queue after the resize goroutine exits.
+func TestStartTerminalResizeWatch_SeedsAndStops(t *testing.T) {
+	t.Parallel()
+	q := &terminalSizeQueue{ch: make(chan remotecommand.TerminalSize, 2)}
+	calls := 0
+	getSize := func(int) (int, int, error) {
+		calls++
+		return 100, 40, nil
+	}
+
+	stop := startTerminalResizeWatch(0, q, getSize)
+	sz := q.Next()
+	require.NotNil(t, sz)
+	assert.Equal(t, uint16(100), sz.Width)
+	assert.Equal(t, uint16(40), sz.Height)
+
+	stop()
+	assert.Nil(t, q.Next())
+	assert.GreaterOrEqual(t, calls, 1)
+}
+
+// TestStartTerminalResizeWatch_GetSizeErrorSkipsSeed verifies a failing
+// getSize leaves the queue empty until stop closes it.
+func TestStartTerminalResizeWatch_GetSizeErrorSkipsSeed(t *testing.T) {
+	t.Parallel()
+	q := &terminalSizeQueue{ch: make(chan remotecommand.TerminalSize, 1)}
+	stop := startTerminalResizeWatch(0, q, func(int) (int, int, error) {
+		return 0, 0, errors.New("no tty")
+	})
+	stop()
+	assert.Nil(t, q.Next())
 }

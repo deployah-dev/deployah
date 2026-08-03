@@ -50,6 +50,42 @@ func terminalSizeFromWH(w, h int) remotecommand.TerminalSize {
 	return remotecommand.TerminalSize{Width: uint16(w), Height: uint16(h)}
 }
 
+// startTerminalResizeWatch seeds q with the current terminal size, then
+// forwards SIGWINCH updates until the returned stop func runs. getSize is
+// usually [term.GetSize]; tests inject a stub.
+func startTerminalResizeWatch(fd int, q *terminalSizeQueue, getSize func(int) (int, int, error)) (stop func()) {
+	if w, h, sizeErr := getSize(fd); sizeErr == nil {
+		q.ch <- terminalSizeFromWH(w, h)
+	}
+
+	resizeCh := make(chan os.Signal, 1)
+	done := make(chan struct{})
+	signal.Notify(resizeCh, syscall.SIGWINCH)
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		for {
+			select {
+			case <-done:
+				return
+			case <-resizeCh:
+				if w, h, sizeErr := getSize(fd); sizeErr == nil {
+					select {
+					case q.ch <- terminalSizeFromWH(w, h):
+					case <-done:
+						return
+					}
+				}
+			}
+		}
+	})
+	return func() {
+		signal.Stop(resizeCh)
+		close(done)
+		wg.Wait()
+		close(q.ch)
+	}
+}
+
 // ExecuteOptions configures an interactive or one-shot shell session.
 type ExecuteOptions struct {
 	// ProjectName is the Deployah project name.
@@ -351,41 +387,10 @@ func (e *ShellExecutor) execInContainer(podName, containerName string, cmd []str
 	}
 
 	var sizeQueue remotecommand.TerminalSizeQueue
-	var q *terminalSizeQueue
 	if isTTY {
-		q = &terminalSizeQueue{ch: make(chan remotecommand.TerminalSize, 1)}
+		q := &terminalSizeQueue{ch: make(chan remotecommand.TerminalSize, 1)}
 		sizeQueue = q
-
-		if w, h, sizeErr := term.GetSize(fd); sizeErr == nil {
-			q.ch <- terminalSizeFromWH(w, h)
-		}
-
-		resizeCh := make(chan os.Signal, 1)
-		done := make(chan struct{})
-		signal.Notify(resizeCh, syscall.SIGWINCH)
-		var wg sync.WaitGroup
-		wg.Go(func() {
-			for {
-				select {
-				case <-done:
-					return
-				case <-resizeCh:
-					if w, h, sizeErr := term.GetSize(fd); sizeErr == nil {
-						select {
-						case q.ch <- terminalSizeFromWH(w, h):
-						case <-done:
-							return
-						}
-					}
-				}
-			}
-		})
-		defer func() {
-			signal.Stop(resizeCh)
-			close(done)
-			wg.Wait()
-			close(q.ch)
-		}()
+		defer startTerminalResizeWatch(fd, q, term.GetSize)()
 	}
 
 	req := k8sClient.CoreV1().RESTClient().Post().

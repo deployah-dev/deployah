@@ -15,18 +15,24 @@
 package deploy
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes/fake"
 	"nabat.dev/nabat"
 	"nabat.dev/nabat/nabattest"
 
 	"deployah.dev/deployah/internal/k8s"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	clienttesting "k8s.io/client-go/testing"
 )
 
 // newWatcher builds a DeployWatcher for tests.
@@ -249,4 +255,114 @@ func TestDeployWatcher_UpdateTitle_StaleWithoutPods(t *testing.T) {
 	w.updateTitle(spy)
 
 	assert.Equal(t, "pod status unavailable (retrying...)", spy.title)
+}
+
+func readyPod(name, component, release string) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: "default",
+			Labels: map[string]string{
+				"app.kubernetes.io/instance": release,
+				"deployah.dev/component":     component,
+			},
+		},
+		Status: corev1.PodStatus{
+			Phase:             corev1.PodRunning,
+			ContainerStatuses: []corev1.ContainerStatus{{Ready: true}},
+		},
+	}
+}
+
+// TestDeployWatcher_RefreshPodStatus_Success verifies a successful poll
+// updates the summary and clears a previous stale flag.
+func TestDeployWatcher_RefreshPodStatus_Success(t *testing.T) {
+	t.Parallel()
+	cs := fake.NewSimpleClientset(readyPod("api-1", "api", "myapp-prod"))
+	w := NewDeployWatcher(cs, "default", "myapp-prod")
+	w.mu.Lock()
+	w.pollStale = true
+	w.mu.Unlock()
+
+	w.refreshPodStatus(t.Context())
+
+	summary := w.Summary()
+	require.Len(t, summary, 1)
+	assert.Equal(t, "api", summary[0].Name)
+	assert.Equal(t, 1, summary[0].ReadyPods)
+	assert.Equal(t, 1, summary[0].TotalPods)
+	w.mu.Lock()
+	stale := w.pollStale
+	w.mu.Unlock()
+	assert.False(t, stale)
+}
+
+// TestDeployWatcher_RefreshPodStatus_PollErrorMarksStale verifies API
+// failures leave the prior summary intact and set pollStale.
+func TestDeployWatcher_RefreshPodStatus_PollErrorMarksStale(t *testing.T) {
+	t.Parallel()
+	cs := fake.NewSimpleClientset()
+	cs.PrependReactor("list", "pods", func(clienttesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("api unavailable")
+	})
+	w := NewDeployWatcher(cs, "default", "myapp-prod")
+	w.mu.Lock()
+	w.summary = []ComponentStatus{{Name: "api", ReadyPods: 1, TotalPods: 2}}
+	w.mu.Unlock()
+
+	w.refreshPodStatus(t.Context())
+
+	summary := w.Summary()
+	require.Len(t, summary, 1)
+	assert.Equal(t, 1, summary[0].ReadyPods)
+	w.mu.Lock()
+	stale := w.pollStale
+	w.mu.Unlock()
+	assert.True(t, stale)
+}
+
+// TestDeployWatcher_RefreshPodStatus_CanceledSkipsStale verifies shutdown
+// cancellation does not mark status stale.
+func TestDeployWatcher_RefreshPodStatus_CanceledSkipsStale(t *testing.T) {
+	t.Parallel()
+	cs := fake.NewSimpleClientset()
+	w := NewDeployWatcher(cs, "default", "myapp-prod")
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	w.refreshPodStatus(ctx)
+
+	w.mu.Lock()
+	stale := w.pollStale
+	w.mu.Unlock()
+	assert.False(t, stale)
+}
+
+// TestDeployWatcher_FinalRefresh_AllReady verifies finalRefresh exits once
+// pods are ready even when the parent context is already canceled.
+func TestDeployWatcher_FinalRefresh_AllReady(t *testing.T) {
+	t.Parallel()
+	cs := fake.NewSimpleClientset(readyPod("api-1", "api", "myapp-prod"))
+	w := NewDeployWatcher(cs, "default", "myapp-prod")
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	runStatus(t, func(st *nabat.Status) {
+		w.finalRefresh(ctx, st)
+	}, "deploy")
+
+	assert.True(t, w.allReady())
+	w.mu.Lock()
+	stale := w.pollStale
+	w.mu.Unlock()
+	assert.False(t, stale)
+}
+
+// TestDeployWatcher_AllReady_EmptyIsFalse verifies no observed pods is not
+// treated as ready.
+func TestDeployWatcher_AllReady_EmptyIsFalse(t *testing.T) {
+	t.Parallel()
+	w := newWatcher()
+	assert.False(t, w.allReady())
 }
