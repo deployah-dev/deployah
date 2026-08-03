@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package util provides small validation helpers shared by CLI prompts and
+// Package validate provides small validation helpers shared by CLI prompts and
 // spec processing.
 //
 // Functions such as [ValidatePositiveInteger], [ValidateNonEmpty], and
 // [ValidateResourceString] centralize input checks so interactive init and
 // configuration paths enforce the same rules.
-package util
+package validate

@@ -28,7 +28,7 @@ import (
 	"nabat.dev/theme"
 
 	"deployah.dev/deployah/internal/cmd/cluster"
-	"deployah.dev/deployah/internal/cmd/common"
+	"deployah.dev/deployah/internal/cmd/cmdopts"
 	"deployah.dev/deployah/internal/cmd/delete"
 	"deployah.dev/deployah/internal/cmd/deploy"
 	"deployah.dev/deployah/internal/cmd/initialize"
@@ -84,7 +84,7 @@ func NewApp(opts ...nabat.Option) *nabat.App {
 
 	// Build runtime once from global flags and store in context for all commands.
 	if err := app.OnPreRun(func(c *nabat.Context) error {
-		var opts common.GlobalOptions
+		var opts cmdopts.GlobalOptions
 		if err := c.Bind(&opts); err != nil {
 			return fmt.Errorf("binding global options: %w", err)
 		}

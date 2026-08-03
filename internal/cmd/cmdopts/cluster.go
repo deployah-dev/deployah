@@ -12,38 +12,69 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package common
+package cmdopts
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"strings"
+	"net"
+	"slices"
+	"syscall"
 
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
 
 	"deployah.dev/deployah/internal/k8s"
 	"deployah.dev/deployah/internal/spec"
 )
+
+// clusterHintSuffix is appended to connectivity errors so deploy and plan
+// share the same recovery guidance.
+const clusterHintSuffix = "\n\nHint: the target cluster/context may be unavailable. For a local cluster, run 'deployah cluster up' (and pass --context kind-deployah or set the environment's 'context' field)."
 
 // ClusterHint returns an actionable suffix for errors that look like the
 // target cluster or context is missing or unreachable. It returns an empty
 // string for unrelated errors. Shared by `deployah deploy` and `deployah
 // plan` so their connectivity error messages never drift apart.
 func ClusterHint(err error) string {
+	if !isClusterUnreachable(err) {
+		return ""
+	}
+	return clusterHintSuffix
+}
+
+// isClusterUnreachable reports whether err (or a wrapped cause) indicates a
+// missing kubeconfig, unknown context, or network failure reaching the API.
+func isClusterUnreachable(err error) bool {
 	if err == nil {
-		return ""
+		return false
 	}
-	msg := strings.ToLower(err.Error())
-	switch {
-	case strings.Contains(msg, "context") && (strings.Contains(msg, "does not exist") || strings.Contains(msg, "not found")),
-		strings.Contains(msg, "connection refused"),
-		strings.Contains(msg, "dial tcp"),
-		strings.Contains(msg, "no configuration has been provided"),
-		strings.Contains(msg, "couldn't get current server api group list"):
-		return "\n\nHint: the target cluster/context may be unavailable. For a local cluster, run 'deployah cluster up' (and pass --context kind-deployah or set the environment's 'context' field)."
-	default:
-		return ""
+
+	// clientcmd.IsEmptyConfig / IsContextNotFound do not walk wrappers, so
+	// unwrap one level at a time before those checks.
+	for e := err; e != nil; e = errors.Unwrap(e) {
+		if clientcmd.IsEmptyConfig(e) || clientcmd.IsContextNotFound(e) {
+			return true
+		}
 	}
+	if multi, ok := err.(interface{ Unwrap() []error }); ok {
+		if slices.ContainsFunc(multi.Unwrap(), isClusterUnreachable) {
+			return true
+		}
+	}
+
+	if opErr, ok := errors.AsType[*net.OpError](err); ok && opErr != nil {
+		return true
+	}
+	if dnsErr, ok := errors.AsType[*net.DNSError](err); ok && dnsErr != nil {
+		return true
+	}
+	if errno, ok := errors.AsType[syscall.Errno](err); ok &&
+		(errno == syscall.ECONNREFUSED || errno == syscall.ECONNRESET) {
+		return true
+	}
+	return false
 }
 
 // HasExposeComponents reports whether any component in the spec declares an

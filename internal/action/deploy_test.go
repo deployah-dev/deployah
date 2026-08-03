@@ -40,7 +40,9 @@ var testManifest = &spec.Spec{
 
 // Run loads the manifest and delegates to the deployer.
 func TestDeploy_Run(t *testing.T) {
+	t.Parallel()
 	t.Run("succeeds when deployer and loader succeed", func(t *testing.T) {
+		t.Parallel()
 		d := action.NewDeploy(&mockDeployer{}, &mockSpecLoader{m: testManifest})
 		m, err := d.Run(t.Context(), "prod", false)
 		require.NoError(t, err)
@@ -48,6 +50,7 @@ func TestDeploy_Run(t *testing.T) {
 	})
 
 	t.Run("returns error when manifest loader fails", func(t *testing.T) {
+		t.Parallel()
 		d := action.NewDeploy(&mockDeployer{}, &mockSpecLoader{err: fmt.Errorf("not found")})
 		_, err := d.Run(t.Context(), "prod", false)
 		require.Error(t, err)
@@ -55,6 +58,7 @@ func TestDeploy_Run(t *testing.T) {
 	})
 
 	t.Run("returns error when deployer fails", func(t *testing.T) {
+		t.Parallel()
 		d := action.NewDeploy(&mockDeployer{err: fmt.Errorf("helm error")}, &mockSpecLoader{m: testManifest})
 		_, err := d.Run(t.Context(), "prod", false)
 		require.Error(t, err)

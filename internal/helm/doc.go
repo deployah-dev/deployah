@@ -15,7 +15,7 @@
 // Package helm generates Helm charts from Deployah specs and drives
 // install, upgrade, list, and delete operations against a cluster.
 //
-// [PrepareChart] renders templates and values for an environment.
-// [Client] wraps Helm v4 actions with Deployah-specific release naming,
-// labels, and caching through [ChartCache].
+// [PrepareChart] renders templates and values for an environment into a
+// caller-supplied [ChartCache]. [Client] wraps Helm v4 actions with
+// Deployah-specific release naming, labels, and a per-client [ChartCache].
 package helm

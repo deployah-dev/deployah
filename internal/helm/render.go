@@ -100,7 +100,7 @@ func (c *Client) RenderOffline(ctx context.Context, manifest *spec.Spec, environ
 // constructed with WithDebug(true), cleanup is a no-op and the temp dir is
 // left behind for inspection.
 func (c *Client) prepareAndLoadChart(ctx context.Context, manifest *spec.Spec, environment string, resolved *spec.ResolvedSpec) (ch *chart.Chart, chartPath string, cleanup func(), err error) {
-	chartPath, err = PrepareChart(ctx, manifest, environment, resolved)
+	chartPath, err = PrepareChart(ctx, manifest, environment, resolved, c.chartCache)
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("failed to prepare chart: %w", err)
 	}

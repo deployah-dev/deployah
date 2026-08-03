@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"strings"
 	"time"
@@ -22,6 +23,7 @@ import (
 	"deployah.dev/deployah/internal/spec"
 
 	v1 "helm.sh/helm/v4/pkg/release/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
 var (
@@ -30,8 +32,18 @@ var (
 	// ErrReleaseNotFound is returned when a Helm release does not exist.
 	ErrReleaseNotFound = errors.New("release not found")
 	// ErrReleaseAlreadyExists is returned when a Helm release already exists.
+	//
+	// Today this sentinel is produced only for user-facing wording in
+	// [Client.wrapHelmError] (via typed Kubernetes/Helm drivers when
+	// available, otherwise string matching). No caller matches it with
+	// [errors.Is] yet; treat it as message classification until one does.
 	ErrReleaseAlreadyExists = errors.New("release already exists")
 	// ErrReleasePending is returned when a Helm release has an operation in progress.
+	//
+	// Today this sentinel is produced only for user-facing wording in
+	// [Client.wrapHelmError] via string matching on Helm's untyped pending
+	// messages. No caller matches it with [errors.Is] yet; treat it as
+	// message classification until one does.
 	ErrReleasePending = errors.New("another operation is in progress")
 )
 
@@ -46,6 +58,7 @@ type Client struct {
 	extraKubeconfigPaths []string
 	storageDriver        string
 	debug                bool
+	chartCache           *ChartCache
 }
 
 // Option is a functional option for configuring the Helm client
@@ -104,17 +117,30 @@ func WithDebug(keep bool) Option {
 	}
 }
 
+// WithChartCache sets the prepared-chart cache used by this client.
+// cache must be non-nil; [NewClient] rejects a nil cache.
+func WithChartCache(cache *ChartCache) Option {
+	return func(c *Client) {
+		c.chartCache = cache
+	}
+}
+
 // NewClient initializes Helm action configuration with functional options.
 // Default storage driver is "secret" if not specified.
 // Default timeout is 5 minutes if not specified.
+// Each client gets its own [ChartCache] unless [WithChartCache] is set.
 func NewClient(opts ...Option) (*Client, error) {
 	c := &Client{
 		storageDriver: "secret",
 		timeout:       5 * time.Minute,
+		chartCache:    NewChartCache(defaultChartCacheTTL),
 	}
 
 	for _, opt := range opts {
 		opt(c)
+	}
+	if c.chartCache == nil {
+		return nil, errors.New("chart cache is required")
 	}
 
 	settings := cli.New()
@@ -205,7 +231,7 @@ func (c *Client) InstallApp(ctx context.Context, manifest *spec.Spec, environmen
 		"deployah.dev/version":     manifest.APIVersion,
 	}
 
-	chartPath, err := PrepareChart(ctx, manifest, environment, resolved)
+	chartPath, err := PrepareChart(ctx, manifest, environment, resolved, c.chartCache)
 	if err != nil {
 		return fmt.Errorf("failed to prepare chart: %w", err)
 	}
@@ -407,26 +433,45 @@ func releaserListToV1(rs []release.Releaser) ([]*v1.Release, error) {
 // sentinel branches wrap both the sentinel and the original err (via two
 // %w verbs) so callers can match on either the sentinel with [errors.Is]
 // or inspect the underlying Helm/Kubernetes error text.
+//
+// Typed Kubernetes and Helm storage errors are classified first. String
+// matching remains only for Helm messages that still lack stable sentinels
+// (notably pending operations).
 func (c *Client) wrapHelmError(operation, releaseName string, err error) error {
 	if errors.Is(err, driver.ErrReleaseNotFound) {
 		return fmt.Errorf("release '%s': %w: %w", releaseName, ErrReleaseNotFound, err)
 	}
-	errMsg := err.Error()
+	if errors.Is(err, driver.ErrReleaseExists) {
+		return fmt.Errorf("release '%s': %w: %w", releaseName, ErrReleaseAlreadyExists, err)
+	}
 
-	// Check for common error patterns and provide helpful messages.
-	// Helm and Kubernetes internals do not expose typed sentinels for most of
-	// these cases, so string matching is the only option.
+	switch {
+	case apierrors.IsNotFound(err):
+		return fmt.Errorf("release '%s': %w: %w", releaseName, ErrReleaseNotFound, err)
+	case apierrors.IsAlreadyExists(err):
+		return fmt.Errorf("release '%s': %w: %w", releaseName, ErrReleaseAlreadyExists, err)
+	case apierrors.IsForbidden(err), apierrors.IsUnauthorized(err):
+		return fmt.Errorf("insufficient permissions for %s operation on release '%s': %w", operation, releaseName, err)
+	case apierrors.IsTimeout(err), apierrors.IsServerTimeout(err):
+		return fmt.Errorf("operation timed out for release '%s': %w", releaseName, err)
+	}
+
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		return fmt.Errorf("unable to connect to Kubernetes cluster: %w", err)
+	}
+
+	// Helm still surfaces some conditions as plain strings only.
+	// Timeout/forbidden/unauthorized/already-exists string arms are omitted
+	// here because the typed checks above cover those Kubernetes cases.
+	errMsg := err.Error()
 	switch {
 	case strings.Contains(errMsg, "not found"):
 		return fmt.Errorf("release '%s': %w: %w", releaseName, ErrReleaseNotFound, err)
 	case strings.Contains(errMsg, "another operation") || strings.Contains(errMsg, "pending"):
 		return fmt.Errorf("release '%s': %w: %w", releaseName, ErrReleasePending, err)
-	case strings.Contains(errMsg, "timeout"):
-		return fmt.Errorf("operation timed out for release '%s': %w", releaseName, err)
 	case strings.Contains(errMsg, "connection refused") || strings.Contains(errMsg, "dial"):
 		return fmt.Errorf("unable to connect to Kubernetes cluster: %w", err)
-	case strings.Contains(errMsg, "forbidden") || strings.Contains(errMsg, "unauthorized"):
-		return fmt.Errorf("insufficient permissions for %s operation on release '%s': %w", operation, releaseName, err)
 	case strings.Contains(errMsg, "already exists"):
 		return fmt.Errorf("release '%s': %w: %w", releaseName, ErrReleaseAlreadyExists, err)
 	default:

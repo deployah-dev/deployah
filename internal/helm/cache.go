@@ -16,32 +16,41 @@ import (
 	"deployah.dev/deployah/internal/spec"
 )
 
-// ChartCache represents a cached chart entry
+const defaultChartCacheTTL = 1 * time.Hour
+
+// chartCacheEntry is one prepared chart directory in a [ChartCache].
+type chartCacheEntry struct {
+	path      string
+	createdAt time.Time
+}
+
+// ChartCache stores prepared chart directories keyed by content hash.
+// Each [Client] owns one instance (see [NewClient] and [WithChartCache]).
+// There is no process-global cache. Methods are safe for concurrent use.
 type ChartCache struct {
-	Path      string
-	CreatedAt time.Time
+	mu      sync.RWMutex
+	entries map[string]*chartCacheEntry
+	ttl     time.Duration
+
+	hashOnce      sync.Once
+	embeddedHash  string
+	embeddedError error
 }
 
-// ChartCacheInfo provides detailed information about the chart cache
-type ChartCacheInfo struct {
-	Count     int      `json:"count"`
-	TotalSize int64    `json:"totalSize"`
-	ChartHash string   `json:"chartHash"`
-	TTL       string   `json:"ttl"`
-	CacheKeys []string `json:"cacheKeys,omitempty"`
+// NewChartCache returns an empty chart cache with the given TTL.
+// A non-positive ttl falls back to one hour.
+func NewChartCache(ttl time.Duration) *ChartCache {
+	if ttl <= 0 {
+		ttl = defaultChartCacheTTL
+	}
+	return &ChartCache{
+		entries: make(map[string]*chartCacheEntry),
+		ttl:     ttl,
+	}
 }
 
-// chartCache is a global cache for prepared charts
-var (
-	chartCache        = make(map[string]*ChartCache)
-	chartCacheMutex   sync.RWMutex
-	chartCacheTTL     = 1 * time.Hour // Cache TTL - charts expire after 1 hour
-	embeddedChartHash string          // Cached hash of embedded chart templates
-	chartHashOnce     sync.Once       // Ensure embedded chart hash is computed only once
-)
-
-// GenerateCacheKey creates a cache key from the resolved spec (or raw spec
-// when resolved is nil), the target environment, and the embedded chart
+// GenerateKey creates a cache key from the resolved spec (or raw spec when
+// resolved is nil), the target environment, and this cache's embedded chart
 // template hash.
 //
 // environment must be part of the key: [PrepareChart] bakes the
@@ -53,7 +62,7 @@ var (
 // covers only the target-environment subset and ensures platform file changes
 // invalidate the cache. encoding/json sorts map keys deterministically since
 // Go 1.12, so the serialization is stable.
-func GenerateCacheKey(manifest *spec.Spec, environment string, resolved *spec.ResolvedSpec) (string, error) {
+func (c *ChartCache) GenerateKey(manifest *spec.Spec, environment string, resolved *spec.ResolvedSpec) (string, error) {
 	var inputBytes []byte
 	var err error
 	if resolved != nil {
@@ -65,8 +74,7 @@ func GenerateCacheKey(manifest *spec.Spec, environment string, resolved *spec.Re
 		return "", fmt.Errorf("failed to marshal spec for hashing: %w", err)
 	}
 
-	// Get hash of embedded chart templates to detect chart updates.
-	chartHash, err := getEmbeddedChartHash()
+	chartHash, err := c.embeddedChartHash()
 	if err != nil {
 		return "", fmt.Errorf("failed to generate embedded chart hash: %w", err)
 	}
@@ -78,182 +86,110 @@ func GenerateCacheKey(manifest *spec.Spec, environment string, resolved *spec.Re
 	return hex.EncodeToString(finalHash[:]), nil
 }
 
-// getEmbeddedChartHash generates a hash of the embedded chart templates
-// This ensures cache invalidation when the base Deployah chart is updated
-// The hash is computed only once per application run for performance
-func getEmbeddedChartHash() (string, error) {
-	var err error
-
-	// Use sync.Once to ensure the hash is computed only once per application run
-	chartHashOnce.Do(func() {
+// embeddedChartHash returns a hash of the embedded chart templates, computed
+// once per [ChartCache] instance so cache keys invalidate when the base
+// Deployah chart changes.
+func (c *ChartCache) embeddedChartHash() (string, error) {
+	c.hashOnce.Do(func() {
 		hasher := sha256.New()
 
-		// Walk through all embedded chart files and hash their content
 		walkErr := fs.WalkDir(ChartTemplateFS, "chart", func(path string, d fs.DirEntry, walkErr error) error {
 			if walkErr != nil {
 				return fmt.Errorf("failed to access embedded chart file %s: %w", path, walkErr)
 			}
-
-			// Skip directories, only hash file contents
 			if d.IsDir() {
 				return nil
 			}
 
-			// Read file content
 			data, readErr := ChartTemplateFS.ReadFile(path)
 			if readErr != nil {
 				return fmt.Errorf("failed to read embedded file %s: %w", path, readErr)
 			}
 
-			// Include file path and content in hash to detect both content and structure changes
 			hasher.Write([]byte(path))
 			hasher.Write(data)
-
 			return nil
 		})
 
 		if walkErr != nil {
-			err = fmt.Errorf("failed to walk embedded chart directory: %w", walkErr)
+			c.embeddedError = fmt.Errorf("failed to walk embedded chart directory: %w", walkErr)
 			return
 		}
-
-		embeddedChartHash = hex.EncodeToString(hasher.Sum(nil))
+		c.embeddedHash = hex.EncodeToString(hasher.Sum(nil))
 	})
 
-	if err != nil {
-		return "", fmt.Errorf("failed to generate embedded chart hash: %w", err)
+	if c.embeddedError != nil {
+		return "", c.embeddedError
 	}
-
-	return embeddedChartHash, nil
+	return c.embeddedHash, nil
 }
 
-// GetCachedChart retrieves a cached chart if it exists and is valid
-func GetCachedChart(cacheKey string) (string, bool) {
-	chartCacheMutex.RLock()
-	defer chartCacheMutex.RUnlock()
+// get returns a cached chart path when the entry exists, is unexpired, and
+// the directory is still on disk.
+func (c *ChartCache) get(cacheKey string) (string, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 
-	cache, exists := chartCache[cacheKey]
+	entry, exists := c.entries[cacheKey]
 	if !exists {
 		return "", false
 	}
-
-	// Check if cache entry has expired
-	if time.Since(cache.CreatedAt) > chartCacheTTL {
+	if time.Since(entry.createdAt) > c.ttl {
 		return "", false
 	}
-
-	// Verify the cached directory still exists
-	if _, err := os.Stat(cache.Path); errors.Is(err, fs.ErrNotExist) {
+	if _, err := os.Stat(entry.path); errors.Is(err, fs.ErrNotExist) {
 		return "", false
 	}
-
-	return cache.Path, true
+	return entry.path, true
 }
 
-// SetCachedChart stores a chart path in the cache
-func SetCachedChart(cacheKey, chartPath string) {
-	chartCacheMutex.Lock()
-	defer chartCacheMutex.Unlock()
-
-	chartCache[cacheKey] = &ChartCache{
-		Path:      chartPath,
-		CreatedAt: time.Now(),
+// set stores a chart path in the cache.
+func (c *ChartCache) set(cacheKey, chartPath string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries[cacheKey] = &chartCacheEntry{
+		path:      chartPath,
+		createdAt: time.Now(),
 	}
 }
 
-// CleanupExpiredCharts removes expired chart cache entries
-func CleanupExpiredCharts() {
-	chartCacheMutex.Lock()
-	defer chartCacheMutex.Unlock()
+// entryCount returns the number of cache entries (including expired ones
+// not yet cleaned up).
+func (c *ChartCache) entryCount() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return len(c.entries)
+}
+
+// cleanupExpired removes expired chart cache entries and their directories.
+func (c *ChartCache) cleanupExpired() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	now := time.Now()
-	for key, cache := range chartCache {
-		if now.Sub(cache.CreatedAt) > chartCacheTTL {
-			// Remove expired chart directory
-			if err := os.RemoveAll(cache.Path); err != nil {
-				// Log error but continue cleanup
-				slog.Warn("failed to cleanup expired chart cache", "path", cache.Path, "err", err)
+	for key, entry := range c.entries {
+		if now.Sub(entry.createdAt) > c.ttl {
+			if err := os.RemoveAll(entry.path); err != nil {
+				slog.Warn("failed to cleanup expired chart cache", "path", entry.path, "err", err)
 			}
-			delete(chartCache, key)
+			delete(c.entries, key)
 		}
 	}
 }
 
-// ClearChartCache clears all cached charts and removes their directories
-func ClearChartCache() error {
-	chartCacheMutex.Lock()
-	defer chartCacheMutex.Unlock()
-
-	var errs []error
-	for key, cache := range chartCache {
-		if err := os.RemoveAll(cache.Path); err != nil {
-			errs = append(errs, fmt.Errorf("failed to remove %s: %w", cache.Path, err))
-		}
-		delete(chartCache, key)
-	}
-
-	if len(errs) > 0 {
-		return fmt.Errorf("errors during cache cleanup: %w", errors.Join(errs...))
-	}
-
-	return nil
-}
-
-// GetChartCacheStats returns statistics about the chart cache
-func GetChartCacheStats() (count int, totalSize int64) {
-	chartCacheMutex.RLock()
-	defer chartCacheMutex.RUnlock()
-
-	count = len(chartCache)
-	for _, cache := range chartCache {
-		if size, err := getDirSize(cache.Path); err == nil {
-			totalSize += size
-		}
-	}
-
-	return count, totalSize
-}
-
-// GetChartCacheInfo returns detailed information about the chart cache
-func GetChartCacheInfo() (*ChartCacheInfo, error) {
-	chartCacheMutex.RLock()
-	defer chartCacheMutex.RUnlock()
-
-	info := &ChartCacheInfo{
-		Count: len(chartCache),
-		TTL:   chartCacheTTL.String(),
-	}
-
-	// Get embedded chart hash
-	if hash, err := getEmbeddedChartHash(); err == nil {
-		info.ChartHash = hash
-	}
-
-	// Calculate total size and collect cache keys
-	for key, cache := range chartCache {
-		info.CacheKeys = append(info.CacheKeys, key)
-		if size, err := getDirSize(cache.Path); err == nil {
-			info.TotalSize += size
-		}
-	}
-
-	return info, nil
-}
-
-// CreateChartCopy creates a copy of a cached chart directory to avoid conflicts
-func CreateChartCopy(sourcePath string) (string, error) {
+// createChartCopy creates a copy of a cached chart directory so callers can
+// delete their returned path without removing the cache's backing directory.
+func createChartCopy(sourcePath string) (string, error) {
 	tmpDir, err := os.MkdirTemp("", "deployah-chart-copy-*")
 	if err != nil {
 		return "", fmt.Errorf("failed to create temp dir for chart copy: %w", err)
 	}
 
-	// Copy the entire directory tree
 	err = filepath.Walk(sourcePath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return fmt.Errorf("failed to access path %s: %w", path, err)
 		}
 
-		// Calculate relative path
 		relPath, err := filepath.Rel(sourcePath, path)
 		if err != nil {
 			return fmt.Errorf("failed to calculate relative path for %s: %w", path, err)
@@ -265,7 +201,6 @@ func CreateChartCopy(sourcePath string) (string, error) {
 			return os.MkdirAll(destPath, info.Mode())
 		}
 
-		// Copy file
 		sourceFile, err := os.Open(path) // #nosec G304,G122 -- path from filepath.Walk within source tree
 		if err != nil {
 			return fmt.Errorf("failed to open source file %s: %w", path, err)
@@ -301,19 +236,4 @@ func CreateChartCopy(sourcePath string) (string, error) {
 	}
 
 	return tmpDir, nil
-}
-
-// getDirSize calculates the total size of a directory
-func getDirSize(path string) (int64, error) {
-	var size int64
-	err := filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
-		if err != nil {
-			return fmt.Errorf("failed to access file in directory %s: %w", path, err)
-		}
-		if !info.IsDir() {
-			size += info.Size()
-		}
-		return nil
-	})
-	return size, err
 }

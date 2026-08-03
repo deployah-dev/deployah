@@ -7,12 +7,13 @@ import (
 	"os"
 	"os/signal"
 	"slices"
-	"strings"
+	"sync"
 	"syscall"
 
 	"golang.org/x/term"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/remotecommand"
+	"mvdan.cc/sh/v3/syntax"
 	"nabat.dev/nabat"
 
 	"deployah.dev/deployah/internal/k8s"
@@ -47,6 +48,42 @@ func terminalSizeFromWH(w, h int) remotecommand.TerminalSize {
 		h = maxDim
 	}
 	return remotecommand.TerminalSize{Width: uint16(w), Height: uint16(h)}
+}
+
+// startTerminalResizeWatch seeds q with the current terminal size, then
+// forwards SIGWINCH updates until the returned stop func runs. getSize is
+// usually [term.GetSize]; tests inject a stub.
+func startTerminalResizeWatch(fd int, q *terminalSizeQueue, getSize func(int) (int, int, error)) (stop func()) {
+	if w, h, sizeErr := getSize(fd); sizeErr == nil {
+		q.ch <- terminalSizeFromWH(w, h)
+	}
+
+	resizeCh := make(chan os.Signal, 1)
+	done := make(chan struct{})
+	signal.Notify(resizeCh, syscall.SIGWINCH)
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		for {
+			select {
+			case <-done:
+				return
+			case <-resizeCh:
+				if w, h, sizeErr := getSize(fd); sizeErr == nil {
+					select {
+					case q.ch <- terminalSizeFromWH(w, h):
+					case <-done:
+						return
+					}
+				}
+			}
+		}
+	})
+	return func() {
+		signal.Stop(resizeCh)
+		close(done)
+		wg.Wait()
+		close(q.ch)
+	}
 }
 
 // ExecuteOptions configures an interactive or one-shot shell session.
@@ -138,8 +175,10 @@ func (e *ShellExecutor) Execute(opts ExecuteOptions) error {
 		selectedShell = availableShells[0]
 	}
 
-	execCommand := e.buildExecCommand(selectedShell, opts.Command, opts.WorkDir)
-
+	execCommand, err := buildExecCommand(selectedShell, opts.Command, opts.WorkDir)
+	if err != nil {
+		return err
+	}
 	return e.execInContainer(pod.Name, containerName, execCommand)
 }
 
@@ -228,19 +267,55 @@ func (e *ShellExecutor) detectAvailableShells(podName, containerName string) ([]
 	return availableShells, nil
 }
 
-// buildExecCommand builds the command to execute
-func (e *ShellExecutor) buildExecCommand(shell, command, workdir string) []string {
+// shellQuote returns a POSIX-safe shell word for s using [syntax.Quote], so
+// user-supplied paths cannot expand or run as code inside a `sh -c` script.
+func shellQuote(s string) (string, error) {
+	quoted, err := syntax.Quote(s, syntax.LangPOSIX)
+	if err != nil {
+		return "", fmt.Errorf("quote %q: %w", s, err)
+	}
+	return quoted, nil
+}
+
+// buildExecCommand builds the argv for pod exec. WorkDir and the shell name
+// are quoted when spliced into a shell script. Command is intentional shell
+// input from --command and is not re-quoted.
+func buildExecCommand(shell, command, workdir string) ([]string, error) {
 	if command != "" {
-		return []string{shell, "-c", command}
+		if workdir != "" {
+			quotedDir, err := shellQuote(workdir)
+			if err != nil {
+				return nil, fmt.Errorf("workdir: %w", err)
+			}
+			return []string{shell, "-c", "cd " + quotedDir + " && " + command}, nil
+		}
+		return []string{shell, "-c", command}, nil
 	}
-
-	cmd := []string{shell}
-
 	if workdir != "" {
-		cmd = append(cmd, "-c", fmt.Sprintf("cd %s && exec %s", workdir, shell))
+		quotedDir, err := shellQuote(workdir)
+		if err != nil {
+			return nil, fmt.Errorf("workdir: %w", err)
+		}
+		quotedShell, err := shellQuote(shell)
+		if err != nil {
+			return nil, fmt.Errorf("shell: %w", err)
+		}
+		return []string{shell, "-c", "cd " + quotedDir + " && exec " + quotedShell}, nil
 	}
+	return []string{shell}, nil
+}
 
-	return cmd
+// isBrokenPipe reports whether err is a broken-pipe condition from the
+// remotecommand stream, matching [syscall.EPIPE] through the wrap chain.
+func isBrokenPipe(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, syscall.EPIPE) {
+		return true
+	}
+	var errno syscall.Errno
+	return errors.As(err, &errno) && errno == syscall.EPIPE
 }
 
 // execTest executes a test command to check if something exists
@@ -312,30 +387,10 @@ func (e *ShellExecutor) execInContainer(podName, containerName string, cmd []str
 	}
 
 	var sizeQueue remotecommand.TerminalSizeQueue
-	var resizeCh chan os.Signal
-	var q *terminalSizeQueue
 	if isTTY {
-		q = &terminalSizeQueue{ch: make(chan remotecommand.TerminalSize, 1)}
+		q := &terminalSizeQueue{ch: make(chan remotecommand.TerminalSize, 1)}
 		sizeQueue = q
-
-		if w, h, sizeErr := term.GetSize(fd); sizeErr == nil {
-			q.ch <- terminalSizeFromWH(w, h)
-		}
-
-		resizeCh = make(chan os.Signal, 1)
-		signal.Notify(resizeCh, syscall.SIGWINCH)
-		go func() {
-			for range resizeCh {
-				if w, h, sizeErr := term.GetSize(fd); sizeErr == nil {
-					q.ch <- terminalSizeFromWH(w, h)
-				}
-			}
-		}()
-		defer func() {
-			signal.Stop(resizeCh)
-			close(resizeCh)
-			close(q.ch)
-		}()
+		defer startTerminalResizeWatch(fd, q, term.GetSize)()
 	}
 
 	req := k8sClient.CoreV1().RESTClient().Post().
@@ -373,10 +428,7 @@ func (e *ShellExecutor) execInContainer(podName, containerName string, cmd []str
 			return nil
 		}
 
-		// The SPDY executor stringifies syscall.EPIPE before returning it, so
-		// errors.Is(err, syscall.EPIPE) is tried first and the string fallback
-		// handles cases where the errno is not preserved through the stream layer.
-		if errors.Is(err, syscall.EPIPE) || strings.Contains(err.Error(), "broken pipe") {
+		if isBrokenPipe(err) {
 			return nil
 		}
 
