@@ -8,6 +8,10 @@ updates:
     labels:
       - kind/chore
       - area/ci
+    groups:
+      codeql:
+        patterns:
+          - "github/codeql-action*"
 
   - package-ecosystem: gomod
     directory: /
