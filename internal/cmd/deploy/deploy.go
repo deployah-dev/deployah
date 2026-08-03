@@ -14,7 +14,7 @@ import (
 	"nabat.dev/nabat"
 	"nabat.dev/theme"
 
-	"deployah.dev/deployah/internal/cmd/common"
+	"deployah.dev/deployah/internal/cmd/cmdopts"
 	"deployah.dev/deployah/internal/extras"
 	"deployah.dev/deployah/internal/k8s"
 	"deployah.dev/deployah/internal/readiness"
@@ -119,7 +119,7 @@ func runDeploy(c *nabat.Context, resolvedTheme theme.ResolvedTheme) error {
 	c.Logger().Debug("spec loaded", "env", opts.Environment)
 
 	// Fail closed when any component uses expose and platform is absent.
-	if platform == nil && common.HasExposeComponents(manifest) {
+	if platform == nil && cmdopts.HasExposeComponents(manifest) {
 		return fmt.Errorf(
 			"one or more components use expose blocks but no platform file was found; "+
 				"create %s or set DEPLOYAH_PLATFORM_FILE, or pass --platform-file",
@@ -158,17 +158,17 @@ func runDeploy(c *nabat.Context, resolvedTheme theme.ResolvedTheme) error {
 
 	helmClient, err := cluster.Helm()
 	if err != nil {
-		return fmt.Errorf("helm client: %w%s", err, common.ClusterHint(err))
+		return fmt.Errorf("helm client: %w%s", err, cmdopts.ClusterHint(err))
 	}
 
 	// Fail fast before the spinner so a bad context surfaces as a clean error
 	// rather than a panic (helm/helm#32183 is triggered by a second
 	// IsReachable call inside InstallApp on an already-poisoned client).
 	if reachErr := helmClient.IsReachable(); reachErr != nil {
-		return fmt.Errorf("%w%s", reachErr, common.ClusterHint(reachErr))
+		return fmt.Errorf("%w%s", reachErr, cmdopts.ClusterHint(reachErr))
 	}
 
-	common.WarnContextFallback(c, cluster, opts.Environment)
+	cmdopts.WarnContextFallback(c, cluster, opts.Environment)
 
 	// Fetch the Kubernetes clientset once and thread it through, so a
 	// transient failure produces one consistent outcome for this invocation.
@@ -180,7 +180,7 @@ func runDeploy(c *nabat.Context, resolvedTheme theme.ResolvedTheme) error {
 	// Materialize self-signed TLS certs once, before any render, so the plan
 	// render and the real apply see identical bytes (see applyDeploy).
 	if resolvedSpec != nil {
-		if tlsErr := common.MaterializeSelfSignedTLS(c, k8sClient, k8sErr, cluster.Namespace(), resolvedSpec); tlsErr != nil {
+		if tlsErr := cmdopts.MaterializeSelfSignedTLS(c, k8sClient, k8sErr, cluster.Namespace(), resolvedSpec); tlsErr != nil {
 			return fmt.Errorf("materialize self-signed TLS: %w", tlsErr)
 		}
 	}
@@ -286,7 +286,7 @@ func computePlan(c *nabat.Context, helmClient session.HelmClient, cluster *sessi
 	diff, result, cleanup, err := planengine.BuildPlan(c, helmClient, manifest, environment, cluster.Context(), resolved, postRenderer)
 	if err != nil {
 		cleanup()
-		return nil, fmt.Errorf("%w%s", err, common.ClusterHint(err))
+		return nil, fmt.Errorf("%w%s", err, cmdopts.ClusterHint(err))
 	}
 	return &deployPlan{diff: diff, result: result, cleanup: cleanup}, nil
 }
@@ -355,11 +355,11 @@ func applyBundleCRDs(c *nabat.Context, sess *session.Session, cluster *session.C
 	}
 	restCfg, restErr := cluster.RESTConfig()
 	if restErr != nil {
-		return stats, fmt.Errorf("rest config for CRDs: %w%s", restErr, common.ClusterHint(restErr))
+		return stats, fmt.Errorf("rest config for CRDs: %w%s", restErr, cmdopts.ClusterHint(restErr))
 	}
 	stats, crdErr := extras.ApplyCRDs(c, restCfg, bundle.CRDs, extras.Policy(opts.CRDs), sess.Timeout())
 	if crdErr != nil {
-		return stats, fmt.Errorf("apply CRDs: %w%s", crdErr, common.ClusterHint(crdErr))
+		return stats, fmt.Errorf("apply CRDs: %w%s", crdErr, cmdopts.ClusterHint(crdErr))
 	}
 	return stats, nil
 }
@@ -372,7 +372,7 @@ func applyDeploy(c *nabat.Context, sess *session.Session, cluster *session.Clust
 		defer verifyCleanup()
 	}
 	if err != nil {
-		return fmt.Errorf("render manifests: %w%s", err, common.ClusterHint(err))
+		return fmt.Errorf("render manifests: %w%s", err, cmdopts.ClusterHint(err))
 	}
 	// A mismatch means the chart is non-deterministic (e.g. embeds a
 	// timestamp), so what was shown isn't what would actually be installed.
@@ -433,7 +433,7 @@ func applyDeploy(c *nabat.Context, sess *session.Session, cluster *session.Clust
 				c.Warn(fmt.Sprintf("[%s] %s: %s", w.Object, w.Reason, w.Message))
 			}
 		}
-		return fmt.Errorf("deploy failed: %w%s", err, common.ClusterHint(err))
+		return fmt.Errorf("deploy failed: %w%s", err, cmdopts.ClusterHint(err))
 	}
 
 	summary := buildSummaryMsg(watcher)

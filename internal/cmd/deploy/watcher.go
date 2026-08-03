@@ -16,7 +16,9 @@ package deploy
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -33,6 +35,7 @@ const (
 	pollInterval        = 3 * time.Second
 	finalRefreshPoll    = 1 * time.Second
 	finalRefreshTimeout = 10 * time.Second
+	finalRefreshBudget  = 2 * time.Second
 )
 
 // ComponentStatus summarizes pod readiness for one Deployah component at
@@ -47,9 +50,10 @@ type DeployWatcher struct {
 	namespace   string
 	releaseName string
 
-	mu       sync.Mutex
-	warnings []k8s.DeployEvent
-	summary  []ComponentStatus
+	mu        sync.Mutex
+	warnings  []k8s.DeployEvent
+	summary   []ComponentStatus
+	pollStale bool // true when the last readiness poll failed
 }
 
 // NewDeployWatcher creates a watcher for the given release.
@@ -86,13 +90,13 @@ func (w *DeployWatcher) Run(ctx context.Context, st *nabat.Status) {
 	for {
 		select {
 		case <-ctx.Done():
-			w.finalRefresh(st) //nolint:contextcheck // ctx is canceled; finalRefresh creates its own timeout
+			w.finalRefresh(ctx, st)
 			return
 
 		case ev, ok := <-eventCh:
 			if !ok {
 				<-ctx.Done()
-				w.finalRefresh(st) //nolint:contextcheck // ctx is canceled; finalRefresh creates its own timeout
+				w.finalRefresh(ctx, st)
 				return
 			}
 			w.trackWarning(ev)
@@ -157,31 +161,49 @@ func (w *DeployWatcher) pushRow(st *nabat.Status, ev k8s.DeployEvent) {
 }
 
 // updateTitle sets the status header to the current pod readiness summary.
+// When the last poll failed, the title marks status as stale so the operator
+// can tell updates have stopped without the watcher exiting.
 func (w *DeployWatcher) updateTitle(st headerUpdater) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if w.pollStale {
+		if len(w.summary) == 0 {
+			st.SetTitle("pod status unavailable (retrying...)")
+			return
+		}
+		ready, total := readyTotal(w.summary)
+		st.SetTitle(fmt.Sprintf("pods %d/%d ready (status stale)", ready, total))
+		return
+	}
 	if len(w.summary) == 0 {
 		st.SetTitle("waiting for pods...")
 		return
 	}
-	total, ready := 0, 0
-	for _, s := range w.summary {
-		total += s.TotalPods
-		ready += s.ReadyPods
-	}
+	ready, total := readyTotal(w.summary)
 	st.SetTitle(fmt.Sprintf("pods %d/%d ready", ready, total))
+}
+
+// readyTotal sums ReadyPods and TotalPods across statuses.
+func readyTotal(statuses []ComponentStatus) (ready, total int) {
+	for _, s := range statuses {
+		ready += s.ReadyPods
+		total += s.TotalPods
+	}
+	return ready, total
 }
 
 // finalRefresh polls pod readiness until all pods are ready or
 // finalRefreshTimeout elapses, marking RowWarning on timeout. Called after
-// the parent ctx is already canceled, hence the independent timeout.
-func (w *DeployWatcher) finalRefresh(st *nabat.Status) {
+// the parent ctx is already canceled; [context.WithoutCancel] preserves
+// request-scoped values while detaching from that cancellation.
+func (w *DeployWatcher) finalRefresh(ctx context.Context, st *nabat.Status) {
 	deadline := time.After(finalRefreshTimeout)
 	ticker := time.NewTicker(finalRefreshPoll)
 	defer ticker.Stop()
 
+	base := context.WithoutCancel(ctx)
 	for {
-		freshCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		freshCtx, cancel := context.WithTimeout(base, finalRefreshBudget)
 		w.refreshPodStatus(freshCtx)
 		cancel()
 		w.updateTitle(st)
@@ -207,15 +229,30 @@ func (w *DeployWatcher) allReady() bool {
 }
 
 // refreshPodStatus polls pods for the release via [readiness.Poll] and
-// updates the per-component summary. Errors are silently ignored so the
-// watcher stays passive.
+// updates the per-component summary. Poll failures leave the previous
+// summary in place, mark status stale for the title, and log at debug so
+// the watcher stays passive without going silent.
 func (w *DeployWatcher) refreshPodStatus(ctx context.Context) {
 	statuses, err := readiness.Poll(ctx, w.k8sClient, w.namespace, w.releaseName)
 	if err != nil {
+		// Shutdown cancel is expected; other failures (including deadline)
+		// mark the title stale so the operator sees updates have stopped.
+		if errors.Is(err, context.Canceled) {
+			return
+		}
+		slog.DebugContext(ctx, "deploy watcher: pod status poll failed",
+			"err", err,
+			"namespace", w.namespace,
+			"release", w.releaseName,
+		)
+		w.mu.Lock()
+		w.pollStale = true
+		w.mu.Unlock()
 		return
 	}
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.summary = statuses
+	w.pollStale = false
 }

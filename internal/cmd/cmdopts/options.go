@@ -1,9 +1,9 @@
-package common
+package cmdopts
 
 import "time"
 
 // GlobalOptions are the persistent flags shared by all commands.
-// Used exclusively in the OnPreRun hook to construct the runtime.
+// Used exclusively in the OnPreRun hook to construct the session.
 type GlobalOptions struct {
 	Namespace    string        `nabat:"namespace"`
 	Kubeconfig   string        `nabat:"kubeconfig"`

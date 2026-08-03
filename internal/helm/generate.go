@@ -5,6 +5,7 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"maps"
@@ -81,26 +82,42 @@ func GenerateReleaseName(projectName, environmentName string) string {
 
 // PrepareChart expands the embedded chart into a temporary directory,
 // rendering .gotmpl files with Go templates and Sprig functions, and returns
-// the prepared chart root directory (cached across calls for identical charts).
-func PrepareChart(ctx context.Context, manifest *spec.Spec, desiredEnvironment string, resolved *spec.ResolvedSpec) (string, error) {
+// the prepared chart root directory. Identical charts are reused via cache.
+//
+// cache must be non-nil. If ctx is already canceled or past its deadline,
+// PrepareChart returns [context.Canceled] or [context.DeadlineExceeded]
+// immediately; chart expansion itself is not interrupted mid-flight.
+//
+// On a cache miss, every 10th entry may start a background goroutine that
+// removes expired cache directories; that work outlives this call.
+//
+// Errors: [context.Canceled], [context.DeadlineExceeded], or a wrapped
+// error when cache is nil or chart generation fails.
+func PrepareChart(ctx context.Context, manifest *spec.Spec, desiredEnvironment string, resolved *spec.ResolvedSpec, cache *ChartCache) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if cache == nil {
+		return "", errors.New("chart cache is required")
+	}
+
 	// Generate comprehensive cache key based on resolved spec (or raw spec if
 	// no platform resolution was performed), the target environment, and
 	// embedded chart templates.
-	cacheKey, err := GenerateCacheKey(manifest, desiredEnvironment, resolved)
+	cacheKey, err := cache.GenerateKey(manifest, desiredEnvironment, resolved)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate cache key: %w", err)
 	}
 
-	if cachedPath, found := GetCachedChart(cacheKey); found {
+	if cachedPath, found := cache.get(cacheKey); found {
 		// Return a copy of the cached chart to avoid conflicts with cleanup
-		return CreateChartCopy(cachedPath)
+		return createChartCopy(cachedPath)
 	}
 
 	// Cleanup expired cache entries periodically (every 10th call)
 	// This is a simple approach to avoid goroutine overhead
-	count, _ := GetChartCacheStats()
-	if count > 0 && count%10 == 0 {
-		go CleanupExpiredCharts()
+	if count := cache.entryCount(); count > 0 && count%10 == 0 {
+		go cache.cleanupExpired()
 	}
 
 	const root = "chart"
@@ -196,9 +213,9 @@ func PrepareChart(ctx context.Context, manifest *spec.Spec, desiredEnvironment s
 
 	// tmpDir must never be handed out directly; return a copy so the cache
 	// entry survives caller cleanup.
-	SetCachedChart(cacheKey, tmpDir)
+	cache.set(cacheKey, tmpDir)
 
-	return CreateChartCopy(tmpDir)
+	return createChartCopy(tmpDir)
 }
 
 // createComponentSubCharts creates sub-chart directories for each

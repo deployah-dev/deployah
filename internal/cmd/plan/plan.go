@@ -21,7 +21,7 @@ import (
 	"nabat.dev/nabat"
 	"nabat.dev/theme"
 
-	"deployah.dev/deployah/internal/cmd/common"
+	"deployah.dev/deployah/internal/cmd/cmdopts"
 	"deployah.dev/deployah/internal/drift"
 	"deployah.dev/deployah/internal/extras"
 	"deployah.dev/deployah/internal/k8s"
@@ -139,7 +139,7 @@ func runPlan(c *nabat.Context, resolvedTheme theme.ResolvedTheme) error {
 		return fmt.Errorf("load spec: %w", err)
 	}
 
-	if platform == nil && common.HasExposeComponents(manifest) {
+	if platform == nil && cmdopts.HasExposeComponents(manifest) {
 		return fmt.Errorf(
 			"one or more components use expose blocks but no platform file was found; "+
 				"create %s or set DEPLOYAH_PLATFORM_FILE, or pass --platform-file",
@@ -181,7 +181,7 @@ func runOffline(c *nabat.Context, sess *session.Session, platform *spec.Platform
 
 	// Offline mode never contacts the cluster, so any self-signed TLS cert
 	// is generated fresh (nil client) rather than fetched/reused -- a
-	// deliberate offline generation, not common.MaterializeSelfSignedTLS's
+	// deliberate offline generation, not cmdopts.MaterializeSelfSignedTLS's
 	// fail-closed path for an online command that couldn't build a client.
 	if resolvedSpec != nil {
 		if tlsErr := k8s.MaterializeSelfSignedTLS(c, nil, "", resolvedSpec); tlsErr != nil {
@@ -226,14 +226,14 @@ func runOnline(c *nabat.Context, sess *session.Session, platform *spec.PlatformC
 
 	helmClient, err := cluster.Helm()
 	if err != nil {
-		return fmt.Errorf("helm client: %w%s", err, common.ClusterHint(err))
+		return fmt.Errorf("helm client: %w%s", err, cmdopts.ClusterHint(err))
 	}
 
 	if reachErr := helmClient.IsReachable(); reachErr != nil {
-		return fmt.Errorf("%w%s", reachErr, common.ClusterHint(reachErr))
+		return fmt.Errorf("%w%s", reachErr, cmdopts.ClusterHint(reachErr))
 	}
 
-	common.WarnContextFallback(c, cluster, opts.Environment)
+	cmdopts.WarnContextFallback(c, cluster, opts.Environment)
 
 	// Materialize self-signed TLS certs once, before rendering, matching
 	// deploy's determinism guarantee (a fresh keypair per render would make
@@ -243,7 +243,7 @@ func runOnline(c *nabat.Context, sess *session.Session, platform *spec.PlatformC
 		c.Logger().Debug("kubernetes client unavailable", "err", k8sErr)
 	}
 	if resolvedSpec != nil {
-		if tlsErr := common.MaterializeSelfSignedTLS(c, k8sClient, k8sErr, cluster.Namespace(), resolvedSpec); tlsErr != nil {
+		if tlsErr := cmdopts.MaterializeSelfSignedTLS(c, k8sClient, k8sErr, cluster.Namespace(), resolvedSpec); tlsErr != nil {
 			return fmt.Errorf("materialize self-signed TLS: %w", tlsErr)
 		}
 	}
@@ -261,7 +261,7 @@ func runOnline(c *nabat.Context, sess *session.Session, platform *spec.PlatformC
 	p, result, cleanup, err := planengine.BuildPlan(c, helmClient, manifest, opts.Environment, cluster.Context(), resolvedSpec, postRenderer)
 	defer cleanup()
 	if err != nil {
-		return fmt.Errorf("%w%s", err, common.ClusterHint(err))
+		return fmt.Errorf("%w%s", err, cmdopts.ClusterHint(err))
 	}
 
 	if n := len(bundle.CRDs); n > 0 {
@@ -270,7 +270,7 @@ func runOnline(c *nabat.Context, sess *session.Session, platform *spec.PlatformC
 
 	if opts.Drift {
 		if driftErr := checkDrift(c, cluster, p, result.Manifest); driftErr != nil {
-			return fmt.Errorf("check drift: %w%s", driftErr, common.ClusterHint(driftErr))
+			return fmt.Errorf("check drift: %w%s", driftErr, cmdopts.ClusterHint(driftErr))
 		}
 	}
 

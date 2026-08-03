@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package common defines flags and options shared by every Deployah command.
+// Package cmdopts defines flags and helpers shared by every Deployah command.
 //
 // [GlobalOptions] captures persistent CLI flags such as namespace, kubeconfig,
 // spec path, debug mode, and operation timeout. The root command reads
-// these values in its pre-run hook and builds a [runtime.Runtime] from them.
-package common
+// these values in its pre-run hook and builds a [session.Session] from them.
+package cmdopts

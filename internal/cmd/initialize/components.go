@@ -10,7 +10,7 @@ import (
 	"nabat.dev/nabat"
 
 	"deployah.dev/deployah/internal/spec"
-	"deployah.dev/deployah/internal/util"
+	"deployah.dev/deployah/internal/validate"
 )
 
 func validateComponentNameUnique(name string, existing map[string]spec.Component) error {
@@ -363,7 +363,7 @@ func collectComponentImage(c *nabat.Context, component *spec.Component, componen
 		fmt.Sprintf("Image for %s", componentName),
 		nabat.WithHint("nginx:latest"),
 		nabat.WithValidate(func(s string) error {
-			return util.ValidateNonEmpty(s, "image")
+			return validate.ValidateNonEmpty(s, "image")
 		}),
 	)
 	if err != nil {
@@ -560,20 +560,20 @@ func collectComponentAutoscaling(c *nabat.Context, component *spec.Component, co
 				"Minimum number of replicas to maintain",
 				nabat.WithHint(strconv.Itoa(DefaultMinReplicas)),
 				nabat.WithDefault(strconv.Itoa(DefaultMinReplicas)),
-				nabat.WithValidate(func(s string) error { return util.ValidatePositiveInteger(s, "minimum replicas") }),
+				nabat.WithValidate(func(s string) error { return validate.ValidatePositiveInteger(s, "minimum replicas") }),
 			),
 			nabat.WithFormField(&maxReplicasStr, "Maximum Replicas",
 				"Maximum number of replicas allowed",
 				nabat.WithHint(strconv.Itoa(DefaultMaxReplicas)),
 				nabat.WithDefault(strconv.Itoa(DefaultMaxReplicas)),
-				nabat.WithValidate(func(s string) error { return util.ValidatePositiveInteger(s, "maximum replicas") }),
+				nabat.WithValidate(func(s string) error { return validate.ValidatePositiveInteger(s, "maximum replicas") }),
 			),
 		)
 		if err != nil {
 			return fmt.Errorf("failed to get autoscaling config: %w", err)
 		}
 
-		if err = util.ValidateMinMaxReplicas(minReplicasStr, maxReplicasStr); err != nil {
+		if err = validate.ValidateMinMaxReplicas(minReplicasStr, maxReplicasStr); err != nil {
 			return fmt.Errorf("autoscaling configuration error: %w", err)
 		}
 
@@ -612,17 +612,17 @@ func collectComponentCustomResources(c *nabat.Context, component *spec.Component
 		nabat.WithFormField(&cpu, "CPU",
 			"CPU resource (e.g., 500m, 1)",
 			nabat.WithHint("500m"),
-			nabat.WithValidate(func(s string) error { return util.ValidateResourceString(s, "CPU") }),
+			nabat.WithValidate(func(s string) error { return validate.ValidateResourceString(s, "CPU") }),
 		),
 		nabat.WithFormField(&memory, "Memory",
 			"Memory resource (e.g., 512Mi, 1Gi)",
 			nabat.WithHint("512Mi"),
-			nabat.WithValidate(func(s string) error { return util.ValidateResourceString(s, "Memory") }),
+			nabat.WithValidate(func(s string) error { return validate.ValidateResourceString(s, "Memory") }),
 		),
 		nabat.WithFormField(&ephemeralStorage, "Ephemeral Storage",
 			"Ephemeral storage (e.g., 1Gi, 2Gi)",
 			nabat.WithHint("1Gi"),
-			nabat.WithValidate(func(s string) error { return util.ValidateResourceString(s, "EphemeralStorage") }),
+			nabat.WithValidate(func(s string) error { return validate.ValidateResourceString(s, "EphemeralStorage") }),
 		),
 	)
 	if err != nil {

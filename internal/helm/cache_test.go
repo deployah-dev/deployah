@@ -17,6 +17,7 @@ package helm
 import (
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -33,6 +34,7 @@ import (
 // hitting the cache.
 func TestPrepareChart_CacheSurvivesCallerCleanup(t *testing.T) {
 	t.Parallel()
+	cache := NewChartCache(time.Hour)
 	manifest := &spec.Spec{
 		APIVersion: "v1-alpha.2",
 		Project:    "cache-test",
@@ -40,13 +42,13 @@ func TestPrepareChart_CacheSurvivesCallerCleanup(t *testing.T) {
 	}
 	require.NoError(t, spec.FillSpecWithDefaults(manifest, "v1-alpha.2"))
 
-	returnedPath, err := PrepareChart(t.Context(), manifest, "production", nil)
+	returnedPath, err := PrepareChart(t.Context(), manifest, "production", nil, cache)
 	require.NoError(t, err)
 
-	key, err := GenerateCacheKey(manifest, "production", nil)
+	key, err := cache.GenerateKey(manifest, "production", nil)
 	require.NoError(t, err)
 
-	cachedPath, found := GetCachedChart(key)
+	cachedPath, found := cache.get(key)
 	require.True(t, found, "PrepareChart must register a cache entry on a miss")
 	t.Cleanup(func() {
 		if removeErr := os.RemoveAll(cachedPath); removeErr != nil {
@@ -61,6 +63,36 @@ func TestPrepareChart_CacheSurvivesCallerCleanup(t *testing.T) {
 	// exactly as InstallApp/RenderManifests's deferred cleanup does.
 	require.NoError(t, os.RemoveAll(returnedPath))
 
-	_, stillFound := GetCachedChart(key)
+	_, stillFound := cache.get(key)
 	assert.True(t, stillFound, "the cache entry must survive the caller cleaning up its own returned copy")
+}
+
+// TestPrepareChart_RequiresCache verifies PrepareChart rejects a nil cache.
+func TestPrepareChart_RequiresCache(t *testing.T) {
+	t.Parallel()
+	_, err := PrepareChart(t.Context(), &spec.Spec{Project: "x"}, "prod", nil, nil)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "chart cache is required")
+}
+
+// TestChartCache_Isolation verifies two ChartCache instances do not share
+// entries.
+func TestChartCache_Isolation(t *testing.T) {
+	t.Parallel()
+	a := NewChartCache(time.Hour)
+	b := NewChartCache(time.Hour)
+
+	a.set("key", t.TempDir())
+	_, foundA := a.get("key")
+	_, foundB := b.get("key")
+	assert.True(t, foundA)
+	assert.False(t, foundB, "caches must not share entries")
+}
+
+// TestNewClient_RejectsNilChartCache verifies WithChartCache(nil) fails fast.
+func TestNewClient_RejectsNilChartCache(t *testing.T) {
+	t.Parallel()
+	_, err := NewClient(WithStorageDriver("memory"), WithChartCache(nil))
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "chart cache is required")
 }
