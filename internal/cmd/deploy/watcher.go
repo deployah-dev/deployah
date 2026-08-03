@@ -32,10 +32,15 @@ import (
 )
 
 const (
-	pollInterval        = 3 * time.Second
+	pollInterval       = 3 * time.Second
+	finalRefreshBudget = 2 * time.Second
+)
+
+// finalRefreshPoll and finalRefreshTimeout are package vars so unit tests can
+// shrink the wait without sleeping for the production 10s timeout.
+var (
 	finalRefreshPoll    = 1 * time.Second
 	finalRefreshTimeout = 10 * time.Second
-	finalRefreshBudget  = 2 * time.Second
 )
 
 // ComponentStatus summarizes pod readiness for one Deployah component at

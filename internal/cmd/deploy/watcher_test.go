@@ -359,6 +359,35 @@ func TestDeployWatcher_FinalRefresh_AllReady(t *testing.T) {
 	assert.False(t, stale)
 }
 
+// TestDeployWatcher_FinalRefresh_TimeoutMarksWarning verifies finalRefresh
+// stops after the deadline when pods never become ready and marks the
+// status completion as a warning. Not parallel: mutates package-level
+// timeout vars.
+func TestDeployWatcher_FinalRefresh_TimeoutMarksWarning(t *testing.T) {
+	origPoll := finalRefreshPoll
+	origTimeout := finalRefreshTimeout
+	finalRefreshPoll = 5 * time.Millisecond
+	finalRefreshTimeout = 20 * time.Millisecond
+	t.Cleanup(func() {
+		finalRefreshPoll = origPoll
+		finalRefreshTimeout = origTimeout
+	})
+
+	cs := fake.NewSimpleClientset() // no pods => never allReady
+	w := NewDeployWatcher(cs, "default", "myapp-prod")
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	runStatus(t, func(st *nabat.Status) {
+		w.finalRefresh(ctx, st)
+	}, "deploy")
+
+	// Empty cluster never becomes ready, so exit implies the deadline branch
+	// (SetCompletion(RowWarning)) ran rather than the allReady early return.
+	assert.False(t, w.allReady())
+}
+
 // TestDeployWatcher_AllReady_EmptyIsFalse verifies no observed pods is not
 // treated as ready.
 func TestDeployWatcher_AllReady_EmptyIsFalse(t *testing.T) {

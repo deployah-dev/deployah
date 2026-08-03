@@ -17,6 +17,8 @@ package shell
 import (
 	"errors"
 	"fmt"
+	"os"
+	"sync"
 	"syscall"
 	"testing"
 
@@ -201,4 +203,37 @@ func TestStartTerminalResizeWatch_GetSizeErrorSkipsSeed(t *testing.T) {
 	})
 	stop()
 	assert.Nil(t, q.Next())
+}
+
+// TestStartTerminalResizeWatch_SIGWINCHUpdatesSize verifies a SIGWINCH
+// delivers a new size on the queue. Not parallel: [signal.Notify] is
+// process-wide for SIGWINCH.
+func TestStartTerminalResizeWatch_SIGWINCHUpdatesSize(t *testing.T) {
+	q := &terminalSizeQueue{ch: make(chan remotecommand.TerminalSize, 4)}
+	var mu sync.Mutex
+	call := 0
+	getSize := func(int) (int, int, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		call++
+		if call == 1 {
+			return 80, 24, nil
+		}
+		return 120, 40, nil
+	}
+
+	stop := startTerminalResizeWatch(0, q, getSize)
+	t.Cleanup(stop)
+
+	seed := q.Next()
+	require.NotNil(t, seed)
+	assert.Equal(t, uint16(80), seed.Width)
+	assert.Equal(t, uint16(24), seed.Height)
+
+	require.NoError(t, syscall.Kill(os.Getpid(), syscall.SIGWINCH))
+
+	resized := q.Next()
+	require.NotNil(t, resized)
+	assert.Equal(t, uint16(120), resized.Width)
+	assert.Equal(t, uint16(40), resized.Height)
 }
