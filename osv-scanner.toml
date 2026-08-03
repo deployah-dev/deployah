@@ -1,0 +1,5 @@
+# OSV-Scanner configuration. See https://google.github.io/osv-scanner/configuration/
+
+[[IgnoredVulns]]
+id = "GO-2026-5932"
+reason = "golang.org/x/crypto/openpgp is uncalled (transitive only); advisory has no fixed version"
