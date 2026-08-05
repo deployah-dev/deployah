@@ -33,8 +33,6 @@ RUN --mount=from=binary,target=/build \
     && tar -czvf "/out/deployah-${TARGETOS}-${TARGETARCH}${TARGETVARIANT}.tar.gz" \
          deployah README.md LICENSE \
     && cd /out \
-    && sha256sum "deployah-${TARGETOS}-${TARGETARCH}${TARGETVARIANT}."* \
-         > "deployah-${TARGETOS}-${TARGETARCH}${TARGETVARIANT}.sha256sum" \
     && sha256sum "deployah-${TARGETOS}-${TARGETARCH}${TARGETVARIANT}."* >> "SHA256SUMS"
 
 FROM scratch AS artifact

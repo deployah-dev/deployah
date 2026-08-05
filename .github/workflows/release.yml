@@ -168,7 +168,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          for f in dist/*.tar.gz dist/*.sha256sum dist/SHA256SUMS; do
+          for f in dist/*.tar.gz dist/SHA256SUMS; do
             cosign sign-blob --yes --bundle "${f}.sigstore.json" "$f"
           done
 
@@ -205,7 +205,6 @@ jobs:
           # TODO: add dist/*.zip once windows targets are enabled.
           files: |
             dist/*.tar.gz
-            dist/*.sha256sum
             dist/SHA256SUMS
             dist/*.sigstore.json
         env:
