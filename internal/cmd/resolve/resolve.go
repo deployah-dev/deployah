@@ -18,7 +18,6 @@
 package resolve
 
 import (
-	"encoding/json"
 	"fmt"
 	"maps"
 	"slices"
@@ -322,12 +321,7 @@ func runEnvironmentsOverview(c *nabat.Context, sess *session.Session, output str
 	rows := buildEnvironmentOverview(rawSpec, platform, sess.CurrentKubeContext())
 
 	if strings.EqualFold(output, "json") {
-		data, marshalErr := json.MarshalIndent(map[string][]envOverviewRow{"environments": rows}, "", "  ")
-		if marshalErr != nil {
-			return fmt.Errorf("json marshal: %w", marshalErr)
-		}
-		c.Println(string(data))
-		return nil
+		return c.JSON(map[string][]envOverviewRow{"environments": rows})
 	}
 
 	if platform == nil {
@@ -386,10 +380,5 @@ func outputJSON(c *nabat.Context, resolved *spec.ResolvedSpec, report *spec.Reso
 		}
 	}
 
-	data, err := json.MarshalIndent(out, "", "  ")
-	if err != nil {
-		return fmt.Errorf("json marshal: %w", err)
-	}
-	c.Println(string(data))
-	return nil
+	return c.JSON(out)
 }

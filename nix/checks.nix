@@ -32,8 +32,18 @@ in
 git-hooks.lib.${system}.run {
   inherit src;
   hooks = {
-    golangci-lint = {
+    # Use the pinned Go toolchain's gofmt; git-hooks' default wrapper
+    # still ships Go 1.26 and rejects go.mod 1.27.
+    gofmt = {
       enable = true;
+      entry = "${go}/bin/gofmt -l -w";
+      files = "\\.go$";
+    };
+    # Disabled while go.mod is 1.27: nixpkgs golangci-lint is built with
+    # Go 1.26 and fails config load. Re-enable when
+    # https://github.com/golangci/golangci-lint/issues/6643 lands.
+    golangci-lint = {
+      enable = false;
       extraPackages = [ go ];
     };
     markdownlint = {

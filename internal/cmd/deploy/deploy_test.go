@@ -121,15 +121,9 @@ func nabatContext(t *testing.T) *nabat.Context {
 // returned Context reports as non-interactive (no TTY).
 func nabatContextWithIO(t *testing.T) (*nabat.Context, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
-	var captured *nabat.Context
 	io, in, out, errOut := nabattest.NewIO()
 	app := nabat.MustNew("test", nabat.WithIO(io))
-	app.MustCommand("run", nabat.WithRun(func(c *nabat.Context) error {
-		captured = c
-		return nil
-	}))
-	require.NoError(t, nabattest.Run(t, app, []string{"run"}))
-	return captured, in, out, errOut
+	return nabattest.Context(t, app), in, out, errOut
 }
 
 // releaseWithResolvedFQDN builds a prior release whose deployah.resolved

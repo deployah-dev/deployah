@@ -44,12 +44,10 @@ const (
 func makeEvent(uid types.UID, involvedName, reason, message, evType, rv string) *corev1.Event {
 	now := metav1.NewTime(time.Now())
 	return &corev1.Event{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:            involvedName + "." + string(uid),
-			Namespace:       testNamespace,
-			UID:             uid,
-			ResourceVersion: rv,
-		},
+		Name:            involvedName + "." + string(uid),
+		Namespace:       testNamespace,
+		UID:             uid,
+		ResourceVersion: rv,
 		InvolvedObject: corev1.ObjectReference{
 			Kind: "Pod",
 			Name: involvedName,
@@ -203,12 +201,10 @@ func TestWatchDeployEvents_FieldTranslation(t *testing.T) {
 
 	ts := time.Date(2026, 1, 15, 10, 30, 0, 0, time.UTC)
 	ev := &corev1.Event{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:            testRelease + "-api-abc.uid-field",
-			Namespace:       testNamespace,
-			UID:             "uid-field",
-			ResourceVersion: "101",
-		},
+		Name:            testRelease + "-api-abc.uid-field",
+		Namespace:       testNamespace,
+		UID:             "uid-field",
+		ResourceVersion: "101",
 		InvolvedObject: corev1.ObjectReference{
 			Kind: "ReplicaSet",
 			Name: testRelease + "-api-abc",
@@ -237,7 +233,7 @@ func TestToDeployEvent_ZeroCount(t *testing.T) {
 	ev := watch.Event{
 		Type: watch.Added,
 		Object: &corev1.Event{
-			ObjectMeta: metav1.ObjectMeta{UID: "uid-zero"},
+			UID: "uid-zero",
 			InvolvedObject: corev1.ObjectReference{
 				Kind: "Pod",
 				Name: "myapp-prod-api-xyz",
@@ -269,10 +265,8 @@ func TestToDeployEvent_TimestampFallbacks(t *testing.T) {
 	ev := watch.Event{
 		Type: watch.Added,
 		Object: &corev1.Event{
-			ObjectMeta: metav1.ObjectMeta{
-				UID:             "uid-ts",
-				ResourceVersion: "101",
-			},
+			UID:             "uid-ts",
+			ResourceVersion: "101",
 			InvolvedObject: corev1.ObjectReference{
 				Kind: "Pod",
 				Name: "myapp-prod-api-abc",

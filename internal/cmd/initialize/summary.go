@@ -35,12 +35,13 @@ func showSummaryAndSave(c *nabat.Context, config *ProjectConfig) error {
 		return nil
 	}
 
-	// WithDefault(true) lets non-interactive / CI mode save without prompting.
+	// WithPrefill(true) seeds the TTY on Yes and lets non-interactive / CI
+	// mode save without prompting.
 	save, err := c.Confirm(
 		fmt.Sprintf("Save to %s?", config.OutputPath),
 		nabat.WithAffirmative("Yes"),
 		nabat.WithNegative("No"),
-		nabat.WithDefault(true),
+		nabat.WithPrefill(true),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to confirm save: %w", err)

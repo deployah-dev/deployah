@@ -71,8 +71,7 @@ type clusterStatusView struct {
 }
 
 // registerStatus attaches the "status" subcommand to the cluster group.
-// app is passed so the command can read the resolved theme at run time.
-func registerStatus(group *nabat.Command, app *nabat.App) {
+func registerStatus(group *nabat.Command) {
 	group.MustCommand("status",
 		nabat.WithDescription("Show the local cluster status and access info"),
 		nabat.WithLongDescription("Show the local cluster's health, metadata, whether the cloud provider is running, "+
@@ -84,13 +83,11 @@ deployah cluster status
 
 # Output as JSON
 deployah cluster status --output json`),
-		nabat.WithRun(func(c *nabat.Context) error {
-			return runStatus(c, app.Theme())
-		}),
+		nabat.WithRun(runStatus),
 	)
 }
 
-func runStatus(c *nabat.Context, th theme.ResolvedTheme) error {
+func runStatus(c *nabat.Context) error {
 	opts := &statusOptions{}
 	if err := c.Bind(opts); err != nil {
 		return fmt.Errorf("binding options: %w", err)
@@ -146,7 +143,7 @@ func runStatus(c *nabat.Context, th theme.ResolvedTheme) error {
 	case cli.OutputFormatYAML:
 		return c.YAML(view)
 	default:
-		renderStatusSummary(c, th, view)
+		renderStatusSummary(c, view)
 		return nil
 	}
 }
@@ -320,36 +317,32 @@ func hasPortMappedAccess(entries []accessEntry) bool {
 
 // renderStatusSummary prints the cluster status and access info as human-readable
 // output: a compact key/value summary (themed) followed by the access table.
-func renderStatusSummary(c *nabat.Context, th theme.ResolvedTheme, view clusterStatusView) {
-	// Header line: themed cluster name + colored status badge.
+func renderStatusSummary(c *nabat.Context, view clusterStatusView) {
 	c.Printf("%s   %s\n\n",
-		th.Style(theme.TextTitle).Render(view.Name),
-		statusBadge(th, view.Status))
+		c.Render(theme.TextTitle, view.Name),
+		c.Badge(statusIcon(view.Status), view.Status))
 
-	// Aligned key/value summary. Pad the label first, then style it, so the
-	// ANSI escapes are not counted in the column width and alignment holds.
-	label := th.Style(theme.TextMuted)
-	field := func(name, value string) {
-		c.Printf("  %s  %s\n", label.Render(fmt.Sprintf("%-14s", name)), value)
+	cloudProvider := boolText(view.CloudProviderRunning, "running", "stopped")
+	fields := []nabat.Field{
+		{Key: "Backend", Value: fmt.Sprintf("%s (%s)", view.Backend, view.Runtime)},
+		{Key: "Nodes", Value: nodesText(view.Nodes, view.Roles)},
+		{Key: "Context", Value: view.Context},
+		{Key: "Cloud provider", Value: c.Badge(statusIcon(cloudProvider), cloudProvider)},
 	}
-
-	field("Backend", fmt.Sprintf("%s (%s)", view.Backend, view.Runtime))
-	field("Nodes", nodesText(view.Nodes, view.Roles))
-	field("Context", view.Context)
-	field("Cloud provider", statusBadge(th, boolText(view.CloudProviderRunning, "running", "stopped")))
 	if view.CreatedAt != "" {
-		field("Created", view.CreatedAt)
+		fields = append(fields, nabat.Field{Key: "Created", Value: view.CreatedAt})
 	}
 	if view.Kubeconfig != "" {
-		field("Kubeconfig", shortenHome(view.Kubeconfig))
+		fields = append(fields, nabat.Field{Key: "Kubeconfig", Value: shortenHome(view.Kubeconfig)})
 	}
+	c.Fields(fields, nabat.WithFieldKeyWidth(14)).Print()
 
 	if len(view.Access) == 0 {
 		return
 	}
 
 	c.Println("")
-	c.Printf("%s\n", th.Style(theme.TextTitle).Render("Ingress / LoadBalancer access"))
+	c.Printf("%s\n", c.Render(theme.TextTitle, "Ingress / LoadBalancer access"))
 	accessRows := make([][]string, 0, len(view.Access))
 	for _, a := range view.Access {
 		target := a.Host
@@ -371,18 +364,18 @@ func renderStatusSummary(c *nabat.Context, th theme.ResolvedTheme, view clusterS
 	}
 	if len(hostsLines) > 0 {
 		c.Println("")
-		c.Printf("%s\n", th.Style(theme.TextMuted).Render("Add these entries to /etc/hosts to resolve ingress hosts locally:"))
+		c.Printf("%s\n", c.Render(theme.TextMuted, "Add these entries to /etc/hosts to resolve ingress hosts locally:"))
 		c.Println("  " + strings.Join(hostsLines, "\n  "))
 	}
 	if len(curlLines) > 0 {
 		c.Println("")
-		c.Printf("%s\n", th.Style(theme.TextMuted).Render("Or test without editing /etc/hosts:"))
+		c.Printf("%s\n", c.Render(theme.TextMuted, "Or test without editing /etc/hosts:"))
 		c.Println("  " + strings.Join(curlLines, "\n  "))
 	}
 
 	if hasPortMappedAccess(view.Access) {
 		c.Println("")
-		c.Printf("%s\n", th.Style(theme.TextMuted).Render(
+		c.Printf("%s\n", c.Render(theme.TextMuted,
 			"Note: gateway ports are bound on all interfaces (0.0.0.0); your firewall may prompt for access."))
 	}
 }
@@ -434,22 +427,19 @@ func pluralizeRole(role string, count int) string {
 	return role + "s"
 }
 
-// statusBadge renders a themed "● <status>" indicator using nabat theme tokens.
-// Colors are stripped automatically by the output writer when stdout is not a
-// TTY or NO_COLOR is set.
-func statusBadge(th theme.ResolvedTheme, status string) string {
-	var tok theme.Token
+// statusIcon maps a cluster/cloud-provider status word onto a Nabat badge icon.
+// Deployah owns the word→icon mapping; Nabat does not interpret status strings.
+func statusIcon(status string) nabat.Icon {
 	switch status {
 	case "running":
-		tok = theme.StatusSuccess
+		return nabat.IconSuccess
 	case "unhealthy":
-		tok = theme.StatusWarning
+		return nabat.IconWarning
 	case "stopped":
-		tok = theme.StatusError
+		return nabat.IconError
 	default: // "unknown" and anything else
-		tok = theme.TextMuted
+		return nabat.IconUnknown
 	}
-	return th.Style(tok).Render("● " + status)
 }
 
 // shortenHome replaces the user's home directory prefix with "~" so long paths

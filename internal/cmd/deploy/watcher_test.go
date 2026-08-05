@@ -31,7 +31,6 @@ import (
 	"deployah.dev/deployah/internal/k8s"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clienttesting "k8s.io/client-go/testing"
 )
 
@@ -57,7 +56,7 @@ func makeDeployEvent(uid types.UID, evType, reason, object, message string, coun
 // written to stderr (the title + plain-text row table).
 func runStatus(t *testing.T, fn func(*nabat.Status), title string) string {
 	t.Helper()
-	io, _, _, stderr := nabattest.NewIO()
+	io, _, _, _ := nabattest.NewIO()
 	app := nabat.MustNew("test", nabat.WithIO(io))
 	app.MustCommand("run", nabat.WithRun(func(c *nabat.Context) error {
 		return c.Status(func(st *nabat.Status) error {
@@ -65,8 +64,9 @@ func runStatus(t *testing.T, fn func(*nabat.Status), title string) string {
 			return nil
 		}, nabat.WithTitle(title))
 	}))
-	require.NoError(t, nabattest.Run(t, app, []string{"run"}))
-	return stderr.String()
+	got := nabattest.Capture(t, app, []string{"run"})
+	require.NoError(t, got.Err)
+	return got.Stderr.String()
 }
 
 // TestDeployWatcher_Warnings_CollectsOnlyWarningEvents verifies that
@@ -259,13 +259,11 @@ func TestDeployWatcher_UpdateTitle_StaleWithoutPods(t *testing.T) {
 
 func readyPod(name, component, release string) *corev1.Pod {
 	return &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: "default",
-			Labels: map[string]string{
-				"app.kubernetes.io/instance": release,
-				"deployah.dev/component":     component,
-			},
+		Name:      name,
+		Namespace: "default",
+		Labels: map[string]string{
+			"app.kubernetes.io/instance": release,
+			"deployah.dev/component":     component,
 		},
 		Status: corev1.PodStatus{
 			Phase:             corev1.PodRunning,

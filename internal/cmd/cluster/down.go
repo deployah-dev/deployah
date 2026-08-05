@@ -63,33 +63,33 @@ func runDown(c *nabat.Context) error {
 		return nil
 	}
 
-	if !opts.Force {
-		confirmed, confirmErr := c.Confirm(
-			"Delete the local cluster? This removes all workloads running in it.",
-			nabat.WithAffirmative("Yes, delete it"),
-			nabat.WithNegative("No, cancel"),
-		)
-		if confirmErr != nil {
-			return fmt.Errorf("confirmation: %w", confirmErr)
-		}
-		if !confirmed {
-			c.Info("Delete cancelled")
-			return nil
-		}
+	confirmed, confirmErr := c.Confirm(
+		"Delete the local cluster? This removes all workloads running in it.",
+		nabat.WithAffirmative("Yes, delete it"),
+		nabat.WithNegative("No, cancel"),
+		nabat.WithYes(opts.Force),
+		nabat.WithBypassHint("--force"),
+	)
+	if confirmErr != nil {
+		return confirmErr
+	}
+	if !confirmed {
+		c.Info("Delete cancelled")
+		return nil
 	}
 
 	// Stop the cloud provider container first; ignore ErrUnsupported (engine mismatch).
-	if spinErr := c.Spinner("Stopping cloud provider...", func(_ *nabat.Spinner) error {
+	if spinErr := c.Spinner(func(_ *nabat.Spinner) error {
 		stopErr := m.StopCloudProvider(c, localkube.WithClusterName(clusterName))
 		if stopErr != nil && !errors.Is(stopErr, localkube.ErrUnsupported) {
 			return stopErr
 		}
 		return nil
-	}); spinErr != nil {
+	}, nabat.WithTitle("Stopping cloud provider...")); spinErr != nil {
 		return fmt.Errorf("stop cloud provider: %w", spinErr)
 	}
 
-	if spinErr := c.Spinner("Deleting local cluster", func(sp *nabat.Spinner) error {
+	if spinErr := c.Spinner(func(sp *nabat.Spinner) error {
 		return m.Delete(c, clusterName,
 			localkube.WithIgnoreMissing(),
 			localkube.WithDeleteEventHandler(func(e localkube.Event) {
@@ -100,7 +100,7 @@ func runDown(c *nabat.Context) error {
 				}
 			}),
 		)
-	}); spinErr != nil {
+	}, nabat.WithTitle("Deleting local cluster")); spinErr != nil {
 		return fmt.Errorf("delete local cluster: %w", spinErr)
 	}
 

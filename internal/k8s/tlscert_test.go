@@ -27,7 +27,6 @@ import (
 	"deployah.dev/deployah/internal/spec"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	certutil "k8s.io/client-go/util/cert"
 )
 
@@ -43,11 +42,9 @@ func leafOf(t *testing.T, certPEM []byte) *x509.Certificate {
 
 func tlsSecret(certPEM, keyPEM []byte, secretType corev1.SecretType) *corev1.Secret {
 	return &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      selfSignedSecretName(tlsTestFQDN),
-			Namespace: testNamespace,
-		},
-		Type: secretType,
+		Name:      selfSignedSecretName(tlsTestFQDN),
+		Namespace: testNamespace,
+		Type:      secretType,
 		Data: map[string][]byte{
 			corev1.TLSCertKey:       certPEM,
 			corev1.TLSPrivateKeyKey: keyPEM,

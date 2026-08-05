@@ -105,8 +105,7 @@ func Resolve(
 
 		rc, compFields, err := resolveComponent(compName, comp, platformEnv, env, substReport, platform)
 		if err != nil {
-			var re *ResolutionError
-			if errors.As(err, &re) {
+			if re, ok := errors.AsType[*ResolutionError](err); ok {
 				report.ErrorCode = re.Code
 			} else {
 				report.ErrorCode = ErrCodeDomainGap

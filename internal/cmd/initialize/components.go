@@ -318,7 +318,7 @@ func collectComponentRole(c *nabat.Context, component *spec.Component, component
 		labels = append(labels, roleLabels[r])
 	}
 
-	choice, err := nabat.Select(c,
+	choice, err := c.Select(
 		fmt.Sprintf("Role for %s - how does this component run?", componentName),
 		labels,
 		roleLabels[spec.ComponentRoleService],
@@ -341,7 +341,7 @@ func collectComponentKind(c *nabat.Context, component *spec.Component, component
 		labels = append(labels, kindLabels[k])
 	}
 
-	choice, err := nabat.Select(c,
+	choice, err := c.Select(
 		fmt.Sprintf("Kind for %s - does it keep data on disk?", componentName),
 		labels,
 		kindLabels[spec.ComponentKindStateless],
@@ -412,7 +412,7 @@ func collectComponentResources(c *nabat.Context, component *spec.Component, comp
 	}
 	labels = append(labels, customResourcesLabel)
 
-	choice, err := nabat.Select(c,
+	choice, err := c.Select(
 		fmt.Sprintf("Resources for %s — Select a resource preset or enter custom values", componentName),
 		labels,
 		presetLabel(spec.ResourcePresetSmall),
@@ -549,23 +549,19 @@ func collectComponentAutoscaling(c *nabat.Context, component *spec.Component, co
 			Enabled: true,
 		}
 
-		// Initialize the bound variables so the TTY form shows the defaults
-		// prefilled. nabat.WithDefault only sets the non-interactive
-		// fallback value; it does not prefill the widget.
-		minReplicasStr := strconv.Itoa(DefaultMinReplicas)
-		maxReplicasStr := strconv.Itoa(DefaultMaxReplicas)
+		var minReplicasStr, maxReplicasStr string
 		err = c.Form(
 			nabat.WithFormTitle(fmt.Sprintf("Autoscaling Configuration for %s", componentName)),
 			nabat.WithFormField(&minReplicasStr, "Minimum Replicas",
 				"Minimum number of replicas to maintain",
 				nabat.WithHint(strconv.Itoa(DefaultMinReplicas)),
-				nabat.WithDefault(strconv.Itoa(DefaultMinReplicas)),
+				nabat.WithPrefill(strconv.Itoa(DefaultMinReplicas)),
 				nabat.WithValidate(func(s string) error { return validate.ValidatePositiveInteger(s, "minimum replicas") }),
 			),
 			nabat.WithFormField(&maxReplicasStr, "Maximum Replicas",
 				"Maximum number of replicas allowed",
 				nabat.WithHint(strconv.Itoa(DefaultMaxReplicas)),
-				nabat.WithDefault(strconv.Itoa(DefaultMaxReplicas)),
+				nabat.WithPrefill(strconv.Itoa(DefaultMaxReplicas)),
 				nabat.WithValidate(func(s string) error { return validate.ValidatePositiveInteger(s, "maximum replicas") }),
 			),
 		)
@@ -748,7 +744,7 @@ func collectComponentEnvironments(c *nabat.Context, component *spec.Component, c
 		return nil
 	}
 
-	selectedEnvs, err := nabat.MultiSelect(c,
+	selectedEnvs, err := c.MultiSelect(
 		fmt.Sprintf("Environment Selection for %s — Select one or more environments for this component", componentName),
 		availableEnvironments,
 		availableEnvironments,

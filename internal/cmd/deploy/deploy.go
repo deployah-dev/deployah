@@ -12,7 +12,6 @@ import (
 	"helm.sh/helm/v4/pkg/postrenderer"
 	"k8s.io/client-go/kubernetes"
 	"nabat.dev/nabat"
-	"nabat.dev/theme"
 
 	"deployah.dev/deployah/internal/cmd/cmdopts"
 	"deployah.dev/deployah/internal/extras"
@@ -67,12 +66,7 @@ deployah deploy prod --explain
 
 # Preview what a deploy would change, without touching the cluster
 deployah plan prod --offline`),
-		nabat.WithRun(func(c *nabat.Context) error {
-			// Captured here (not read from *nabat.Context, which has no
-			// public accessor for it) so RenderText can color its output;
-			// see internal/plan/format_text.go's TextOptions.Theme doc.
-			return runDeploy(c, app.Theme())
-		}),
+		nabat.WithRun(runDeploy),
 	)
 }
 
@@ -85,12 +79,11 @@ type deployPlan struct {
 	cleanup func()
 }
 
-func runDeploy(c *nabat.Context, resolvedTheme theme.ResolvedTheme) error {
+func runDeploy(c *nabat.Context) error {
 	opts := &Options{}
 	if err := c.Bind(opts); err != nil {
 		return fmt.Errorf("binding options: %w", err)
 	}
-
 	c.Logger().Debug("starting deployment process")
 
 	sess := session.FromContext(c)
@@ -205,7 +198,7 @@ func runDeploy(c *nabat.Context, resolvedTheme theme.ResolvedTheme) error {
 		c.Printf("CRDs: %d from .deployah/crds/ (policy %s)\n", n, opts.CRDs)
 	}
 
-	textOpts := planengine.TextOptions{Mode: planengine.ModeCompact, Theme: resolvedTheme}
+	textOpts := planengine.TextOptions{Mode: planengine.ModeCompact, Theme: c.Theme()}
 	if renderErr := planengine.RenderText(c.IO().Out, plan.diff, textOpts); renderErr != nil {
 		return fmt.Errorf("render plan: %w", renderErr)
 	}
@@ -263,18 +256,16 @@ func skipWhenIdle(helmIdle bool, crdCount int) bool {
 }
 
 // confirmApply gates the real apply behind --yes or an interactive prompt.
-// proceed is false with a nil error on a clean "no"; err is non-nil only when
-// non-interactive without --yes, or the prompt fails. prompt must be non-empty.
+// proceed is false with a nil error on a clean "no"; err is non-nil when
+// non-interactive without --yes ([nabat.ErrConfirmationRequired]), or the
+// prompt fails. prompt must be non-empty.
 func confirmApply(c *nabat.Context, opts *Options, prompt string) (proceed bool, err error) {
-	if opts.Yes {
-		return true, nil
-	}
-	if !c.IsInteractive() {
-		return false, errors.New("refusing to deploy without confirmation; re-run with --yes")
-	}
-	confirmed, confirmErr := c.Confirm(prompt)
+	confirmed, confirmErr := c.Confirm(prompt,
+		nabat.WithYes(opts.Yes),
+		nabat.WithBypassHint("--yes"),
+	)
 	if confirmErr != nil {
-		return false, fmt.Errorf("confirmation: %w", confirmErr)
+		return false, confirmErr
 	}
 	return confirmed, nil
 }

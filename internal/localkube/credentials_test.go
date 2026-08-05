@@ -164,7 +164,7 @@ func TestPatchDefaultServiceAccount_AddsEntry(t *testing.T) {
 
 	// Pre-create the default SA (fake client starts empty).
 	sa := &corev1.ServiceAccount{
-		ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "default"},
+		Name: "default", Namespace: "default",
 	}
 	client := fake.NewSimpleClientset(sa)
 
@@ -186,7 +186,7 @@ func TestPatchDefaultServiceAccount_Idempotent(t *testing.T) {
 	t.Parallel()
 
 	sa := &corev1.ServiceAccount{
-		ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "default"},
+		Name: "default", Namespace: "default",
 		ImagePullSecrets: []corev1.LocalObjectReference{
 			{Name: registryAuthSecretName},
 		},
@@ -266,7 +266,7 @@ func TestSyncRegistryAuth_WritesSecretAndPatchesSA(t *testing.T) {
 	require.NoError(t, err)
 
 	sa := &corev1.ServiceAccount{
-		ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "default"},
+		Name: "default", Namespace: "default",
 	}
 	client := fake.NewSimpleClientset(sa)
 

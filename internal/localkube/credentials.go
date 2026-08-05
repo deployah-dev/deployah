@@ -165,11 +165,9 @@ func applyRegistryAuthSecret(
 	secretData []byte,
 ) error {
 	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      registryAuthSecretName,
-			Namespace: namespace,
-		},
-		Type: corev1.SecretTypeDockerConfigJson,
+		Name:      registryAuthSecretName,
+		Namespace: namespace,
+		Type:      corev1.SecretTypeDockerConfigJson,
 		Data: map[string][]byte{
 			corev1.DockerConfigJsonKey: secretData,
 		},

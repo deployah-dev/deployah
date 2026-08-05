@@ -46,7 +46,7 @@ func Register(app *nabat.App) {
 
 	registerUp(group)
 	registerDown(group)
-	registerStatus(group, app)
+	registerStatus(group)
 	registerKubeconfig(group)
 }
 
@@ -67,21 +67,6 @@ func newManager(c *nabat.Context, extra ...localkube.Option) (*localkube.Manager
 		localkube.WithEventHandler(logEvent(log)),
 	}, extra...)
 	return localkube.New(opts...)
-}
-
-// runMaybeSpinner runs fn, optionally wrapped in a spinner. When spin is true
-// it delegates to Context.Spinner; otherwise it calls fn directly with a nil
-// handle. The no-spinner path is used for fast idempotent no-ops, where the
-// spinner would add visual noise and (because it starts a Bubble Tea program)
-// can leak terminal capability-probe replies onto the next shell prompt.
-//
-// Callbacks must guard handle use with a nil check, since fn receives nil on
-// the no-spinner path.
-func runMaybeSpinner(c *nabat.Context, title string, spin bool, fn func(*nabat.Spinner) error) error {
-	if spin {
-		return c.Spinner(title, fn)
-	}
-	return fn(nil)
 }
 
 // phaseLabel maps a localkube Step to a short human-readable phrase for use

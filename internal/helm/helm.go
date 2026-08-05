@@ -456,8 +456,7 @@ func (c *Client) wrapHelmError(operation, releaseName string, err error) error {
 		return fmt.Errorf("operation timed out for release '%s': %w", releaseName, err)
 	}
 
-	var opErr *net.OpError
-	if errors.As(err, &opErr) {
+	if _, ok := errors.AsType[*net.OpError](err); ok {
 		return fmt.Errorf("unable to connect to Kubernetes cluster: %w", err)
 	}
 

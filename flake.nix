@@ -21,11 +21,12 @@
       system:
       let
         pkgs = import nixpkgs { inherit system; };
-        go = pkgs.go;
+        # nixpkgs' default `go` may lag; pin the toolchain Nabat requires.
+        go = pkgs.go_1_27;
 
         buildGoModule' = pkgs.buildGoModule.override { inherit go; };
 
-        deployahVendorHash = "sha256-CoOzDrJDWuJCBgN1PQoS3k28Mrg78tv4FxvMvZGn+Ms=";
+        deployahVendorHash = "sha256-KmIlfzjPCysvdQu7O0oIdsVjkdsXK+vLWNtQLdYDJ5A=";
 
         deployah = import ./nix/deployah.nix {
           buildGoModule = buildGoModule';
@@ -65,6 +66,7 @@
             flake-utils
             deployah
             system
+            go
             ;
           lib = lib';
         };

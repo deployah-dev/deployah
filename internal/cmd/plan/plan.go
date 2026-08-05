@@ -15,11 +15,12 @@
 package plan
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"strings"
 
 	"nabat.dev/nabat"
-	"nabat.dev/theme"
 
 	"deployah.dev/deployah/internal/cmd/cmdopts"
 	"deployah.dev/deployah/internal/drift"
@@ -77,12 +78,7 @@ deployah plan production --output json
 
 # Gate a CI job on exit code 2 (pending changes) vs. 0 (no changes)
 deployah plan production --detailed-exitcode`),
-		nabat.WithRun(func(c *nabat.Context) error {
-			// Captured here (not read from *nabat.Context, which has no
-			// public accessor for it) so RenderText can color its output;
-			// see internal/plan/format_text.go's TextOptions.Theme doc.
-			return runPlan(c, app.Theme())
-		}),
+		nabat.WithRun(runPlan),
 	)
 }
 
@@ -112,12 +108,11 @@ func validateOptions(c *nabat.Context) error {
 	return nil
 }
 
-func runPlan(c *nabat.Context, resolvedTheme theme.ResolvedTheme) error {
+func runPlan(c *nabat.Context) error {
 	opts := &Options{}
 	if err := c.Bind(opts); err != nil {
 		return fmt.Errorf("binding options: %w", err)
 	}
-
 	sess := session.FromContext(c)
 
 	// Prescan the raw (pre-envsubst) manifest for ${VAR} tokens so the
@@ -163,7 +158,7 @@ func runPlan(c *nabat.Context, resolvedTheme theme.ResolvedTheme) error {
 	if opts.Offline {
 		return runOffline(c, sess, platform, manifest, opts, resolvedSpec)
 	}
-	return runOnline(c, sess, platform, manifest, opts, resolvedSpec, resolvedTheme)
+	return runOnline(c, sess, platform, manifest, opts, resolvedSpec)
 }
 
 // runOffline renders the chart without contacting the cluster and prints a
@@ -218,7 +213,7 @@ func runOffline(c *nabat.Context, sess *session.Session, platform *spec.Platform
 
 // runOnline renders the chart, diffs it against the last successful
 // release, and displays the resulting plan.
-func runOnline(c *nabat.Context, sess *session.Session, platform *spec.PlatformConfig, manifest *spec.Spec, opts *Options, resolvedSpec *spec.ResolvedSpec, resolvedTheme theme.ResolvedTheme) error {
+func runOnline(c *nabat.Context, sess *session.Session, platform *spec.PlatformConfig, manifest *spec.Spec, opts *Options, resolvedSpec *spec.ResolvedSpec) error {
 	cluster, err := sess.Target(c, opts.Environment)
 	if err != nil {
 		return fmt.Errorf("target cluster: %w", err)
@@ -274,7 +269,7 @@ func runOnline(c *nabat.Context, sess *session.Session, platform *spec.PlatformC
 		}
 	}
 
-	return outputPlan(c, p, opts, resolvedTheme)
+	return outputPlan(c, p, opts)
 }
 
 // checkDrift runs `--drift` detection against the resolved cluster and
@@ -309,16 +304,20 @@ func checkDrift(c *nabat.Context, cluster *session.Cluster, p *planengine.Plan, 
 	return nil
 }
 
-func outputPlan(c *nabat.Context, p *planengine.Plan, opts *Options, resolvedTheme theme.ResolvedTheme) error {
+func outputPlan(c *nabat.Context, p *planengine.Plan, opts *Options) error {
 	if opts.OutputFormat == outputFormatJSON {
-		if err := planengine.RenderJSON(c.IO().Out, p); err != nil {
+		var buf bytes.Buffer
+		if err := planengine.RenderJSON(&buf, p); err != nil {
 			return fmt.Errorf("render json: %w", err)
+		}
+		if err := c.FprintHighlight(c.IO().Out, strings.TrimRight(buf.String(), "\n"), "json"); err != nil {
+			return fmt.Errorf("write json: %w", err)
 		}
 	} else {
 		textOpts := planengine.TextOptions{
 			Mode:        textMode(opts),
 			ShowSecrets: opts.ShowSecrets,
-			Theme:       resolvedTheme,
+			Theme:       c.Theme(),
 		}
 		if err := planengine.RenderText(c.IO().Out, p, textOpts); err != nil {
 			return fmt.Errorf("render text: %w", err)
