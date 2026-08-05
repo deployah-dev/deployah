@@ -29,7 +29,6 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"nabat.dev/nabat"
 	"nabat.dev/nabat/nabattest"
-	"nabat.dev/theme"
 
 	"deployah.dev/deployah/internal/helm"
 	"deployah.dev/deployah/internal/render"
@@ -102,20 +101,12 @@ func (s *stubHelmClient) RollbackRelease(context.Context, string, int, time.Dura
 
 var _ session.HelmClient = (*stubHelmClient)(nil)
 
-// nabatContext returns a bare *nabat.Context and its captured stdout buffer,
-// following the same pattern as internal/cmd/deploy/deploy_test.go's
-// nabatContext helper.
+// nabatContext returns a bare *nabat.Context and its captured stdout buffer.
 func nabatContext(t *testing.T) (*nabat.Context, *bytes.Buffer) {
 	t.Helper()
 	io, _, out, _ := nabattest.NewIO()
-	var captured *nabat.Context
 	app := nabat.MustNew("test", nabat.WithIO(io))
-	app.MustCommand("run", nabat.WithRun(func(c *nabat.Context) error {
-		captured = c
-		return nil
-	}))
-	require.NoError(t, nabattest.Run(t, app, []string{"run"}))
-	return captured, out
+	return nabattest.Context(t, app), out
 }
 
 // sessionWithStub builds a [session.Session] whose Helm client is stub.
@@ -312,7 +303,7 @@ func TestRunOnline(t *testing.T) {
 			opts := testOptions()
 			opts.DetailedExitCode = tt.detailed
 
-			err := runOnline(c, sess, nil, testManifest(), opts, nil, theme.ResolvedTheme{})
+			err := runOnline(c, sess, nil, testManifest(), opts, nil)
 			if tt.wantErrIs != nil {
 				require.Error(t, err)
 				assert.ErrorIs(t, err, tt.wantErrIs)
@@ -342,17 +333,12 @@ func TestRunOnline_DriftOnFreshInstall_NoStdoutFootprint(t *testing.T) {
 	sess := sessionWithStub(stub)
 
 	io, _, out, errOut := nabattest.NewIO()
-	var captured *nabat.Context
 	app := nabat.MustNew("test", nabat.WithIO(io))
-	app.MustCommand("run", nabat.WithRun(func(c *nabat.Context) error {
-		captured = c
-		return nil
-	}))
-	require.NoError(t, nabattest.Run(t, app, []string{"run"}))
+	c := nabattest.Context(t, app)
 
 	opts := testOptions()
 	opts.Drift = true
-	err := runOnline(captured, sess, nil, testManifest(), opts, nil, theme.ResolvedTheme{})
+	err := runOnline(c, sess, nil, testManifest(), opts, nil)
 	require.NoError(t, err, "checkDrift must short-circuit cleanly without a working cluster config")
 
 	assert.NotContains(t, out.String(), "Drift (cluster changed outside deployah):",
@@ -492,7 +478,7 @@ spec:
 	c, out := nabatContext(t)
 	c.SetContext(session.WithContext(c.Context(), sess))
 
-	err := runOnline(c, sess, nil, testManifest(), testOptions(), nil, theme.ResolvedTheme{})
+	err := runOnline(c, sess, nil, testManifest(), testOptions(), nil)
 	require.NoError(t, err)
 	assert.Contains(t, out.String(), "CRDs: 1 pending from .deployah/crds/")
 }

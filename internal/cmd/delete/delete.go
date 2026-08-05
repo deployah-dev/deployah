@@ -149,34 +149,34 @@ func runDelete(c *nabat.Context) error {
 		return renderDryRunPreview(c, opts.Project, opts.Environment, release, opts.ShowResources, opts.Output)
 	}
 
-	if !opts.Yes {
-		targetCtx := cluster.Context()
-		if fallback, current := cluster.ContextFallback(); fallback {
-			targetCtx = current
-		}
-		prompt := fmt.Sprintf("Delete project '%s' in environment '%s'?", opts.Project, opts.Environment)
-		if targetCtx != "" {
-			prompt = fmt.Sprintf("Delete project '%s' in environment '%s' (context: %s)?", opts.Project, opts.Environment, targetCtx)
-		}
-		confirmed, confirmErr := c.Confirm(
-			prompt,
-			nabat.WithAffirmative("Yes, delete it"),
-			nabat.WithNegative("No, cancel"),
-		)
-		if confirmErr != nil {
-			return fmt.Errorf("confirmation: %w", confirmErr)
-		}
-		if !confirmed {
-			c.Info("Delete cancelled")
-			return nil
-		}
+	targetCtx := cluster.Context()
+	if fallback, current := cluster.ContextFallback(); fallback {
+		targetCtx = current
+	}
+	prompt := fmt.Sprintf("Delete project '%s' in environment '%s'?", opts.Project, opts.Environment)
+	if targetCtx != "" {
+		prompt = fmt.Sprintf("Delete project '%s' in environment '%s' (context: %s)?", opts.Project, opts.Environment, targetCtx)
+	}
+	confirmed, confirmErr := c.Confirm(
+		prompt,
+		nabat.WithAffirmative("Yes, delete it"),
+		nabat.WithNegative("No, cancel"),
+		nabat.WithYes(opts.Yes),
+		nabat.WithBypassHint("--yes"),
+	)
+	if confirmErr != nil {
+		return confirmErr
+	}
+	if !confirmed {
+		c.Info("Delete cancelled")
+		return nil
 	}
 
 	err = c.Spinner(
-		fmt.Sprintf("Deleting '%s' in '%s'...", opts.Project, opts.Environment),
 		func(_ *nabat.Spinner) error {
 			return helmClient.DeleteRelease(c, opts.Project, opts.Environment, opts.Wait)
 		},
+		nabat.WithTitle(fmt.Sprintf("Deleting '%s' in '%s'...", opts.Project, opts.Environment)),
 	)
 	if err != nil {
 		return fmt.Errorf("delete release: %w", err)

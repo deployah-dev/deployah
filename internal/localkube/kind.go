@@ -150,11 +150,9 @@ func buildKindConfig(cfg *createConfig) (*kindv1alpha4.Cluster, error) {
 		})
 	}
 	return &kindv1alpha4.Cluster{
-		TypeMeta: kindv1alpha4.TypeMeta{
-			Kind:       "Cluster",
-			APIVersion: "kind.x-k8s.io/v1alpha4",
-		},
-		Nodes: []kindv1alpha4.Node{node},
+		Kind:       "Cluster",
+		APIVersion: "kind.x-k8s.io/v1alpha4",
+		Nodes:      []kindv1alpha4.Node{node},
 	}, nil
 }
 

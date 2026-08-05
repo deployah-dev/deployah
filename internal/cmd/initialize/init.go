@@ -167,49 +167,23 @@ func runInit(c *nabat.Context) error {
 // checkOverwrite guards against silently clobbering an existing spec file.
 // It reports whether the caller should proceed with initialization.
 func checkOverwrite(c *nabat.Context, opts *Options) (proceed bool, err error) {
-	confirmOverwrite := func(prompt string) (bool, error) {
-		return c.Confirm(prompt,
-			nabat.WithAffirmative("Yes, overwrite"),
-			nabat.WithNegative("No, cancel"),
-		)
-	}
-	proceed, cancelMsg, err := resolveOverwrite(opts.Output, opts.Force, c.IsInteractive(), confirmOverwrite)
-	if err != nil {
-		return false, err
-	}
-	if cancelMsg != "" {
-		c.Info(cancelMsg)
-	}
-	return proceed, nil
-}
-
-// resolveOverwrite implements the overwrite decision matrix, taking confirm
-// as a func so the file-exists x force x interactive matrix can be unit
-// tested without simulating a real TTY session.
-func resolveOverwrite(path string, force, interactive bool, confirm func(prompt string) (bool, error)) (proceed bool, cancelMsg string, err error) {
-	if force {
-		return true, "", nil
+	if _, statErr := os.Stat(opts.Output); statErr != nil {
+		return true, nil
 	}
 
-	if _, statErr := os.Stat(path); statErr != nil {
-		return true, "", nil
-	}
-
-	if !interactive {
-		// Fail closed with a plain, grep-friendly error instead of letting
-		// nabat's Confirm crash with "requires interactive terminal".
-		return false, "", fmt.Errorf("%s already exists; pass --force to overwrite", path)
-	}
-
-	// Only reached on the interactive, file-exists, non-force path.
-	overwrite, confirmErr := confirm(fmt.Sprintf("%s already exists. Overwrite it?", path))
+	overwrite, confirmErr := c.Confirm(
+		fmt.Sprintf("%s already exists. Overwrite it?", opts.Output),
+		nabat.WithAffirmative("Yes, overwrite"),
+		nabat.WithNegative("No, cancel"),
+		nabat.WithYes(opts.Force),
+		nabat.WithBypassHint("--force"),
+	)
 	if confirmErr != nil {
-		return false, "", fmt.Errorf("failed to confirm overwrite: %w", confirmErr)
+		return false, confirmErr
 	}
 	if !overwrite {
-		// cancelMsg is non-empty only here, so the caller can print it.
-		return false, "Cancelled: " + path + " was not modified.", nil
+		c.Info("Cancelled: " + opts.Output + " was not modified.")
+		return false, nil
 	}
-
-	return true, "", nil
+	return true, nil
 }

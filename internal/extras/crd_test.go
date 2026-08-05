@@ -95,7 +95,7 @@ func (f *fakeCRDClient) Apply(_ context.Context, name string, patch []byte) (*ap
 	}
 	f.lastPatch = append([]byte(nil), patch...)
 	crd := &apiextensionsv1.CustomResourceDefinition{
-		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Name: name,
 	}
 	f.objects[name] = crd
 	f.applies++
@@ -174,7 +174,7 @@ func TestApplyCRDs_CreateIfMissing(t *testing.T) {
 	client := newFakeCRDClient()
 	client.establishAfterNGets = 1
 	existing := &apiextensionsv1.CustomResourceDefinition{
-		ObjectMeta: metav1.ObjectMeta{Name: "existing.example.com", ResourceVersion: "1"},
+		Name: "existing.example.com", ResourceVersion: "1",
 	}
 	client.objects[existing.Name] = existing
 
@@ -197,7 +197,7 @@ func TestApplyCRDs_CreateReplaceAppliesExisting(t *testing.T) {
 	client := newFakeCRDClient()
 	client.establishAfterNGets = 1
 	client.objects["widgets.example.com"] = &apiextensionsv1.CustomResourceDefinition{
-		ObjectMeta: metav1.ObjectMeta{Name: "widgets.example.com", ResourceVersion: "7"},
+		Name: "widgets.example.com", ResourceVersion: "7",
 	}
 
 	stats, err := applyCRDs(t.Context(), client, []Object{
@@ -263,7 +263,7 @@ func TestApplyCRDs_WaitAPIError(t *testing.T) {
 	t.Parallel()
 	client := newFakeCRDClient()
 	client.objects["broken.example.com"] = &apiextensionsv1.CustomResourceDefinition{
-		ObjectMeta: metav1.ObjectMeta{Name: "broken.example.com"},
+		Name: "broken.example.com",
 	}
 	client.failGetAfter = 1
 
@@ -411,7 +411,7 @@ spec:
 		t.Parallel()
 		client := newFakeCRDClient()
 		client.objects["widgets.example.com"] = &apiextensionsv1.CustomResourceDefinition{
-			ObjectMeta: metav1.ObjectMeta{Name: "widgets.example.com"},
+			Name: "widgets.example.com",
 		}
 		client.applyErr = errors.New("ssa rejected")
 		_, err := applyCRDs(t.Context(), client, []Object{

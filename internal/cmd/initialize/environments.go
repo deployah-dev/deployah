@@ -42,19 +42,11 @@ func resolveEnvironments(c *nabat.Context, config *ProjectConfig, flagEnvironmen
 // When the local environment is declined, the input requires at least one
 // name; the rule is enforced inline so no warning outlives the step.
 func collectEnvironments(c *nabat.Context, config *ProjectConfig) error {
-	// A bound form field is used instead of c.Confirm: the ad-hoc Confirm
-	// only applies WithDefault as its non-interactive fallback, so it
-	// always starts on "No"; a form field starts on the target's value.
-	useLocal := true
-	err := c.Form(
-		nabat.WithFormGroup(
-			nabat.WithFormField(&useLocal,
-				StepEnvironments+" — Set up a local environment?",
-				"Creates a kind cluster config; matches 'deployah cluster up'",
-				nabat.WithAffirmative("Yes"),
-				nabat.WithNegative("No"),
-			),
-		),
+	useLocal, err := c.Confirm(
+		StepEnvironments+" — Set up a local environment?",
+		nabat.WithAffirmative("Yes"),
+		nabat.WithNegative("No"),
+		nabat.WithInitial(true),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to collect local environment choice: %w", err)

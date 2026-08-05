@@ -23,7 +23,6 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func pod(name, component string, ready bool) *corev1.Pod {
@@ -32,13 +31,11 @@ func pod(name, component string, ready bool) *corev1.Pod {
 		phase = corev1.PodPending
 	}
 	return &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: "default",
-			Labels: map[string]string{
-				"app.kubernetes.io/instance": "web-production",
-				"deployah.dev/component":     component,
-			},
+		Name:      name,
+		Namespace: "default",
+		Labels: map[string]string{
+			"app.kubernetes.io/instance": "web-production",
+			"deployah.dev/component":     component,
 		},
 		Status: corev1.PodStatus{
 			Phase:             phase,

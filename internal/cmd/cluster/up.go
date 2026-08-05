@@ -99,15 +99,15 @@ func runUp(c *nabat.Context) error {
 	_, getErr := m.Get(c, clusterName)
 	clusterExisted := getErr == nil
 
-	// Skip the spinner when the cluster already exists: Create is then a fast
-	// idempotent no-op, so the spinner only adds noise (and risks leaking
-	// terminal probe replies on the quick path).
+	// Spinner delays animation until work runs past the default grace period,
+	// so a fast idempotent Create (cluster already exists) prints at most a
+	// static line and never probes the terminal.
 	const createTitle = "Creating local cluster"
-	if spinErr := runMaybeSpinner(c, createTitle, !clusterExisted, func(sp *nabat.Spinner) error {
+	if spinErr := c.Spinner(func(sp *nabat.Spinner) error {
 		return m.Create(c, clusterName,
 			localkube.WithCreateIfMissing(),
 			localkube.WithCreateEventHandler(func(e localkube.Event) {
-				if sp == nil || e.Status != localkube.StepStarted {
+				if e.Status != localkube.StepStarted {
 					return
 				}
 				if lbl := phaseLabel(e.Step); lbl != "" {
@@ -115,7 +115,7 @@ func runUp(c *nabat.Context) error {
 				}
 			}),
 		)
-	}); spinErr != nil {
+	}, nabat.WithTitle(createTitle)); spinErr != nil {
 		return fmt.Errorf("create local cluster: %w", spinErr)
 	}
 
@@ -185,13 +185,12 @@ func runUp(c *nabat.Context) error {
 	}
 
 	// Background: start container and return immediately. Capture the prior
-	// state first so the message reflects whether we actually started it, and
-	// skip the spinner when it is already running (StartCloudProvider is then a
-	// fast no-op).
+	// state first so the message reflects whether we actually started it.
+	// Delayed spinner covers the already-running fast path.
 	cloudWasRunning := m.CloudProviderRunning(c)
-	if startErr := runMaybeSpinner(c, "Starting cloud provider...", !cloudWasRunning, func(_ *nabat.Spinner) error {
+	if startErr := c.Spinner(func(_ *nabat.Spinner) error {
 		return m.StartCloudProvider(c)
-	}); startErr != nil {
+	}, nabat.WithTitle("Starting cloud provider...")); startErr != nil {
 		if errors.Is(startErr, localkube.ErrUnsupported) {
 			c.Info("Cloud provider not supported on this runtime; LoadBalancer and Ingress will not be reachable")
 			nextSteps(true)

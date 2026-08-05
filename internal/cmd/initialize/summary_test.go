@@ -14,20 +14,13 @@ import (
 )
 
 // nabatContext builds a minimal *nabat.Context for tests that call
-// functions requiring one.
+// functions requiring one. Non-TTY: any prompt reachable from the tested
+// function must have a fallback, or must not be reached.
 func nabatContext(t *testing.T) *nabat.Context {
 	t.Helper()
-	var captured *nabat.Context
-	// Non-TTY: any prompt reachable from the tested function must have a
-	// fallback, or must not be reached.
 	io, _, _, _ := nabattest.NewIO()
 	app := nabat.MustNew("test", nabat.WithIO(io))
-	app.MustCommand("run", nabat.WithRun(func(c *nabat.Context) error {
-		captured = c
-		return nil
-	}))
-	require.NoError(t, nabattest.Run(t, app, []string{"run"}))
-	return captured
+	return nabattest.Context(t, app)
 }
 
 // TestShowSummaryAndSave_RoleAwareComponentsProduceValidSpec is an
@@ -195,13 +188,8 @@ func TestShowSummaryAndSave_ExtrasAlreadyExist(t *testing.T) {
 	}
 
 	io, _, _, errOut := nabattest.NewIO()
-	var captured *nabat.Context
 	app := nabat.MustNew("test", nabat.WithIO(io))
-	app.MustCommand("run", nabat.WithRun(func(c *nabat.Context) error {
-		captured = c
-		return nil
-	}))
-	require.NoError(t, nabattest.Run(t, app, []string{"run"}))
-	require.NoError(t, showSummaryAndSave(captured, config))
+	c := nabattest.Context(t, app)
+	require.NoError(t, showSummaryAndSave(c, config))
 	assert.Contains(t, errOut.String(), ".deployah/manifests/ and .deployah/crds/ already exist")
 }

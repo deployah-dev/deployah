@@ -12,7 +12,7 @@ func selectComponentInteractively(c *nabat.Context, components []string) (string
 		return components[0], nil
 	}
 
-	return nabat.Select(c,
+	return c.Select(
 		"Select Component — Choose which component to connect to:",
 		components,
 		components[0],
@@ -33,7 +33,7 @@ func selectContainerInteractively(c *nabat.Context, containers []string, compone
 		}
 	}
 
-	return nabat.Select(c,
+	return c.Select(
 		fmt.Sprintf("Select Container — Choose which container in component '%s' to connect to:", componentName),
 		containers,
 		defaultContainer,
@@ -46,7 +46,7 @@ func selectEnvironmentInteractively(c *nabat.Context, environments []string, pro
 		return environments[0], nil
 	}
 
-	return nabat.Select(c,
+	return c.Select(
 		fmt.Sprintf("Select Environment — Choose which environment for project '%s' component '%s' to connect to:", projectName, componentName),
 		environments,
 		environments[0],

@@ -23,6 +23,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
+	"nabat.dev/nabat"
 
 	"deployah.dev/deployah/internal/extras"
 	"deployah.dev/deployah/internal/k8s"
@@ -32,7 +33,6 @@ import (
 
 	planengine "deployah.dev/deployah/internal/plan"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // newClusterWithStub builds a [session.Cluster] whose Kubernetes client is
@@ -99,8 +99,8 @@ func TestConfirmApply(t *testing.T) {
 		name        string
 		opts        *Options
 		wantProceed bool
-		wantErr     bool
-		errContains []string
+		wantErrIs   error
+		wantHint    string
 	}{
 		{
 			name:        "yes skips prompt",
@@ -108,10 +108,10 @@ func TestConfirmApply(t *testing.T) {
 			wantProceed: true,
 		},
 		{
-			name:        "non-interactive without yes refuses",
-			opts:        &Options{Yes: false},
-			wantErr:     true,
-			errContains: []string{"refusing to deploy without confirmation", "--yes"},
+			name:      "non-interactive without yes refuses",
+			opts:      &Options{Yes: false},
+			wantErrIs: nabat.ErrConfirmationRequired,
+			wantHint:  "--yes",
 		},
 	}
 
@@ -120,12 +120,12 @@ func TestConfirmApply(t *testing.T) {
 			t.Parallel()
 			c := nabatContext(t) // nabattest.NewIO reports non-TTY by default
 			proceed, err := confirmApply(c, tt.opts, "Apply these changes?")
-			if tt.wantErr {
-				require.Error(t, err)
+			if tt.wantErrIs != nil {
+				require.ErrorIs(t, err, tt.wantErrIs)
 				assert.False(t, proceed)
-				for _, s := range tt.errContains {
-					assert.Contains(t, err.Error(), s)
-				}
+				var ce *nabat.ConfirmationError
+				require.ErrorAs(t, err, &ce)
+				assert.Equal(t, tt.wantHint, ce.BypassHint)
 				return
 			}
 			require.NoError(t, err)
@@ -171,13 +171,11 @@ func TestSkipDeploy_NoChanges_ShowsReadinessSummary(t *testing.T) {
 	t.Parallel()
 	k8sClient := fake.NewSimpleClientset(
 		&corev1.Pod{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "web-1",
-				Namespace: "default",
-				Labels: map[string]string{
-					"app.kubernetes.io/instance":  "web-production",
-					"app.kubernetes.io/component": "web",
-				},
+			Name:      "web-1",
+			Namespace: "default",
+			Labels: map[string]string{
+				"app.kubernetes.io/instance":  "web-production",
+				"app.kubernetes.io/component": "web",
 			},
 			Status: corev1.PodStatus{
 				Phase:      corev1.PodRunning,
@@ -300,13 +298,11 @@ func TestApplyCRDsOnly_ReportsSuccessAndReadiness(t *testing.T) {
 	t.Parallel()
 	k8sClient := fake.NewSimpleClientset(
 		&corev1.Pod{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "web-1",
-				Namespace: "default",
-				Labels: map[string]string{
-					"app.kubernetes.io/instance":  "web-production",
-					"app.kubernetes.io/component": "web",
-				},
+			Name:      "web-1",
+			Namespace: "default",
+			Labels: map[string]string{
+				"app.kubernetes.io/instance":  "web-production",
+				"app.kubernetes.io/component": "web",
 			},
 			Status: corev1.PodStatus{
 				Phase: corev1.PodRunning,
