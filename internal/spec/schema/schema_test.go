@@ -16,7 +16,7 @@ type SchemaTestSuite struct {
 
 // TestGetManifestSchema verifies manifest schema retrieval for a version.
 func (s *SchemaTestSuite) TestGetManifestSchema() {
-	schema, err := GetManifestSchema("v1-alpha.2")
+	schema, err := GetManifestSchema("v1-alpha.3")
 	s.Require().NoError(err)
 	s.Require().NotNil(schema)
 }
@@ -32,7 +32,7 @@ func (s *SchemaTestSuite) TestGetManifestSchema_InvalidVersion() {
 // TestGetEnvironmentsSchema verifies environments schema retrieval for a
 // version.
 func (s *SchemaTestSuite) TestGetEnvironmentsSchema() {
-	schema, err := GetEnvironmentsSchema("v1-alpha.2")
+	schema, err := GetEnvironmentsSchema("v1-alpha.3")
 	s.Require().NoError(err)
 	s.Require().NotNil(schema)
 }

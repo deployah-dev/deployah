@@ -1,5 +1,5 @@
-# $schema: ../../internal/spec/schema/v1-alpha.2/manifest.json
-apiVersion: v1-alpha.2
+# $schema: ../../internal/spec/schema/v1-alpha.3/manifest.json
+apiVersion: v1-alpha.3
 project: multi-env
 components:
   web:

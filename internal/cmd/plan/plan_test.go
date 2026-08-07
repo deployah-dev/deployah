@@ -186,7 +186,7 @@ data:
 `
 
 func testManifest() *spec.Spec {
-	return &spec.Spec{Project: "web", APIVersion: "v1-alpha.2"}
+	return &spec.Spec{Project: "web", APIVersion: "v1-alpha.3"}
 }
 
 func testOptions() *Options {
@@ -381,7 +381,7 @@ func TestRunOffline_PrintsPendingCRDs(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	specPath := filepath.Join(dir, "deployah.yaml")
-	writePlanExtras(t, dir, "deployah.yaml", "apiVersion: deployah.dev/v1-alpha.2\nproject: web\n")
+	writePlanExtras(t, dir, "deployah.yaml", "apiVersion: deployah.dev/v1-alpha.3\nproject: web\n")
 	writePlanExtras(t, dir, ".deployah/crds/widget.yaml", `
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
@@ -422,7 +422,7 @@ func TestRunOffline_LoadExtrasError(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	specPath := filepath.Join(dir, "deployah.yaml")
-	writePlanExtras(t, dir, "deployah.yaml", "apiVersion: deployah.dev/v1-alpha.2\nproject: web\n")
+	writePlanExtras(t, dir, "deployah.yaml", "apiVersion: deployah.dev/v1-alpha.3\nproject: web\n")
 	writePlanExtras(t, dir, ".deployah/manifests/bad.yaml", "not: [valid")
 	stub := &stubHelmClient{offlineResult: renderResult(deploymentV1)}
 	sess := session.New(
@@ -445,7 +445,7 @@ func TestRunOnline_PrintsPendingCRDs(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	specPath := filepath.Join(dir, "deployah.yaml")
-	writePlanExtras(t, dir, "deployah.yaml", "apiVersion: deployah.dev/v1-alpha.2\nproject: web\n")
+	writePlanExtras(t, dir, "deployah.yaml", "apiVersion: deployah.dev/v1-alpha.3\nproject: web\n")
 	writePlanExtras(t, dir, ".deployah/crds/widget.yaml", `
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition

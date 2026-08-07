@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: Service
+metadata:
+    annotations:
+        deployah.dev/project: stateful-profile-retention
+        deployah.dev/source: spec
+    labels:
+        app.kubernetes.io/instance: stateful-profile-retention-production
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: db
+        deployah.dev/component: db
+        deployah.dev/environment: production
+        deployah.dev/project: stateful-profile-retention
+        helm.sh/chart: db-0.1.0
+    name: stateful-profile-retention-production-db-headless
+    namespace: default
+spec:
+    clusterIP: None
+    ports:
+        - name: http
+          port: 80
+          protocol: TCP
+          targetPort: http
+    publishNotReadyAddresses: true
+    selector:
+        app.kubernetes.io/instance: stateful-profile-retention-production
+        app.kubernetes.io/name: db
+    type: ClusterIP

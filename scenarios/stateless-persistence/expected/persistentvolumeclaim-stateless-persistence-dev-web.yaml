@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+    annotations:
+        deployah.dev/project: stateless-persistence
+        deployah.dev/source: spec
+    labels:
+        app.kubernetes.io/instance: stateless-persistence-dev
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: web
+        deployah.dev/component: web
+        deployah.dev/environment: dev
+        deployah.dev/project: stateless-persistence
+        helm.sh/chart: web-0.1.0
+    name: stateless-persistence-dev-web
+    namespace: default
+spec:
+    accessModes:
+        - ReadWriteOnce
+    resources:
+        requests:
+            storage: 1Gi

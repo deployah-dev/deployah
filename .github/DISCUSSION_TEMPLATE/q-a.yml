@@ -74,7 +74,7 @@ body:
       label: Relevant config
       description: Minimal deployah.yaml (and platform file if used). Redact secrets.
       placeholder: |
-        apiVersion: v1-alpha.2
+        apiVersion: v1-alpha.3
         project: my-first-app
         components:
           web:

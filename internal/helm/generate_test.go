@@ -287,11 +287,11 @@ func TestMapSpecToChartValues_EnvironmentFilterPrefixMatch(t *testing.T) {
 			comp := serviceComponent()
 			comp.Environments = tt.filter
 			m := &spec.Spec{
-				APIVersion: "v1-alpha.2",
+				APIVersion: "v1-alpha.3",
 				Project:    "shop",
 				Components: map[string]spec.Component{"web": comp},
 			}
-			require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.2"))
+			require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.3"))
 
 			vals, err := MapSpecToChartValues(m, tt.environment, nil)
 			require.NoError(t, err)
@@ -312,7 +312,7 @@ func TestMapSpecToChartValues_SelfSignedTLS(t *testing.T) {
 
 	subdomain := "api"
 	m := &spec.Spec{
-		APIVersion: "v1-alpha.2",
+		APIVersion: "v1-alpha.3",
 		Project:    "shop",
 		Environments: map[string]spec.Environment{
 			"local": {},
@@ -329,7 +329,7 @@ func TestMapSpecToChartValues_SelfSignedTLS(t *testing.T) {
 			},
 		},
 	}
-	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.2"))
+	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.3"))
 
 	resolved := &spec.ResolvedSpec{
 		Spec: m,
@@ -375,7 +375,7 @@ func TestMapSpecToChartValues_SelfSignedTLS_Unmaterialized(t *testing.T) {
 
 	subdomain := "api"
 	m := &spec.Spec{
-		APIVersion: "v1-alpha.2",
+		APIVersion: "v1-alpha.3",
 		Project:    "shop",
 		Environments: map[string]spec.Environment{
 			"local": {},
@@ -392,7 +392,7 @@ func TestMapSpecToChartValues_SelfSignedTLS_Unmaterialized(t *testing.T) {
 			},
 		},
 	}
-	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.2"))
+	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.3"))
 
 	resolved := &spec.ResolvedSpec{
 		Spec: m,
@@ -418,7 +418,7 @@ func TestMapSpecToChartValues_SecretNameTLS(t *testing.T) {
 
 	subdomain := "api"
 	m := &spec.Spec{
-		APIVersion: "v1-alpha.2",
+		APIVersion: "v1-alpha.3",
 		Project:    "shop",
 		Environments: map[string]spec.Environment{
 			"production": {},
@@ -435,7 +435,7 @@ func TestMapSpecToChartValues_SecretNameTLS(t *testing.T) {
 			},
 		},
 	}
-	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.2"))
+	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.3"))
 
 	resolved := &spec.ResolvedSpec{
 		Spec: m,
@@ -466,7 +466,7 @@ func TestMapSpecToChartValues_CertManagerTLS(t *testing.T) {
 
 	subdomain := "api"
 	m := &spec.Spec{
-		APIVersion: "v1-alpha.2",
+		APIVersion: "v1-alpha.3",
 		Project:    "shop",
 		Environments: map[string]spec.Environment{
 			"production": {},
@@ -483,7 +483,7 @@ func TestMapSpecToChartValues_CertManagerTLS(t *testing.T) {
 			},
 		},
 	}
-	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.2"))
+	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.3"))
 
 	resolved := &spec.ResolvedSpec{
 		Spec: m,
@@ -514,7 +514,7 @@ func TestMapSpecToChartValues_Autoscaling(t *testing.T) {
 	t.Parallel()
 
 	m := &spec.Spec{
-		APIVersion: "v1-alpha.2",
+		APIVersion: "v1-alpha.3",
 		Project:    "shop",
 		Environments: map[string]spec.Environment{
 			"production": {},
@@ -536,7 +536,7 @@ func TestMapSpecToChartValues_Autoscaling(t *testing.T) {
 			},
 		},
 	}
-	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.2"))
+	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.3"))
 
 	vals, err := MapSpecToChartValues(m, "production", nil)
 	require.NoError(t, err)
@@ -556,7 +556,7 @@ func TestMapSpecToChartValues_Profiles(t *testing.T) {
 	t.Parallel()
 
 	m := &spec.Spec{
-		APIVersion: "v1-alpha.2",
+		APIVersion: "v1-alpha.3",
 		Project:    "shop",
 		Environments: map[string]spec.Environment{
 			"production": {},
@@ -569,7 +569,7 @@ func TestMapSpecToChartValues_Profiles(t *testing.T) {
 			},
 		},
 	}
-	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.2"))
+	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.3"))
 
 	resolved := &spec.ResolvedSpec{
 		Spec: m,
@@ -635,6 +635,176 @@ func TestMapSpecToChartValues_Profiles(t *testing.T) {
 	components := mustNestedMap(t, resolvedBlock, "components")
 	webResolved := mustNestedMap(t, components, "web")
 	assert.Equal(t, []string{"default", "public-web"}, webResolved["profiles"])
+}
+
+// TestMapSpecToChartValues_StatefulComponent maps StatefulSet workload values.
+func TestMapSpecToChartValues_StatefulComponent(t *testing.T) {
+	t.Parallel()
+
+	replicas := 2
+	m := &spec.Spec{
+		APIVersion: "v1-alpha.3",
+		Project:    "shop",
+		Environments: map[string]spec.Environment{
+			"production": {},
+		},
+		Components: map[string]spec.Component{
+			"db": {
+				Role:     spec.ComponentRoleService,
+				Kind:     spec.ComponentKindStateful,
+				Image:    "postgres:16",
+				Port:     5432,
+				Replicas: &replicas,
+				Persistence: &spec.Persistence{
+					Size:      "20Gi",
+					MountPath: "/var/lib/postgresql/data",
+				},
+			},
+		},
+	}
+	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.3"))
+
+	resolved := &spec.ResolvedSpec{
+		Spec: m,
+		Env:  spec.NormalizeEnv("production"),
+		Components: map[string]spec.ResolvedComponent{
+			"db": {
+				StorageClass: "fast-ssd",
+				MergedProfile: &spec.PlatformProfile{
+					PVCRetentionPolicy: &spec.PVCRetentionPolicy{
+						WhenDeleted: "Delete",
+						WhenScaled:  "Retain",
+					},
+				},
+			},
+		},
+	}
+
+	vals, err := MapSpecToChartValues(m, "production", resolved)
+	require.NoError(t, err)
+
+	db := mustNestedMap(t, vals, "db")
+	assert.Equal(t, "StatefulSet", db["workloadKind"])
+	assert.Equal(t, 2, db["replicaCount"])
+
+	persistence := mustNestedMap(t, db, "persistence")
+	assert.Equal(t, true, persistence["enabled"])
+	assert.Equal(t, "20Gi", persistence["size"])
+	assert.Equal(t, "/var/lib/postgresql/data", persistence["mountPath"])
+	assert.Equal(t, "fast-ssd", persistence["storageClass"])
+	assert.Equal(t, []string{"ReadWriteOncePod"}, persistence["accessModes"])
+
+	statefulSet := mustNestedMap(t, db, "statefulSet")
+	retention := mustNestedMap(t, statefulSet, "persistentVolumeClaimRetentionPolicy")
+	assert.Equal(t, "Delete", retention["whenDeleted"])
+	assert.Equal(t, "Retain", retention["whenScaled"])
+
+	deployah := mustNestedMap(t, vals, "deployah")
+	resolvedBlock := mustNestedMap(t, deployah, "resolved")
+	components := mustNestedMap(t, resolvedBlock, "components")
+	dbResolved := mustNestedMap(t, components, "db")
+	assert.Equal(t, "StatefulSet", dbResolved["workloadKind"])
+	assert.Equal(t, "20Gi", dbResolved["persistenceSize"])
+}
+
+// TestMapSpecToChartValues_StatefulIdentityOnly maps StatefulSet without PVC.
+func TestMapSpecToChartValues_StatefulIdentityOnly(t *testing.T) {
+	t.Parallel()
+
+	replicas := 2
+	m := &spec.Spec{
+		APIVersion: "v1-alpha.3",
+		Project:    "shop",
+		Environments: map[string]spec.Environment{
+			"production": {},
+		},
+		Components: map[string]spec.Component{
+			"peer": {
+				Role:     spec.ComponentRoleService,
+				Kind:     spec.ComponentKindStateful,
+				Image:    "redis:7-alpine",
+				Port:     6379,
+				Replicas: &replicas,
+			},
+		},
+	}
+	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.3"))
+
+	vals, err := MapSpecToChartValues(m, "production", nil)
+	require.NoError(t, err)
+
+	peer := mustNestedMap(t, vals, "peer")
+	assert.Equal(t, "StatefulSet", peer["workloadKind"])
+	assert.Equal(t, 2, peer["replicaCount"])
+	_, hasPersistence := peer["persistence"]
+	assert.False(t, hasPersistence, "identity-only stateful must not enable persistence")
+	assert.Contains(t, peer, "statefulSet")
+}
+
+// TestMapSpecToChartValues_StatelessWithPersistence forces Recreate strategy.
+func TestMapSpecToChartValues_StatelessWithPersistence(t *testing.T) {
+	t.Parallel()
+
+	m := &spec.Spec{
+		APIVersion: "v1-alpha.3",
+		Project:    "shop",
+		Environments: map[string]spec.Environment{
+			"production": {},
+		},
+		Components: map[string]spec.Component{
+			"web": {
+				Role:  spec.ComponentRoleService,
+				Kind:  spec.ComponentKindStateless,
+				Image: "nginx:1.0.0",
+				Port:  80,
+				Persistence: &spec.Persistence{
+					Size:      "1Gi",
+					MountPath: "/data",
+				},
+			},
+		},
+	}
+	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.3"))
+
+	vals, err := MapSpecToChartValues(m, "production", nil)
+	require.NoError(t, err)
+
+	web := mustNestedMap(t, vals, "web")
+	assert.Equal(t, "Deployment", web["workloadKind"])
+	persistence := mustNestedMap(t, web, "persistence")
+	assert.Equal(t, true, persistence["enabled"])
+	assert.Equal(t, []string{"ReadWriteOnce"}, persistence["accessModes"])
+	strategy := mustNestedMap(t, web, "updateStrategy")
+	assert.Equal(t, "Recreate", strategy["type"])
+}
+
+// TestMapSpecToChartValues_Replicas maps replicaCount from the spec.
+func TestMapSpecToChartValues_Replicas(t *testing.T) {
+	t.Parallel()
+
+	replicas := 3
+	m := &spec.Spec{
+		APIVersion: "v1-alpha.3",
+		Project:    "shop",
+		Environments: map[string]spec.Environment{
+			"production": {},
+		},
+		Components: map[string]spec.Component{
+			"web": {
+				Role:     spec.ComponentRoleService,
+				Image:    "nginx:1.0.0",
+				Port:     80,
+				Replicas: &replicas,
+			},
+		},
+	}
+	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.3"))
+
+	vals, err := MapSpecToChartValues(m, "production", nil)
+	require.NoError(t, err)
+	web := mustNestedMap(t, vals, "web")
+	assert.Equal(t, 3, web["replicaCount"])
+	assert.Equal(t, "Deployment", web["workloadKind"])
 }
 
 // TestParseContainerImage verifies repository/tag/digest extraction across

@@ -91,7 +91,7 @@ must install a platform into a cluster first (Epinio, Kubero).
 | **Local cluster included?** | **Yes** (`deployah cluster up`, kind) | No | No | No | No | No |
 | **Builds your image?** | No (you bring it) | Yes (and a dev loop) | Yes (Dockerfile/Stapel) | No (you bring it) | Yes (buildpacks) | Yes (buildpacks) |
 | **Output** | **Helm release** | Helm release | Helm release (via Nelm) | Raw YAML (no install) | Helm release (hidden) | K8s objects via operator |
-| **Multi-component** (service/worker/job, stateless/stateful) | **Yes, named** | Partial | No (you template each) | No (one workload per file) | No (web apps) | web/worker/cron, plus DB add-ons |
+| **Multi-component** (service/worker/job, stateless/stateful) | **Yes, named** (`kind: stateful` with per-pod PVCs; see [stateful workloads](../README.md#stateful-workloads)) | Partial | No (you template each) | No (one workload per file) | No (web apps) | web/worker/cron, plus DB add-ons |
 | **Multiple environments** | **Yes** (own context, config, env, vars) | Partial (profiles and vars) | Yes (env name; you template the diffs) | No (the platform decides) | Namespaces only | Pipelines (up to 4 stages) |
 | **Installs and day-2** | **Yes** | Yes (and dev mode) | Yes (converge/plan/dismiss/status/logs) | No (you run `kubectl apply`) | Yes (and UI) | Yes (and UI) |
 | **Maturity (mid-2026)** | Early, independent | Mature, CNCF, ~4.9k★ | Mature, CNCF, Flant, ~4.7k★ | Mature spec, CNCF | Active, ~585★ | Active, ~4.3k★ |
@@ -158,8 +158,9 @@ Choose **Deployah** if you want:
 - To deploy with **zero Helm knowledge**, **zero cluster-side setup**, and
   **one binary**.
 - To **start a local cluster** with one command and try things fast.
-- A **short spec** for a project with **many components** (service, worker, job)
-  across **many environments** (each with its own cluster and settings).
+- A **short spec** for a project with **many components** (stateless or
+  stateful services today; worker and job roles planned) across **many
+  environments** (each with its own cluster and settings).
 - A real **Helm release** at the end, which works well with GitOps and `helm`.
 - You already **build your images in CI** and just want to ship them.
 

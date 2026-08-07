@@ -164,6 +164,28 @@ func TestMergeProfiles(t *testing.T) {
 		assert.Equal(t, spec.ErrCodeProfileNotFound, re.Code)
 	})
 
+	t.Run("pvcRetentionPolicy last non-nil wins with field overlay", func(t *testing.T) {
+		t.Parallel()
+		withRetention := map[string]spec.PlatformProfile{
+			"base": {
+				PVCRetentionPolicy: &spec.PVCRetentionPolicy{
+					WhenDeleted: "Retain",
+					WhenScaled:  "Retain",
+				},
+			},
+			"override": {
+				PVCRetentionPolicy: &spec.PVCRetentionPolicy{
+					WhenDeleted: "Delete",
+				},
+			},
+		}
+		merged, err := spec.MergeProfiles([]string{"base", "override"}, withRetention)
+		require.NoError(t, err)
+		require.NotNil(t, merged.PVCRetentionPolicy)
+		assert.Equal(t, "Delete", merged.PVCRetentionPolicy.WhenDeleted)
+		assert.Equal(t, "Retain", merged.PVCRetentionPolicy.WhenScaled)
+	})
+
 	t.Run("deep merge maps last wins", func(t *testing.T) {
 		t.Parallel()
 		merged, err := spec.MergeProfiles([]string{"a", "b"}, profiles)

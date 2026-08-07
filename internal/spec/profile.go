@@ -87,6 +87,7 @@ func ResolveProfileNames(componentProfiles []string, platformProfiles map[string
 //     false *bool values that mergo would skip
 //   - arrays (tolerations): concatenate and deduplicate identical entries
 //   - scalars (storageClass): last non-empty wins
+//   - pvcRetentionPolicy: last non-nil wins (field overlay within the policy)
 //   - allowedDomains: intersection of explicit lists; omitted means no constraint
 //   - maxResources: minimum (strictest) ceiling per resource
 func MergeProfiles(names []string, profiles map[string]PlatformProfile) (PlatformProfile, error) {
@@ -118,6 +119,9 @@ func MergeProfiles(names []string, profiles map[string]PlatformProfile) (Platfor
 		if p.StorageClass != "" {
 			merged.StorageClass = p.StorageClass
 		}
+		if p.PVCRetentionPolicy != nil {
+			merged.PVCRetentionPolicy = mergePVCRetentionPolicy(merged.PVCRetentionPolicy, p.PVCRetentionPolicy)
+		}
 		if p.AllowedDomains != nil {
 			if !allowedDomainsSet {
 				merged.AllowedDomains = slices.Clone(p.AllowedDomains)
@@ -130,6 +134,25 @@ func MergeProfiles(names []string, profiles map[string]PlatformProfile) (Platfor
 	}
 
 	return merged, nil
+}
+
+// mergePVCRetentionPolicy overlays overlay onto base. Non-empty overlay fields
+// win; nil overlay returns base unchanged.
+func mergePVCRetentionPolicy(base, overlay *PVCRetentionPolicy) *PVCRetentionPolicy {
+	if overlay == nil {
+		return base
+	}
+	out := &PVCRetentionPolicy{}
+	if base != nil {
+		*out = *base
+	}
+	if overlay.WhenDeleted != "" {
+		out.WhenDeleted = overlay.WhenDeleted
+	}
+	if overlay.WhenScaled != "" {
+		out.WhenScaled = overlay.WhenScaled
+	}
+	return out
 }
 
 // ValidateProfileAgainstComponent checks domain, storage class, and resource

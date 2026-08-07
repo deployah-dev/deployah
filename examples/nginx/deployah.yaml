@@ -1,4 +1,4 @@
-apiVersion: v1-alpha.2
+apiVersion: v1-alpha.3
 project: nginx
 components:
   web:

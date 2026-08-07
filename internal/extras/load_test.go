@@ -727,7 +727,7 @@ func TestLoadFromSpec_Offline(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	specPath := filepath.Join(dir, "deployah.yaml")
-	writeFile(t, specPath, "apiVersion: deployah.dev/v1-alpha.2\nproject: demo\n")
+	writeFile(t, specPath, "apiVersion: deployah.dev/v1-alpha.3\nproject: demo\n")
 	writeFile(t, filepath.Join(dir, ".deployah", "manifests", "cm.yaml"), `
 apiVersion: v1
 kind: ConfigMap

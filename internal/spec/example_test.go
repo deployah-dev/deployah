@@ -26,13 +26,13 @@ import (
 // ExampleFillSpecWithDefaults applies schema defaults to a minimal manifest.
 func ExampleFillSpecWithDefaults() {
 	m := &spec.Spec{
-		APIVersion: "v1-alpha.2",
+		APIVersion: "v1-alpha.3",
 		Project:    "demo",
 		Components: map[string]spec.Component{
 			"web": {Image: "nginx:latest"},
 		},
 	}
-	if err := spec.FillSpecWithDefaults(m, "v1-alpha.2"); err != nil {
+	if err := spec.FillSpecWithDefaults(m, "v1-alpha.3"); err != nil {
 		log.Fatal(err)
 	}
 	fmt.Println(m.Components["web"].Port)
@@ -41,7 +41,7 @@ func ExampleFillSpecWithDefaults() {
 
 // ExampleLoad reads a manifest file from disk.
 func ExampleLoad() {
-	const yamlDoc = `apiVersion: v1-alpha.2
+	const yamlDoc = `apiVersion: v1-alpha.3
 project: demo
 environments:
   default: {}

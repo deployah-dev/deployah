@@ -195,7 +195,9 @@ func resolveComponent(
 			if profileErr := ValidateProfileAgainstComponent(name, comp, *rc.MergedProfile, platformEnv, ""); profileErr != nil {
 				return rc, result, profileErr
 			}
-			applyResolvedStorageClass(&rc, &result, name, env, platformEnv)
+		}
+		if scErr := applyResolvedStorageClass(&rc, &result, name, comp, env, platformEnv); scErr != nil {
+			return rc, result, scErr
 		}
 		return rc, result, nil
 	}
@@ -369,38 +371,71 @@ func resolveComponent(
 		if profileErr := ValidateProfileAgainstComponent(name, comp, *rc.MergedProfile, platformEnv, domainKey); profileErr != nil {
 			return rc, result, profileErr
 		}
-		applyResolvedStorageClass(&rc, &result, name, env, platformEnv)
+	}
+	if scErr := applyResolvedStorageClass(&rc, &result, name, comp, env, platformEnv); scErr != nil {
+		return rc, result, scErr
 	}
 
 	return rc, result, nil
 }
 
-// applyResolvedStorageClass copies the merged profile's logical storage class
-// key to the Kubernetes className after validation has succeeded.
+// applyResolvedStorageClass resolves the Kubernetes storage class name.
+// Component persistence.storageClass wins over the merged profile's
+// storageClass. An explicit key with no env map or unknown key is an error.
+// When no key is set, storageClassName is left empty (cluster default).
 func applyResolvedStorageClass(
 	rc *ResolvedComponent,
 	result *componentResolveResult,
 	compName string,
+	comp Component,
 	env EnvIdentity,
 	platformEnv *PlatformEnvironment,
-) {
-	if rc.MergedProfile == nil || rc.MergedProfile.StorageClass == "" || platformEnv == nil {
-		return
+) error {
+	logicalKey := ""
+	sourceKind := ""
+	if comp.Persistence != nil && comp.Persistence.StorageClass != "" {
+		logicalKey = comp.Persistence.StorageClass
+		sourceKind = "component persistence.storageClass"
+	} else if rc.MergedProfile != nil && rc.MergedProfile.StorageClass != "" {
+		logicalKey = rc.MergedProfile.StorageClass
+		sourceKind = "platform profiles -> storageClass"
 	}
-	sc, ok := platformEnv.StorageClasses[rc.MergedProfile.StorageClass]
+	if logicalKey == "" {
+		return nil
+	}
+
+	if platformEnv == nil || platformEnv.StorageClasses == nil {
+		return &ResolutionError{
+			Code: ErrCodeComponentStorageClassNotFound,
+			Message: fmt.Sprintf(
+				"component %q references storageClass %q (%s) but the environment has no storageClasses",
+				compName, logicalKey, sourceKind,
+			),
+		}
+	}
+	sc, ok := platformEnv.StorageClasses[logicalKey]
 	if !ok {
-		return
+		available := slices.Sorted(maps.Keys(platformEnv.StorageClasses))
+		return &ResolutionError{
+			Code: ErrCodeComponentStorageClassNotFound,
+			Message: fmt.Sprintf(
+				"component %q references storageClass %q (%s) but environment does not define it (available: %s)",
+				compName, logicalKey, sourceKind, joinStrings(available),
+			),
+		}
 	}
+
 	rc.StorageClass = sc.ClassName
 	result.fields = append(result.fields, ResolvedField{
 		Component: compName,
 		Path:      "storageClass",
 		Value:     sc.ClassName,
 		Source: fmt.Sprintf(
-			"platform profiles -> storageClass %q -> environments.%s.storageClasses.%s.className",
-			rc.MergedProfile.StorageClass, env.Original, rc.MergedProfile.StorageClass,
+			"%s %q -> environments.%s.storageClasses.%s.className",
+			sourceKind, logicalKey, env.Original, logicalKey,
 		),
 	})
+	return nil
 }
 
 // defaultDomainKey picks the domain used when a component names none: the

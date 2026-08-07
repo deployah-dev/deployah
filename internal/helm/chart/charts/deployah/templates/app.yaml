@@ -3,11 +3,16 @@
 {{ include "deployah.configmap" . }}
 {{- end }}
 
-{{- if .Values.image.repository }}
+{{- if eq .Values.workloadKind "StatefulSet" }}
+{{ include "deployah.statefulset" . }}
+{{ include "deployah.headless-service" . }}
+{{- else if .Values.image.repository }}
 {{ include "deployah.deployment" . }}
 {{- end }}
 
+{{- if ne .Values.workloadKind "StatefulSet" }}
 {{ include "deployah.persistence" . }}
+{{- end }}
 
 {{ include "deployah.hpa" . }}
 {{ include "deployah.ingress" . }}

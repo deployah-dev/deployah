@@ -456,8 +456,8 @@ func (c *Client) wrapHelmError(operation, releaseName string, err error) error {
 		return fmt.Errorf("operation timed out for release '%s': %w", releaseName, err)
 	}
 
-	if _, ok := errors.AsType[*net.OpError](err); ok {
-		return fmt.Errorf("unable to connect to Kubernetes cluster: %w", err)
+	if opErr, ok := errors.AsType[*net.OpError](err); ok {
+		return fmt.Errorf("unable to connect to Kubernetes cluster: %w", opErr)
 	}
 
 	// Helm still surfaces some conditions as plain strings only.

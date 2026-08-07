@@ -6,10 +6,18 @@
   deployah,
   system,
   go,
+  golangci-lint,
 }:
 
 let
-  quality = import ./quality.nix { inherit pkgs lib go; };
+  quality = import ./quality.nix {
+    inherit
+      pkgs
+      lib
+      go
+      golangci-lint
+      ;
+  };
   testing = import ./testing.nix { inherit lib; };
   vendor = import ./vendor.nix { inherit pkgs system; };
   demo = import ./demo.nix { inherit pkgs lib deployah; };

@@ -1,0 +1,14 @@
+# $schema: ../../internal/spec/schema/platform/v1-alpha.2/platform.json
+apiVersion: platform/v1-alpha.2
+profiles:
+  stateful-store:
+    storageClass: fast
+    pvcRetentionPolicy:
+      whenDeleted: Delete
+      whenScaled: Retain
+environments:
+  production:
+    context: prod-eks
+    storageClasses:
+      fast:
+        className: fast-ssd

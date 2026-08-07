@@ -242,14 +242,14 @@ linters:
 
     godoclint:
       default: all
+      disable:
+        # staticcheck ST1021/ST1022: comment should start with symbol name.
+        - start-with-name
+        # staticcheck ST1020: exported identifiers must have a doc comment.
+        - require-doc
       options:
         max-len:
           length: 80
-        disable:
-          # staticcheck ST1021/ST1022: comment should start with symbol name.
-          - start-with-name
-          # staticcheck ST1020: exported identifiers must have a doc comment.
-          - require-doc
 
     gocritic:
       enabled-tags:
@@ -276,8 +276,10 @@ linters:
         - set-status
 
     staticcheck:
-      # Enable all checks (SA*, S*, ST*, QF*)
-      checks: ["all"]
+      # Enable all checks (SA*, S*, ST*, QF*).
+      # SA4023: false positives on nabat Context.Form (can return nil) with the
+      # Go 1.27 staticcheck snapshot; re-enable when upstream settles.
+      checks: ["all", "-SA4023"]
 
     nolintlint:
       # Fail unused //nolint and require naming the suppressed linter (no bare //nolint).

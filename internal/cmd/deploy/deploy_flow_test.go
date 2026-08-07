@@ -158,7 +158,7 @@ func TestApplyDeploy_RenderMismatch_AbortsBeforeApply(t *testing.T) {
 	opts := &Options{Environment: "production"}
 	manifest := &spec.Spec{Project: "web"}
 
-	err := applyDeploy(c, sess, cluster, stub, nil, manifest, opts, nil, planned, nil, nil, &extras.Bundle{}, nil)
+	err := applyDeploy(c, sess, cluster, stub, nil, manifest, opts, nil, planned, nil, nil, &extras.Bundle{}, nil, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "changed between plan and apply")
 	assert.Equal(t, 1, stub.renderCallCount, "must re-render exactly once before comparing")
@@ -390,7 +390,7 @@ func TestApplyDeploy_CallsInstallAfterEmptyCRDs(t *testing.T) {
 	c, _, _, stderr := nabatContextWithIO(t)
 	opts := &Options{Environment: "production", CRDs: string(extras.PolicyCreate)}
 
-	err := applyDeploy(c, sess, cluster, stub, nil, &spec.Spec{Project: "web"}, opts, nil, planned, nil, assertNever{}, &extras.Bundle{}, nil)
+	err := applyDeploy(c, sess, cluster, stub, nil, &spec.Spec{Project: "web"}, opts, nil, planned, nil, assertNever{}, &extras.Bundle{}, nil, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, stub.installCallCount)
 	assert.Contains(t, stderr.String(), "Deployed")
@@ -419,7 +419,7 @@ func TestApplyDeploy_PropagatesCRDApplyError(t *testing.T) {
 	c := nabatContext(t)
 	opts := &Options{Environment: "production", CRDs: string(extras.PolicyCreate)}
 
-	err = applyDeploy(c, sess, cluster, stub, nil, &spec.Spec{Project: "web"}, opts, nil, planned, nil, nil, sampleBundleCRD(t), nil)
+	err = applyDeploy(c, sess, cluster, stub, nil, &spec.Spec{Project: "web"}, opts, nil, planned, nil, nil, sampleBundleCRD(t), nil, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "rest config for CRDs")
 	assert.Equal(t, 0, stub.installCallCount)

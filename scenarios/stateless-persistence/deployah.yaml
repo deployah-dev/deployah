@@ -1,0 +1,15 @@
+# $schema: ../../internal/spec/schema/v1-alpha.3/manifest.json
+apiVersion: v1-alpha.3
+project: stateless-persistence
+components:
+  web:
+    kind: stateless
+    image: nginx:latest
+    port: 8080
+    resourcePreset: small
+    environments: [dev]
+    persistence:
+      size: 1Gi
+      mountPath: /data
+environments:
+  dev: {}

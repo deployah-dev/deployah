@@ -1,0 +1,13 @@
+# $schema: ../../internal/spec/schema/v1-alpha.3/manifest.json
+apiVersion: v1-alpha.3
+project: stateful-identity
+components:
+  peer:
+    kind: stateful
+    image: redis:7-alpine
+    port: 6379
+    resourcePreset: nano
+    environments: [dev]
+    replicas: 2
+environments:
+  dev: {}

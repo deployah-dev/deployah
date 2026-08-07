@@ -12,8 +12,13 @@ metadata:
   {{- end }}
 spec:
   scaleTargetRef:
+    {{- if eq .Values.workloadKind "StatefulSet" }}
+    apiVersion: {{ include "common.capabilities.statefulset.apiVersion" . }}
+    kind: StatefulSet
+    {{- else }}
     apiVersion: {{ include "common.capabilities.deployment.apiVersion" . }}
     kind: Deployment
+    {{- end }}
     name: {{ include "common.names.fullname" . }}
   minReplicas: {{ .Values.autoscaling.minReplicas }}
   maxReplicas: {{ .Values.autoscaling.maxReplicas }}

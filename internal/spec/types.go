@@ -25,7 +25,7 @@ import (
 
 // Spec defines the structure of the project spec.
 type Spec struct {
-	// APIVersion is the schema version of the spec (e.g., "v1-alpha.2").
+	// APIVersion is the schema version of the spec (e.g., "v1-alpha.3").
 	APIVersion string `json:"apiVersion,omitempty" yaml:"apiVersion,omitempty"`
 	// Project is the project name.
 	Project string `json:"project" yaml:"project"`
@@ -82,6 +82,15 @@ type Component struct {
 	Args []string `json:"args,omitempty" yaml:"args,omitempty"`
 	// Port is the primary container port for services.
 	Port int `json:"port,omitempty" yaml:"port,omitempty"`
+	// Replicas is the desired replica count when autoscaling is disabled.
+	// Nil means the chart default (1). Mutually exclusive with
+	// autoscaling.enabled.
+	Replicas *int `json:"replicas,omitempty" yaml:"replicas,omitempty"`
+	// Persistence configures durable storage for the component. Optional on
+	// stateful components (omit for identity-only StatefulSet). Allowed on
+	// stateless components (shared PVC with Recreate strategy) subject to
+	// replica and autoscaling constraints.
+	Persistence *Persistence `json:"persistence,omitempty" yaml:"persistence,omitempty"`
 	// Autoscaling configures horizontal pod autoscaling.
 	Autoscaling *Autoscaling `json:"autoscaling,omitempty" yaml:"autoscaling,omitempty"`
 	// Resources sets explicit CPU, memory, and storage requests and limits.
@@ -99,6 +108,17 @@ type Component struct {
 	Env map[string]string `json:"env,omitempty" yaml:"env,omitempty"`
 	// Health configures ready and alive checks for the component.
 	Health *Health `json:"health,omitempty" yaml:"health,omitempty"`
+}
+
+// Persistence configures volume storage for a component.
+type Persistence struct {
+	// Size is the requested volume size (Kubernetes quantity, e.g. "20Gi").
+	Size string `json:"size" yaml:"size"`
+	// MountPath is the path where the volume is mounted in the container.
+	MountPath string `json:"mountPath" yaml:"mountPath"`
+	// StorageClass is an optional logical key from the platform environment's
+	// storageClasses map. When set, it overrides the profile storageClass.
+	StorageClass string `json:"storageClass,omitempty" yaml:"storageClass,omitempty"`
 }
 
 // ListensOnPort reports whether the component has a service role and a

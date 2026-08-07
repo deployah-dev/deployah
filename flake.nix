@@ -28,6 +28,17 @@
 
         deployahVendorHash = "sha256-KmIlfzjPCysvdQu7O0oIdsVjkdsXK+vLWNtQLdYDJ5A=";
 
+        golangci-lint = import ./nix/golangci-lint.nix {
+          buildGoModule = buildGoModule';
+          inherit (pkgs)
+            fetchFromGitHub
+            installShellFiles
+            lib
+            stdenv
+            buildPackages
+            ;
+        };
+
         deployah = import ./nix/deployah.nix {
           buildGoModule = buildGoModule';
           deployahVersion = "dev";
@@ -44,6 +55,7 @@
             go
             git-hooks
             system
+            golangci-lint
             ;
           src = ./.;
         };
@@ -54,6 +66,7 @@
         packages = {
           default = deployah;
           deployah = deployah;
+          golangci-lint = golangci-lint;
         };
 
         checks = {
@@ -67,12 +80,18 @@
             deployah
             system
             go
+            golangci-lint
             ;
           lib = lib';
         };
 
         devShells.default = import ./nix/devshell.nix {
-          inherit pkgs go pre-commit-check;
+          inherit
+            pkgs
+            go
+            pre-commit-check
+            golangci-lint
+            ;
         };
       }
     );

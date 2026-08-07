@@ -331,11 +331,6 @@ func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string, resolved *spe
 		// TODO: Implement component configFile -- deep-merge config.yaml <
 		// config.<env>.yaml < config.<component>.yaml < config.<component>.<env>.yaml.
 
-		if component.Kind == spec.ComponentKindStateful {
-			// TODO: Add support for stateful components
-			return nil, fmt.Errorf("stateful components are not supported yet")
-		}
-
 		// TODO: Add support for component env, The user can specify the environment variables for the component e.g. NODE_ENV=roduction
 
 		image := ""
@@ -365,6 +360,67 @@ func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string, resolved *spe
 		}
 
 		componentValues["resources"] = resources
+
+		workloadKind := "Deployment"
+		if component.Kind == spec.ComponentKindStateful {
+			workloadKind = "StatefulSet"
+		}
+		componentValues["workloadKind"] = workloadKind
+
+		if component.Replicas != nil {
+			componentValues["replicaCount"] = *component.Replicas
+		}
+
+		if component.Persistence != nil {
+			accessModes := []string{"ReadWriteOnce"}
+			if component.Kind == spec.ComponentKindStateful {
+				accessModes = []string{"ReadWriteOncePod"}
+			}
+			persistence := map[string]any{
+				"enabled":     true,
+				"mountPath":   component.Persistence.MountPath,
+				"size":        component.Persistence.Size,
+				"accessModes": accessModes,
+			}
+			if resolved != nil {
+				if rc, ok := resolved.Components[componentName]; ok && rc.StorageClass != "" {
+					persistence["storageClass"] = rc.StorageClass
+				}
+			}
+			componentValues["persistence"] = persistence
+			if component.Kind != spec.ComponentKindStateful {
+				componentValues["updateStrategy"] = map[string]any{"type": "Recreate"}
+			}
+		}
+
+		if component.Kind == spec.ComponentKindStateful {
+			statefulSet := map[string]any{
+				"updateStrategy": map[string]any{
+					"type": "RollingUpdate",
+				},
+				"podManagementPolicy": "OrderedReady",
+			}
+			// Retention only applies when volumeClaimTemplates exist.
+			if component.Persistence != nil {
+				retention := map[string]any{
+					"whenDeleted": "Retain",
+					"whenScaled":  "Retain",
+				}
+				if resolved != nil {
+					if rc, ok := resolved.Components[componentName]; ok &&
+						rc.MergedProfile != nil && rc.MergedProfile.PVCRetentionPolicy != nil {
+						if rc.MergedProfile.PVCRetentionPolicy.WhenDeleted != "" {
+							retention["whenDeleted"] = rc.MergedProfile.PVCRetentionPolicy.WhenDeleted
+						}
+						if rc.MergedProfile.PVCRetentionPolicy.WhenScaled != "" {
+							retention["whenScaled"] = rc.MergedProfile.PVCRetentionPolicy.WhenScaled
+						}
+					}
+				}
+				statefulSet["persistentVolumeClaimRetentionPolicy"] = retention
+			}
+			componentValues["statefulSet"] = statefulSet
+		}
 
 		if component.Expose != nil {
 			ingressVals := map[string]any{"enabled": true}
@@ -447,21 +503,37 @@ func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string, resolved *spe
 			maps.Copy(componentValues, probes)
 		}
 
+		entry, hasEntry := resolvedComponents[componentName].(map[string]any)
+		if !hasEntry {
+			entry = map[string]any{}
+			resolvedComponents[componentName] = entry
+		}
+		entry["workloadKind"] = workloadKind
+		if component.Persistence != nil {
+			entry["persistenceMountPath"] = component.Persistence.MountPath
+			entry["persistenceSize"] = component.Persistence.Size
+		}
+
 		if resolved != nil {
-			if rc, ok := resolved.Components[componentName]; ok && rc.MergedProfile != nil {
-				if err := applyMergedProfile(componentValues, rc.MergedProfile); err != nil {
-					return nil, fmt.Errorf("component %s: apply profile values: %w", componentName, err)
-				}
-				entry, hasEntry := resolvedComponents[componentName].(map[string]any)
-				if !hasEntry {
-					entry = map[string]any{}
-					resolvedComponents[componentName] = entry
+			if rc, ok := resolved.Components[componentName]; ok {
+				if rc.MergedProfile != nil {
+					if err := applyMergedProfile(componentValues, rc.MergedProfile); err != nil {
+						return nil, fmt.Errorf("component %s: apply profile values: %w", componentName, err)
+					}
 				}
 				if len(rc.Profiles) > 0 {
 					entry["profiles"] = rc.Profiles
 				}
 				if rc.StorageClass != "" {
 					entry["storageClass"] = rc.StorageClass
+					// Profile-only storage class still needs to reach chart
+					// persistence when the component set persistence without
+					// an explicit key (component key already applied above).
+					if persistence, isMap := componentValues["persistence"].(map[string]any); isMap {
+						if _, set := persistence["storageClass"]; !set {
+							persistence["storageClass"] = rc.StorageClass
+						}
+					}
 				}
 			}
 		}

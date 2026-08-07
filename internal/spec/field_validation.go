@@ -64,7 +64,7 @@ func initValidators() error {
 		return fmt.Errorf("failed to extract component name pattern: %w", err)
 	}
 
-	// Extract environment name pattern. v1-alpha.2 models "environments" as
+	// Extract environment name pattern. v1-alpha.3 models "environments" as
 	// an object keyed by environment name, so the pattern lives on
 	// propertyNames rather than on an array item's "name" field.
 	envPattern, err := extractPattern(schemaData, []string{"properties", "environments", "propertyNames", "pattern"})

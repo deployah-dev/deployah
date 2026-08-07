@@ -29,6 +29,7 @@ type Options struct {
 	Environment         string `nabat:"environment"`
 	Explain             bool   `nabat:"explain"`
 	ForceHostnameChange bool   `nabat:"force-hostname-change"`
+	ResizeVolumes       bool   `nabat:"resize-volumes"`
 	Yes                 bool   `nabat:"yes"`
 	Reapply             bool   `nabat:"reapply"`
 	CRDs                string `nabat:"crds"`
@@ -45,6 +46,7 @@ func Register(app *nabat.App) {
 		nabat.WithArg("environment", "", nabat.WithRequired(), nabat.WithUsage("Environment to deploy to"), nabat.WithPrompt("Environment", "", nabat.WithHint("e.g. prod, staging"))),
 		nabat.WithFlag("explain", false, nabat.WithUsage("Print the resolution report before cluster checks (visible even when cluster is unreachable)")),
 		nabat.WithFlag("force-hostname-change", false, nabat.WithUsage("Allow changing the resolved hostname even though it may break existing traffic (skips the hostname guard)")),
+		nabat.WithFlag("resize-volumes", false, nabat.WithUsage("Allow persistence.size increases by expanding PVCs; StatefulSet controllers are orphan-deleted when needed so volumeClaimTemplates can be rewritten")),
 		nabat.WithFlag("yes", false, nabat.WithShort('y'), nabat.WithUsage("Apply without an interactive confirmation prompt")),
 		nabat.WithFlag("reapply", false, nabat.WithUsage("Upgrade the release even when the plan shows no changes")),
 		nabat.WithSelectFlag("crds", string(extras.PolicyCreate), crdPolicies, nabat.WithUsage("CRD install policy: create (install if missing) or create-replace")),
@@ -211,6 +213,20 @@ func runDeploy(c *nabat.Context) error {
 		}
 	}
 
+	prevResolved, prevErr := loadPreviousResolvedComponents(c, helmClient, manifest.Project, opts.Environment)
+	if prevErr != nil {
+		return prevErr
+	}
+	if guardErr := checkWorkloadGuards(manifest, opts.Environment, prevResolved); guardErr != nil {
+		return guardErr
+	}
+	emitWorkloadWarnings(c, manifest, opts.Environment, prevResolved)
+
+	resizes := detectPersistenceResizes(manifest, opts.Environment, resolvedSpec, prevResolved)
+	if resizeFlagErr := requireResizeFlag(resizes, opts.ResizeVolumes); resizeFlagErr != nil {
+		return resizeFlagErr
+	}
+
 	helmIdle := !plan.diff.HasChanges() && !opts.Reapply
 	if skipWhenIdle(helmIdle, len(bundle.CRDs)) {
 		return skipDeploy(c, k8sClient, k8sErr, plan)
@@ -225,6 +241,16 @@ func runDeploy(c *nabat.Context) error {
 		if len(reqs) > 0 {
 			if capErr := k8s.CheckAPIRequirements(k8sClient, reqs); capErr != nil {
 				return capErr
+			}
+		}
+		if hasStatefulWithPersistence(manifest, opts.Environment) {
+			if verErr := k8s.CheckMinimumVersion(
+				k8sClient,
+				k8s.MinStatefulMajor,
+				k8s.MinStatefulMinor,
+				"kind: stateful with persistence requires Kubernetes 1.32+",
+			); verErr != nil {
+				return verErr
 			}
 		}
 	}
@@ -246,7 +272,7 @@ func runDeploy(c *nabat.Context) error {
 	if helmIdle {
 		return applyCRDsOnly(c, sess, cluster, k8sClient, k8sErr, plan, bundle, opts)
 	}
-	return applyDeploy(c, sess, cluster, helmClient, platform, manifest, opts, resolvedSpec, plan, k8sClient, k8sErr, bundle, postRenderer)
+	return applyDeploy(c, sess, cluster, helmClient, platform, manifest, opts, resolvedSpec, plan, k8sClient, k8sErr, bundle, postRenderer, resizes)
 }
 
 // skipWhenIdle reports whether deploy should exit without cluster writes:
@@ -356,8 +382,10 @@ func applyBundleCRDs(c *nabat.Context, sess *session.Session, cluster *session.C
 }
 
 // applyDeploy re-renders and verifies determinism before the real Helm
-// install/upgrade. CRDs from the bundle are applied first.
-func applyDeploy(c *nabat.Context, sess *session.Session, cluster *session.Cluster, helmClient session.HelmClient, platform *spec.PlatformConfig, manifest *spec.Spec, opts *Options, resolved *spec.ResolvedSpec, plan *deployPlan, k8sClient kubernetes.Interface, k8sErr error, bundle *extras.Bundle, postRenderer postrenderer.PostRenderer) error {
+// install/upgrade. CRDs from the bundle are applied first. When resizes is
+// non-empty, PVC expansion (and StatefulSet orphan-delete when needed) run
+// before Helm.
+func applyDeploy(c *nabat.Context, sess *session.Session, cluster *session.Cluster, helmClient session.HelmClient, platform *spec.PlatformConfig, manifest *spec.Spec, opts *Options, resolved *spec.ResolvedSpec, plan *deployPlan, k8sClient kubernetes.Interface, k8sErr error, bundle *extras.Bundle, postRenderer postrenderer.PostRenderer, resizes []persistenceResize) error {
 	verify, verifyCleanup, err := helmClient.RenderManifests(c, manifest, opts.Environment, resolved, postRenderer)
 	if verifyCleanup != nil {
 		defer verifyCleanup()
@@ -374,6 +402,16 @@ func applyDeploy(c *nabat.Context, sess *session.Session, cluster *session.Clust
 	crdStats, crdErr := applyBundleCRDs(c, sess, cluster, bundle, opts)
 	if crdErr != nil {
 		return crdErr
+	}
+
+	if len(resizes) > 0 {
+		if k8sErr != nil {
+			return fmt.Errorf("resize volumes: kubernetes client unavailable: %w", k8sErr)
+		}
+		c.Printf("Resizing volumes for %d component(s)...\n", len(resizes))
+		if resizeErr := resizeVolumes(c, k8sClient, cluster.Namespace(), plan.result.ReleaseName, resizes); resizeErr != nil {
+			return fmt.Errorf("%s: %w", resizeFailureHint(resizes), resizeErr)
+		}
 	}
 
 	resolvedCtx := cluster.Context()
