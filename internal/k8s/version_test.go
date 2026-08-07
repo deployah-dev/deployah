@@ -79,3 +79,23 @@ func TestParseVersionPart(t *testing.T) {
 		assert.Equal(t, tt.want, got, tt.in)
 	}
 }
+
+func TestParseVersionPart_Empty(t *testing.T) {
+	t.Parallel()
+	_, err := parseVersionPart("")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "empty version part")
+}
+
+func TestParseVersionPart_NonNumeric(t *testing.T) {
+	t.Parallel()
+	_, err := parseVersionPart("abc")
+	require.Error(t, err)
+}
+
+func TestCheckMinimumVersion_MinorParseError(t *testing.T) {
+	t.Parallel()
+	err := CheckMinimumVersion(fakeClientWithVersion("1", "abc"), 1, 32, "reason")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "parse cluster minor version")
+}

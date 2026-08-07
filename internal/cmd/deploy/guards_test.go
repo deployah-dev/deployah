@@ -181,3 +181,136 @@ func TestHasStatefulWithPersistence(t *testing.T) {
 	}
 	assert.True(t, hasStatefulWithPersistence(withDisk, "dev"))
 }
+
+func TestEmitWorkloadWarnings_HPAOnStatefulWithPersistence(t *testing.T) {
+	t.Parallel()
+	c, _, _, stderr := nabatContextWithIO(t)
+	manifest := &spec.Spec{
+		Components: map[string]spec.Component{
+			"cache": {
+				Kind:        spec.ComponentKindStateful,
+				Persistence: &spec.Persistence{Size: "5Gi", MountPath: "/data"},
+				Autoscaling: &spec.Autoscaling{Enabled: true, MinReplicas: 1, MaxReplicas: 3},
+			},
+		},
+	}
+	emitWorkloadWarnings(c, manifest, "dev", map[string]map[string]any{})
+	assert.Contains(t, stderr.String(), "retains PVCs on scale-down")
+}
+
+func TestEmitWorkloadWarnings_ExposeMultiReplicaStateful(t *testing.T) {
+	t.Parallel()
+	c, _, _, stderr := nabatContextWithIO(t)
+	replicas := 3
+	manifest := &spec.Spec{
+		Components: map[string]spec.Component{
+			"peer": {
+				Kind:     spec.ComponentKindStateful,
+				Replicas: &replicas,
+				Expose:   &spec.Expose{},
+			},
+		},
+	}
+	emitWorkloadWarnings(c, manifest, "dev", map[string]map[string]any{})
+	assert.Contains(t, stderr.String(), "expose with replicas > 1")
+}
+
+func TestEmitWorkloadWarnings_MountPathChange(t *testing.T) {
+	t.Parallel()
+	c, _, _, stderr := nabatContextWithIO(t)
+	prev := map[string]map[string]any{
+		"db": {
+			"workloadKind":         "StatefulSet",
+			"persistenceSize":      "10Gi",
+			"persistenceMountPath": "/old/data",
+		},
+	}
+	manifest := &spec.Spec{
+		Components: map[string]spec.Component{
+			"db": {
+				Kind:        spec.ComponentKindStateful,
+				Persistence: &spec.Persistence{Size: "10Gi", MountPath: "/new/data"},
+			},
+		},
+	}
+	emitWorkloadWarnings(c, manifest, "dev", prev)
+	assert.Contains(t, stderr.String(), "persistence.mountPath change")
+	assert.Contains(t, stderr.String(), "/old/data")
+	assert.Contains(t, stderr.String(), "/new/data")
+}
+
+func TestEmitWorkloadWarnings_NoWarningsWhenClean(t *testing.T) {
+	t.Parallel()
+	c, _, _, stderr := nabatContextWithIO(t)
+	manifest := &spec.Spec{
+		Components: map[string]spec.Component{
+			"web": {Kind: spec.ComponentKindStateless},
+		},
+	}
+	emitWorkloadWarnings(c, manifest, "dev", map[string]map[string]any{})
+	assert.Empty(t, stderr.String())
+}
+
+func TestComponentActiveInEnv(t *testing.T) {
+	t.Parallel()
+	assert.True(t, componentActiveInEnv(spec.Component{}, "dev"), "no filter = active everywhere")
+	assert.True(t, componentActiveInEnv(spec.Component{Environments: []string{"dev"}}, "dev"))
+	assert.False(t, componentActiveInEnv(spec.Component{Environments: []string{"staging"}}, "dev"))
+	assert.True(t, componentActiveInEnv(spec.Component{Environments: []string{"review"}}, "review/pr-42"), "prefix match")
+}
+
+func TestPreviousResolvedComponents_NonMapComponent(t *testing.T) {
+	t.Parallel()
+	values := map[string]any{
+		"deployah": map[string]any{
+			"resolved": map[string]any{
+				"components": map[string]any{
+					"db":      map[string]any{"workloadKind": "StatefulSet"},
+					"invalid": "not-a-map",
+				},
+			},
+		},
+	}
+	got := previousResolvedComponents(values)
+	assert.Len(t, got, 1)
+	assert.Contains(t, got, "db")
+}
+
+func TestCheckWorkloadGuards_InactiveComponentSkipped(t *testing.T) {
+	t.Parallel()
+	prev := previousResolvedComponents(releaseWithResolved("db", map[string]any{
+		"workloadKind": "Deployment",
+	}).Chart.Values)
+	manifest := &spec.Spec{
+		Project: "shop",
+		Components: map[string]spec.Component{
+			"db": {
+				Kind:         spec.ComponentKindStateful,
+				Environments: []string{"staging"},
+			},
+		},
+	}
+	require.NoError(t, checkWorkloadGuards(manifest, "production", prev))
+}
+
+func TestCheckWorkloadGuards_SizeParseError(t *testing.T) {
+	t.Parallel()
+	prev := map[string]map[string]any{
+		"db": {
+			"workloadKind":    "StatefulSet",
+			"persistenceSize": "not-a-quantity",
+		},
+	}
+	manifest := &spec.Spec{
+		Project: "shop",
+		Components: map[string]spec.Component{
+			"db": {
+				Kind:        spec.ComponentKindStateful,
+				Persistence: &spec.Persistence{Size: "10Gi", MountPath: "/data"},
+			},
+		},
+	}
+	err := checkWorkloadGuards(manifest, "production", prev)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "parse previous persistence.size")
+}

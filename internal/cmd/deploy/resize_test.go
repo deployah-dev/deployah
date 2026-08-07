@@ -433,3 +433,160 @@ func TestResizeVolumes_OrphanDeleteLeavesPods(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "20Gi", livePVC.Spec.Resources.Requests.Storage().String())
 }
+
+func TestResizeVolumes_NilClient(t *testing.T) {
+	t.Parallel()
+	err := resizeVolumes(t.Context(), nil, "default", "shop-production", []persistenceResize{{
+		Component: "db", NewSize: "20Gi", Stateful: true,
+	}})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "kubernetes client is required")
+}
+
+func TestResizeVolumes_EmptyResizes(t *testing.T) {
+	t.Parallel()
+	client := fake.NewSimpleClientset()
+	require.NoError(t, resizeVolumes(t.Context(), client, "default", "shop-production", nil))
+}
+
+func TestResizeVolumes_ParseSizeError(t *testing.T) {
+	t.Parallel()
+	client := fake.NewSimpleClientset()
+	err := resizeVolumes(t.Context(), client, "default", "shop-production", []persistenceResize{{
+		Component: "db", NewSize: "not-a-quantity", Stateful: false,
+	}})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "parse size")
+}
+
+func TestResizeVolumes_NoPVCsFound(t *testing.T) {
+	t.Parallel()
+	client := fake.NewSimpleClientset()
+	err := resizeVolumes(t.Context(), client, "default", "shop-production", []persistenceResize{{
+		Component: "web", NewSize: "2Gi", Stateful: false,
+	}})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no PVCs found")
+}
+
+func TestResolveStorageClassForExpansion_NoClassNoHintNoDefault(t *testing.T) {
+	t.Parallel()
+	client := fake.NewSimpleClientset()
+	pvc := &corev1.PersistentVolumeClaim{Name: "orphan"}
+	_, err := resolveStorageClassForExpansion(t.Context(), client, pvc, "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no storage class")
+	assert.Contains(t, err.Error(), "no default storage class")
+}
+
+func TestPatchPVCSize_NilRequests(t *testing.T) {
+	t.Parallel()
+	qty := resource.MustParse("10Gi")
+	pvc := &corev1.PersistentVolumeClaim{
+		Name:      "test-pvc",
+		Namespace: "default",
+		Spec: corev1.PersistentVolumeClaimSpec{
+			StorageClassName: new("standard"),
+		},
+	}
+	client := fake.NewSimpleClientset(pvc)
+	require.NoError(t, patchPVCSize(t.Context(), client, "default", pvc, qty))
+	assert.Equal(t, qty, pvc.Spec.Resources.Requests[corev1.ResourceStorage])
+}
+
+func TestPatchPVCSize_AlreadyLargerSkips(t *testing.T) {
+	t.Parallel()
+	current := resource.MustParse("20Gi")
+	pvc := &corev1.PersistentVolumeClaim{
+		Name:      "test-pvc",
+		Namespace: "default",
+		Spec: corev1.PersistentVolumeClaimSpec{
+			Resources: corev1.VolumeResourceRequirements{
+				Requests: corev1.ResourceList{corev1.ResourceStorage: current},
+			},
+		},
+	}
+	client := fake.NewSimpleClientset(pvc)
+	require.NoError(t, patchPVCSize(t.Context(), client, "default", pvc, resource.MustParse("10Gi")))
+	assert.Equal(t, "20Gi", pvc.Spec.Resources.Requests.Storage().String())
+}
+
+func TestDetectPersistenceResizes_NoChangeSkipped(t *testing.T) {
+	t.Parallel()
+	prev := previousResolvedComponents(releaseWithResolved("db", map[string]any{
+		"workloadKind":    "StatefulSet",
+		"persistenceSize": "10Gi",
+	}).Chart.Values)
+	manifest := &spec.Spec{
+		Components: map[string]spec.Component{
+			"db": {
+				Kind:        spec.ComponentKindStateful,
+				Persistence: &spec.Persistence{Size: "10Gi", MountPath: "/data"},
+			},
+		},
+	}
+	resizes := detectPersistenceResizes(manifest, "production", nil, prev)
+	assert.Empty(t, resizes)
+}
+
+func TestDetectPersistenceResizes_DecreaseSkipped(t *testing.T) {
+	t.Parallel()
+	prev := previousResolvedComponents(releaseWithResolved("db", map[string]any{
+		"workloadKind":    "StatefulSet",
+		"persistenceSize": "20Gi",
+	}).Chart.Values)
+	manifest := &spec.Spec{
+		Components: map[string]spec.Component{
+			"db": {
+				Kind:        spec.ComponentKindStateful,
+				Persistence: &spec.Persistence{Size: "10Gi", MountPath: "/data"},
+			},
+		},
+	}
+	resizes := detectPersistenceResizes(manifest, "production", nil, prev)
+	assert.Empty(t, resizes, "decrease is not a resize; guard owns that error")
+}
+
+func TestDetectPersistenceResizes_NoPersistenceSkipped(t *testing.T) {
+	t.Parallel()
+	prev := previousResolvedComponents(releaseWithResolved("peer", map[string]any{
+		"workloadKind": "StatefulSet",
+	}).Chart.Values)
+	manifest := &spec.Spec{
+		Components: map[string]spec.Component{
+			"peer": {Kind: spec.ComponentKindStateful},
+		},
+	}
+	resizes := detectPersistenceResizes(manifest, "production", nil, prev)
+	assert.Empty(t, resizes)
+}
+
+func TestOrphanDeleteStatefulSets_MultipleFound(t *testing.T) {
+	t.Parallel()
+	sts1 := &appsv1.StatefulSet{
+		Name:      "shop-production-db",
+		Namespace: "default",
+		Labels: map[string]string{
+			"app.kubernetes.io/instance": "shop-production",
+			spec.LabelComponent:          "db",
+		},
+	}
+	sts2 := &appsv1.StatefulSet{
+		Name:      "shop-production-db-old",
+		Namespace: "default",
+		Labels: map[string]string{
+			"app.kubernetes.io/instance": "shop-production",
+			spec.LabelComponent:          "db",
+		},
+	}
+	client := fake.NewSimpleClientset(sts1, sts2)
+	err := orphanDeleteStatefulSets(t.Context(), client, "default", "shop-production", []string{"db"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "expected 1 StatefulSet")
+	assert.Contains(t, err.Error(), "found 2")
+}
+
+func TestOrphanDeleteStatefulSets_EmptyComponents(t *testing.T) {
+	t.Parallel()
+	require.NoError(t, orphanDeleteStatefulSets(t.Context(), fake.NewSimpleClientset(), "default", "rel", nil))
+}
