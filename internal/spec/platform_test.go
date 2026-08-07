@@ -41,7 +41,7 @@ func writeTempFile(t *testing.T, content string) string {
 // TestLoadPlatform_Valid verifies platform spec behavior.
 func TestLoadPlatform_Valid(t *testing.T) {
 	yaml := `
-apiVersion: platform/v1-alpha.1
+apiVersion: platform/v1-alpha.2
 environments:
   production:
     context: prod-eks
@@ -63,7 +63,7 @@ environments:
 	p, err := spec.LoadPlatform(path)
 	require.NoError(t, err)
 	require.NotNil(t, p)
-	assert.Equal(t, "platform/v1-alpha.1", p.APIVersion)
+	assert.Equal(t, "platform/v1-alpha.2", p.APIVersion)
 	assert.Len(t, p.Environments, 2)
 	prod := p.Environments["production"]
 	assert.Equal(t, "prod-eks", prod.Context)
@@ -93,7 +93,7 @@ environments:
 // TestLoadPlatform_CertManagerMissingIssuer verifies platform spec behavior.
 func TestLoadPlatform_CertManagerMissingIssuer(t *testing.T) {
 	yaml := `
-apiVersion: platform/v1-alpha.1
+apiVersion: platform/v1-alpha.2
 environments:
   prod:
     domains:
@@ -111,7 +111,7 @@ environments:
 // TestLoadPlatform_SecretNameMissingField verifies platform spec behavior.
 func TestLoadPlatform_SecretNameMissingField(t *testing.T) {
 	yaml := `
-apiVersion: platform/v1-alpha.1
+apiVersion: platform/v1-alpha.2
 environments:
   prod:
     domains:
@@ -180,7 +180,7 @@ func TestNormalizeEnv_Wildcard(t *testing.T) {
 
 func minimalPlatform() *spec.PlatformConfig {
 	return &spec.PlatformConfig{
-		APIVersion: "platform/v1-alpha.1",
+		APIVersion: "platform/v1-alpha.2",
 		Environments: map[string]spec.PlatformEnvironment{
 			"production": {
 				Context: "prod-eks",
@@ -209,7 +209,7 @@ func minimalPlatform() *spec.PlatformConfig {
 
 func minimalSpec(subdomain *string) *spec.Spec {
 	return &spec.Spec{
-		APIVersion: "v1-alpha.2",
+		APIVersion: "v1-alpha.3",
 		Project:    "shop",
 		Environments: map[string]spec.Environment{
 			"production": {},
@@ -245,7 +245,7 @@ func TestResolve_FQDN(t *testing.T) {
 // the platform registry warn, while prefix-style entries stay warning-free.
 func TestResolve_UnknownEnvironmentNameWarnings(t *testing.T) {
 	appSpec := &spec.Spec{
-		APIVersion: "v1-alpha.2",
+		APIVersion: "v1-alpha.3",
 		Project:    "shop",
 		Environments: map[string]spec.Environment{
 			"production": {},
@@ -366,7 +366,7 @@ func TestResolve_DomainGapError(t *testing.T) {
 	appSpec := minimalSpec(new("api"))
 	// staging has no domains defined.
 	platform := &spec.PlatformConfig{
-		APIVersion: "platform/v1-alpha.1",
+		APIVersion: "platform/v1-alpha.2",
 		Environments: map[string]spec.PlatformEnvironment{
 			"staging": {Context: "staging-eks"},
 		},
@@ -382,7 +382,7 @@ func TestResolve_DomainGapError(t *testing.T) {
 func TestResolve_FQDNCollision(t *testing.T) {
 	// Two components resolving to the same FQDN (apex on same domain).
 	appSpec := &spec.Spec{
-		APIVersion: "v1-alpha.2",
+		APIVersion: "v1-alpha.3",
 		Project:    "shop",
 		Environments: map[string]spec.Environment{
 			"production": {},
@@ -403,7 +403,7 @@ func TestResolve_FQDNCollision(t *testing.T) {
 func TestResolve_WildcardStaticSubdomainWarning(t *testing.T) {
 	// review/pr-123 matches the "review" wildcard key; static subdomain warns.
 	platform := &spec.PlatformConfig{
-		APIVersion: "platform/v1-alpha.1",
+		APIVersion: "platform/v1-alpha.2",
 		Environments: map[string]spec.PlatformEnvironment{
 			"review": {
 				Context: "staging-eks",
@@ -417,7 +417,7 @@ func TestResolve_WildcardStaticSubdomainWarning(t *testing.T) {
 		},
 	}
 	appSpec := &spec.Spec{
-		APIVersion: "v1-alpha.2",
+		APIVersion: "v1-alpha.3",
 		Project:    "shop",
 		Environments: map[string]spec.Environment{
 			"review": {},
@@ -442,7 +442,7 @@ func TestResolve_WildcardStaticSubdomainWarning(t *testing.T) {
 func TestResolve_WildcardDynamicSubdomainNoWarning(t *testing.T) {
 	// Subdomain came from envsubst => no warning even for wildcard env.
 	platform := &spec.PlatformConfig{
-		APIVersion: "platform/v1-alpha.1",
+		APIVersion: "platform/v1-alpha.2",
 		Environments: map[string]spec.PlatformEnvironment{
 			"review": {
 				Context: "staging-eks",
@@ -456,7 +456,7 @@ func TestResolve_WildcardDynamicSubdomainNoWarning(t *testing.T) {
 		},
 	}
 	appSpec := &spec.Spec{
-		APIVersion: "v1-alpha.2",
+		APIVersion: "v1-alpha.3",
 		Project:    "shop",
 		Environments: map[string]spec.Environment{
 			"review": {},
@@ -477,7 +477,7 @@ func TestResolve_WildcardDynamicSubdomainNoWarning(t *testing.T) {
 func TestResolve_PlatformEnvNotFound(t *testing.T) {
 	appSpec := minimalSpec(new("api"))
 	platform := &spec.PlatformConfig{
-		APIVersion:   "platform/v1-alpha.1",
+		APIVersion:   "platform/v1-alpha.2",
 		Environments: map[string]spec.PlatformEnvironment{},
 	}
 	env := spec.NormalizeEnv("production")
@@ -506,7 +506,7 @@ func TestSentinelSubstituteRaw_LiteralPassthrough(t *testing.T) {
 func TestLoadPlatform_RejectsTwoDefaultDomains(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "deployah.platform.yaml")
-	doc := `apiVersion: platform/v1-alpha.1
+	doc := `apiVersion: platform/v1-alpha.2
 environments:
   production:
     context: prod
@@ -583,7 +583,7 @@ func TestScaffoldPlatformFile_NoEnvironmentsWritesNothing(t *testing.T) {
 func TestScaffoldPlatformFile_DoesNotOverwriteExisting(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "deployah.platform.yaml")
-	require.NoError(t, os.WriteFile(path, []byte("apiVersion: platform/v1-alpha.1\nenvironments:\n  prod:\n    context: prod\n"), 0o600))
+	require.NoError(t, os.WriteFile(path, []byte("apiVersion: platform/v1-alpha.2\nenvironments:\n  prod:\n    context: prod\n"), 0o600))
 
 	created, err := spec.ScaffoldPlatformFile(path, "127.0.0.1", []string{"local"})
 	require.NoError(t, err)
@@ -632,7 +632,7 @@ func TestPlatformEnvContext(t *testing.T) {
 	t.Parallel()
 
 	reviewPlatform := &spec.PlatformConfig{
-		APIVersion: "platform/v1-alpha.1",
+		APIVersion: "platform/v1-alpha.2",
 		Environments: map[string]spec.PlatformEnvironment{
 			"review": {Context: "staging-eks"},
 		},
@@ -693,7 +693,7 @@ func TestResolve_ErrorCode_PlatformNotFound(t *testing.T) {
 func TestResolve_ErrorCode_PlatformEnvNotFound(t *testing.T) {
 	appSpec := minimalSpec(new("api"))
 	platform := &spec.PlatformConfig{
-		APIVersion: "platform/v1-alpha.1",
+		APIVersion: "platform/v1-alpha.2",
 		Environments: map[string]spec.PlatformEnvironment{
 			"staging": {Context: "staging-eks"},
 		},
@@ -710,7 +710,7 @@ func TestResolve_ErrorCode_DomainGap(t *testing.T) {
 	appSpec := minimalSpec(new("api"))
 	// Platform has the env but not the domain referenced by the component.
 	platform := &spec.PlatformConfig{
-		APIVersion: "platform/v1-alpha.1",
+		APIVersion: "platform/v1-alpha.2",
 		Environments: map[string]spec.PlatformEnvironment{
 			"production": {Context: "prod-eks", Domains: map[string]spec.PlatformDomain{}},
 		},
@@ -726,7 +726,7 @@ func TestResolve_ErrorCode_DomainGap(t *testing.T) {
 func TestResolve_ErrorCode_InvalidDNS(t *testing.T) {
 	// Subdomain with invalid characters (not dynamic).
 	appSpec := &spec.Spec{
-		APIVersion: "v1-alpha.2",
+		APIVersion: "v1-alpha.3",
 		Project:    "shop",
 		Environments: map[string]spec.Environment{
 			"production": {},
@@ -746,7 +746,7 @@ func TestResolve_ErrorCode_InvalidDNS(t *testing.T) {
 // TestResolve_ErrorCode_FQDNCollision verifies platform spec behavior.
 func TestResolve_ErrorCode_FQDNCollision(t *testing.T) {
 	appSpec := &spec.Spec{
-		APIVersion: "v1-alpha.2",
+		APIVersion: "v1-alpha.3",
 		Project:    "shop",
 		Environments: map[string]spec.Environment{
 			"production": {},
@@ -769,7 +769,7 @@ func TestResolve_DynamicSubdomainSkipsDNSValidation(t *testing.T) {
 	// Subdomain contains ${PR_NUMBER} which is not a valid DNS label, but
 	// the prescan marks it as dynamic so resolution should succeed.
 	appSpec := &spec.Spec{
-		APIVersion: "v1-alpha.2",
+		APIVersion: "v1-alpha.3",
 		Project:    "shop",
 		Environments: map[string]spec.Environment{
 			"review": {},
@@ -779,7 +779,7 @@ func TestResolve_DynamicSubdomainSkipsDNSValidation(t *testing.T) {
 		},
 	}
 	platform := &spec.PlatformConfig{
-		APIVersion: "platform/v1-alpha.1",
+		APIVersion: "platform/v1-alpha.2",
 		Environments: map[string]spec.PlatformEnvironment{
 			"review": {
 				Context: "staging-eks",
@@ -800,7 +800,7 @@ func TestResolve_DynamicSubdomainSkipsDNSValidation(t *testing.T) {
 func TestResolve_StaticInvalidSubdomainFailsDNS(t *testing.T) {
 	// Same invalid subdomain but NOT marked as dynamic: should fail.
 	appSpec := &spec.Spec{
-		APIVersion: "v1-alpha.2",
+		APIVersion: "v1-alpha.3",
 		Project:    "shop",
 		Environments: map[string]spec.Environment{
 			"review": {},
@@ -810,7 +810,7 @@ func TestResolve_StaticInvalidSubdomainFailsDNS(t *testing.T) {
 		},
 	}
 	platform := &spec.PlatformConfig{
-		APIVersion: "platform/v1-alpha.1",
+		APIVersion: "platform/v1-alpha.2",
 		Environments: map[string]spec.PlatformEnvironment{
 			"review": {
 				Context: "staging-eks",
@@ -869,7 +869,7 @@ func platformWithProfiles() *spec.PlatformConfig {
 func TestLoadPlatform_WithProfiles(t *testing.T) {
 	t.Parallel()
 	yaml := `
-apiVersion: platform/v1-alpha.1
+apiVersion: platform/v1-alpha.2
 profiles:
   default:
     nodeSelector:
@@ -907,7 +907,7 @@ environments:
 func TestLoadPlatform_ProfileUnknownDomainRef(t *testing.T) {
 	t.Parallel()
 	yaml := `
-apiVersion: platform/v1-alpha.1
+apiVersion: platform/v1-alpha.2
 profiles:
   public-web:
     allowedDomains: [missing]
@@ -930,7 +930,7 @@ environments:
 func TestLoadPlatform_ProfileUnknownStorageClassRef(t *testing.T) {
 	t.Parallel()
 	yaml := `
-apiVersion: platform/v1-alpha.1
+apiVersion: platform/v1-alpha.2
 profiles:
   gpu:
     storageClass: missing
@@ -1032,7 +1032,7 @@ func TestResolve_Profiles(t *testing.T) {
 		{
 			name: "domain ignored without expose",
 			appSpec: &spec.Spec{
-				APIVersion:   "v1-alpha.2",
+				APIVersion:   "v1-alpha.3",
 				Project:      "shop",
 				Environments: map[string]spec.Environment{"production": {}},
 				Components: map[string]spec.Component{
@@ -1049,7 +1049,7 @@ func TestResolve_Profiles(t *testing.T) {
 		{
 			name: "storage class missing in environment",
 			appSpec: &spec.Spec{
-				APIVersion:   "v1-alpha.2",
+				APIVersion:   "v1-alpha.3",
 				Project:      "shop",
 				Environments: map[string]spec.Environment{"local": {}},
 				Components: map[string]spec.Component{
@@ -1063,7 +1063,7 @@ func TestResolve_Profiles(t *testing.T) {
 		{
 			name: "storage class resolved to className",
 			appSpec: &spec.Spec{
-				APIVersion:   "v1-alpha.2",
+				APIVersion:   "v1-alpha.3",
 				Project:      "shop",
 				Environments: map[string]spec.Environment{"production": {}},
 				Components: map[string]spec.Component{
@@ -1189,6 +1189,93 @@ func TestResolve_Profiles(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestResolve_ComponentStorageClass verifies persistence.storageClass wins
+// over the profile key and fails when the key is unknown.
+func TestResolve_ComponentStorageClass(t *testing.T) {
+	t.Parallel()
+
+	platform := platformWithProfiles()
+	prod := platform.Environments["production"]
+	prod.StorageClasses["standard"] = spec.PlatformStorageClass{ClassName: "standard-hdd"}
+	platform.Environments["production"] = prod
+
+	t.Run("component key wins over profile", func(t *testing.T) {
+		t.Parallel()
+		appSpec := &spec.Spec{
+			APIVersion:   "v1-alpha.3",
+			Project:      "shop",
+			Environments: map[string]spec.Environment{"production": {}},
+			Components: map[string]spec.Component{
+				"db": {
+					Kind:     spec.ComponentKindStateful,
+					Profiles: []string{"gpu"}, // profile storageClass: fast
+					Persistence: &spec.Persistence{
+						Size:         "20Gi",
+						MountPath:    "/data",
+						StorageClass: "standard",
+					},
+				},
+			},
+		}
+		resolved, report, err := spec.Resolve(appSpec, platform, spec.NormalizeEnv("production"), spec.SubstitutionReport{})
+		require.NoError(t, err)
+		assert.Equal(t, "standard-hdd", resolved.Components["db"].StorageClass)
+		var source string
+		for _, f := range report.Fields {
+			if f.Component == "db" && f.Path == "storageClass" {
+				source = f.Source
+			}
+		}
+		assert.Contains(t, source, "component persistence.storageClass")
+	})
+
+	t.Run("unknown component key errors", func(t *testing.T) {
+		t.Parallel()
+		appSpec := &spec.Spec{
+			APIVersion:   "v1-alpha.3",
+			Project:      "shop",
+			Environments: map[string]spec.Environment{"production": {}},
+			Components: map[string]spec.Component{
+				"db": {
+					Persistence: &spec.Persistence{
+						Size:         "20Gi",
+						MountPath:    "/data",
+						StorageClass: "missing",
+					},
+				},
+			},
+		}
+		_, report, err := spec.Resolve(appSpec, platform, spec.NormalizeEnv("production"), spec.SubstitutionReport{})
+		require.Error(t, err)
+		require.NotNil(t, report)
+		assert.Equal(t, spec.ErrCodeComponentStorageClassNotFound, report.ErrorCode)
+	})
+
+	t.Run("component key without storageClasses map errors", func(t *testing.T) {
+		t.Parallel()
+		p := minimalPlatform()
+		appSpec := &spec.Spec{
+			APIVersion:   "v1-alpha.3",
+			Project:      "shop",
+			Environments: map[string]spec.Environment{"local": {}},
+			Components: map[string]spec.Component{
+				"db": {
+					Persistence: &spec.Persistence{
+						Size:         "20Gi",
+						MountPath:    "/data",
+						StorageClass: "fast",
+					},
+				},
+			},
+		}
+		_, report, err := spec.Resolve(appSpec, p, spec.NormalizeEnv("local"), spec.SubstitutionReport{})
+		require.Error(t, err)
+		require.NotNil(t, report)
+		assert.Equal(t, spec.ErrCodeComponentStorageClassNotFound, report.ErrorCode)
+		assert.Contains(t, err.Error(), "no storageClasses")
+	})
 }
 
 // TestResolveForDisplay covers offline partial results and the happy path that

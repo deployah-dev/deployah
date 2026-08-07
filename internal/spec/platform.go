@@ -32,7 +32,7 @@ const PlatformEnvVar = "DEPLOYAH_PLATFORM_FILE"
 // PlatformConfig is the top-level structure of the platform file
 // (deployah.platform.yaml). It is platform-owned and not subject to envsubst.
 type PlatformConfig struct {
-	// APIVersion is the platform schema version, e.g. "platform/v1-alpha.1".
+	// APIVersion is the platform schema version, e.g. "platform/v1-alpha.2".
 	APIVersion string `json:"apiVersion" yaml:"apiVersion"`
 	// Profiles maps logical profile names to deployment policy. Profiles are
 	// org-wide (root-level), not per-environment. A profile named "default" is
@@ -67,6 +67,9 @@ type PlatformProfile struct {
 	// StorageClass is a logical storage class key from the target
 	// environment's storageClasses map.
 	StorageClass string `json:"storageClass,omitempty" yaml:"storageClass,omitempty"`
+	// PVCRetentionPolicy overrides StatefulSet PVC retention for stateful
+	// components. Nil means chart defaults (Retain/Retain).
+	PVCRetentionPolicy *PVCRetentionPolicy `json:"pvcRetentionPolicy,omitempty" yaml:"pvcRetentionPolicy,omitempty"`
 	// AllowedDomains restricts which domain keys a component may expose on.
 	// nil means no constraint. A non-nil empty list means deny-all (no domain
 	// is allowed). Multiple profiles intersect. Neither JSON nor YAML uses
@@ -74,6 +77,14 @@ type PlatformProfile struct {
 	AllowedDomains []string `json:"allowedDomains" yaml:"allowedDomains"`
 	// MaxResources is a ceiling on component resource requests.
 	MaxResources *ProfileMaxResources `json:"maxResources,omitempty" yaml:"maxResources,omitempty"`
+}
+
+// PVCRetentionPolicy controls StatefulSet persistentVolumeClaimRetentionPolicy.
+type PVCRetentionPolicy struct {
+	// WhenDeleted is Retain or Delete when the StatefulSet is deleted.
+	WhenDeleted string `json:"whenDeleted,omitempty" yaml:"whenDeleted,omitempty"`
+	// WhenScaled is Retain or Delete when the StatefulSet is scaled down.
+	WhenScaled string `json:"whenScaled,omitempty" yaml:"whenScaled,omitempty"`
 }
 
 // ProfileMaxResources caps component resource requests.

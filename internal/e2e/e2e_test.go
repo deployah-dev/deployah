@@ -35,6 +35,7 @@ import (
 	"nabat.dev/nabat"
 	"nabat.dev/nabat/nabattest"
 	"sigs.k8s.io/e2e-framework/klient"
+	"sigs.k8s.io/e2e-framework/klient/k8s"
 	"sigs.k8s.io/e2e-framework/klient/k8s/resources"
 	"sigs.k8s.io/e2e-framework/klient/wait"
 	"sigs.k8s.io/e2e-framework/klient/wait/conditions"
@@ -51,10 +52,11 @@ import (
 // `deployah cluster up`.
 type E2ESuite struct {
 	suite.Suite
-	kcPath    string
-	client    klient.Client
-	scenarios []scenario
-	created   bool // true once the suite attempts cluster up (teardown if partial)
+	kcPath      string
+	client      klient.Client
+	scenarios   []scenario
+	testdataDir string // absolute; resolved before SetupSuite chdirs to a temp dir
+	created     bool   // true once the suite attempts cluster up (teardown if partial)
 }
 
 type scenario struct {
@@ -74,14 +76,24 @@ type clusterStatusView struct {
 }
 
 type expectations struct {
-	Env         string               `yaml:"env"`
-	Namespace   string               `yaml:"namespace"`
-	Deployments []expectedDeployment `yaml:"deployments"`
-	Services    []expectedService    `yaml:"services"`
-	Pods        expectedPods         `yaml:"pods"`
+	Env          string                `yaml:"env"`
+	Namespace    string                `yaml:"namespace"`
+	Deployments  []expectedDeployment  `yaml:"deployments"`
+	StatefulSets []expectedStatefulSet `yaml:"statefulSets"`
+	Services     []expectedService     `yaml:"services"`
+	PVCs         []expectedPVC         `yaml:"pvcs"`
+	Pods         expectedPods          `yaml:"pods"`
 }
 
 type expectedDeployment struct {
+	Name     string            `yaml:"name"`
+	Replicas int32             `yaml:"replicas"`
+	Image    string            `yaml:"image"`
+	PortName string            `yaml:"portName"`
+	Labels   map[string]string `yaml:"labels"`
+}
+
+type expectedStatefulSet struct {
 	Name     string            `yaml:"name"`
 	Replicas int32             `yaml:"replicas"`
 	Image    string            `yaml:"image"`
@@ -94,6 +106,15 @@ type expectedService struct {
 	Port           int32             `yaml:"port"`
 	TargetPortName string            `yaml:"targetPortName"`
 	Selector       map[string]string `yaml:"selector"`
+	// ClusterIP, when set to "None", asserts a headless Service.
+	ClusterIP string `yaml:"clusterIP"`
+}
+
+type expectedPVC struct {
+	NamePrefix string `yaml:"namePrefix"`
+	MinCount   int    `yaml:"minCount"`
+	Phase      string `yaml:"phase"`
+	Storage    string `yaml:"storage"`
 }
 
 type expectedPods struct {
@@ -116,6 +137,7 @@ func (s *E2ESuite) SetupSuite() {
 	// the chdir below moves the whole suite out of it.
 	testdataDir, err := filepath.Abs("testdata")
 	s.Require().NoError(err)
+	s.testdataDir = testdataDir
 	s.scenarios = discoverScenarios(t, testdataDir)
 
 	// cluster up scaffolds deployah.platform.yaml into the cwd, so run from a
@@ -151,6 +173,76 @@ func (s *E2ESuite) TearDownSuite() {
 	if err := runErr(s.T(), "cluster", "down", "--force"); err != nil {
 		s.T().Errorf("cluster down failed: %v", err)
 	}
+}
+
+// TestStatefulScale deploys a stateful component at replicas 1, then upgrades
+// to replicas 2 and asserts a second PVC is created.
+func (s *E2ESuite) TestStatefulScale() {
+	t := s.T()
+	src := filepath.Join(s.testdataDir, "stateful-scale")
+	require.DirExists(t, src)
+
+	// Work in a temp copy so swapping deployah.yaml never dirties testdata/.
+	dir := t.TempDir()
+	for _, name := range []string{"deployah.yaml", "deployah-replicas-2.yaml"} {
+		data, readErr := os.ReadFile(filepath.Join(src, name)) // #nosec G304 -- fixture under testdata
+		require.NoError(t, readErr)
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), data, 0o600))
+	}
+
+	t.Chdir(dir)
+	t.Cleanup(func() {
+		if delErr := runErr(t, "delete", "stateful-scale", "dev",
+			"--yes", "--wait", "--allow-missing-platform",
+			"--context", "kind-deployah"); delErr != nil {
+			t.Logf("cleanup delete failed (non-fatal): %v", delErr)
+		}
+	})
+
+	run(t, "deploy", "dev", "--context", "kind-deployah", "--yes")
+
+	res := s.client.Resources("default")
+	ctx := t.Context()
+	stsName := "stateful-scale-dev-cache"
+
+	require.NoError(t, wait.For(
+		conditions.New(res).ResourceMatch(&appsv1.StatefulSet{
+			ObjectMeta: metav1.ObjectMeta{Name: stsName, Namespace: "default"},
+		}, func(obj k8s.Object) bool {
+			live, ok := obj.(*appsv1.StatefulSet)
+			return ok && live.Status.ReadyReplicas >= 1
+		}),
+		wait.WithTimeout(5*time.Minute),
+		wait.WithInterval(2*time.Second),
+	))
+
+	replicas2, readErr := os.ReadFile("deployah-replicas-2.yaml") // #nosec G304 -- temp fixture copy
+	require.NoError(t, readErr)
+	require.NoError(t, os.WriteFile("deployah.yaml", replicas2, 0o600))
+
+	run(t, "deploy", "dev", "--context", "kind-deployah", "--yes")
+	require.NoError(t, wait.For(
+		conditions.New(res).ResourceMatch(&appsv1.StatefulSet{
+			ObjectMeta: metav1.ObjectMeta{Name: stsName, Namespace: "default"},
+		}, func(obj k8s.Object) bool {
+			live, ok := obj.(*appsv1.StatefulSet)
+			return ok && live.Spec.Replicas != nil &&
+				*live.Spec.Replicas == 2 && live.Status.ReadyReplicas >= 2
+		}),
+		wait.WithTimeout(5*time.Minute),
+		wait.WithInterval(2*time.Second),
+	))
+
+	var pvcs corev1.PersistentVolumeClaimList
+	require.NoError(t, res.List(ctx, &pvcs))
+	matched := 0
+	for _, pvc := range pvcs.Items {
+		if strings.HasPrefix(pvc.Name, "data-stateful-scale-dev-cache-") {
+			matched++
+			assert.Equal(t, corev1.ClaimBound, pvc.Status.Phase, pvc.Name)
+		}
+	}
+	assert.GreaterOrEqual(t, matched, 2, "expected per-pod PVCs after scale-up")
 }
 
 // TestDeployScenarios deploys each discovered fixture and asserts expect.yaml.
@@ -227,6 +319,50 @@ func (s *E2ESuite) assertExpectations(t testing.TB, exp expectations) {
 		}
 	}
 
+	for _, sts := range exp.StatefulSets {
+		target := &appsv1.StatefulSet{
+			ObjectMeta: metav1.ObjectMeta{Name: sts.Name, Namespace: exp.Namespace},
+		}
+		err := wait.For(
+			conditions.New(res).ResourceMatch(target, func(obj k8s.Object) bool {
+				live, ok := obj.(*appsv1.StatefulSet)
+				if !ok || live.Spec.Replicas == nil {
+					return false
+				}
+				return live.Status.ReadyReplicas >= *live.Spec.Replicas &&
+					live.Status.ReadyReplicas > 0
+			}),
+			wait.WithTimeout(5*time.Minute),
+			wait.WithInterval(2*time.Second),
+		)
+		require.NoErrorf(t, err, "statefulset %s/%s never became ready",
+			exp.Namespace, sts.Name)
+
+		var live appsv1.StatefulSet
+		require.NoError(t, res.Get(ctx, sts.Name, exp.Namespace, &live))
+		dumpActual(t, &live)
+
+		for key, val := range sts.Labels {
+			assert.Equalf(t, val, live.Labels[key],
+				"statefulset %s label %s", sts.Name, key)
+		}
+		containers := live.Spec.Template.Spec.Containers
+		require.NotEmptyf(t, containers, "statefulset %s has no containers", sts.Name)
+		assert.Equalf(t, sts.Image, containers[0].Image,
+			"statefulset %s image", sts.Name)
+		if sts.PortName != "" {
+			require.NotEmptyf(t, containers[0].Ports,
+				"statefulset %s has no ports", sts.Name)
+			assert.Equalf(t, sts.PortName, containers[0].Ports[0].Name,
+				"statefulset %s port name", sts.Name)
+		}
+		if sts.Replicas > 0 {
+			require.NotNil(t, live.Spec.Replicas)
+			assert.Equalf(t, sts.Replicas, *live.Spec.Replicas,
+				"statefulset %s replicas", sts.Name)
+		}
+	}
+
 	for _, svc := range exp.Services {
 		var live corev1.Service
 		require.NoError(t, res.Get(ctx, svc.Name, exp.Namespace, &live))
@@ -240,10 +376,37 @@ func (s *E2ESuite) assertExpectations(t testing.TB, exp expectations) {
 			assert.Equalf(t, svc.TargetPortName, live.Spec.Ports[0].TargetPort.StrVal,
 				"service %s targetPort name", svc.Name)
 		}
+		if svc.ClusterIP == "None" {
+			assert.Equalf(t, corev1.ClusterIPNone, live.Spec.ClusterIP,
+				"service %s should be headless", svc.Name)
+		}
 		for key, val := range svc.Selector {
 			assert.Equalf(t, val, live.Spec.Selector[key],
 				"service %s selector %s", svc.Name, key)
 		}
+	}
+
+	for _, wantPVC := range exp.PVCs {
+		var pvcs corev1.PersistentVolumeClaimList
+		require.NoError(t, res.List(ctx, &pvcs))
+		matched := 0
+		for _, pvc := range pvcs.Items {
+			if !strings.HasPrefix(pvc.Name, wantPVC.NamePrefix) {
+				continue
+			}
+			matched++
+			if wantPVC.Phase != "" {
+				assert.Equalf(t, wantPVC.Phase, string(pvc.Status.Phase),
+					"pvc %s phase", pvc.Name)
+			}
+			if wantPVC.Storage != "" {
+				req := pvc.Spec.Resources.Requests[corev1.ResourceStorage]
+				assert.Equalf(t, wantPVC.Storage, req.String(),
+					"pvc %s storage", pvc.Name)
+			}
+		}
+		assert.GreaterOrEqualf(t, matched, wantPVC.MinCount,
+			"pvcs with prefix %s", wantPVC.NamePrefix)
 	}
 
 	if exp.Pods.LabelSelector != "" {

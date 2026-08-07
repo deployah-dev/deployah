@@ -1,0 +1,22 @@
+# $schema: ../../internal/spec/schema/v1-alpha.3/manifest.json
+apiVersion: v1-alpha.3
+project: stateful-hpa
+components:
+  cache:
+    kind: stateful
+    image: redis:7
+    port: 6379
+    resourcePreset: small
+    environments: [dev]
+    persistence:
+      size: 5Gi
+      mountPath: /data
+    autoscaling:
+      enabled: true
+      minReplicas: 1
+      maxReplicas: 3
+      metrics:
+        - type: cpu
+          target: 70
+environments:
+  dev: {}

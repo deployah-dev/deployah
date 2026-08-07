@@ -287,6 +287,156 @@ func TestValidateComponentAutoscaling(t *testing.T) {
 	}
 }
 
+// TestValidateComponentPersistence verifies stateful/stateless persistence rules.
+func TestValidateComponentPersistence(t *testing.T) {
+	t.Parallel()
+
+	replicas2 := 2
+	tests := []struct {
+		name      string
+		component Component
+		wantErr   string
+	}{
+		{
+			name:      "stateless without persistence",
+			component: Component{Kind: ComponentKindStateless},
+		},
+		{
+			name: "stateful with persistence",
+			component: Component{
+				Kind: ComponentKindStateful,
+				Persistence: &Persistence{
+					Size:      "20Gi",
+					MountPath: "/data",
+				},
+			},
+		},
+		{
+			name:      "stateful without persistence (identity only)",
+			component: Component{Kind: ComponentKindStateful},
+		},
+		{
+			name: "stateful missing size",
+			component: Component{
+				Kind:        ComponentKindStateful,
+				Persistence: &Persistence{MountPath: "/data"},
+			},
+			wantErr: "persistence.size is required when persistence is set",
+		},
+		{
+			name: "stateful missing mountPath",
+			component: Component{
+				Kind:        ComponentKindStateful,
+				Persistence: &Persistence{Size: "20Gi"},
+			},
+			wantErr: "persistence.mountPath is required when persistence is set",
+		},
+		{
+			name: "stateless persistence with replicas > 1",
+			component: Component{
+				Kind:        ComponentKindStateless,
+				Replicas:    &replicas2,
+				Persistence: &Persistence{Size: "1Gi", MountPath: "/data"},
+			},
+			wantErr: "cannot set replicas > 1",
+		},
+		{
+			name: "stateless persistence with autoscaling",
+			component: Component{
+				Kind: ComponentKindStateless,
+				Persistence: &Persistence{
+					Size:      "1Gi",
+					MountPath: "/data",
+				},
+				Autoscaling: &Autoscaling{Enabled: true, MinReplicas: 1, MaxReplicas: 3},
+			},
+			wantErr: "cannot enable autoscaling",
+		},
+		{
+			name: "stateless persistence allowed with one replica",
+			component: Component{
+				Kind: ComponentKindStateless,
+				Persistence: &Persistence{
+					Size:      "1Gi",
+					MountPath: "/data",
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := ValidateComponentPersistence(tt.component)
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
+// TestValidateComponentReplicas verifies replicas vs autoscaling mutual exclusion.
+func TestValidateComponentReplicas(t *testing.T) {
+	t.Parallel()
+
+	replicas1 := 1
+	replicas0 := 0
+	tests := []struct {
+		name      string
+		component Component
+		wantErr   string
+	}{
+		{
+			name:      "nil replicas",
+			component: Component{},
+		},
+		{
+			name: "replicas without autoscaling",
+			component: Component{
+				Replicas: &replicas1,
+			},
+		},
+		{
+			name: "replicas with autoscaling enabled",
+			component: Component{
+				Replicas:    &replicas1,
+				Autoscaling: &Autoscaling{Enabled: true, MinReplicas: 1, MaxReplicas: 3},
+			},
+			wantErr: "mutually exclusive",
+		},
+		{
+			name: "replicas with autoscaling disabled",
+			component: Component{
+				Replicas:    &replicas1,
+				Autoscaling: &Autoscaling{Enabled: false},
+			},
+		},
+		{
+			name: "replicas less than 1",
+			component: Component{
+				Replicas: &replicas0,
+			},
+			wantErr: "at least 1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := ValidateComponentReplicas(tt.component)
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
 // TestValidateComponentEnvironmentFilter rejects unsupported /* suffixes.
 func TestValidateComponentEnvironmentFilter(t *testing.T) {
 	t.Parallel()

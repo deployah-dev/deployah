@@ -105,19 +105,20 @@ type ResolvedField struct {
 
 // Resolution error codes for use in the resolution report and JSON output.
 const (
-	ErrCodePlatformNotFound            = "PLATFORM_NOT_FOUND"
-	ErrCodePlatformEnvNotFound         = "PLATFORM_ENV_NOT_FOUND"
-	ErrCodeDomainGap                   = "DOMAIN_GAP"
-	ErrCodeFQDNCollision               = "FQDN_COLLISION"
-	ErrCodeInvalidDNS                  = "INVALID_DNS"
-	ErrCodeStaticWildcardSubdomain     = "STATIC_WILDCARD_SUBDOMAIN"
-	ErrCodeContextMismatch             = "CONTEXT_MISMATCH"
-	ErrCodeHostnameChanged             = "HOSTNAME_CHANGED"
-	ErrCodeProfileNotFound             = "PROFILE_NOT_FOUND"
-	ErrCodeProfileDomainNotAllowed     = "PROFILE_DOMAIN_NOT_ALLOWED"
-	ErrCodeProfileStorageClassNotFound = "PROFILE_STORAGE_CLASS_NOT_FOUND"
-	ErrCodeProfileResourceExceeded     = "PROFILE_RESOURCE_EXCEEDED"
-	ErrCodeProfileOptOutBlocked        = "PROFILE_OPT_OUT_BLOCKED"
+	ErrCodePlatformNotFound              = "PLATFORM_NOT_FOUND"
+	ErrCodePlatformEnvNotFound           = "PLATFORM_ENV_NOT_FOUND"
+	ErrCodeDomainGap                     = "DOMAIN_GAP"
+	ErrCodeFQDNCollision                 = "FQDN_COLLISION"
+	ErrCodeInvalidDNS                    = "INVALID_DNS"
+	ErrCodeStaticWildcardSubdomain       = "STATIC_WILDCARD_SUBDOMAIN"
+	ErrCodeContextMismatch               = "CONTEXT_MISMATCH"
+	ErrCodeHostnameChanged               = "HOSTNAME_CHANGED"
+	ErrCodeProfileNotFound               = "PROFILE_NOT_FOUND"
+	ErrCodeProfileDomainNotAllowed       = "PROFILE_DOMAIN_NOT_ALLOWED"
+	ErrCodeProfileStorageClassNotFound   = "PROFILE_STORAGE_CLASS_NOT_FOUND"
+	ErrCodeComponentStorageClassNotFound = "COMPONENT_STORAGE_CLASS_NOT_FOUND"
+	ErrCodeProfileResourceExceeded       = "PROFILE_RESOURCE_EXCEEDED"
+	ErrCodeProfileOptOutBlocked          = "PROFILE_OPT_OUT_BLOCKED"
 )
 
 // ResolutionError is a resolution error that carries a machine-readable code.

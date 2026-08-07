@@ -3,14 +3,18 @@
   pkgs,
   go,
   pre-commit-check,
+  golangci-lint,
 }:
 
 let
-  devTools = with pkgs; [
+  # Prefer the flake-pinned golangci-lint over a user GOPATH install.
+  devTools = [
     go
+    golangci-lint
+  ]
+  ++ (with pkgs; [
     gopls
     gotools
-    golangci-lint
     markdownlint-cli
     delve
     git
@@ -25,7 +29,7 @@ let
     bat
     xclip
     xvfb-run
-  ];
+  ]);
 in
 pkgs.mkShell {
   name = "deployah";
@@ -38,7 +42,9 @@ pkgs.mkShell {
     ${pre-commit-check.shellHook}
     export GOROOT="${go}/share/go"
     export GOPATH="''${GOPATH:-$HOME/go}"
-    export PATH="${go}/bin:$GOPATH/bin:$PATH"
+    # Flake Go + golangci-lint first; GOPATH/bin last so local installs do not
+    # shadow the pinned toolchain (Go 1.27-capable golangci-lint).
+    export PATH="${golangci-lint}/bin:${go}/bin:$PATH:$GOPATH/bin"
     echo "Deployah dev shell — $(go version)"
   '';
 }

@@ -5,6 +5,7 @@
   git-hooks,
   system,
   src,
+  golangci-lint,
 }:
 
 let
@@ -39,11 +40,10 @@ git-hooks.lib.${system}.run {
       entry = "${go}/bin/gofmt -l -w";
       files = "\\.go$";
     };
-    # Disabled while go.mod is 1.27: nixpkgs golangci-lint is built with
-    # Go 1.26 and fails config load. Re-enable when
-    # https://github.com/golangci/golangci-lint/issues/6643 lands.
+    # Flake-pinned golangci-lint (Go 1.27 build from upstream PR #6642).
     golangci-lint = {
-      enable = false;
+      enable = true;
+      package = golangci-lint;
       extraPackages = [ go ];
     };
     markdownlint = {

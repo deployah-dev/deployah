@@ -1,0 +1,108 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+    annotations:
+        deployah.dev/project: stateful-hpa
+        deployah.dev/source: spec
+    labels:
+        app.kubernetes.io/instance: stateful-hpa-dev
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: cache
+        deployah.dev/component: cache
+        deployah.dev/environment: dev
+        deployah.dev/project: stateful-hpa
+        helm.sh/chart: cache-0.1.0
+    name: stateful-hpa-dev-cache
+    namespace: default
+spec:
+    persistentVolumeClaimRetentionPolicy:
+        whenDeleted: Retain
+        whenScaled: Retain
+    podManagementPolicy: OrderedReady
+    revisionHistoryLimit: 10
+    selector:
+        matchLabels:
+            app.kubernetes.io/instance: stateful-hpa-dev
+            app.kubernetes.io/name: cache
+    serviceName: stateful-hpa-dev-cache-headless
+    template:
+        metadata:
+            annotations: null
+            labels:
+                app.kubernetes.io/instance: stateful-hpa-dev
+                app.kubernetes.io/managed-by: Helm
+                app.kubernetes.io/name: cache
+                deployah.dev/component: cache
+                deployah.dev/environment: dev
+                deployah.dev/project: stateful-hpa
+                helm.sh/chart: cache-0.1.0
+        spec:
+            affinity:
+                podAntiAffinity:
+                    preferredDuringSchedulingIgnoredDuringExecution:
+                        - podAffinityTerm:
+                            labelSelector:
+                                matchLabels:
+                                    app.kubernetes.io/instance: stateful-hpa-dev
+                                    app.kubernetes.io/name: cache
+                            topologyKey: kubernetes.io/hostname
+                          weight: 1
+            containers:
+                - image: docker.io/library/redis:7
+                  imagePullPolicy: IfNotPresent
+                  livenessProbe:
+                    failureThreshold: 6
+                    periodSeconds: 10
+                    tcpSocket:
+                        port: http
+                    timeoutSeconds: 3
+                  name: cache
+                  ports:
+                    - containerPort: 6379
+                      name: http
+                      protocol: TCP
+                  readinessProbe:
+                    failureThreshold: 3
+                    periodSeconds: 5
+                    tcpSocket:
+                        port: http
+                    timeoutSeconds: 3
+                  resources:
+                    limits: {}
+                    requests:
+                        cpu: 500m
+                        ephemeral-storage: 50Mi
+                        memory: 512Mi
+                  startupProbe:
+                    failureThreshold: 36
+                    periodSeconds: 5
+                    tcpSocket:
+                        port: http
+                    timeoutSeconds: 3
+                  volumeMounts:
+                    - mountPath: /data
+                      name: data
+            restartPolicy: Always
+            serviceAccountName: default
+    updateStrategy:
+        type: RollingUpdate
+    volumeClaimTemplates:
+        - metadata:
+            annotations:
+                deployah.dev/project: stateful-hpa
+                deployah.dev/source: spec
+            labels:
+                app.kubernetes.io/instance: stateful-hpa-dev
+                app.kubernetes.io/managed-by: Helm
+                app.kubernetes.io/name: cache
+                deployah.dev/component: cache
+                deployah.dev/environment: dev
+                deployah.dev/project: stateful-hpa
+                helm.sh/chart: cache-0.1.0
+            name: data
+          spec:
+            accessModes:
+                - ReadWriteOncePod
+            resources:
+                requests:
+                    storage: 5Gi

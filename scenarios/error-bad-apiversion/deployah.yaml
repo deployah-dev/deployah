@@ -1,4 +1,4 @@
-# $schema: ../../internal/spec/schema/v1-alpha.2/manifest.json
+# $schema: ../../internal/spec/schema/v1-alpha.3/manifest.json
 apiVersion: v1-alpha.99
 project: error-bad-apiversion
 components:

@@ -1,6 +1,6 @@
 {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://deployah.dev/schemas/platform/v1-alpha.1/platform.json",
+    "$id": "https://deployah.dev/schemas/platform/v1-alpha.2/platform.json",
     "title": "Deployah Platform Config",
     "description": "Platform-owned configuration file (deployah.platform.yaml). Defines Kubernetes contexts, domain bindings, storage classes per environment, and org-wide deployment profiles. Not subject to envsubst.",
     "type": "object",
@@ -10,8 +10,8 @@
         "apiVersion": {
             "type": "string",
             "title": "API Version",
-            "description": "Platform schema version. Must be 'platform/v1-alpha.1'.",
-            "const": "platform/v1-alpha.1"
+            "description": "Platform schema version. Must be 'platform/v1-alpha.2'.",
+            "const": "platform/v1-alpha.2"
         },
         "profiles": {
             "type": "object",
@@ -263,6 +263,9 @@
                     "minLength": 1,
                     "examples": ["fast", "standard"]
                 },
+                "pvcRetentionPolicy": {
+                    "$ref": "#/$defs/PVCRetentionPolicy"
+                },
                 "allowedDomains": {
                     "type": "array",
                     "title": "Allowed Domains",
@@ -340,11 +343,37 @@
                     "examples": ["2Gi", "512Mi"]
                 }
             }
+        },
+        "PVCRetentionPolicy": {
+            "type": "object",
+            "title": "PVC Retention Policy",
+            "description": "Overrides StatefulSet persistentVolumeClaimRetentionPolicy for stateful components. Defaults are Retain for both fields when omitted.",
+            "additionalProperties": false,
+            "properties": {
+                "whenDeleted": {
+                    "type": "string",
+                    "title": "When Deleted",
+                    "description": "PVC retention when the StatefulSet is deleted.",
+                    "enum": ["Retain", "Delete"],
+                    "examples": ["Retain", "Delete"]
+                },
+                "whenScaled": {
+                    "type": "string",
+                    "title": "When Scaled",
+                    "description": "PVC retention when the StatefulSet is scaled down.",
+                    "enum": ["Retain", "Delete"],
+                    "examples": ["Retain", "Delete"]
+                }
+            },
+            "examples": [
+                {"whenDeleted": "Retain", "whenScaled": "Retain"},
+                {"whenDeleted": "Delete", "whenScaled": "Delete"}
+            ]
         }
     },
     "examples": [
         {
-            "apiVersion": "platform/v1-alpha.1",
+            "apiVersion": "platform/v1-alpha.2",
             "profiles": {
                 "default": {
                     "nodeSelector": {"workload": "general"}

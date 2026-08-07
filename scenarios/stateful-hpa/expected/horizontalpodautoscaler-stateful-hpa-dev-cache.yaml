@@ -1,0 +1,36 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+    annotations:
+        deployah.dev/project: stateful-hpa
+        deployah.dev/source: spec
+    labels:
+        app.kubernetes.io/instance: stateful-hpa-dev
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: cache
+        deployah.dev/component: cache
+        deployah.dev/environment: dev
+        deployah.dev/project: stateful-hpa
+        helm.sh/chart: cache-0.1.0
+    name: stateful-hpa-dev-cache
+    namespace: default
+spec:
+    maxReplicas: 3
+    metrics:
+        - resource:
+            name: cpu
+            target:
+                averageUtilization: 70
+                type: Utilization
+          type: Resource
+        - resource:
+            name: memory
+            target:
+                averageUtilization: 80
+                type: Utilization
+          type: Resource
+    minReplicas: 1
+    scaleTargetRef:
+        apiVersion: apps/v1
+        kind: StatefulSet
+        name: stateful-hpa-dev-cache

@@ -1,4 +1,4 @@
-apiVersion: v1-alpha.2
+apiVersion: v1-alpha.3
 project: basic-web-service
 components:
   web:

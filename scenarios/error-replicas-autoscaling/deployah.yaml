@@ -1,0 +1,18 @@
+# $schema: ../../internal/spec/schema/v1-alpha.3/manifest.json
+apiVersion: v1-alpha.3
+project: error-replicas-autoscaling
+components:
+  web:
+    image: nginx:latest
+    port: 8080
+    replicas: 2
+    environments: [dev]
+    autoscaling:
+      enabled: true
+      minReplicas: 1
+      maxReplicas: 5
+      metrics:
+        - type: cpu
+          target: 70
+environments:
+  dev: {}

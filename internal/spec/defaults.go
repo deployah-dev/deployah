@@ -66,14 +66,14 @@ const componentsPrefixLength = len(ComponentsPrefix)
 // and pattern extraction operations.
 //
 // Cache keys follow the format: "{version}-{schemaType}"
-// Example: "v1-alpha.2-spec", "v1-alpha.2-environments"
+// Example: "v1-alpha.3-spec", "v1-alpha.3-environments"
 var (
 	// compiledSchemaCache stores compiled JSON schemas with their raw data
-	// Key format: "v1-alpha.2-spec" -> schemaInfo{compiled, rawData}
+	// Key format: "v1-alpha.3-spec" -> schemaInfo{compiled, rawData}
 	compiledSchemaCache = make(map[string]*schemaInfo)
 
 	// patternCache stores extracted component name patterns from schemas
-	// Key format: "v1-alpha.2" -> "^[a-zA-Z0-9_-]+$"
+	// Key format: "v1-alpha.3" -> "^[a-zA-Z0-9_-]+$"
 	patternCache = make(map[string]string)
 
 	// schemaMutex protects concurrent access to the caches
@@ -270,7 +270,7 @@ func (w *defaultsWalker) walk(schemaData any, path string, defaults DefaultValue
 	}
 
 	// Handle map-typed additionalProperties combined with a propertyNames
-	// pattern (the v1-alpha.2 layout for components/environments); the
+	// pattern (the v1-alpha.3 layout for components/environments); the
 	// pattern plays the same role as a patternProperties key.
 	if addProps, exists := schemaMap["additionalProperties"].(map[string]any); exists {
 		pattern := ".*"

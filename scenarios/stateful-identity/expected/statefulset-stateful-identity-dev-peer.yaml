@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+    annotations:
+        deployah.dev/project: stateful-identity
+        deployah.dev/source: spec
+    labels:
+        app.kubernetes.io/instance: stateful-identity-dev
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: peer
+        deployah.dev/component: peer
+        deployah.dev/environment: dev
+        deployah.dev/project: stateful-identity
+        helm.sh/chart: peer-0.1.0
+    name: stateful-identity-dev-peer
+    namespace: default
+spec:
+    podManagementPolicy: OrderedReady
+    replicas: 2
+    revisionHistoryLimit: 10
+    selector:
+        matchLabels:
+            app.kubernetes.io/instance: stateful-identity-dev
+            app.kubernetes.io/name: peer
+    serviceName: stateful-identity-dev-peer-headless
+    template:
+        metadata:
+            annotations: null
+            labels:
+                app.kubernetes.io/instance: stateful-identity-dev
+                app.kubernetes.io/managed-by: Helm
+                app.kubernetes.io/name: peer
+                deployah.dev/component: peer
+                deployah.dev/environment: dev
+                deployah.dev/project: stateful-identity
+                helm.sh/chart: peer-0.1.0
+        spec:
+            affinity:
+                podAntiAffinity:
+                    preferredDuringSchedulingIgnoredDuringExecution:
+                        - podAffinityTerm:
+                            labelSelector:
+                                matchLabels:
+                                    app.kubernetes.io/instance: stateful-identity-dev
+                                    app.kubernetes.io/name: peer
+                            topologyKey: kubernetes.io/hostname
+                          weight: 1
+            containers:
+                - image: docker.io/library/redis:7-alpine
+                  imagePullPolicy: IfNotPresent
+                  livenessProbe:
+                    failureThreshold: 6
+                    periodSeconds: 10
+                    tcpSocket:
+                        port: http
+                    timeoutSeconds: 3
+                  name: peer
+                  ports:
+                    - containerPort: 6379
+                      name: http
+                      protocol: TCP
+                  readinessProbe:
+                    failureThreshold: 3
+                    periodSeconds: 5
+                    tcpSocket:
+                        port: http
+                    timeoutSeconds: 3
+                  resources:
+                    limits: {}
+                    requests:
+                        cpu: 100m
+                        ephemeral-storage: 50Mi
+                        memory: 128Mi
+                  startupProbe:
+                    failureThreshold: 36
+                    periodSeconds: 5
+                    tcpSocket:
+                        port: http
+                    timeoutSeconds: 3
+            restartPolicy: Always
+            serviceAccountName: default
+    updateStrategy:
+        type: RollingUpdate

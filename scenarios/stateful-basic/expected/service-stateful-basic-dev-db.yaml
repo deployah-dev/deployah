@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: Service
+metadata:
+    annotations:
+        deployah.dev/project: stateful-basic
+        deployah.dev/source: spec
+    labels:
+        app.kubernetes.io/instance: stateful-basic-dev
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: db
+        deployah.dev/component: db
+        deployah.dev/environment: dev
+        deployah.dev/project: stateful-basic
+        helm.sh/chart: db-0.1.0
+    name: stateful-basic-dev-db
+    namespace: default
+spec:
+    ports:
+        - name: http
+          port: 80
+          protocol: TCP
+          targetPort: http
+    selector:
+        app.kubernetes.io/instance: stateful-basic-dev
+        app.kubernetes.io/name: db
+    sessionAffinity: None
+    type: ClusterIP

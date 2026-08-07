@@ -9,6 +9,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"nabat.dev/nabat"
 	"nabat.dev/nabat/nabattest"
+
+	"deployah.dev/deployah/internal/spec"
 )
 
 // TestCheckOverwrite covers the file-exists x force matrix that guards
@@ -17,7 +19,7 @@ func TestCheckOverwrite(t *testing.T) {
 	t.Parallel()
 
 	existing := filepath.Join(t.TempDir(), "deployah.yaml")
-	require.NoError(t, os.WriteFile(existing, []byte("apiVersion: v1-alpha.2\n"), 0o600))
+	require.NoError(t, os.WriteFile(existing, []byte("apiVersion: v1-alpha.3\n"), 0o600))
 	missing := filepath.Join(t.TempDir(), "missing.yaml")
 
 	tests := []struct {
@@ -75,4 +77,33 @@ func TestCheckOverwrite(t *testing.T) {
 			assert.Equal(t, tt.wantProceed, proceed)
 		})
 	}
+}
+
+// TestStatefulWizardDefaultsMatchValidation ensures the init wizard's
+// stateful shapes (with or without persistence) pass validation.
+func TestStatefulWizardDefaultsMatchValidation(t *testing.T) {
+	t.Parallel()
+
+	replicas := 1
+	withDisk := spec.Component{
+		Kind:     spec.ComponentKindStateful,
+		Image:    "postgres:16",
+		Replicas: &replicas,
+		Persistence: &spec.Persistence{
+			Size:      "20Gi",
+			MountPath: "/data",
+		},
+	}
+	require.NoError(t, spec.ValidateComponentPersistence(withDisk))
+	require.NoError(t, spec.ValidateComponentReplicas(withDisk))
+
+	identityOnly := spec.Component{
+		Kind:     spec.ComponentKindStateful,
+		Image:    "redis:7-alpine",
+		Replicas: &replicas,
+	}
+	require.NoError(t, spec.ValidateComponentPersistence(identityOnly))
+	require.NoError(t, spec.ValidateComponentReplicas(identityOnly))
+	assert.Nil(t, identityOnly.Persistence)
+	assert.Nil(t, identityOnly.Autoscaling, "init wizard skips autoscaling for stateful")
 }

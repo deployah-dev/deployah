@@ -17,6 +17,7 @@ deployah deploy <environment> [flags]
       --explain                 Print the resolution report before cluster checks (visible even when cluster is unreachable)
       --force-hostname-change   Allow changing the resolved hostname even though it may break existing traffic (skips the hostname guard)
       --reapply                 Upgrade the release even when the plan shows no changes
+      --resize-volumes          Allow persistence.size increases by expanding PVCs; StatefulSet controllers are orphan-deleted when needed so volumeClaimTemplates can be rewritten
   -y, --yes                     Apply without an interactive confirmation prompt
 ```
 

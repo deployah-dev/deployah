@@ -31,6 +31,7 @@ but for the deploy step: S2I builds your image, and Deployah runs your release.
 - [How Deployah works](#how-deployah-works)
 - [Concepts](#concepts)
 - [Writing your spec](#writing-your-spec)
+- [Stateful workloads](#stateful-workloads)
 - [Platform file](#platform-file)
 - [Profiles](#profiles)
 - [Health checks](#health-checks)
@@ -108,7 +109,7 @@ Save this as `deployah.yaml` in an empty folder. It runs the public `nginx`
 image, so you do not need to build anything.
 
 ```yaml
-apiVersion: v1-alpha.2
+apiVersion: v1-alpha.3
 project: my-first-app
 components:
   web:
@@ -210,13 +211,14 @@ A few words you will see often.
   - `service`: it serves traffic and can be exposed (the default).
   - `worker`: a long-running background task, not exposed.
   - `job`: a one-off task that runs and then stops.
-- **Kind.** `stateless` (the default, easy to scale) or `stateful` (needs
-  persistent storage). Platform teams can already declare storage classes for
-  when stateful deploys land; see [Storage classes](#storage-classes).
-- **What deploys today.** Deployah currently deploys `stateless` `service`
-  components. The `worker` and `job` roles and the `stateful` kind are in the
-  schema but are not deployable yet, so a deploy that uses them stops with a
-  "not supported yet" error.
+- **Kind.** `stateless` (the default, easy to scale) or `stateful`
+  (StatefulSet with stable identity; optional per-pod volumes). See
+  [Stateful workloads](#stateful-workloads) and
+  [Storage classes](#storage-classes).
+- **What deploys today.** Deployah deploys `service` components as
+  `stateless` (Deployment) or `stateful` (StatefulSet). The `worker` and
+  `job` roles are in the schema but are not deployable yet, so a deploy that
+  uses them stops with a "not supported yet" error.
 - **Environment.** A target such as `dev`, `staging`, or `prod`. Each
   environment can use a different cluster, different files, and different
   variables. The platform file registers which environments exist; an entry
@@ -259,7 +261,7 @@ Here is a full example that shows the common fields. You do not need all of
 them; most have defaults.
 
 ```yaml
-apiVersion: v1-alpha.2             # required: the schema version
+apiVersion: v1-alpha.3             # required: the schema version
 project: shop                      # required: your project name
 
 components:                        # required: one or more components
@@ -307,7 +309,7 @@ Top level:
 
 | Field | Required | Notes |
 |---|---|---|
-| `apiVersion` | Yes | The schema version. Must be `v1-alpha.2`. |
+| `apiVersion` | Yes | The schema version. Must be `v1-alpha.3`. |
 | `project` | Yes | Lowercase name (DNS-1123). Prefixes your Kubernetes resources. |
 | `components` | Yes | A map of component name to component settings. |
 | `environments` | Yes in practice | A map of environment name to environment settings. Keys support prefix-based wildcard matching, e.g. a `review` key matches `--environment review/pr-123`. |
@@ -325,17 +327,19 @@ Component:
 | `resourcePreset` | none | `nano`, `micro`, `small`, `medium`, `large`, `xlarge`, `2xlarge`. |
 | `resources` | none | `cpu`, `memory`, `ephemeralStorage` (Kubernetes units). |
 | `expose` | none | `true` for all defaults, or an object with `domain` (defaults to the platform's default domain), `subdomain` (defaults to the component name), and `apex`. See [Platform file](#platform-file). |
+| `replicas` | `1` (chart) | Desired pod count. Cannot combine with `autoscaling.enabled`. |
+| `persistence` | none | Optional for `kind: stateful` (`size`, `mountPath`, optional logical `storageClass`). Omit for identity-only. Allowed on stateless (shared PVC, Recreate). See [Stateful workloads](#stateful-workloads). |
 | `autoscaling` | off | `enabled`, `minReplicas`, `maxReplicas`, `metrics`. |
 | `health` | auto | Ready and alive checks. See [Health checks](#health-checks). |
 | `environments` | none | Which environments deploy this component. |
 | `profiles` | none | List of platform profile names. Merged left to right. See [Profiles](#profiles). |
 
 > [!IMPORTANT]
-> Not deployed yet: the schema accepts `role: worker` and `role: job`,
-> `kind: stateful`, and the `env`, `envFile`, and `configFile` fields, but
-> Deployah does not apply them at deploy time yet. Today, deploy a
-> `stateless` `service` using `image`, `port`, `resources` or
-> `resourcePreset`, `expose`, `autoscaling`, and `profiles`.
+> Not deployed yet: the schema accepts `role: worker` and `role: job`, and
+> the `env`, `envFile`, and `configFile` fields, but Deployah does not apply
+> them at deploy time yet. Today, deploy a `service` as `stateless` or
+> `stateful` using `image`, `port`, `resources` or `resourcePreset`,
+> optional `persistence`, `expose`, `autoscaling`, and `profiles`.
 
 Environment:
 
@@ -417,7 +421,7 @@ Every example below is complete and valid. Copy one and change the values.
 **Smallest spec.** One service, one environment.
 
 ```yaml
-apiVersion: v1-alpha.2
+apiVersion: v1-alpha.3
 project: hello
 components:
   web:
@@ -430,7 +434,7 @@ environments:
 **Two components.** A web app and an API in one project.
 
 ```yaml
-apiVersion: v1-alpha.2
+apiVersion: v1-alpha.3
 project: shop
 components:
   web:
@@ -449,7 +453,7 @@ environments:
 from the platform file, not from here.
 
 ```yaml
-apiVersion: v1-alpha.2
+apiVersion: v1-alpha.3
 project: shop
 components:
   web:
@@ -471,7 +475,7 @@ comes from the platform file. Set `subdomain` only when you want a different
 label, and `apex: true` for the bare domain.
 
 ```yaml
-apiVersion: v1-alpha.2
+apiVersion: v1-alpha.3
 project: shop
 components:
   web:
@@ -484,7 +488,7 @@ components:
 **Set exact resources.** Use `resources` instead of a preset.
 
 ```yaml
-apiVersion: v1-alpha.2
+apiVersion: v1-alpha.3
 project: shop
 components:
   web:
@@ -501,7 +505,7 @@ environments:
 **Autoscale on CPU.** Scale between 2 and 6 replicas at 70% CPU.
 
 ```yaml
-apiVersion: v1-alpha.2
+apiVersion: v1-alpha.3
 project: shop
 components:
   web:
@@ -519,6 +523,156 @@ environments:
   prod: {}
 ```
 
+## Stateful workloads
+
+Use `kind: stateful` when a component needs **stable network identity**
+(ordinal hostnames, headless DNS, ordered start/scale), and optionally a
+**per-pod volume**: single-writer stores, disk-backed caches or queues, or
+any process that must remount the same PVC after a restart.
+
+Deployah models this as a Kubernetes StatefulSet, a ClusterIP Service, and a
+headless Service (`...-headless`). When you set `persistence`, each replica
+gets its own `volumeClaimTemplates` PVC. For highly available databases with
+operator-managed failover, prefer a dedicated operator or managed service.
+Deployah gives you a solid StatefulSet (and PVCs when requested); it does not
+replace PostgresOperator, CloudNativePG, or similar.
+
+Stateful components **with persistence** require **Kubernetes 1.32 or
+newer**. Deployah checks the cluster API version before deploy and fails fast
+on older clusters. That floor matches stable `ReadWriteOncePod` and PVC
+retention support. Identity-only stateful components (no `persistence`) do
+not require that floor.
+
+### Persistence and replicas
+
+`persistence` is optional. Omit it for identity-only StatefulSets. When set,
+`size` and `mountPath` are required:
+
+```yaml
+apiVersion: v1-alpha.3
+project: shop
+components:
+  # Identity only: stable DNS / ordinals, no PVC
+  peer:
+    kind: stateful
+    image: ghcr.io/acme/peer:1.0.0
+    port: 8080
+    resourcePreset: nano
+    environments: [dev]
+    replicas: 3
+  # Per-pod durable volume
+  cache:
+    kind: stateful
+    image: redis:7-alpine
+    port: 6379
+    resourcePreset: nano
+    environments: [dev]
+    replicas: 1
+    persistence:
+      size: 20Gi
+      mountPath: /data
+      # storageClass: fast   # optional logical key; see Storage classes
+environments:
+  dev: {}
+```
+
+| Field | Required | Notes |
+|---|---|---|
+| `persistence.size` | When `persistence` is set | Kubernetes quantity (`1Gi`, `20Gi`, ...). |
+| `persistence.mountPath` | When `persistence` is set | Absolute path inside the container. |
+| `persistence.storageClass` | No | Logical key from the platform environment `storageClasses` map. Overrides the profile `storageClass` when set. |
+| `replicas` | No | Desired StatefulSet replicas (default `1`). Cannot be set together with `autoscaling.enabled`. |
+
+Autoscaling is allowed on stateful components when you omit `replicas`. Plan
+and deploy warn that scale-down may leave PVCs behind when retention is
+`Retain` (the default) and persistence is enabled.
+
+You can also set `persistence` on `kind: stateless`. Deployah uses a shared
+PVC and forces the Deployment strategy to `Recreate`. It rejects `replicas`
+greater than `1` and rejects enabled HPA for that component.
+
+### Storage class resolution
+
+Order of precedence for the Kubernetes StorageClass name:
+
+1. Component `persistence.storageClass` (logical key)
+2. Merged platform profile `storageClass` (logical key)
+3. Cluster default (empty `storageClassName`) when neither sets a key
+
+If a logical key is set and the target environment has no `storageClasses`
+map, or the key is missing from that map, resolve fails with a hard error.
+See [Storage classes](#storage-classes) for the platform map shape.
+
+### Access mode and PVC retention
+
+Stateful volume claim templates default to `ReadWriteOncePod`. That access
+mode keeps a single pod attached to each volume, which matches StatefulSet
+identity. If your StorageClass or CSI driver cannot provide RWOP, the PVC
+stays Pending and the StatefulSet will not become ready.
+
+Chart defaults keep volumes when the StatefulSet is deleted or scaled down
+(`Retain` / `Retain`). A platform profile may override with
+`pvcRetentionPolicy`:
+
+```yaml
+profiles:
+  ephemeral-data:
+    pvcRetentionPolicy:
+      whenDeleted: Delete
+      whenScaled: Delete
+```
+
+Values are `Retain` or `Delete` for each of `whenDeleted` and `whenScaled`.
+
+### Services and Ingress
+
+Each stateful service component gets:
+
+- A normal ClusterIP Service named like the component release
+  (`{{ project }}-{{ env }}-{{ component }}`)
+- A headless Service named `...-headless` (`clusterIP: None`) for stable
+  DNS (`pod-0.{{ headless }}...`)
+
+Exposing a multi-replica stateful component through Ingress still points at
+the ClusterIP Service. Clients that need sticky per-pod routing should use
+headless DNS or an application-aware proxy; a single Ingress backend does not
+fan out to a specific ordinal.
+
+### Growing volumes
+
+Decreasing `persistence.size` is rejected. Increasing size needs an explicit
+`--resize-volumes` opt-in because Deployah must expand live PVCs. For
+stateful components it also orphan-deletes the StatefulSet controller so Helm
+can re-apply `volumeClaimTemplates`. Stateless shared PVCs are patched in
+place (no orphan-delete).
+
+1. Confirm the StorageClass has `allowVolumeExpansion: true`.
+1. Raise `persistence.size` in `deployah.yaml` (for example `20Gi` to `40Gi`).
+1. Deploy with the flag:
+
+   ```sh
+   deployah deploy <environment> --resize-volumes --yes
+   ```
+
+1. Deployah then:
+   - Patches each matching PVC `spec.resources.requests.storage`
+   - Waits for expansion to progress
+   - For stateful: orphan-deletes the StatefulSet (pods and PVCs keep running)
+   - Runs the normal Helm upgrade
+
+If resize fails after an orphan-delete, pods and PVCs should still be
+running. Fix the cause (expansion support, permissions, quota) and re-run
+`deployah deploy ... --resize-volumes`. Without the flag, a size increase
+stops with an error that tells you to pass `--resize-volumes`.
+
+### Kind flips and other guards
+
+Deployah rejects changing a component between `stateless` and `stateful` on
+an existing release (delete and redeploy instead). It also rejects adding or
+removing `persistence` on an existing StatefulSet (`volumeClaimTemplates` are
+immutable). It warns when you combine stateful + persistence with HPA,
+Ingress with replicas > 1, or a changed `mountPath` after the first deploy.
+
 ## Platform file
 
 A second file, `deployah.platform.yaml`, lives next to `deployah.yaml`. It
@@ -531,7 +685,7 @@ requires it. This file is not processed with `${...}` substitution: it holds
 real values, not templates.
 
 ```yaml
-apiVersion: platform/v1-alpha.1
+apiVersion: platform/v1-alpha.2
 profiles:
   default:
     nodeSelector:
@@ -608,7 +762,7 @@ A component's expose block resolves against the active environment's
 Each environment can declare a `storageClasses` map: logical names that map to
 real Kubernetes [StorageClass](https://kubernetes.io/docs/concepts/storage/storage-classes/)
 names. This is the same idea as `domains`: the platform file owns the cluster
-details; a future stateful component will pick a logical name instead of a
+details; a component or profile picks a logical name instead of a
 cluster-specific class string.
 
 | Field | Notes |
@@ -626,9 +780,9 @@ environments:
         className: gp3
 ```
 
-> [!NOTE]
-> Profiles can reference a logical `storageClass` from this map. Direct use by
-> `kind: stateful` components is not deployable yet.
+Profiles can set `storageClass` to a logical key from this map. A component
+may override with `persistence.storageClass`. See
+[Stateful workloads](#stateful-workloads).
 
 ### Profiles
 
@@ -655,7 +809,7 @@ components:
 
 ```yaml
 # deployah.platform.yaml (platform team)
-apiVersion: platform/v1-alpha.1
+apiVersion: platform/v1-alpha.2
 profiles:
   default:
     nodeSelector:
@@ -1012,7 +1166,7 @@ These work with every command:
 | `deployah resolve <environment>` | Preview the fully resolved hostname, TLS mode, and context, offline. Use `--output json` for machine-readable output. |
 | `deployah resolve --environments` | List every environment from both files: where it is registered, its context (or the kubeconfig fallback), domains, and overrides. |
 | `deployah plan <environment>` | Preview what a deploy would change, without applying anything. Extra manifests from `.deployah/manifests/` appear in the diff; pending CRDs are reported but not applied. Use `--offline` to render with no cluster access, `--drift` to also compare against live cluster state, or `--output json` for CI. |
-| `deployah deploy <environment>` | Deploy your project. Shows the plan and asks for confirmation before applying; use `-y`/`--yes` to skip the prompt, `--reapply` to upgrade even with no changes, `--crds` for [CRD install policy](#crd-policy) (`create` or `create-replace`), `--explain` to print the resolution report first, or `--force-hostname-change` to bypass the hostname guard. |
+| `deployah deploy <environment>` | Deploy your project. Shows the plan and asks for confirmation before applying; use `-y`/`--yes` to skip the prompt, `--reapply` to upgrade even with no changes, `--crds` for [CRD install policy](#crd-policy) (`create` or `create-replace`), `--explain` to print the resolution report first, `--force-hostname-change` to bypass the hostname guard, or `--resize-volumes` to grow [persistence](#growing-volumes) sizes. |
 | `deployah status <project>` | Show the status of a deployed project. Use `--detailed` for pod details, `-e` for an environment. |
 | `deployah logs <project>` | Stream logs. Filter with `--component`, `-e`, `--container`, `--since`, `--tail`. Use `--no-follow` for a one-off read. |
 | `deployah shell <project>` | Open a shell in a running container. Choose with `--component` and `--container`. |
@@ -1492,11 +1646,11 @@ deployah <command> --help
 
 Deployah validates your spec and platform file with JSON Schema.
 
-- **Manifest schema version:** v1-alpha.2
-- **Manifest schema:** `internal/spec/schema/v1-alpha.2/manifest.json`
-- **Manifest environments schema:** `internal/spec/schema/v1-alpha.2/environments.json`
-- **Platform schema version:** platform/v1-alpha.1
-- **Platform schema:** `internal/spec/schema/platform/v1-alpha.1/platform.json`
+- **Manifest schema version:** v1-alpha.3
+- **Manifest schema:** `internal/spec/schema/v1-alpha.3/manifest.json`
+- **Manifest environments schema:** `internal/spec/schema/v1-alpha.3/environments.json`
+- **Platform schema version:** platform/v1-alpha.2
+- **Platform schema:** `internal/spec/schema/platform/v1-alpha.2/platform.json`
 
 For the latest schema and examples, see the
 [schema directory](internal/spec/schema/) in the repository.

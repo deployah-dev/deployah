@@ -111,7 +111,7 @@ func TestValidateComponentName(t *testing.T) {
 	}
 }
 
-// TestValidateEnvName verifies ValidateEnvName rules against the v1-alpha.2
+// TestValidateEnvName verifies ValidateEnvName rules against the v1-alpha.3
 // object-shaped "environments" schema. Top-level environment keys never
 // carry a "/*" wildcard suffix; that syntax is only valid in a component's
 // "environments" filter list, which is a plain string array with no pattern

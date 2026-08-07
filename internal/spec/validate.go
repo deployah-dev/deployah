@@ -87,7 +87,7 @@ func validateYAMLAgainstSchema(
 }
 
 // ValidateSpec validates spec YAML against the provided JSON schema.
-// version should be the version of the schema (e.g., "v1-alpha.2").
+// version should be the version of the schema (e.g., "v1-alpha.3").
 // This is a strict validation: unknown fields are not allowed.
 func ValidateSpec(specObj map[string]any, version string) error {
 	return validateYAMLAgainstSchema(
@@ -100,7 +100,7 @@ func ValidateSpec(specObj map[string]any, version string) error {
 
 // ValidateEnvironments validates environments YAML against the provided JSON
 // schema file.
-// version should be the version of the schema (e.g., "v1-alpha.2").
+// version should be the version of the schema (e.g., "v1-alpha.3").
 // This is a strict validation: unknown fields are not allowed.
 func ValidateEnvironments(specObj map[string]any, version string) error {
 	return validateYAMLAgainstSchema(
@@ -251,6 +251,53 @@ func ValidateComponentHealth(component Component) error {
 	return nil
 }
 
+// ValidateComponentPersistence validates persistence and replica constraints
+// for stateful and stateless components. Persistence is optional on stateful
+// components (identity-only StatefulSet); when set, size and mountPath are
+// required.
+func ValidateComponentPersistence(component Component) error {
+	kind := component.Kind
+	if kind == "" {
+		kind = ComponentKindStateless
+	}
+
+	if component.Persistence == nil {
+		return nil
+	}
+
+	if strings.TrimSpace(component.Persistence.Size) == "" {
+		return fmt.Errorf("persistence.size is required when persistence is set")
+	}
+	if strings.TrimSpace(component.Persistence.MountPath) == "" {
+		return fmt.Errorf("persistence.mountPath is required when persistence is set")
+	}
+	if kind == ComponentKindStateless {
+		if component.Replicas != nil && *component.Replicas > 1 {
+			return fmt.Errorf("stateless components with persistence cannot set replicas > 1")
+		}
+		if component.Autoscaling != nil && component.Autoscaling.Enabled {
+			return fmt.Errorf("stateless components with persistence cannot enable autoscaling")
+		}
+	}
+
+	return nil
+}
+
+// ValidateComponentReplicas rejects setting both replicas and
+// autoscaling.enabled.
+func ValidateComponentReplicas(component Component) error {
+	if component.Replicas == nil {
+		return nil
+	}
+	if *component.Replicas < 1 {
+		return fmt.Errorf("replicas must be at least 1")
+	}
+	if component.Autoscaling != nil && component.Autoscaling.Enabled {
+		return fmt.Errorf("replicas and autoscaling.enabled are mutually exclusive")
+	}
+	return nil
+}
+
 // ValidateSpecComponents validates all components in a spec.
 func ValidateSpecComponents(spec *Spec) error {
 	var errs []error
@@ -260,6 +307,12 @@ func ValidateSpecComponents(spec *Spec) error {
 			errs = append(errs, fmt.Errorf("component %s: %w", name, err))
 		}
 		if err := ValidateComponentAutoscaling(component); err != nil {
+			errs = append(errs, fmt.Errorf("component %s: %w", name, err))
+		}
+		if err := ValidateComponentPersistence(component); err != nil {
+			errs = append(errs, fmt.Errorf("component %s: %w", name, err))
+		}
+		if err := ValidateComponentReplicas(component); err != nil {
 			errs = append(errs, fmt.Errorf("component %s: %w", name, err))
 		}
 		if err := ValidateComponentHealth(component); err != nil {

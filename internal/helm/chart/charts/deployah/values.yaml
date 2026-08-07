@@ -104,6 +104,27 @@ exports:
     ##
     replicaCount: 1
 
+    ## @param workloadKind Kubernetes workload kind: Deployment or StatefulSet
+    ##
+    workloadKind: Deployment
+
+    ## StatefulSet-specific settings (used when workloadKind is StatefulSet)
+    ##
+    statefulSet:
+      ## @param statefulSet.updateStrategy.type StatefulSet update strategy
+      ##
+      updateStrategy:
+        type: RollingUpdate
+      ## @param statefulSet.podManagementPolicy OrderedReady or Parallel
+      ##
+      podManagementPolicy: OrderedReady
+      ## @param statefulSet.persistentVolumeClaimRetentionPolicy.whenDeleted Retain or Delete
+      ## @param statefulSet.persistentVolumeClaimRetentionPolicy.whenScaled Retain or Delete
+      ##
+      persistentVolumeClaimRetentionPolicy:
+        whenDeleted: Retain
+        whenScaled: Retain
+
     ## @param revisionHistoryLimit The number of old history to retain to allow rollback
     ##
     revisionHistoryLimit: 10
@@ -639,9 +660,10 @@ exports:
       ##
       annotations: {}
       ## @param persistence.accessModes Persistent Volume Access Modes
+      ## Stateful defaults to ReadWriteOncePod; stateless shared PVC uses ReadWriteOnce.
       ##
       accessModes:
-        - ReadWriteOnce
+        - ReadWriteOncePod
       ## @param persistence.size Size of data volume
       ##
       size: 8Gi

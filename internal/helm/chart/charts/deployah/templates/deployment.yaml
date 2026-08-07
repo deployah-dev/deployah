@@ -19,7 +19,10 @@ spec:
   {{- $podLabels := include "common.tplvalues.merge" (dict "values" (list .Values.podLabels .Values.commonLabels) "context" .) | fromYaml }}
   selector:
     matchLabels: {{- include "common.labels.matchLabels" ( dict "customLabels" $podLabels "context" $ ) | nindent 6 }}
-  {{- if .Values.updateStrategy }}
+  {{- if .Values.persistence.enabled }}
+  strategy:
+    type: Recreate
+  {{- else if .Values.updateStrategy }}
   strategy: {{- toYaml .Values.updateStrategy | nindent 4 }}
   {{- end }}
   template:

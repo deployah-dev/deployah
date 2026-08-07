@@ -59,7 +59,7 @@ var kindOrder = []spec.ComponentKind{
 // kindLabels maps each kind to a select label with a short explanation.
 var kindLabels = map[spec.ComponentKind]string{
 	spec.ComponentKindStateless: "stateless - remembers nothing on disk; replicas scale freely",
-	spec.ComponentKindStateful:  "stateful  - keeps data on a persistent volume; stable replica identity",
+	spec.ComponentKindStateful:  "stateful  - stable replica identity (optional persistent volume)",
 }
 
 // kindFromLabel reverses kindLabels. It reports false when label does not
@@ -273,6 +273,18 @@ func collectComponentAdvanced(c *nabat.Context, component *spec.Component, compo
 		return fmt.Errorf("failed to collect component kind: %w", err)
 	}
 
+	if component.Kind == spec.ComponentKindStateful {
+		if err = collectComponentPersistence(c, component, componentName); err != nil {
+			return fmt.Errorf("failed to collect component persistence: %w", err)
+		}
+		if err = collectComponentReplicas(c, component, componentName); err != nil {
+			return fmt.Errorf("failed to collect component replicas: %w", err)
+		}
+		if component.Persistence != nil {
+			c.Printf("Note: set a profile storageClass (or persistence.storageClass) in deployah.platform.yaml for this stateful component.\n")
+		}
+	}
+
 	if component.Expose != nil {
 		if err = collectComponentExposeOptions(c, component, componentName); err != nil {
 			return fmt.Errorf("failed to collect component expose options: %w", err)
@@ -291,8 +303,12 @@ func collectComponentAdvanced(c *nabat.Context, component *spec.Component, compo
 		return fmt.Errorf("failed to collect component config files: %w", err)
 	}
 
-	if err = collectComponentAutoscaling(c, component, componentName); err != nil {
-		return fmt.Errorf("failed to collect component autoscaling: %w", err)
+	// Autoscaling is skipped for stateful in the init wizard; HPA remains
+	// available via the written deployah.yaml for advanced users.
+	if component.Kind != spec.ComponentKindStateful {
+		if err = collectComponentAutoscaling(c, component, componentName); err != nil {
+			return fmt.Errorf("failed to collect component autoscaling: %w", err)
+		}
 	}
 
 	if err = collectComponentEnvironmentVariables(c, component, componentName); err != nil {
@@ -342,7 +358,7 @@ func collectComponentKind(c *nabat.Context, component *spec.Component, component
 	}
 
 	choice, err := c.Select(
-		fmt.Sprintf("Kind for %s - does it keep data on disk?", componentName),
+		fmt.Sprintf("Kind for %s - Deployment or StatefulSet (stable identity)?", componentName),
 		labels,
 		kindLabels[spec.ComponentKindStateless],
 	)
@@ -355,6 +371,77 @@ func collectComponentKind(c *nabat.Context, component *spec.Component, component
 		return fmt.Errorf("unrecognized kind selection %q", choice)
 	}
 	component.Kind = kind
+	return nil
+}
+
+func collectComponentPersistence(c *nabat.Context, component *spec.Component, componentName string) error {
+	addVolume, err := c.Confirm(
+		fmt.Sprintf("Add a persistent volume for %s?", componentName),
+		nabat.WithAffirmative("Yes"),
+		nabat.WithNegative("No, identity only (no PVC)"),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to get persistence preference: %w", err)
+	}
+	if !addVolume {
+		return nil
+	}
+
+	size, err := c.Input(
+		fmt.Sprintf("Persistence size for %s", componentName),
+		nabat.WithHint("20Gi"),
+		nabat.WithDefault("20Gi"),
+		nabat.WithValidate(func(s string) error {
+			return validate.ValidateNonEmpty(s, "persistence.size")
+		}),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to collect persistence size: %w", err)
+	}
+
+	mountPath, err := c.Input(
+		fmt.Sprintf("Persistence mount path for %s", componentName),
+		nabat.WithHint("/data"),
+		nabat.WithDefault("/data"),
+		nabat.WithValidate(func(s string) error {
+			if s == "" || s[0] != '/' {
+				return fmt.Errorf("mountPath must be an absolute path starting with /")
+			}
+			return nil
+		}),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to collect persistence mount path: %w", err)
+	}
+
+	component.Persistence = &spec.Persistence{
+		Size:      size,
+		MountPath: mountPath,
+	}
+	return nil
+}
+
+func collectComponentReplicas(c *nabat.Context, component *spec.Component, componentName string) error {
+	replicasStr, err := c.Input(
+		fmt.Sprintf("Replicas for %s", componentName),
+		nabat.WithHint("1"),
+		nabat.WithDefault("1"),
+		nabat.WithValidate(func(s string) error {
+			n, atoiErr := strconv.Atoi(s)
+			if atoiErr != nil || n < 1 {
+				return fmt.Errorf("replicas must be an integer >= 1")
+			}
+			return nil
+		}),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to collect replicas: %w", err)
+	}
+	replicas, err := strconv.Atoi(replicasStr)
+	if err != nil {
+		return fmt.Errorf("invalid replicas: %w", err)
+	}
+	component.Replicas = &replicas
 	return nil
 }
 

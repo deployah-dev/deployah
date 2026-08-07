@@ -1,0 +1,16 @@
+# $schema: ../../internal/spec/schema/v1-alpha.3/manifest.json
+apiVersion: v1-alpha.3
+project: stateful-profile-retention
+components:
+  db:
+    kind: stateful
+    image: postgres:16
+    port: 5432
+    resourcePreset: small
+    environments: [production]
+    profiles: [stateful-store]
+    persistence:
+      size: 20Gi
+      mountPath: /var/lib/postgresql/data
+environments:
+  production: {}

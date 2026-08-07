@@ -3,29 +3,41 @@
   pkgs,
   lib,
   go,
+  golangci-lint,
 }:
 
+let
+  withGo =
+    script:
+    ''
+      export GOTOOLCHAIN=local
+      export GOROOT="${go}/share/go"
+      export PATH="${go}/bin:$PATH"
+    ''
+    + script;
+in
 {
-  # Skip until golangci-lint supports Go 1.27:
-  # https://github.com/golangci/golangci-lint/issues/6643
-  # nixpkgs' binary is built with Go 1.26 and rejects go.mod 1.27.
   fmt = lib.mkApp {
     name = "fmt";
-    description = "Format Go files (skipped until Go 1.27 support)";
-    script = ''
-      echo "skipping golangci-lint fmt: Go 1.27 not supported yet"
-      echo "see https://github.com/golangci/golangci-lint/issues/6643"
-      exit 0
+    description = "Format Go files (gofumpt + gci via golangci-lint)";
+    runtimeInputs = [
+      go
+      golangci-lint
+    ];
+    script = withGo ''
+      exec golangci-lint fmt ./...
     '';
   };
 
   lint = lib.mkApp {
     name = "lint";
-    description = "Run golangci-lint (skipped until Go 1.27 support)";
-    script = ''
-      echo "skipping golangci-lint: Go 1.27 not supported yet"
-      echo "see https://github.com/golangci/golangci-lint/issues/6643"
-      exit 0
+    description = "Run golangci-lint";
+    runtimeInputs = [
+      go
+      golangci-lint
+    ];
+    script = withGo ''
+      exec golangci-lint run ./...
     '';
   };
 
@@ -40,16 +52,18 @@
   tidy = lib.mkApp {
     name = "tidy";
     description = "Run go mod tidy for the module";
-    script = ''
-      exec ${go}/bin/go mod tidy
+    runtimeInputs = [ go ];
+    script = withGo ''
+      exec go mod tidy
     '';
   };
 
   gen-docs = lib.mkApp {
     name = "gen-docs";
     description = "Generate the CLI reference under docs/cli from the command tree";
-    script = ''
-      exec ${go}/bin/go run ./internal/tools/gendocs
+    runtimeInputs = [ go ];
+    script = withGo ''
+      exec go run ./internal/tools/gendocs
     '';
   };
 }

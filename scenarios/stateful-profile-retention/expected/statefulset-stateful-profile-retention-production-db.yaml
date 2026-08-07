@@ -1,0 +1,110 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+    annotations:
+        deployah.dev/project: stateful-profile-retention
+        deployah.dev/source: spec
+    labels:
+        app.kubernetes.io/instance: stateful-profile-retention-production
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: db
+        deployah.dev/component: db
+        deployah.dev/environment: production
+        deployah.dev/project: stateful-profile-retention
+        helm.sh/chart: db-0.1.0
+    name: stateful-profile-retention-production-db
+    namespace: default
+spec:
+    persistentVolumeClaimRetentionPolicy:
+        whenDeleted: Delete
+        whenScaled: Retain
+    podManagementPolicy: OrderedReady
+    replicas: 1
+    revisionHistoryLimit: 10
+    selector:
+        matchLabels:
+            app.kubernetes.io/instance: stateful-profile-retention-production
+            app.kubernetes.io/name: db
+    serviceName: stateful-profile-retention-production-db-headless
+    template:
+        metadata:
+            annotations: null
+            labels:
+                app.kubernetes.io/instance: stateful-profile-retention-production
+                app.kubernetes.io/managed-by: Helm
+                app.kubernetes.io/name: db
+                deployah.dev/component: db
+                deployah.dev/environment: production
+                deployah.dev/project: stateful-profile-retention
+                helm.sh/chart: db-0.1.0
+        spec:
+            affinity:
+                podAntiAffinity:
+                    preferredDuringSchedulingIgnoredDuringExecution:
+                        - podAffinityTerm:
+                            labelSelector:
+                                matchLabels:
+                                    app.kubernetes.io/instance: stateful-profile-retention-production
+                                    app.kubernetes.io/name: db
+                            topologyKey: kubernetes.io/hostname
+                          weight: 1
+            containers:
+                - image: docker.io/library/postgres:16
+                  imagePullPolicy: IfNotPresent
+                  livenessProbe:
+                    failureThreshold: 6
+                    periodSeconds: 10
+                    tcpSocket:
+                        port: http
+                    timeoutSeconds: 3
+                  name: db
+                  ports:
+                    - containerPort: 5432
+                      name: http
+                      protocol: TCP
+                  readinessProbe:
+                    failureThreshold: 3
+                    periodSeconds: 5
+                    tcpSocket:
+                        port: http
+                    timeoutSeconds: 3
+                  resources:
+                    limits: {}
+                    requests:
+                        cpu: 500m
+                        ephemeral-storage: 50Mi
+                        memory: 512Mi
+                  startupProbe:
+                    failureThreshold: 36
+                    periodSeconds: 5
+                    tcpSocket:
+                        port: http
+                    timeoutSeconds: 3
+                  volumeMounts:
+                    - mountPath: /var/lib/postgresql/data
+                      name: data
+            restartPolicy: Always
+            serviceAccountName: default
+    updateStrategy:
+        type: RollingUpdate
+    volumeClaimTemplates:
+        - metadata:
+            annotations:
+                deployah.dev/project: stateful-profile-retention
+                deployah.dev/source: spec
+            labels:
+                app.kubernetes.io/instance: stateful-profile-retention-production
+                app.kubernetes.io/managed-by: Helm
+                app.kubernetes.io/name: db
+                deployah.dev/component: db
+                deployah.dev/environment: production
+                deployah.dev/project: stateful-profile-retention
+                helm.sh/chart: db-0.1.0
+            name: data
+          spec:
+            accessModes:
+                - ReadWriteOncePod
+            resources:
+                requests:
+                    storage: 20Gi
+            storageClassName: fast-ssd

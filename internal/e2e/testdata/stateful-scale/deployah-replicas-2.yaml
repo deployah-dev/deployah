@@ -1,0 +1,15 @@
+apiVersion: v1-alpha.3
+project: stateful-scale
+components:
+  cache:
+    kind: stateful
+    image: redis:7-alpine
+    port: 6379
+    replicas: 2
+    resourcePreset: nano
+    environments: [dev]
+    persistence:
+      size: 1Gi
+      mountPath: /data
+environments:
+  dev: {}

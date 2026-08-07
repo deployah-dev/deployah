@@ -1,4 +1,4 @@
-apiVersion: platform/v1-alpha.1
+apiVersion: platform/v1-alpha.2
 environments:
   local:
     context: kind-deployah

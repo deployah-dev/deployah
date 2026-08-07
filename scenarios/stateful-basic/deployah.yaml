@@ -1,0 +1,15 @@
+# $schema: ../../internal/spec/schema/v1-alpha.3/manifest.json
+apiVersion: v1-alpha.3
+project: stateful-basic
+components:
+  db:
+    kind: stateful
+    image: postgres:16
+    port: 5432
+    resourcePreset: small
+    environments: [dev]
+    persistence:
+      size: 20Gi
+      mountPath: /var/lib/postgresql/data
+environments:
+  dev: {}

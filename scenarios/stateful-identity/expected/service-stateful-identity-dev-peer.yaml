@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: Service
+metadata:
+    annotations:
+        deployah.dev/project: stateful-identity
+        deployah.dev/source: spec
+    labels:
+        app.kubernetes.io/instance: stateful-identity-dev
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: peer
+        deployah.dev/component: peer
+        deployah.dev/environment: dev
+        deployah.dev/project: stateful-identity
+        helm.sh/chart: peer-0.1.0
+    name: stateful-identity-dev-peer
+    namespace: default
+spec:
+    ports:
+        - name: http
+          port: 80
+          protocol: TCP
+          targetPort: http
+    selector:
+        app.kubernetes.io/instance: stateful-identity-dev
+        app.kubernetes.io/name: peer
+    sessionAffinity: None
+    type: ClusterIP

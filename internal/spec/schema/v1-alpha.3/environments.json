@@ -1,8 +1,8 @@
 {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://deployah.dev/schemas/v1-alpha.2/environments.json",
-    "title": "Deployah Environments v1-alpha.2",
-    "description": "Schema for the environments section of the v1-alpha.2 manifest. The section is optional: which environments exist is owned by the platform file; an entry here only adds developer overrides (envFile, variables) for that environment.",
+    "$id": "https://deployah.dev/schemas/v1-alpha.3/environments.json",
+    "title": "Deployah Environments v1-alpha.3",
+    "description": "Schema for the environments section of the v1-alpha.3 manifest. The section is optional: which environments exist is owned by the platform file; an entry here only adds developer overrides (envFile, variables) for that environment.",
     "type": "object",
     "additionalProperties": true,
     "properties": {
