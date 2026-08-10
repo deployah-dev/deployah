@@ -1283,3 +1283,77 @@ func TestMapSpecToChartValues_WorkerExecHealth(t *testing.T) {
 	exec := mustNestedMap(t, liveness, "exec")
 	assert.Equal(t, []any{"pgrep", "-f", "worker"}, exec["command"])
 }
+
+func TestApplyPortsAndService_ServiceMetricsDefaultsToAppPort(t *testing.T) {
+	t.Parallel()
+	vals := map[string]any{}
+	err := applyPortsAndService(vals, spec.Component{
+		Role:    spec.ComponentRoleService,
+		Port:    8080,
+		Metrics: &spec.ComponentMetrics{}, // port 0 -> use app port, no dedicated metrics port
+	})
+	require.NoError(t, err)
+	ports, ok := vals["ports"].([]map[string]any)
+	require.True(t, ok)
+	require.Len(t, ports, 1)
+	assert.Equal(t, "http", ports[0]["name"])
+}
+
+func TestApplyPortsAndService_ServiceWithoutPortIsNoop(t *testing.T) {
+	t.Parallel()
+	vals := map[string]any{}
+	require.NoError(t, applyPortsAndService(vals, spec.Component{
+		Role: spec.ComponentRoleService,
+		Port: 0,
+	}))
+	assert.Empty(t, vals)
+}
+
+func TestApplyShutdownTimeout_InvalidDuration(t *testing.T) {
+	t.Parallel()
+	err := applyShutdownTimeout(map[string]any{}, spec.Component{ShutdownTimeout: "nope"})
+	require.Error(t, err)
+}
+
+func TestBuildProbeValues_WorkerAliveDisabled(t *testing.T) {
+	t.Parallel()
+	probes, err := buildProbeValues(spec.Component{
+		Role:   spec.ComponentRoleWorker,
+		Health: &spec.Health{Alive: &spec.HealthAlive{Disabled: true}},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, probes)
+}
+
+func TestBuildProbeValues_WorkerWithoutExec(t *testing.T) {
+	t.Parallel()
+	probes, err := buildProbeValues(spec.Component{Role: spec.ComponentRoleWorker})
+	require.NoError(t, err)
+	assert.Empty(t, probes)
+}
+
+func TestCopyMonitorProfile_RelabelingsMustBeSlice(t *testing.T) {
+	t.Parallel()
+	monitor := map[string]any{}
+	err := copyMonitorProfile(monitor, &spec.PlatformProfile{
+		Metrics: &spec.ProfileMetrics{
+			Relabelings: []any{make(chan int)}, // not JSON-marshalable
+		},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "relabelings")
+}
+
+func TestApplyMetricsValues_CopyProfileError(t *testing.T) {
+	t.Parallel()
+	err := applyMetricsValues(map[string]any{}, spec.Component{
+		Role:    spec.ComponentRoleService,
+		Port:    8080,
+		Metrics: &spec.ComponentMetrics{Path: "/metrics"},
+	}, &spec.PlatformProfile{
+		Metrics: &spec.ProfileMetrics{
+			MetricRelabelings: []any{make(chan int)},
+		},
+	})
+	require.Error(t, err)
+}

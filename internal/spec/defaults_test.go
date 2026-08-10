@@ -919,6 +919,15 @@ func TestDefaultValuesCopy(t *testing.T) {
 	assert.NotEqual(t, original, copied)
 }
 
+func TestApplyRoleDependentDefaults_EmptyRole(t *testing.T) {
+	t.Parallel()
+	c := &Component{Image: "api:1"}
+	applyRoleDependentDefaults(c)
+	assert.Equal(t, ComponentRoleService, c.Role)
+	assert.Equal(t, DefaultServiceShutdownTimeout, c.ShutdownTimeout)
+	assert.Equal(t, 8080, c.Port)
+}
+
 // TestFillSpecWithDefaults_RoleDependentDefaults covers shutdownTimeout,
 // worker port omission, and metrics path/port defaults that schema alone
 // cannot express.

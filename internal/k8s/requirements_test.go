@@ -27,12 +27,14 @@ func TestRequiredAPIs(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name        string
-		manifest    *spec.Spec
-		environment string
-		resolved    *spec.ResolvedSpec
-		wantGVs     []string
-		wantEmpty   bool
+		name                string
+		manifest            *spec.Spec
+		environment         string
+		resolved            *spec.ResolvedSpec
+		wantGVs             []string
+		wantEmpty           bool
+		wantReasonContains  string
+		wantReasonForGroupV string
 	}{
 		{
 			name: "metrics enabled",
@@ -85,6 +87,25 @@ func TestRequiredAPIs(t *testing.T) {
 			},
 			wantGVs: []string{"networking.k8s.io/v1", "cert-manager.io/v1"},
 		},
+		{
+			name: "autoscaling and shared monitoring noun is plural",
+			manifest: &spec.Spec{
+				Components: map[string]spec.Component{
+					"api": {
+						Autoscaling: &spec.Autoscaling{Enabled: true},
+						Metrics:     &spec.ComponentMetrics{},
+					},
+					"worker": {
+						Role:    spec.ComponentRoleWorker,
+						Metrics: &spec.ComponentMetrics{Port: 9090},
+					},
+				},
+			},
+			environment:         "production",
+			wantGVs:             []string{"autoscaling/v2", "monitoring.coreos.com/v1"},
+			wantReasonContains:  "components",
+			wantReasonForGroupV: "monitoring.coreos.com/v1",
+		},
 	}
 
 	for _, tt := range tests {
@@ -99,6 +120,9 @@ func TestRequiredAPIs(t *testing.T) {
 			for _, req := range reqs {
 				for _, gv := range req.GroupVersions {
 					got[gv] = struct{}{}
+					if tt.wantReasonForGroupV != "" && gv == tt.wantReasonForGroupV {
+						assert.Contains(t, req.Reason, tt.wantReasonContains)
+					}
 				}
 			}
 			for _, gv := range tt.wantGVs {

@@ -493,6 +493,7 @@ func TestMergeProfiles_MonitorFields(t *testing.T) {
 			Metrics: &spec.ProfileMetrics{
 				MonitorLabels:     map[string]string{"release": "b", "team": "obs"},
 				Interval:          "15s",
+				ScrapeTimeout:     "5s",
 				JobLabel:          "app",
 				HonorLabels:       &honorTrue,
 				MetricRelabelings: []any{map[string]any{"action": "drop"}},
@@ -506,6 +507,7 @@ func TestMergeProfiles_MonitorFields(t *testing.T) {
 	assert.Equal(t, map[string]string{"release": "b", "team": "obs"}, merged.Metrics.MonitorLabels)
 	assert.Equal(t, "monitoring", merged.Metrics.MonitorNamespace)
 	assert.Equal(t, "15s", merged.Metrics.Interval)
+	assert.Equal(t, "5s", merged.Metrics.ScrapeTimeout)
 	assert.Equal(t, "app", merged.Metrics.JobLabel)
 	require.NotNil(t, merged.Metrics.HonorLabels)
 	assert.True(t, *merged.Metrics.HonorLabels)

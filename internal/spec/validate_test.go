@@ -614,6 +614,34 @@ func TestValidateComponentHealth(t *testing.T) {
 			errMsg:    "must be greater than or equal to",
 		},
 		{
+			name: "alive invalid restartAfter format",
+			component: Component{
+				Role: ComponentRoleWorker,
+				Health: &Health{
+					Alive: &HealthAlive{
+						Exec:         []string{"true"},
+						RestartAfter: "10",
+					},
+				},
+			},
+			expectErr: true,
+			errMsg:    "health.alive.restartAfter",
+		},
+		{
+			name: "alive restartAfter below default interval when interval omitted",
+			component: Component{
+				Role: ComponentRoleWorker,
+				Health: &Health{
+					Alive: &HealthAlive{
+						Exec:         []string{"true"},
+						RestartAfter: "1s",
+					},
+				},
+			},
+			expectErr: true,
+			errMsg:    "must be greater than or equal to",
+		},
+		{
 			name: "alive restartAfter equal to interval is valid",
 			component: Component{
 				Role: ComponentRoleService,
