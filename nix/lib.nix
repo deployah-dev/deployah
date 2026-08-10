@@ -30,6 +30,7 @@ rec {
       description,
       tags,
       coverProfile,
+      junitFile,
       testPackages ? "./...",
       timeout ? "10m",
       race ? true,
@@ -39,6 +40,7 @@ rec {
       runtimeInputs = [
         go
         pkgs.stdenv.cc
+        pkgs.gotestsum
       ];
       script = ''
         export GOTOOLCHAIN=local
@@ -51,7 +53,9 @@ rec {
           echo "go list: no test packages after filters (tags=${tags})" >&2
           exit 1
         fi
-        exec "$go/bin/go" test -tags=${tags} ${pkgs.lib.optionalString race "-race"} \
+        # gotestsum writes JUnit XML for Codecov Test Analytics even when tests fail.
+        exec gotestsum --junitfile=${junitFile} -- \
+          -tags=${tags} ${pkgs.lib.optionalString race "-race"} \
           -shuffle=on -covermode=atomic \
           -coverpkg=./... -coverprofile=${coverProfile} -timeout ${timeout} "''${testpkgs[@]}"
       '';

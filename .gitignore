@@ -41,5 +41,8 @@ go.work.sum
 coverage*.out
 coverage*.html
 
+# JUnit reports (Codecov Test Analytics)
+junit*.xml
+
 # Pre-commit config
 .pre-commit-config.yaml
