@@ -25,7 +25,7 @@ import (
 
 // Spec defines the structure of the project spec.
 type Spec struct {
-	// APIVersion is the schema version of the spec (e.g., "v1-alpha.3").
+	// APIVersion is the schema version of the spec (e.g., "v1-alpha.4").
 	APIVersion string `json:"apiVersion,omitempty" yaml:"apiVersion,omitempty"`
 	// Project is the project name.
 	Project string `json:"project" yaml:"project"`
@@ -108,6 +108,14 @@ type Component struct {
 	Env map[string]string `json:"env,omitempty" yaml:"env,omitempty"`
 	// Health configures ready and alive checks for the component.
 	Health *Health `json:"health,omitempty" yaml:"health,omitempty"`
+	// ShutdownTimeout is how long Kubernetes waits after SIGTERM before
+	// force-killing the pod (maps to terminationGracePeriodSeconds). When
+	// empty, defaults are 30s for services and 60s for workers.
+	ShutdownTimeout string `json:"shutdownTimeout,omitempty" yaml:"shutdownTimeout,omitempty"`
+	// Metrics configures Prometheus scraping. Accepts true, false, or an
+	// object with port/path. Services emit a ServiceMonitor; workers emit a
+	// PodMonitor. Requires prometheus-operator CRDs on the cluster.
+	Metrics *ComponentMetrics `json:"metrics,omitempty" yaml:"metrics,omitempty"`
 }
 
 // Persistence configures volume storage for a component.
@@ -128,14 +136,17 @@ func (c Component) ListensOnPort() bool {
 	return c.Role.IsService() && c.Port > 0
 }
 
-// Health configures HTTP health checks for a service component. When omitted,
-// TCP checks on the component port run automatically.
+// Health configures health checks for a component. For services, when
+// omitted, TCP checks on the component port run automatically. For workers,
+// the default is process-exit only; optional alive.exec is supported.
 type Health struct {
 	// Ready controls the readiness check. Provide a path to upgrade from TCP
 	// to HTTP. Set to false to disable readiness and startup checks entirely.
+	// Not supported on workers.
 	Ready *HealthReady `json:"ready,omitempty" yaml:"ready,omitempty"`
-	// Alive controls the alive check. Provide a path to upgrade from TCP to
-	// HTTP. Set to false to disable the alive check entirely.
+	// Alive controls the alive check. Provide a path (services) or exec
+	// command (any role) to upgrade from the default. Set to false to
+	// disable the alive check entirely. Path and exec are mutually exclusive.
 	Alive *HealthAlive `json:"alive,omitempty" yaml:"alive,omitempty"`
 }
 
@@ -177,18 +188,23 @@ func (r *HealthReady) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// HealthAlive configures the alive check for a service component. It accepts
-// either false (to disable) or an object with a path and optional timing.
+// HealthAlive configures the alive check for a component. It accepts either
+// false (to disable) or an object with a path or exec command and optional
+// timing.
 //
 // When Alive is nil (field absent), a TCP alive check on the component port
-// runs automatically.
+// runs automatically for services. Workers default to process-exit only.
 type HealthAlive struct {
 	// Disabled is true when the developer set alive: false.
 	Disabled bool `json:"-" yaml:"-"`
 	// Path is the HTTP endpoint that must return 2xx for the pod to be
 	// considered alive. Must start with /. Check only internal process
-	// state here, not external dependencies.
+	// state here, not external dependencies. Mutually exclusive with Exec.
+	// Not supported on workers.
 	Path string `json:"path,omitempty" yaml:"path,omitempty"`
+	// Exec is a command run inside the container; exit 0 means alive.
+	// Mutually exclusive with Path. Available for both service and worker.
+	Exec []string `json:"exec,omitempty" yaml:"exec,omitempty"`
 	// Interval is how often to check the endpoint (e.g. "10s", "1m").
 	// Defaults to "10s" when omitted.
 	Interval string `json:"interval,omitempty" yaml:"interval,omitempty"`
@@ -203,6 +219,7 @@ type HealthAlive struct {
 //
 //	alive: false                           -> HealthAlive{Disabled: true}
 //	alive: {path: /livez, interval: 10s}  -> HealthAlive{Path: "/livez", ...}
+//	alive: {exec: [sh, -c, pgrep worker]} -> HealthAlive{Exec: [...], ...}
 func (a *HealthAlive) UnmarshalJSON(data []byte) error {
 	// Check for boolean false.
 	var b bool
@@ -211,17 +228,79 @@ func (a *HealthAlive) UnmarshalJSON(data []byte) error {
 			a.Disabled = true
 			return nil
 		}
-		return fmt.Errorf("health.alive: true is not valid; omit the field to enable the default TCP check")
+		return fmt.Errorf("health.alive: true is not valid; omit the field to enable the default check")
 	}
 
 	// Unmarshal as object using an alias to avoid infinite recursion.
 	type healthAliveAlias HealthAlive
 	var alias healthAliveAlias
 	if err := json.Unmarshal(data, &alias); err != nil {
-		return fmt.Errorf("health.alive: expected false or an object with a path field: %w", err)
+		return fmt.Errorf("health.alive: expected false or an object with path or exec: %w", err)
 	}
 	*a = HealthAlive(alias)
 	return nil
+}
+
+// ComponentMetrics configures Prometheus scraping for a component. It accepts
+// true (enable with defaults), false (disable), or an object.
+//
+//	metrics: true
+//	metrics: false
+//	metrics: {port: 9090, path: /metrics}
+type ComponentMetrics struct {
+	// Disabled is true when the developer set metrics: false.
+	Disabled bool `json:"-" yaml:"-"`
+	// Enabled controls scraping when using the object form. Nil means true
+	// (omitted defaults to enabled). Set to false to disable per environment
+	// via envsubst. Ignored when Disabled is true.
+	Enabled *bool `json:"enabled,omitempty" yaml:"enabled,omitempty"`
+	// Port is the container port exposing metrics. Required for workers when
+	// metrics are enabled. For services, defaults to the component port.
+	Port int `json:"port,omitempty" yaml:"port,omitempty"`
+	// Path is the HTTP path for metrics. Defaults to /metrics.
+	Path string `json:"path,omitempty" yaml:"path,omitempty"`
+	// Interval overrides the platform profile scrape interval.
+	Interval string `json:"interval,omitempty" yaml:"interval,omitempty"`
+	// ScrapeTimeout overrides the platform profile scrape timeout.
+	ScrapeTimeout string `json:"scrapeTimeout,omitempty" yaml:"scrapeTimeout,omitempty"`
+}
+
+// UnmarshalJSON handles true, false, and object forms:
+//
+//	metrics: true                         -> ComponentMetrics{} (enabled)
+//	metrics: false                        -> ComponentMetrics{Disabled: true}
+//	metrics: {port: 9090, path: /metrics} -> ComponentMetrics{Port: 9090, ...}
+func (m *ComponentMetrics) UnmarshalJSON(data []byte) error {
+	var b bool
+	if err := json.Unmarshal(data, &b); err == nil {
+		if !b {
+			m.Disabled = true
+			return nil
+		}
+		// metrics: true -> zero value means enabled with defaults.
+		*m = ComponentMetrics{}
+		return nil
+	}
+
+	type metricsAlias ComponentMetrics
+	var alias metricsAlias
+	if err := json.Unmarshal(data, &alias); err != nil {
+		return fmt.Errorf("metrics: expected true, false, or an object: %w", err)
+	}
+	*m = ComponentMetrics(alias)
+	return nil
+}
+
+// IsEnabled reports whether metrics scraping should be configured for the
+// component. False when Metrics is nil, metrics: false, or enabled: false.
+func (m *ComponentMetrics) IsEnabled() bool {
+	if m == nil || m.Disabled {
+		return false
+	}
+	if m.Enabled != nil {
+		return *m.Enabled
+	}
+	return true
 }
 
 // Autoscaling defines the autoscaling settings for the component.
@@ -319,6 +398,11 @@ const (
 // components run without inbound traffic.
 func (r ComponentRole) IsService() bool {
 	return r == ComponentRoleService
+}
+
+// IsWorker reports whether r is the "worker" role.
+func (r ComponentRole) IsWorker() bool {
+	return r == ComponentRoleWorker
 }
 
 // ComponentKind specifies the kind of the component.

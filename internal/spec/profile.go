@@ -82,11 +82,15 @@ func ResolveProfileNames(componentProfiles []string, platformProfiles map[string
 // MergeProfiles looks up names in profiles and merges them left to right.
 //
 // Merge rules:
-//   - maps (nodeSelector, podLabels, podAnnotations): deep merge, last wins
+//   - maps (nodeSelector, podLabels, podAnnotations, metrics.monitorLabels,
+//     metrics.annotations): deep merge, last wins
 //   - security contexts: field overlay; non-nil overlay pointers win, including
 //     false *bool values that mergo would skip
 //   - arrays (tolerations): concatenate and deduplicate identical entries
-//   - scalars (storageClass): last non-empty wins
+//   - arrays (metrics.relabelings, metrics.metricRelabelings): concatenate
+//   - scalars (storageClass, metrics.monitorNamespace, metrics.jobLabel,
+//     metrics.interval, metrics.scrapeTimeout): last non-empty wins
+//   - metrics.honorLabels: last non-nil wins
 //   - pvcRetentionPolicy: last non-nil wins (field overlay within the policy)
 //   - allowedDomains: intersection of explicit lists; omitted means no constraint
 //   - maxResources: minimum (strictest) ceiling per resource
@@ -131,9 +135,55 @@ func MergeProfiles(names []string, profiles map[string]PlatformProfile) (Platfor
 			}
 		}
 		merged.MaxResources = mergeMaxResources(merged.MaxResources, p.MaxResources)
+		merged.Metrics = mergeProfileMetrics(merged.Metrics, p.Metrics)
 	}
 
 	return merged, nil
+}
+
+// mergeProfileMetrics overlays overlay onto base. Maps deep-merge, scalars
+// use last-non-empty, bools last-non-nil, and relabel lists concatenate.
+func mergeProfileMetrics(base, overlay *ProfileMetrics) *ProfileMetrics {
+	if overlay == nil {
+		return base
+	}
+	out := &ProfileMetrics{}
+	if base != nil {
+		*out = *base
+		out.MonitorLabels = maps.Clone(base.MonitorLabels)
+		out.Annotations = maps.Clone(base.Annotations)
+		out.Relabelings = slices.Clone(base.Relabelings)
+		out.MetricRelabelings = slices.Clone(base.MetricRelabelings)
+		if base.HonorLabels != nil {
+			v := *base.HonorLabels
+			out.HonorLabels = &v
+		}
+	}
+	out.MonitorLabels = mergeStringMap(out.MonitorLabels, overlay.MonitorLabels)
+	out.Annotations = mergeStringMap(out.Annotations, overlay.Annotations)
+	if overlay.MonitorNamespace != "" {
+		out.MonitorNamespace = overlay.MonitorNamespace
+	}
+	if overlay.Interval != "" {
+		out.Interval = overlay.Interval
+	}
+	if overlay.ScrapeTimeout != "" {
+		out.ScrapeTimeout = overlay.ScrapeTimeout
+	}
+	if overlay.JobLabel != "" {
+		out.JobLabel = overlay.JobLabel
+	}
+	if overlay.HonorLabels != nil {
+		v := *overlay.HonorLabels
+		out.HonorLabels = &v
+	}
+	if len(overlay.Relabelings) > 0 {
+		out.Relabelings = append(out.Relabelings, overlay.Relabelings...)
+	}
+	if len(overlay.MetricRelabelings) > 0 {
+		out.MetricRelabelings = append(out.MetricRelabelings, overlay.MetricRelabelings...)
+	}
+	return out
 }
 
 // mergePVCRetentionPolicy overlays overlay onto base. Non-empty overlay fields
@@ -204,6 +254,17 @@ func ValidateProfileAgainstComponent(
 	if merged.MaxResources != nil {
 		if err := checkResourceCeiling(compName, comp, merged.MaxResources); err != nil {
 			return err
+		}
+	}
+
+	if comp.Metrics.IsEnabled() && (merged.Metrics == nil || len(merged.Metrics.MonitorLabels) == 0) {
+		return &ResolutionError{
+			Code: ErrCodeProfileMonitorLabelsMissing,
+			Message: fmt.Sprintf(
+				"component %q has metrics enabled but the merged profile has no metrics.monitorLabels; "+
+					"set metrics.monitorLabels on a platform profile so Prometheus Operator can discover the monitor",
+				compName,
+			),
 		}
 	}
 

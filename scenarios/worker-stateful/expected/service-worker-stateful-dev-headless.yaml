@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: Service
+metadata:
+    annotations:
+        deployah.dev/project: worker-stateful
+        deployah.dev/source: spec
+    labels:
+        app.kubernetes.io/instance: worker-stateful-dev
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: worker
+        deployah.dev/component: worker
+        deployah.dev/environment: dev
+        deployah.dev/project: worker-stateful
+        helm.sh/chart: worker-0.1.0
+    name: worker-stateful-dev-headless
+    namespace: default
+spec:
+    clusterIP: None
+    ports:
+        - name: identity
+          port: 9
+          protocol: TCP
+          targetPort: identity
+    publishNotReadyAddresses: true
+    selector:
+        app.kubernetes.io/instance: worker-stateful-dev
+        app.kubernetes.io/name: worker
+    type: ClusterIP

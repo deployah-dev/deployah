@@ -251,6 +251,14 @@ func runOnline(c *nabat.Context, sess *session.Session, platform *spec.PlatformC
 	if err != nil {
 		return fmt.Errorf("load extras: %w", err)
 	}
+	if k8sErr == nil {
+		reqs := k8s.RequiredAPIs(manifest, opts.Environment, resolvedSpec)
+		if len(reqs) > 0 {
+			if capErr := k8s.CheckAPIRequirements(k8sClient, reqs); capErr != nil {
+				return capErr
+			}
+		}
+	}
 	postRenderer := bundle.PostRendererFor()
 
 	p, result, cleanup, err := planengine.BuildPlan(c, helmClient, manifest, opts.Environment, cluster.Context(), resolvedSpec, postRenderer)

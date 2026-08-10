@@ -314,3 +314,67 @@ func TestCheckWorkloadGuards_SizeParseError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "parse previous persistence.size")
 }
+
+func TestCheckWorkloadGuards_RoleChangeRejected(t *testing.T) {
+	t.Parallel()
+	prev := previousResolvedComponents(releaseWithResolved("api", map[string]any{
+		"workloadKind": "Deployment",
+		"role":         "service",
+	}).Chart.Values)
+	manifest := &spec.Spec{
+		Project: "shop",
+		Components: map[string]spec.Component{
+			"api": {Role: spec.ComponentRoleWorker, Image: "worker:1"},
+		},
+	}
+	err := checkWorkloadGuards(manifest, "production", prev)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "role change")
+	assert.Contains(t, err.Error(), "service -> worker")
+}
+
+func TestCheckWorkloadGuards_SameRoleAllowed(t *testing.T) {
+	t.Parallel()
+	prev := previousResolvedComponents(releaseWithResolved("api", map[string]any{
+		"workloadKind": "Deployment",
+		"role":         "worker",
+	}).Chart.Values)
+	manifest := &spec.Spec{
+		Project: "shop",
+		Components: map[string]spec.Component{
+			"api": {Role: spec.ComponentRoleWorker, Image: "worker:1"},
+		},
+	}
+	assert.NoError(t, checkWorkloadGuards(manifest, "production", prev))
+}
+
+func TestCheckWorkloadGuards_MissingPrevRoleTreatedAsService(t *testing.T) {
+	t.Parallel()
+	prev := previousResolvedComponents(releaseWithResolved("api", map[string]any{
+		"workloadKind": "Deployment",
+	}).Chart.Values)
+	manifest := &spec.Spec{
+		Project: "shop",
+		Components: map[string]spec.Component{
+			"api": {Role: spec.ComponentRoleWorker, Image: "worker:1"},
+		},
+	}
+	err := checkWorkloadGuards(manifest, "production", prev)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "role change")
+	assert.Contains(t, err.Error(), "service -> worker")
+}
+
+func TestCheckWorkloadGuards_MissingPrevRoleSameAsServiceAllowed(t *testing.T) {
+	t.Parallel()
+	prev := previousResolvedComponents(releaseWithResolved("api", map[string]any{
+		"workloadKind": "Deployment",
+	}).Chart.Values)
+	manifest := &spec.Spec{
+		Project: "shop",
+		Components: map[string]spec.Component{
+			"api": {Role: spec.ComponentRoleService, Image: "api:1", Port: 8080},
+		},
+	}
+	assert.NoError(t, checkWorkloadGuards(manifest, "production", prev))
+}

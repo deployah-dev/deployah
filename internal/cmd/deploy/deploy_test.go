@@ -247,7 +247,7 @@ func TestRequiredAPIs(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			reqs := requiredAPIs(tt.manifest, tt.environment, tt.resolved)
+			reqs := k8s.RequiredAPIs(tt.manifest, tt.environment, tt.resolved)
 			if tt.wantEmpty {
 				assert.Empty(t, reqs)
 				return

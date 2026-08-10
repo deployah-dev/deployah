@@ -77,6 +77,24 @@ func checkWorkloadGuards(
 			))
 		}
 
+		wantRole := string(component.Role)
+		if wantRole == "" {
+			wantRole = string(spec.ComponentRoleService)
+		}
+		// Missing or empty previous role means service (the only role before
+		// workers existed). Always compare so service -> worker upgrades are
+		// rejected even when the prior release omitted role from resolved values.
+		prevRole, hasRole := prev["role"].(string)
+		if !hasRole || prevRole == "" {
+			prevRole = string(spec.ComponentRoleService)
+		}
+		if prevRole != wantRole {
+			errors = append(errors, fmt.Sprintf(
+				"  %s: role change %s -> %s is not supported; delete the release and redeploy",
+				name, prevRole, wantRole,
+			))
+		}
+
 		prevSize, hasPrevSize := prev["persistenceSize"].(string)
 		prevHadPersistence := hasPrevSize && prevSize != ""
 		nowHasPersistence := component.Persistence != nil

@@ -1,0 +1,12 @@
+# $schema: ../../internal/spec/schema/v1-alpha.4/manifest.json
+apiVersion: v1-alpha.4
+project: error-worker-expose
+components:
+  worker:
+    role: worker
+    image: ghcr.io/acme/worker:1.0.0
+    environments: [dev]
+    expose:
+      subdomain: jobs
+environments:
+  dev: {}

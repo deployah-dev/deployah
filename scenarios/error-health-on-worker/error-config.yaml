@@ -1,2 +1,2 @@
 expectedErrors:
-  - "health checks are only supported for role: service components"
+  - "health.ready is not supported on role: worker"

@@ -685,6 +685,10 @@ exports:
     ## APP service parameters
     ##
     service:
+      ## @param service.enabled Create a ClusterIP Service. Set false for workers (headless still renders for StatefulSets).
+      ##
+      enabled: true
+
       ## @param service.type APP service type
       ##
       type: ClusterIP

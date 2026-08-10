@@ -23,7 +23,7 @@
 
 {{ include "deployah.tls.secrets" . }}
 
-{{- if and .Values.ports .Values.service.ports }}
+{{- if and .Values.ports .Values.service.ports (ne .Values.service.enabled false) }}
 {{ include "deployah.service" . }}
 {{- end }}
 

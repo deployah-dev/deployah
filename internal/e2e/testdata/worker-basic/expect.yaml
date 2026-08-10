@@ -1,0 +1,14 @@
+env: dev
+namespace: default
+deployments:
+  - name: worker-basic-dev
+    replicas: 1
+    image: docker.io/library/busybox:1.36
+    labels:
+      deployah.dev/project: worker-basic
+      deployah.dev/environment: dev
+      deployah.dev/component: worker
+pods:
+  labelSelector: "deployah.dev/project=worker-basic,deployah.dev/environment=dev"
+  minCount: 1
+  phase: Running

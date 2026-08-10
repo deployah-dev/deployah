@@ -1,0 +1,36 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+    annotations:
+        deployah.dev/project: worker-hpa
+        deployah.dev/source: spec
+    labels:
+        app.kubernetes.io/instance: worker-hpa-production
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: worker
+        deployah.dev/component: worker
+        deployah.dev/environment: production
+        deployah.dev/project: worker-hpa
+        helm.sh/chart: worker-0.1.0
+    name: worker-hpa-production
+    namespace: default
+spec:
+    maxReplicas: 8
+    metrics:
+        - resource:
+            name: cpu
+            target:
+                averageUtilization: 70
+                type: Utilization
+          type: Resource
+        - resource:
+            name: memory
+            target:
+                averageUtilization: 80
+                type: Utilization
+          type: Resource
+    minReplicas: 2
+    scaleTargetRef:
+        apiVersion: apps/v1
+        kind: Deployment
+        name: worker-hpa-production

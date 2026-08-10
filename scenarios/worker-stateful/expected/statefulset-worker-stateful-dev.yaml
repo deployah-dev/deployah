@@ -1,0 +1,96 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+    annotations:
+        deployah.dev/project: worker-stateful
+        deployah.dev/source: spec
+    labels:
+        app.kubernetes.io/instance: worker-stateful-dev
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: worker
+        deployah.dev/component: worker
+        deployah.dev/environment: dev
+        deployah.dev/project: worker-stateful
+        helm.sh/chart: worker-0.1.0
+    name: worker-stateful-dev
+    namespace: default
+spec:
+    persistentVolumeClaimRetentionPolicy:
+        whenDeleted: Retain
+        whenScaled: Retain
+    podManagementPolicy: OrderedReady
+    replicas: 1
+    revisionHistoryLimit: 10
+    selector:
+        matchLabels:
+            app.kubernetes.io/instance: worker-stateful-dev
+            app.kubernetes.io/name: worker
+    serviceName: worker-stateful-dev-headless
+    template:
+        metadata:
+            annotations: null
+            labels:
+                app.kubernetes.io/instance: worker-stateful-dev
+                app.kubernetes.io/managed-by: Helm
+                app.kubernetes.io/name: worker
+                deployah.dev/component: worker
+                deployah.dev/environment: dev
+                deployah.dev/project: worker-stateful
+                helm.sh/chart: worker-0.1.0
+        spec:
+            affinity:
+                podAntiAffinity:
+                    preferredDuringSchedulingIgnoredDuringExecution:
+                        - podAffinityTerm:
+                            labelSelector:
+                                matchLabels:
+                                    app.kubernetes.io/instance: worker-stateful-dev
+                                    app.kubernetes.io/name: worker
+                            topologyKey: kubernetes.io/hostname
+                          weight: 1
+            containers:
+                - args:
+                    - infinity
+                  command:
+                    - sleep
+                  image: docker.io/library/busybox:1.36
+                  imagePullPolicy: IfNotPresent
+                  name: worker
+                  ports:
+                    - containerPort: 9
+                      name: identity
+                      protocol: TCP
+                  resources:
+                    limits: {}
+                    requests:
+                        cpu: 500m
+                        ephemeral-storage: 50Mi
+                        memory: 512Mi
+                  volumeMounts:
+                    - mountPath: /data
+                      name: data
+            restartPolicy: Always
+            serviceAccountName: default
+            terminationGracePeriodSeconds: 60
+    updateStrategy:
+        type: RollingUpdate
+    volumeClaimTemplates:
+        - metadata:
+            annotations:
+                deployah.dev/project: worker-stateful
+                deployah.dev/source: spec
+            labels:
+                app.kubernetes.io/instance: worker-stateful-dev
+                app.kubernetes.io/managed-by: Helm
+                app.kubernetes.io/name: worker
+                deployah.dev/component: worker
+                deployah.dev/environment: dev
+                deployah.dev/project: worker-stateful
+                helm.sh/chart: worker-0.1.0
+            name: data
+          spec:
+            accessModes:
+                - ReadWriteOncePod
+            resources:
+                requests:
+                    storage: 1Gi

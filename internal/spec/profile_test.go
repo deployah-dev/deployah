@@ -473,3 +473,55 @@ func TestValidateProfileAgainstComponent(t *testing.T) {
 		require.NoError(t, err)
 	})
 }
+
+func TestMergeProfiles_MonitorFields(t *testing.T) {
+	t.Parallel()
+	honorTrue := true
+	honorFalse := false
+	profiles := map[string]spec.PlatformProfile{
+		"a": {
+			Metrics: &spec.ProfileMetrics{
+				MonitorLabels:    map[string]string{"release": "a"},
+				MonitorNamespace: "monitoring",
+				Interval:         "30s",
+				Relabelings:      []any{map[string]any{"action": "keep"}},
+				Annotations:      map[string]string{"team": "platform"},
+				HonorLabels:      &honorFalse,
+			},
+		},
+		"b": {
+			Metrics: &spec.ProfileMetrics{
+				MonitorLabels:     map[string]string{"release": "b", "team": "obs"},
+				Interval:          "15s",
+				JobLabel:          "app",
+				HonorLabels:       &honorTrue,
+				MetricRelabelings: []any{map[string]any{"action": "drop"}},
+				Annotations:       map[string]string{"owner": "sre"},
+			},
+		},
+	}
+	merged, err := spec.MergeProfiles([]string{"a", "b"}, profiles)
+	require.NoError(t, err)
+	require.NotNil(t, merged.Metrics)
+	assert.Equal(t, map[string]string{"release": "b", "team": "obs"}, merged.Metrics.MonitorLabels)
+	assert.Equal(t, "monitoring", merged.Metrics.MonitorNamespace)
+	assert.Equal(t, "15s", merged.Metrics.Interval)
+	assert.Equal(t, "app", merged.Metrics.JobLabel)
+	require.NotNil(t, merged.Metrics.HonorLabels)
+	assert.True(t, *merged.Metrics.HonorLabels)
+	assert.Len(t, merged.Metrics.Relabelings, 1)
+	assert.Len(t, merged.Metrics.MetricRelabelings, 1)
+	assert.Equal(t, map[string]string{"team": "platform", "owner": "sre"}, merged.Metrics.Annotations)
+}
+
+func TestValidateProfileAgainstComponent_MonitorLabelsRequired(t *testing.T) {
+	t.Parallel()
+	comp := spec.Component{
+		Metrics: &spec.ComponentMetrics{Port: 9090},
+	}
+	err := spec.ValidateProfileAgainstComponent("worker", comp, spec.PlatformProfile{}, nil, "")
+	require.Error(t, err)
+	var re *spec.ResolutionError
+	require.ErrorAs(t, err, &re)
+	assert.Equal(t, spec.ErrCodeProfileMonitorLabelsMissing, re.Code)
+}

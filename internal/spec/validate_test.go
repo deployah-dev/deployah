@@ -527,13 +527,24 @@ func TestValidateComponentHealth(t *testing.T) {
 			expectErr: false,
 		},
 		{
-			name: "health on worker role is invalid",
+			name: "worker with exec alive is valid",
 			component: Component{
 				Role:   ComponentRoleWorker,
-				Health: &Health{Ready: &HealthReady{Path: "/health"}},
+				Health: &Health{Alive: &HealthAlive{Exec: []string{"pgrep", "-f", "worker"}}},
+			},
+			expectErr: false,
+		},
+		{
+			name: "path and exec on alive are mutually exclusive",
+			component: Component{
+				Role: ComponentRoleService,
+				Port: 8080,
+				Health: &Health{
+					Alive: &HealthAlive{Path: "/livez", Exec: []string{"true"}},
+				},
 			},
 			expectErr: true,
-			errMsg:    "health checks are only supported for role: service",
+			errMsg:    "mutually exclusive",
 		},
 		{
 			name: "health on job role is invalid",
@@ -542,7 +553,7 @@ func TestValidateComponentHealth(t *testing.T) {
 				Health: &Health{Ready: &HealthReady{Path: "/health"}},
 			},
 			expectErr: true,
-			errMsg:    "health checks are only supported for role: service",
+			errMsg:    "health checks are not supported for role: job",
 		},
 		{
 			name: "ready path without leading slash is invalid",
@@ -650,4 +661,148 @@ func TestValidateComponentHealth(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestValidateComponentWorker(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		component Component
+		expectErr bool
+		errMsg    string
+	}{
+		{
+			name:      "service is ignored",
+			component: Component{Role: ComponentRoleService, Port: 8080},
+		},
+		{
+			name:      "worker without forbidden fields is valid",
+			component: Component{Role: ComponentRoleWorker, Image: "worker:1"},
+		},
+		{
+			name:      "worker with port is invalid",
+			component: Component{Role: ComponentRoleWorker, Port: 8080},
+			expectErr: true,
+			errMsg:    "port is not supported on role: worker",
+		},
+		{
+			name:      "worker with expose is invalid",
+			component: Component{Role: ComponentRoleWorker, Expose: &Expose{}},
+			expectErr: true,
+			errMsg:    "expose is not supported on role: worker",
+		},
+		{
+			name: "worker with health.ready is invalid",
+			component: Component{
+				Role:   ComponentRoleWorker,
+				Health: &Health{Ready: &HealthReady{Path: "/health"}},
+			},
+			expectErr: true,
+			errMsg:    "health.ready is not supported",
+		},
+		{
+			name: "worker with health.alive.path is invalid",
+			component: Component{
+				Role:   ComponentRoleWorker,
+				Health: &Health{Alive: &HealthAlive{Path: "/livez"}},
+			},
+			expectErr: true,
+			errMsg:    "health.alive.path is not supported",
+		},
+		{
+			name: "worker with health.alive.exec is valid",
+			component: Component{
+				Role:   ComponentRoleWorker,
+				Health: &Health{Alive: &HealthAlive{Exec: []string{"true"}}},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := ValidateComponentWorker(tt.component)
+			if tt.expectErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errMsg)
+				return
+			}
+			assert.NoError(t, err)
+		})
+	}
+}
+
+func TestValidateComponentMetrics(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		component Component
+		expectErr bool
+		errMsg    string
+	}{
+		{
+			name:      "nil metrics is valid",
+			component: Component{Role: ComponentRoleService},
+		},
+		{
+			name: "worker metrics true without port is invalid",
+			component: Component{
+				Role:    ComponentRoleWorker,
+				Metrics: &ComponentMetrics{},
+			},
+			expectErr: true,
+			errMsg:    "metrics.port is required",
+		},
+		{
+			name: "worker metrics with port is valid",
+			component: Component{
+				Role:    ComponentRoleWorker,
+				Metrics: &ComponentMetrics{Port: 9090},
+			},
+		},
+		{
+			name: "service metrics without port is valid",
+			component: Component{
+				Role:    ComponentRoleService,
+				Port:    8080,
+				Metrics: &ComponentMetrics{},
+			},
+		},
+		{
+			name: "metrics path must start with slash",
+			component: Component{
+				Role:    ComponentRoleService,
+				Metrics: &ComponentMetrics{Path: "metrics"},
+			},
+			expectErr: true,
+			errMsg:    "metrics.path must start with /",
+		},
+		{
+			name: "disabled metrics skips port check",
+			component: Component{
+				Role:    ComponentRoleWorker,
+				Metrics: &ComponentMetrics{Disabled: true},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := ValidateComponentMetrics(tt.component)
+			if tt.expectErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errMsg)
+				return
+			}
+			assert.NoError(t, err)
+		})
+	}
+}
+
+func TestValidateComponentShutdownTimeout(t *testing.T) {
+	t.Parallel()
+	assert.NoError(t, ValidateComponentShutdownTimeout(Component{}))
+	assert.NoError(t, ValidateComponentShutdownTimeout(Component{ShutdownTimeout: "60s"}))
+	err := ValidateComponentShutdownTimeout(Component{ShutdownTimeout: "0s"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "shutdownTimeout")
 }

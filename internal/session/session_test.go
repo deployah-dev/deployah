@@ -61,7 +61,7 @@ users:
 
 // minimalSpecYAML is a self-contained spec fixture with a valid apiVersion
 // and a single component, reused by Spec/ParseManifest tests.
-const minimalSpecYAML = `apiVersion: v1-alpha.3
+const minimalSpecYAML = `apiVersion: v1-alpha.4
 project: demo
 components:
   web:
@@ -355,7 +355,7 @@ func TestTarget(t *testing.T) {
 		platformDir := t.TempDir()
 		platformPath := platformDir + "/deployah.platform.yaml"
 
-		platformYAML := `apiVersion: platform/v1-alpha.2
+		platformYAML := `apiVersion: platform/v1-alpha.3
 environments:
   production:
     context: prod-eks
@@ -375,7 +375,7 @@ environments:
 		platformDir := t.TempDir()
 		platformPath := platformDir + "/deployah.platform.yaml"
 
-		platformYAML := `apiVersion: platform/v1-alpha.2
+		platformYAML := `apiVersion: platform/v1-alpha.3
 environments:
   production:
     context: prod-eks
@@ -534,7 +534,7 @@ func TestKubeContextAccessor(t *testing.T) {
 // stale cached value.
 func TestClose(t *testing.T) {
 	platformPath := filepath.Join(t.TempDir(), "deployah.platform.yaml")
-	platformYAML := `apiVersion: platform/v1-alpha.2
+	platformYAML := `apiVersion: platform/v1-alpha.3
 environments:
   production:
     domains:

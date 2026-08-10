@@ -32,7 +32,7 @@ const PlatformEnvVar = "DEPLOYAH_PLATFORM_FILE"
 // PlatformConfig is the top-level structure of the platform file
 // (deployah.platform.yaml). It is platform-owned and not subject to envsubst.
 type PlatformConfig struct {
-	// APIVersion is the platform schema version, e.g. "platform/v1-alpha.2".
+	// APIVersion is the platform schema version, e.g. "platform/v1-alpha.3".
 	APIVersion string `json:"apiVersion" yaml:"apiVersion"`
 	// Profiles maps logical profile names to deployment policy. Profiles are
 	// org-wide (root-level), not per-environment. A profile named "default" is
@@ -77,6 +77,37 @@ type PlatformProfile struct {
 	AllowedDomains []string `json:"allowedDomains" yaml:"allowedDomains"`
 	// MaxResources is a ceiling on component resource requests.
 	MaxResources *ProfileMaxResources `json:"maxResources,omitempty" yaml:"maxResources,omitempty"`
+	// Metrics holds Prometheus Operator monitor defaults owned by the
+	// platform (discovery labels, scrape timing, relabelings). Nested under
+	// metrics so profile root stays free of scrape-specific field names.
+	Metrics *ProfileMetrics `json:"metrics,omitempty" yaml:"metrics,omitempty"`
+}
+
+// ProfileMetrics is the platform-owned Prometheus scrape policy for a
+// profile. When a component enables metrics, MonitorLabels must be set on
+// the merged profile so Prometheus Operator can discover the monitor CR.
+type ProfileMetrics struct {
+	// MonitorLabels are required discovery labels for ServiceMonitor and
+	// PodMonitor resources. Typically matches the Prometheus Operator
+	// release selector (e.g. release: kube-prometheus-stack).
+	MonitorLabels map[string]string `json:"monitorLabels,omitempty" yaml:"monitorLabels,omitempty"`
+	// MonitorNamespace is the namespace where the monitor CR is created.
+	// Empty means the app namespace.
+	MonitorNamespace string `json:"monitorNamespace,omitempty" yaml:"monitorNamespace,omitempty"`
+	// Interval is the default scrape interval (e.g. "30s").
+	Interval string `json:"interval,omitempty" yaml:"interval,omitempty"`
+	// ScrapeTimeout is the default scrape timeout (e.g. "10s").
+	ScrapeTimeout string `json:"scrapeTimeout,omitempty" yaml:"scrapeTimeout,omitempty"`
+	// JobLabel is the ServiceMonitor/PodMonitor jobLabel field.
+	JobLabel string `json:"jobLabel,omitempty" yaml:"jobLabel,omitempty"`
+	// HonorLabels maps to honorLabels on monitor endpoints.
+	HonorLabels *bool `json:"honorLabels,omitempty" yaml:"honorLabels,omitempty"`
+	// Annotations are applied to the monitor CR.
+	Annotations map[string]string `json:"annotations,omitempty" yaml:"annotations,omitempty"`
+	// Relabelings are Prometheus relabel configs on the scrape endpoint.
+	Relabelings []any `json:"relabelings,omitempty" yaml:"relabelings,omitempty"`
+	// MetricRelabelings are Prometheus metricRelabelings on the scrape endpoint.
+	MetricRelabelings []any `json:"metricRelabelings,omitempty" yaml:"metricRelabelings,omitempty"`
 }
 
 // PVCRetentionPolicy controls StatefulSet persistentVolumeClaimRetentionPolicy.

@@ -1,5 +1,5 @@
 {{- define "deployah.podmonitor" -}}
-{{- if .Values.podMonitor.enabled }}
+{{- if and .Values.podMonitor.enabled (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1") }}
 ---
 apiVersion: monitoring.coreos.com/v1
 kind: PodMonitor

@@ -191,10 +191,8 @@ func resolveComponent(
 	}
 
 	if comp.Expose == nil {
-		if rc.MergedProfile != nil {
-			if profileErr := ValidateProfileAgainstComponent(name, comp, *rc.MergedProfile, platformEnv, ""); profileErr != nil {
-				return rc, result, profileErr
-			}
+		if profileErr := validateMergedProfile(name, comp, rc.MergedProfile, platformEnv, ""); profileErr != nil {
+			return rc, result, profileErr
 		}
 		if scErr := applyResolvedStorageClass(&rc, &result, name, comp, env, platformEnv); scErr != nil {
 			return rc, result, scErr
@@ -367,16 +365,40 @@ func resolveComponent(
 		}
 	}
 
-	if rc.MergedProfile != nil {
-		if profileErr := ValidateProfileAgainstComponent(name, comp, *rc.MergedProfile, platformEnv, domainKey); profileErr != nil {
-			return rc, result, profileErr
-		}
+	if profileErr := validateMergedProfile(name, comp, rc.MergedProfile, platformEnv, domainKey); profileErr != nil {
+		return rc, result, profileErr
 	}
 	if scErr := applyResolvedStorageClass(&rc, &result, name, comp, env, platformEnv); scErr != nil {
 		return rc, result, scErr
 	}
 
 	return rc, result, nil
+}
+
+// validateMergedProfile runs profile constraints when a merged profile exists,
+// and always enforces monitorLabels when metrics are enabled (even with no
+// profile, which is an error).
+func validateMergedProfile(
+	name string,
+	comp Component,
+	merged *PlatformProfile,
+	platformEnv *PlatformEnvironment,
+	domainKey string,
+) error {
+	if merged != nil {
+		return ValidateProfileAgainstComponent(name, comp, *merged, platformEnv, domainKey)
+	}
+	if comp.Metrics.IsEnabled() {
+		return &ResolutionError{
+			Code: ErrCodeProfileMonitorLabelsMissing,
+			Message: fmt.Sprintf(
+				"component %q has metrics enabled but the merged profile has no metrics.monitorLabels; "+
+					"set metrics.monitorLabels on a platform profile so Prometheus Operator can discover the monitor",
+				name,
+			),
+		}
+	}
+	return nil
 }
 
 // applyResolvedStorageClass resolves the Kubernetes storage class name.

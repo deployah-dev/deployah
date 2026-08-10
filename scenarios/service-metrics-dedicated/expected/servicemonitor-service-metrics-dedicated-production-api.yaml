@@ -1,0 +1,28 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+    annotations:
+        deployah.dev/project: service-metrics-dedicated
+        deployah.dev/source: spec
+    labels:
+        app.kubernetes.io/instance: service-metrics-dedicated-production
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: api
+        deployah.dev/component: api
+        deployah.dev/environment: production
+        deployah.dev/project: service-metrics-dedicated
+        helm.sh/chart: api-0.1.0
+        release: prometheus
+    name: service-metrics-dedicated-production-api
+    namespace: default
+spec:
+    endpoints:
+        - path: /metrics
+          port: metrics
+    namespaceSelector:
+        matchNames:
+            - default
+    selector:
+        matchLabels:
+            app.kubernetes.io/instance: service-metrics-dedicated-production
+            app.kubernetes.io/name: api

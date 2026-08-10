@@ -144,7 +144,7 @@ func TestLoad_NoEnvironmentsSection(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	path := filepath.Join(dir, "deployah.yaml")
-	doc := `apiVersion: v1-alpha.3
+	doc := `apiVersion: v1-alpha.4
 project: demo
 components:
   web:
@@ -394,7 +394,7 @@ func TestParseManifest_ProfilesArray(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "deployah.yaml")
 	content := `
-apiVersion: v1-alpha.3
+apiVersion: v1-alpha.4
 project: shop
 components:
   web:
@@ -416,7 +416,7 @@ func TestLoad_OldProfileStringRejected(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	content := `
-apiVersion: v1-alpha.3
+apiVersion: v1-alpha.4
 project: shop
 components:
   web:

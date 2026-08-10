@@ -38,11 +38,11 @@ func TestPrepareChart_CacheSurvivesCallerCleanup(t *testing.T) {
 	t.Parallel()
 	cache := NewChartCache(time.Hour)
 	manifest := &spec.Spec{
-		APIVersion: "v1-alpha.3",
+		APIVersion: "v1-alpha.4",
 		Project:    "cache-test",
 		Components: map[string]spec.Component{"web": serviceComponent()},
 	}
-	require.NoError(t, spec.FillSpecWithDefaults(manifest, "v1-alpha.3"))
+	require.NoError(t, spec.FillSpecWithDefaults(manifest, "v1-alpha.4"))
 
 	returnedPath, err := PrepareChart(t.Context(), manifest, "production", nil, cache)
 	require.NoError(t, err)

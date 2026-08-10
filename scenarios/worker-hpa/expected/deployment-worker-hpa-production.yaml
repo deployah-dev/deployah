@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+    annotations:
+        deployah.dev/project: worker-hpa
+        deployah.dev/source: spec
+    labels:
+        app.kubernetes.io/instance: worker-hpa-production
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: worker
+        deployah.dev/component: worker
+        deployah.dev/environment: production
+        deployah.dev/project: worker-hpa
+        helm.sh/chart: worker-0.1.0
+    name: worker-hpa-production
+    namespace: default
+spec:
+    revisionHistoryLimit: 10
+    selector:
+        matchLabels:
+            app.kubernetes.io/instance: worker-hpa-production
+            app.kubernetes.io/name: worker
+    strategy:
+        type: RollingUpdate
+    template:
+        metadata:
+            annotations: null
+            labels:
+                app.kubernetes.io/instance: worker-hpa-production
+                app.kubernetes.io/managed-by: Helm
+                app.kubernetes.io/name: worker
+                deployah.dev/component: worker
+                deployah.dev/environment: production
+                deployah.dev/project: worker-hpa
+                helm.sh/chart: worker-0.1.0
+        spec:
+            affinity:
+                podAntiAffinity:
+                    preferredDuringSchedulingIgnoredDuringExecution:
+                        - podAffinityTerm:
+                            labelSelector:
+                                matchLabels:
+                                    app.kubernetes.io/instance: worker-hpa-production
+                                    app.kubernetes.io/name: worker
+                            topologyKey: kubernetes.io/hostname
+                          weight: 1
+            containers:
+                - image: ghcr.io/acme/worker:1.0.0
+                  imagePullPolicy: IfNotPresent
+                  name: worker
+                  resources:
+                    limits: {}
+                    requests:
+                        cpu: 500m
+                        ephemeral-storage: 50Mi
+                        memory: 512Mi
+            restartPolicy: Always
+            serviceAccountName: default
+            terminationGracePeriodSeconds: 60

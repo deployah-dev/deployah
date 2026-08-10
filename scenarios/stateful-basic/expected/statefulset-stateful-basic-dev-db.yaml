@@ -85,6 +85,7 @@ spec:
                       name: data
             restartPolicy: Always
             serviceAccountName: default
+            terminationGracePeriodSeconds: 30
     updateStrategy:
         type: RollingUpdate
     volumeClaimTemplates:

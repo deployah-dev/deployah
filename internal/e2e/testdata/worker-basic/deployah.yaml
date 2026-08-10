@@ -1,0 +1,12 @@
+apiVersion: v1-alpha.4
+project: worker-basic
+components:
+  worker:
+    role: worker
+    image: busybox:1.36
+    command: ["sleep"]
+    args: ["infinity"]
+    environments: [dev]
+    resourcePreset: small
+environments:
+  dev: {}

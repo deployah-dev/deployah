@@ -321,8 +321,7 @@ func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string, resolved *spe
 			},
 		}
 
-		if !component.Role.IsService() {
-			// TODO: Add support for component roles such as "worker", and "job"
+		if component.Role == spec.ComponentRoleJob {
 			return nil, fmt.Errorf("role %s is not supported yet", component.Role)
 		}
 		// TODO: Implement handling for component envFile
@@ -483,24 +482,30 @@ func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string, resolved *spe
 			componentValues["args"] = component.Args
 		}
 
-		// Worker and job roles do not expose ports.
-		if component.ListensOnPort() {
-			componentValues["ports"] = []map[string]any{
-				{
-					"name":          "http",
-					"containerPort": component.Port,
-					// TODO: Add support for protocol
-					"protocol": "TCP",
-				},
-			}
+		if err := applyPortsAndService(componentValues, component); err != nil {
+			return nil, fmt.Errorf("component %s: %w", componentName, err)
 		}
 
-		if component.Role.IsService() {
+		if component.Role.IsService() || hasExecAlive(component) {
 			probes, probeErr := buildProbeValues(component)
 			if probeErr != nil {
 				return nil, fmt.Errorf("component %s: probes: %w", componentName, probeErr)
 			}
 			maps.Copy(componentValues, probes)
+		}
+
+		if err := applyShutdownTimeout(componentValues, component); err != nil {
+			return nil, fmt.Errorf("component %s: shutdownTimeout: %w", componentName, err)
+		}
+
+		var mergedProfile *spec.PlatformProfile
+		if resolved != nil {
+			if rc, ok := resolved.Components[componentName]; ok {
+				mergedProfile = rc.MergedProfile
+			}
+		}
+		if err := applyMetricsValues(componentValues, component, mergedProfile); err != nil {
+			return nil, fmt.Errorf("component %s: metrics: %w", componentName, err)
 		}
 
 		entry, hasEntry := resolvedComponents[componentName].(map[string]any)
@@ -509,6 +514,7 @@ func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string, resolved *spe
 			resolvedComponents[componentName] = entry
 		}
 		entry["workloadKind"] = workloadKind
+		entry["role"] = string(component.Role)
 		if component.Persistence != nil {
 			entry["persistenceMountPath"] = component.Persistence.MountPath
 			entry["persistenceSize"] = component.Persistence.Size
@@ -555,13 +561,224 @@ func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string, resolved *spe
 	return values, nil
 }
 
+// applyPortsAndService sets container ports and ClusterIP/headless service
+// ports. Workers never get a ClusterIP Service; stateful workers get a
+// synthetic identity port for headless DNS. Chart defaults include an http
+// port, so workers without ports must clear ports to nil (falsy in Helm).
+// TODO: Add support for port protocol
+func applyPortsAndService(componentValues map[string]any, component spec.Component) error {
+	if component.Role.IsWorker() {
+		svc := map[string]any{"enabled": false}
+		componentValues["service"] = svc
+		ports := make([]map[string]any, 0, 2)
+		servicePorts := make([]map[string]any, 0, 1)
+		if component.Kind == spec.ComponentKindStateful {
+			ports = append(ports, map[string]any{
+				"name":          spec.IdentityPortName,
+				"containerPort": spec.IdentityPortNumber,
+				"protocol":      "TCP",
+			})
+			servicePorts = append(servicePorts, map[string]any{
+				"name":       spec.IdentityPortName,
+				"protocol":   "TCP",
+				"port":       spec.IdentityPortNumber,
+				"targetPort": spec.IdentityPortName,
+			})
+		}
+		if component.Metrics.IsEnabled() && component.Metrics.Port > 0 {
+			ports = append(ports, map[string]any{
+				"name":          spec.MetricsPortName,
+				"containerPort": component.Metrics.Port,
+				"protocol":      "TCP",
+			})
+		}
+		if len(ports) == 0 {
+			componentValues["ports"] = nil
+		} else {
+			componentValues["ports"] = ports
+		}
+		if len(servicePorts) > 0 {
+			// Keep enabled:false while attaching headless identity ports.
+			svc["ports"] = servicePorts
+		}
+		return nil
+	}
+
+	// Service role.
+	if !component.ListensOnPort() {
+		return nil
+	}
+	ports := []map[string]any{
+		{
+			"name":          "http",
+			"containerPort": component.Port,
+			"protocol":      "TCP",
+		},
+	}
+	servicePorts := []map[string]any{
+		{
+			"name":       "http",
+			"protocol":   "TCP",
+			"port":       80,
+			"targetPort": "http",
+		},
+	}
+	if component.Metrics.IsEnabled() {
+		metricsPort := component.Metrics.Port
+		if metricsPort == 0 {
+			metricsPort = component.Port
+		}
+		if metricsPort != component.Port {
+			ports = append(ports, map[string]any{
+				"name":          spec.MetricsPortName,
+				"containerPort": metricsPort,
+				"protocol":      "TCP",
+			})
+			servicePorts = append(servicePorts, map[string]any{
+				"name":       spec.MetricsPortName,
+				"protocol":   "TCP",
+				"port":       metricsPort,
+				"targetPort": spec.MetricsPortName,
+			})
+		}
+	}
+	componentValues["ports"] = ports
+	componentValues["service"] = map[string]any{
+		"enabled": true,
+		"ports":   servicePorts,
+	}
+	return nil
+}
+
+// applyShutdownTimeout maps shutdownTimeout to terminationGracePeriodSeconds.
+// FillSpecWithDefaults guarantees shutdownTimeout is non-empty by the time
+// chart generation runs.
+func applyShutdownTimeout(componentValues map[string]any, component spec.Component) error {
+	sec, err := spec.ParseDuration(component.ShutdownTimeout)
+	if err != nil {
+		return err
+	}
+	componentValues["terminationGracePeriodSeconds"] = sec
+	return nil
+}
+
+// applyMetricsValues enables ServiceMonitor (service) or PodMonitor (worker)
+// and copies platform profile monitor settings onto the monitor values.
+func applyMetricsValues(
+	componentValues map[string]any,
+	component spec.Component,
+	profile *spec.PlatformProfile,
+) error {
+	if !component.Metrics.IsEnabled() {
+		return nil
+	}
+	// FillSpecWithDefaults guarantees Path is non-empty when metrics are enabled.
+	path := component.Metrics.Path
+	monitorPort := "http"
+	if component.Role.IsWorker() {
+		monitorPort = spec.MetricsPortName
+	} else if component.Metrics.Port > 0 && component.Metrics.Port != component.Port {
+		monitorPort = spec.MetricsPortName
+	}
+
+	monitor := map[string]any{
+		"enabled": true,
+		"port":    monitorPort,
+		"path":    path,
+	}
+	if profile != nil {
+		if err := copyMonitorProfile(monitor, profile); err != nil {
+			return err
+		}
+	}
+	// App interval/timeout override profile defaults when set.
+	if component.Metrics.Interval != "" {
+		monitor["interval"] = component.Metrics.Interval
+	}
+	if component.Metrics.ScrapeTimeout != "" {
+		monitor["scrapeTimeout"] = component.Metrics.ScrapeTimeout
+	}
+
+	if component.Role.IsWorker() {
+		componentValues["podMonitor"] = monitor
+	} else {
+		componentValues["serviceMonitor"] = monitor
+	}
+	return nil
+}
+
+// copyMonitorProfile writes platform profile metrics fields into a monitor
+// values map. App-level interval/scrapeTimeout are applied by the caller
+// after this returns.
+func copyMonitorProfile(monitor map[string]any, profile *spec.PlatformProfile) error {
+	m := profile.Metrics
+	if m == nil {
+		return nil
+	}
+	if len(m.MonitorLabels) > 0 {
+		monitor["labels"] = maps.Clone(m.MonitorLabels)
+	}
+	if m.MonitorNamespace != "" {
+		monitor["namespace"] = m.MonitorNamespace
+	}
+	if m.Interval != "" {
+		monitor["interval"] = m.Interval
+	}
+	if m.ScrapeTimeout != "" {
+		monitor["scrapeTimeout"] = m.ScrapeTimeout
+	}
+	if m.JobLabel != "" {
+		monitor["jobLabel"] = m.JobLabel
+	}
+	if m.HonorLabels != nil {
+		monitor["honorLabels"] = *m.HonorLabels
+	}
+	if len(m.Annotations) > 0 {
+		monitor["annotations"] = maps.Clone(m.Annotations)
+	}
+	if len(m.Relabelings) > 0 {
+		vals, err := toValuesSlice(m.Relabelings)
+		if err != nil {
+			return fmt.Errorf("relabelings: %w", err)
+		}
+		monitor["relabelings"] = vals
+	}
+	if len(m.MetricRelabelings) > 0 {
+		vals, err := toValuesSlice(m.MetricRelabelings)
+		if err != nil {
+			return fmt.Errorf("metricRelabelings: %w", err)
+		}
+		monitor["metricRelabelings"] = vals
+	}
+	return nil
+}
+
+func hasExecAlive(component spec.Component) bool {
+	return component.Health != nil &&
+		component.Health.Alive != nil &&
+		!component.Health.Alive.Disabled &&
+		len(component.Health.Alive.Exec) > 0
+}
+
 // buildProbeValues builds startup/readiness/liveness probe values from the
-// component's health config.
+// component's health config. Workers only emit liveness when alive.exec is set.
 func buildProbeValues(component spec.Component) (map[string]any, error) {
 	h := component.Health
 
 	readyDisabled := h != nil && h.Ready != nil && h.Ready.Disabled
 	aliveDisabled := h != nil && h.Alive != nil && h.Alive.Disabled
+
+	// Workers: only optional exec liveness; no startup/readiness.
+	if component.Role.IsWorker() {
+		if aliveDisabled || !hasExecAlive(component) {
+			return map[string]any{}, nil
+		}
+		liveness, err := buildLivenessProbe(h.Alive.Exec, "", h.Alive.Interval, h.Alive.RestartAfter)
+		if err != nil {
+			return nil, fmt.Errorf("livenessProbe: %w", err)
+		}
+		return map[string]any{"livenessProbe": liveness}, nil
+	}
 
 	// Nothing to emit when both sides are explicitly off.
 	if readyDisabled && aliveDisabled {
@@ -576,8 +793,10 @@ func buildProbeValues(component spec.Component) (map[string]any, error) {
 		readyPath = h.Ready.Path
 	}
 	var alivePath string
+	var aliveExec []string
 	if h != nil && h.Alive != nil && !h.Alive.Disabled {
 		alivePath = h.Alive.Path
+		aliveExec = h.Alive.Exec
 	}
 
 	// Startup probe is active whenever at least one side is not disabled. It
@@ -605,7 +824,7 @@ func buildProbeValues(component spec.Component) (map[string]any, error) {
 			interval = h.Alive.Interval
 			restartAfter = h.Alive.RestartAfter
 		}
-		liveness, livenessErr := buildLivenessProbe(alivePath, interval, restartAfter)
+		liveness, livenessErr := buildLivenessProbe(aliveExec, alivePath, interval, restartAfter)
 		if livenessErr != nil {
 			return nil, fmt.Errorf("livenessProbe: %w", livenessErr)
 		}
@@ -619,7 +838,7 @@ func buildProbeValues(component spec.Component) (map[string]any, error) {
 // When path is non-empty the probe uses HTTP; otherwise it uses TCP.
 func buildStartupProbe(path string) (map[string]any, error) {
 	return probeValues(corev1.Probe{
-		ProbeHandler:     probeHandler(path),
+		ProbeHandler:     probeHandler(nil, path),
 		PeriodSeconds:    int32(spec.DefaultStartupProbePeriod),
 		FailureThreshold: int32(spec.DefaultStartupProbeFailureThreshold),
 		TimeoutSeconds:   int32(spec.DefaultStartupProbeTimeout),
@@ -630,7 +849,7 @@ func buildStartupProbe(path string) (map[string]any, error) {
 // When path is non-empty the probe uses HTTP; otherwise it uses TCP.
 func buildReadinessProbe(path string) (map[string]any, error) {
 	return probeValues(corev1.Probe{
-		ProbeHandler:     probeHandler(path),
+		ProbeHandler:     probeHandler(nil, path),
 		PeriodSeconds:    int32(spec.DefaultReadinessProbePeriod),
 		FailureThreshold: int32(spec.DefaultReadinessProbeFailureThreshold),
 		TimeoutSeconds:   int32(spec.DefaultReadinessProbeTimeout),
@@ -638,10 +857,10 @@ func buildReadinessProbe(path string) (map[string]any, error) {
 }
 
 // buildLivenessProbe constructs the liveness probe map for the Helm values.
-// When path is non-empty the probe uses HTTP; otherwise it uses TCP.
+// Exec takes precedence over path. When both are empty the probe uses TCP.
 // interval and restartAfter are duration strings; each defaults when empty.
 // failureThreshold = ceil(restartAfterSec / intervalSec).
-func buildLivenessProbe(path, interval, restartAfter string) (map[string]any, error) {
+func buildLivenessProbe(exec []string, path, interval, restartAfter string) (map[string]any, error) {
 	if interval == "" {
 		interval = spec.DefaultLivenessInterval
 	}
@@ -664,7 +883,7 @@ func buildLivenessProbe(path, interval, restartAfter string) (map[string]any, er
 	failureThreshold := min(max(int(math.Ceil(float64(restartSec)/float64(intervalSec))), 1), math.MaxInt32)
 
 	return probeValues(corev1.Probe{
-		ProbeHandler:  probeHandler(path),
+		ProbeHandler:  probeHandler(exec, path),
 		PeriodSeconds: int32(intervalSec),
 		// failureThreshold is clamped to math.MaxInt32 above.
 		FailureThreshold: int32(failureThreshold), //nolint:gosec
@@ -672,7 +891,12 @@ func buildLivenessProbe(path, interval, restartAfter string) (map[string]any, er
 	})
 }
 
-func probeHandler(path string) corev1.ProbeHandler {
+func probeHandler(exec []string, path string) corev1.ProbeHandler {
+	if len(exec) > 0 {
+		return corev1.ProbeHandler{
+			Exec: &corev1.ExecAction{Command: slices.Clone(exec)},
+		}
+	}
 	port := intstr.FromString("http")
 	if path != "" {
 		return corev1.ProbeHandler{

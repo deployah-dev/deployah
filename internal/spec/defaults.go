@@ -66,14 +66,14 @@ const componentsPrefixLength = len(ComponentsPrefix)
 // and pattern extraction operations.
 //
 // Cache keys follow the format: "{version}-{schemaType}"
-// Example: "v1-alpha.3-spec", "v1-alpha.3-environments"
+// Example: "v1-alpha.4-spec", "v1-alpha.4-environments"
 var (
 	// compiledSchemaCache stores compiled JSON schemas with their raw data
-	// Key format: "v1-alpha.3-spec" -> schemaInfo{compiled, rawData}
+	// Key format: "v1-alpha.4-spec" -> schemaInfo{compiled, rawData}
 	compiledSchemaCache = make(map[string]*schemaInfo)
 
 	// patternCache stores extracted component name patterns from schemas
-	// Key format: "v1-alpha.3" -> "^[a-zA-Z0-9_-]+$"
+	// Key format: "v1-alpha.4" -> "^[a-zA-Z0-9_-]+$"
 	patternCache = make(map[string]string)
 
 	// schemaMutex protects concurrent access to the caches
@@ -270,7 +270,7 @@ func (w *defaultsWalker) walk(schemaData any, path string, defaults DefaultValue
 	}
 
 	// Handle map-typed additionalProperties combined with a propertyNames
-	// pattern (the v1-alpha.3 layout for components/environments); the
+	// pattern (the v1-alpha.4 layout for components/environments); the
 	// pattern plays the same role as a patternProperties key.
 	if addProps, exists := schemaMap["additionalProperties"].(map[string]any); exists {
 		pattern := ".*"
@@ -398,6 +398,7 @@ func FillSpecWithDefaults(spec *Spec, version string) error {
 		if err = applyDefaultsRecursively(&component, specDefaults, "components."+componentName, version); err != nil {
 			return fmt.Errorf("failed to apply defaults to component %s: %w", componentName, err)
 		}
+		applyRoleDependentDefaults(&component)
 		spec.Components[componentName] = component
 	}
 
@@ -837,6 +838,36 @@ func isZeroValue(val any) bool {
 		}
 	}
 	return v.IsZero()
+}
+
+// applyRoleDependentDefaults fills fields whose defaults depend on role
+// (and therefore cannot come from the JSON schema alone):
+//   - shutdownTimeout: 30s service, 60s worker
+//   - port: 8080 for services only (workers must not get a default port)
+//   - metrics.path: /metrics when metrics enabled and path empty
+//   - metrics.port: component port for services when metrics enabled and port 0
+func applyRoleDependentDefaults(c *Component) {
+	if c.Role == "" {
+		c.Role = ComponentRoleService
+	}
+	if c.ShutdownTimeout == "" {
+		if c.Role.IsWorker() {
+			c.ShutdownTimeout = DefaultWorkerShutdownTimeout
+		} else {
+			c.ShutdownTimeout = DefaultServiceShutdownTimeout
+		}
+	}
+	if c.Role.IsService() && c.Port == 0 {
+		c.Port = 8080
+	}
+	if c.Metrics.IsEnabled() {
+		if c.Metrics.Path == "" {
+			c.Metrics.Path = DefaultMetricsPath
+		}
+		if c.Role.IsService() && c.Metrics.Port == 0 {
+			c.Metrics.Port = c.Port
+		}
+	}
 }
 
 // CreateSpecWithDefaults creates a minimal [Spec] for projectName and fills

@@ -56,7 +56,7 @@ func TestInit_DefaultsProducesValidSpec(t *testing.T) {
 func TestInit_DefaultsWithoutForceAgainstExistingFileFails(t *testing.T) {
 	dir := t.TempDir()
 	outputPath := filepath.Join(dir, "deployah.yaml")
-	require.NoError(t, os.WriteFile(outputPath, []byte("apiVersion: v1-alpha.3\n"), 0o600))
+	require.NoError(t, os.WriteFile(outputPath, []byte("apiVersion: v1-alpha.4\n"), 0o600))
 
 	io, _, _, _ := nabattest.NewIO()
 	app := newInitApp(io)
@@ -70,7 +70,7 @@ func TestInit_DefaultsWithoutForceAgainstExistingFileFails(t *testing.T) {
 func TestInit_DefaultsWithForceAgainstExistingFileSucceeds(t *testing.T) {
 	dir := t.TempDir()
 	outputPath := filepath.Join(dir, "deployah.yaml")
-	require.NoError(t, os.WriteFile(outputPath, []byte("apiVersion: v1-alpha.3\n"), 0o600))
+	require.NoError(t, os.WriteFile(outputPath, []byte("apiVersion: v1-alpha.4\n"), 0o600))
 
 	io, _, _, _ := nabattest.NewIO()
 	app := newInitApp(io)

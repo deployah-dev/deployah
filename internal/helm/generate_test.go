@@ -244,7 +244,7 @@ func TestBuildLivenessProbe_IntervalOnlyDefaultsRestartAfter(t *testing.T) {
 	t.Parallel()
 
 	// interval provided, restartAfter omitted -> defaults to 60s -> 60/30=2
-	p, err := buildLivenessProbe("", "30s", "")
+	p, err := buildLivenessProbe(nil, "", "30s", "")
 	require.NoError(t, err)
 	assert.Equal(t, 2, p["failureThreshold"])
 	assert.Equal(t, 30, p["periodSeconds"])
@@ -256,7 +256,7 @@ func TestBuildLivenessProbe_RestartAfterOnlyDefaultsInterval(t *testing.T) {
 	t.Parallel()
 
 	// restartAfter provided, interval omitted -> interval defaults to 10s -> 120/10=12
-	p, err := buildLivenessProbe("", "", "2m")
+	p, err := buildLivenessProbe(nil, "", "", "2m")
 	require.NoError(t, err)
 	assert.Equal(t, 12, p["failureThreshold"])
 	assert.Equal(t, 10, p["periodSeconds"])
@@ -287,11 +287,11 @@ func TestMapSpecToChartValues_EnvironmentFilterPrefixMatch(t *testing.T) {
 			comp := serviceComponent()
 			comp.Environments = tt.filter
 			m := &spec.Spec{
-				APIVersion: "v1-alpha.3",
+				APIVersion: "v1-alpha.4",
 				Project:    "shop",
 				Components: map[string]spec.Component{"web": comp},
 			}
-			require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.3"))
+			require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.4"))
 
 			vals, err := MapSpecToChartValues(m, tt.environment, nil)
 			require.NoError(t, err)
@@ -312,7 +312,7 @@ func TestMapSpecToChartValues_SelfSignedTLS(t *testing.T) {
 
 	subdomain := "api"
 	m := &spec.Spec{
-		APIVersion: "v1-alpha.3",
+		APIVersion: "v1-alpha.4",
 		Project:    "shop",
 		Environments: map[string]spec.Environment{
 			"local": {},
@@ -329,7 +329,7 @@ func TestMapSpecToChartValues_SelfSignedTLS(t *testing.T) {
 			},
 		},
 	}
-	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.3"))
+	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.4"))
 
 	resolved := &spec.ResolvedSpec{
 		Spec: m,
@@ -375,7 +375,7 @@ func TestMapSpecToChartValues_SelfSignedTLS_Unmaterialized(t *testing.T) {
 
 	subdomain := "api"
 	m := &spec.Spec{
-		APIVersion: "v1-alpha.3",
+		APIVersion: "v1-alpha.4",
 		Project:    "shop",
 		Environments: map[string]spec.Environment{
 			"local": {},
@@ -392,7 +392,7 @@ func TestMapSpecToChartValues_SelfSignedTLS_Unmaterialized(t *testing.T) {
 			},
 		},
 	}
-	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.3"))
+	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.4"))
 
 	resolved := &spec.ResolvedSpec{
 		Spec: m,
@@ -418,7 +418,7 @@ func TestMapSpecToChartValues_SecretNameTLS(t *testing.T) {
 
 	subdomain := "api"
 	m := &spec.Spec{
-		APIVersion: "v1-alpha.3",
+		APIVersion: "v1-alpha.4",
 		Project:    "shop",
 		Environments: map[string]spec.Environment{
 			"production": {},
@@ -435,7 +435,7 @@ func TestMapSpecToChartValues_SecretNameTLS(t *testing.T) {
 			},
 		},
 	}
-	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.3"))
+	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.4"))
 
 	resolved := &spec.ResolvedSpec{
 		Spec: m,
@@ -466,7 +466,7 @@ func TestMapSpecToChartValues_CertManagerTLS(t *testing.T) {
 
 	subdomain := "api"
 	m := &spec.Spec{
-		APIVersion: "v1-alpha.3",
+		APIVersion: "v1-alpha.4",
 		Project:    "shop",
 		Environments: map[string]spec.Environment{
 			"production": {},
@@ -483,7 +483,7 @@ func TestMapSpecToChartValues_CertManagerTLS(t *testing.T) {
 			},
 		},
 	}
-	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.3"))
+	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.4"))
 
 	resolved := &spec.ResolvedSpec{
 		Spec: m,
@@ -514,7 +514,7 @@ func TestMapSpecToChartValues_Autoscaling(t *testing.T) {
 	t.Parallel()
 
 	m := &spec.Spec{
-		APIVersion: "v1-alpha.3",
+		APIVersion: "v1-alpha.4",
 		Project:    "shop",
 		Environments: map[string]spec.Environment{
 			"production": {},
@@ -536,7 +536,7 @@ func TestMapSpecToChartValues_Autoscaling(t *testing.T) {
 			},
 		},
 	}
-	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.3"))
+	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.4"))
 
 	vals, err := MapSpecToChartValues(m, "production", nil)
 	require.NoError(t, err)
@@ -556,7 +556,7 @@ func TestMapSpecToChartValues_Profiles(t *testing.T) {
 	t.Parallel()
 
 	m := &spec.Spec{
-		APIVersion: "v1-alpha.3",
+		APIVersion: "v1-alpha.4",
 		Project:    "shop",
 		Environments: map[string]spec.Environment{
 			"production": {},
@@ -569,7 +569,7 @@ func TestMapSpecToChartValues_Profiles(t *testing.T) {
 			},
 		},
 	}
-	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.3"))
+	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.4"))
 
 	resolved := &spec.ResolvedSpec{
 		Spec: m,
@@ -643,7 +643,7 @@ func TestMapSpecToChartValues_StatefulComponent(t *testing.T) {
 
 	replicas := 2
 	m := &spec.Spec{
-		APIVersion: "v1-alpha.3",
+		APIVersion: "v1-alpha.4",
 		Project:    "shop",
 		Environments: map[string]spec.Environment{
 			"production": {},
@@ -662,7 +662,7 @@ func TestMapSpecToChartValues_StatefulComponent(t *testing.T) {
 			},
 		},
 	}
-	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.3"))
+	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.4"))
 
 	resolved := &spec.ResolvedSpec{
 		Spec: m,
@@ -713,7 +713,7 @@ func TestMapSpecToChartValues_StatefulIdentityOnly(t *testing.T) {
 
 	replicas := 2
 	m := &spec.Spec{
-		APIVersion: "v1-alpha.3",
+		APIVersion: "v1-alpha.4",
 		Project:    "shop",
 		Environments: map[string]spec.Environment{
 			"production": {},
@@ -728,7 +728,7 @@ func TestMapSpecToChartValues_StatefulIdentityOnly(t *testing.T) {
 			},
 		},
 	}
-	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.3"))
+	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.4"))
 
 	vals, err := MapSpecToChartValues(m, "production", nil)
 	require.NoError(t, err)
@@ -746,7 +746,7 @@ func TestMapSpecToChartValues_StatelessWithPersistence(t *testing.T) {
 	t.Parallel()
 
 	m := &spec.Spec{
-		APIVersion: "v1-alpha.3",
+		APIVersion: "v1-alpha.4",
 		Project:    "shop",
 		Environments: map[string]spec.Environment{
 			"production": {},
@@ -764,7 +764,7 @@ func TestMapSpecToChartValues_StatelessWithPersistence(t *testing.T) {
 			},
 		},
 	}
-	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.3"))
+	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.4"))
 
 	vals, err := MapSpecToChartValues(m, "production", nil)
 	require.NoError(t, err)
@@ -784,7 +784,7 @@ func TestMapSpecToChartValues_Replicas(t *testing.T) {
 
 	replicas := 3
 	m := &spec.Spec{
-		APIVersion: "v1-alpha.3",
+		APIVersion: "v1-alpha.4",
 		Project:    "shop",
 		Environments: map[string]spec.Environment{
 			"production": {},
@@ -798,7 +798,7 @@ func TestMapSpecToChartValues_Replicas(t *testing.T) {
 			},
 		},
 	}
-	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.3"))
+	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.4"))
 
 	vals, err := MapSpecToChartValues(m, "production", nil)
 	require.NoError(t, err)
@@ -1050,4 +1050,161 @@ func TestNormalizeJSONNumbers(t *testing.T) {
 			assert.Equal(t, tt.want, tt.input)
 		})
 	}
+}
+
+func TestMapSpecToChartValues_WorkerStateless(t *testing.T) {
+	t.Parallel()
+	manifest := &spec.Spec{
+		APIVersion: spec.CurrentManifestVersion,
+		Project:    "shop",
+		Components: map[string]spec.Component{
+			"worker": {
+				Role:    spec.ComponentRoleWorker,
+				Image:   "ghcr.io/acme/worker:1.0.0",
+				Command: []string{"sleep", "infinity"},
+			},
+		},
+	}
+	require.NoError(t, spec.FillSpecWithDefaults(manifest, spec.CurrentManifestVersion))
+	values, err := MapSpecToChartValues(manifest, "dev", nil)
+	require.NoError(t, err)
+	worker := mustNestedMap(t, values, "worker")
+	assert.Equal(t, "Deployment", worker["workloadKind"])
+	assert.Nil(t, worker["ports"])
+	svc := mustNestedMap(t, worker, "service")
+	assert.Equal(t, false, svc["enabled"])
+	assert.Equal(t, 60, worker["terminationGracePeriodSeconds"])
+	assert.Nil(t, worker["startupProbe"])
+	assert.Nil(t, worker["readinessProbe"])
+	resolved := mustNestedMap(t, mustNestedMap(t, mustNestedMap(t, values, "deployah"), "resolved"), "components")
+	assert.Equal(t, "worker", mustNestedMap(t, resolved, "worker")["role"])
+}
+
+func TestMapSpecToChartValues_WorkerStatefulIdentityPort(t *testing.T) {
+	t.Parallel()
+	manifest := &spec.Spec{
+		APIVersion: spec.CurrentManifestVersion,
+		Project:    "shop",
+		Components: map[string]spec.Component{
+			"worker": {
+				Role:  spec.ComponentRoleWorker,
+				Kind:  spec.ComponentKindStateful,
+				Image: "ghcr.io/acme/worker:1.0.0",
+			},
+		},
+	}
+	require.NoError(t, spec.FillSpecWithDefaults(manifest, spec.CurrentManifestVersion))
+	values, err := MapSpecToChartValues(manifest, "dev", nil)
+	require.NoError(t, err)
+	worker := mustNestedMap(t, values, "worker")
+	assert.Equal(t, "StatefulSet", worker["workloadKind"])
+	ports, ok := worker["ports"].([]map[string]any)
+	require.True(t, ok)
+	require.Len(t, ports, 1)
+	assert.Equal(t, spec.IdentityPortName, ports[0]["name"])
+	assert.Equal(t, spec.IdentityPortNumber, ports[0]["containerPort"])
+	svc := mustNestedMap(t, worker, "service")
+	assert.Equal(t, false, svc["enabled"])
+	svcPorts, ok := svc["ports"].([]map[string]any)
+	require.True(t, ok)
+	require.Len(t, svcPorts, 1)
+	assert.Equal(t, spec.IdentityPortName, svcPorts[0]["name"])
+}
+
+func TestMapSpecToChartValues_WorkerMetrics(t *testing.T) {
+	t.Parallel()
+	manifest := &spec.Spec{
+		APIVersion: spec.CurrentManifestVersion,
+		Project:    "shop",
+		Components: map[string]spec.Component{
+			"worker": {
+				Role:    spec.ComponentRoleWorker,
+				Image:   "ghcr.io/acme/worker:1.0.0",
+				Metrics: &spec.ComponentMetrics{Port: 9090},
+			},
+		},
+	}
+	require.NoError(t, spec.FillSpecWithDefaults(manifest, spec.CurrentManifestVersion))
+	profile := &spec.PlatformProfile{Metrics: &spec.ProfileMetrics{
+		MonitorLabels: map[string]string{"release": "kube-prometheus-stack"},
+	}}
+	resolved := &spec.ResolvedSpec{Components: map[string]spec.ResolvedComponent{
+		"worker": {MergedProfile: profile},
+	}}
+	values, err := MapSpecToChartValues(manifest, "dev", resolved)
+	require.NoError(t, err)
+	worker := mustNestedMap(t, values, "worker")
+	ports, ok := worker["ports"].([]map[string]any)
+	require.True(t, ok)
+	require.Len(t, ports, 1)
+	assert.Equal(t, spec.MetricsPortName, ports[0]["name"])
+	assert.Equal(t, 9090, ports[0]["containerPort"])
+	pm := mustNestedMap(t, worker, "podMonitor")
+	assert.Equal(t, true, pm["enabled"])
+	assert.Equal(t, spec.MetricsPortName, pm["port"])
+	assert.Equal(t, "/metrics", pm["path"])
+	assert.Equal(t, map[string]string{"release": "kube-prometheus-stack"}, pm["labels"])
+}
+
+func TestMapSpecToChartValues_ServiceMetricsDedicatedPort(t *testing.T) {
+	t.Parallel()
+	manifest := &spec.Spec{
+		APIVersion: spec.CurrentManifestVersion,
+		Project:    "shop",
+		Components: map[string]spec.Component{
+			"api": {
+				Role:    spec.ComponentRoleService,
+				Image:   "ghcr.io/acme/api:1.0.0",
+				Port:    8080,
+				Metrics: &spec.ComponentMetrics{Port: 9090, Path: "/metrics"},
+			},
+		},
+	}
+	require.NoError(t, spec.FillSpecWithDefaults(manifest, spec.CurrentManifestVersion))
+	profile := &spec.PlatformProfile{Metrics: &spec.ProfileMetrics{
+		MonitorLabels: map[string]string{"release": "prom"},
+	}}
+	resolved := &spec.ResolvedSpec{Components: map[string]spec.ResolvedComponent{
+		"api": {MergedProfile: profile},
+	}}
+	values, err := MapSpecToChartValues(manifest, "dev", resolved)
+	require.NoError(t, err)
+	api := mustNestedMap(t, values, "api")
+	ports, ok := api["ports"].([]map[string]any)
+	require.True(t, ok)
+	require.Len(t, ports, 2)
+	sm := mustNestedMap(t, api, "serviceMonitor")
+	assert.Equal(t, true, sm["enabled"])
+	assert.Equal(t, spec.MetricsPortName, sm["port"])
+	svc := mustNestedMap(t, api, "service")
+	svcPorts, ok := svc["ports"].([]map[string]any)
+	require.True(t, ok)
+	require.Len(t, svcPorts, 2)
+}
+
+func TestMapSpecToChartValues_WorkerExecHealth(t *testing.T) {
+	t.Parallel()
+	manifest := &spec.Spec{
+		APIVersion: spec.CurrentManifestVersion,
+		Project:    "shop",
+		Components: map[string]spec.Component{
+			"worker": {
+				Role:  spec.ComponentRoleWorker,
+				Image: "ghcr.io/acme/worker:1.0.0",
+				Health: &spec.Health{
+					Alive: &spec.HealthAlive{Exec: []string{"pgrep", "-f", "worker"}},
+				},
+			},
+		},
+	}
+	require.NoError(t, spec.FillSpecWithDefaults(manifest, spec.CurrentManifestVersion))
+	values, err := MapSpecToChartValues(manifest, "dev", nil)
+	require.NoError(t, err)
+	worker := mustNestedMap(t, values, "worker")
+	assert.Nil(t, worker["startupProbe"])
+	assert.Nil(t, worker["readinessProbe"])
+	liveness := mustNestedMap(t, worker, "livenessProbe")
+	assert.Equal(t, true, liveness["enabled"])
+	exec := mustNestedMap(t, liveness, "exec")
+	assert.Equal(t, []any{"pgrep", "-f", "worker"}, exec["command"])
 }

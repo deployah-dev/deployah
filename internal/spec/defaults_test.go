@@ -137,13 +137,13 @@ func TestGetDefaultValues(t *testing.T) {
 	}{
 		{
 			name:       "valid manifest schema",
-			version:    "v1-alpha.3",
+			version:    "v1-alpha.4",
 			schemaType: schema.SchemaTypeManifest,
 			expectErr:  false,
 		},
 		{
 			name:       "valid environments schema",
-			version:    "v1-alpha.3",
+			version:    "v1-alpha.4",
 			schemaType: schema.SchemaTypeEnvironments,
 			expectErr:  false,
 		},
@@ -155,7 +155,7 @@ func TestGetDefaultValues(t *testing.T) {
 		},
 		{
 			name:       "unsupported schema type",
-			version:    "v1-alpha.3",
+			version:    "v1-alpha.4",
 			schemaType: "unsupported",
 			expectErr:  true,
 		},
@@ -173,7 +173,7 @@ func TestGetDefaultValues(t *testing.T) {
 				assert.NoError(t, err)
 				assert.NotNil(t, defaults)
 				// The environments schema declares no defaults in
-				// v1-alpha.3; only the manifest schema must be non-empty.
+				// v1-alpha.4; only the manifest schema must be non-empty.
 				if tt.schemaType == schema.SchemaTypeManifest {
 					assert.NotEmpty(t, defaults)
 				}
@@ -195,7 +195,7 @@ func TestFillSpecWithDefaults(t *testing.T) {
 		{
 			name: "valid manifest with components",
 			manifest: &Spec{
-				APIVersion: "v1-alpha.3",
+				APIVersion: "v1-alpha.4",
 				Project:    "test-project",
 				Components: map[string]Component{
 					"web": {
@@ -203,36 +203,36 @@ func TestFillSpecWithDefaults(t *testing.T) {
 					},
 				},
 			},
-			version:   "v1-alpha.3",
+			version:   "v1-alpha.4",
 			expectErr: false,
 		},
 		{
 			name: "manifest with nil components",
 			manifest: &Spec{
-				APIVersion: "v1-alpha.3",
+				APIVersion: "v1-alpha.4",
 				Project:    "test-project",
 				Components: nil,
 			},
-			version:   "v1-alpha.3",
+			version:   "v1-alpha.4",
 			expectErr: false,
 		},
 		{
 			name: "manifest with environments",
 			manifest: &Spec{
-				APIVersion: "v1-alpha.3",
+				APIVersion: "v1-alpha.4",
 				Project:    "test-project",
 				Components: map[string]Component{},
 				Environments: map[string]Environment{
 					"production": {},
 				},
 			},
-			version:   "v1-alpha.3",
+			version:   "v1-alpha.4",
 			expectErr: false,
 		},
 		{
 			name: "invalid version",
 			manifest: &Spec{
-				APIVersion: "v1-alpha.3",
+				APIVersion: "v1-alpha.4",
 				Project:    "test-project",
 				Components: map[string]Component{},
 			},
@@ -384,7 +384,7 @@ func TestApplyDefaultsRecursively(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			require.NoError(t, applyDefaultsRecursively(tt.obj, tt.defaults, tt.path, "v1-alpha.3"))
+			require.NoError(t, applyDefaultsRecursively(tt.obj, tt.defaults, tt.path, "v1-alpha.4"))
 			assert.Equal(t, tt.expected, tt.obj)
 		})
 	}
@@ -426,7 +426,7 @@ func TestApplyDefaultsToMap(t *testing.T) {
 			t.Parallel()
 
 			// This test mainly ensures the function doesn't panic
-			require.NoError(t, applyDefaultsToMap(tt.mapVal, tt.defaults, tt.path, "v1-alpha.3"))
+			require.NoError(t, applyDefaultsToMap(tt.mapVal, tt.defaults, tt.path, "v1-alpha.4"))
 			// No specific assertions as this is mainly testing for panics
 		})
 	}
@@ -465,7 +465,7 @@ func TestApplyDefaultsToSlice(t *testing.T) {
 			t.Parallel()
 
 			// This test mainly ensures the function doesn't panic
-			require.NoError(t, applyDefaultsToSlice(tt.sliceVal, tt.defaults, tt.path, "v1-alpha.3"))
+			require.NoError(t, applyDefaultsToSlice(tt.sliceVal, tt.defaults, tt.path, "v1-alpha.4"))
 			// No specific assertions as this is mainly testing for panics
 		})
 	}
@@ -659,7 +659,7 @@ func TestCreateSpecWithDefaults(t *testing.T) {
 		{
 			name:        "valid manifest creation",
 			projectName: "test-project",
-			version:     "v1-alpha.3",
+			version:     "v1-alpha.4",
 			expectErr:   false,
 		},
 		{
@@ -787,7 +787,7 @@ func TestIntegration(t *testing.T) {
 	t.Run("create manifest with defaults and verify component defaults", func(t *testing.T) {
 		t.Parallel()
 
-		manifest, err := CreateSpecWithDefaults("test-project", "v1-alpha.3")
+		manifest, err := CreateSpecWithDefaults("test-project", "v1-alpha.4")
 		assert.NoError(t, err)
 		assert.NotNil(t, manifest)
 
@@ -796,7 +796,7 @@ func TestIntegration(t *testing.T) {
 			Image: "nginx:latest",
 		}
 
-		err = FillSpecWithDefaults(manifest, "v1-alpha.3")
+		err = FillSpecWithDefaults(manifest, "v1-alpha.4")
 		assert.NoError(t, err)
 
 		webComponent := manifest.Components["web"]
@@ -810,7 +810,7 @@ func TestIntegration(t *testing.T) {
 		t.Parallel()
 
 		manifest := &Spec{
-			APIVersion: "v1-alpha.3",
+			APIVersion: "v1-alpha.4",
 			Project:    "test-project",
 			Components: map[string]Component{
 				"api": {
@@ -822,7 +822,7 @@ func TestIntegration(t *testing.T) {
 			},
 		}
 
-		err := FillSpecWithDefaults(manifest, "v1-alpha.3")
+		err := FillSpecWithDefaults(manifest, "v1-alpha.4")
 		assert.NoError(t, err)
 
 		apiComponent := manifest.Components["api"]
@@ -838,7 +838,7 @@ func TestIntegration(t *testing.T) {
 		t.Parallel()
 
 		manifest := &Spec{
-			APIVersion: "v1-alpha.3",
+			APIVersion: "v1-alpha.4",
 			Project:    "test-project",
 			Components: map[string]Component{},
 			Environments: map[string]Environment{
@@ -846,10 +846,10 @@ func TestIntegration(t *testing.T) {
 			},
 		}
 
-		err := FillSpecWithDefaults(manifest, "v1-alpha.3")
+		err := FillSpecWithDefaults(manifest, "v1-alpha.4")
 		assert.NoError(t, err)
 
-		// v1-alpha.3 declares no envFile/configFile defaults: the loader's
+		// v1-alpha.4 declares no envFile/configFile defaults: the loader's
 		// convention-based lookup replaced them.
 		assert.Empty(t, manifest.Environments["production"].EnvFile)
 		assert.Empty(t, manifest.Environments["production"].ConfigFile)
@@ -931,7 +931,7 @@ func TestFillSpecWithDefaults_GuardClauses(t *testing.T) {
 		version     string
 		errContains string
 	}{
-		{name: "nil spec returns error", spec: nil, version: "v1-alpha.3", errContains: "spec cannot be nil"},
+		{name: "nil spec returns error", spec: nil, version: "v1-alpha.4", errContains: "spec cannot be nil"},
 		{name: "empty version returns error", spec: &Spec{Project: "test"}, version: "", errContains: "version cannot be empty"},
 	}
 
@@ -1006,7 +1006,7 @@ func TestApplyDefaultsToMap_EdgeCases(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			err := applyDefaultsToMap(tt.value, tt.defaults, tt.path, "v1-alpha.3")
+			err := applyDefaultsToMap(tt.value, tt.defaults, tt.path, "v1-alpha.4")
 			require.NoError(t, err)
 			if tt.check != nil {
 				tt.check(t, tt.value)
@@ -1079,7 +1079,7 @@ func TestApplyDefaultsToSlice_EdgeCases(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			err := applyDefaultsToSlice(tt.value, tt.defaults, tt.path, "v1-alpha.3")
+			err := applyDefaultsToSlice(tt.value, tt.defaults, tt.path, "v1-alpha.4")
 			require.NoError(t, err)
 			if tt.check != nil {
 				tt.check(t, tt.value)
@@ -1295,7 +1295,7 @@ func TestProcessStructField(t *testing.T) {
 			t.Parallel()
 
 			field, fieldType, verify := tt.setup()
-			err := processStructField(field, fieldType, tt.defaults, tt.path, "v1-alpha.3")
+			err := processStructField(field, fieldType, tt.defaults, tt.path, "v1-alpha.4")
 			require.NoError(t, err)
 			verify(t)
 		})
