@@ -19,7 +19,7 @@ const (
 	// CurrentManifestVersion is the manifest apiVersion written by the init
 	// command and expected by the current resolver. Bump this when a new
 	// schema version is added alongside a new schema directory.
-	CurrentManifestVersion = "v1-alpha.3"
+	CurrentManifestVersion = "v1-alpha.4"
 
 	// DefaultSpecPath is the default path for the Deployah spec file
 	DefaultSpecPath = "deployah.yaml"
@@ -143,6 +143,29 @@ const (
 	// DefaultLivenessRestartAfter is the default value for
 	// health.alive.restartAfter when the field is omitted.
 	DefaultLivenessRestartAfter = "60s"
+
+	// DefaultServiceShutdownTimeout is the default shutdownTimeout for
+	// service components (terminationGracePeriodSeconds).
+	DefaultServiceShutdownTimeout = "30s"
+
+	// DefaultWorkerShutdownTimeout is the default shutdownTimeout for
+	// worker components (terminationGracePeriodSeconds).
+	DefaultWorkerShutdownTimeout = "60s"
+
+	// DefaultMetricsPath is the default HTTP path for Prometheus metrics.
+	DefaultMetricsPath = "/metrics"
+
+	// IdentityPortName is the synthetic container/service port name used for
+	// headless DNS on stateful workers that have no app port.
+	IdentityPortName = "identity"
+
+	// IdentityPortNumber is the discard protocol port used as a tracking
+	// port for headless Services when a worker has no application port.
+	IdentityPortNumber = 9
+
+	// MetricsPortName is the named container/service port used when metrics
+	// scraping is enabled on a dedicated port or on a worker.
+	MetricsPortName = "metrics"
 )
 
 // Resource Management

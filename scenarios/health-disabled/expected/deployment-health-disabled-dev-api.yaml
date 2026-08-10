@@ -61,3 +61,4 @@ spec:
                         memory: 512Mi
             restartPolicy: Always
             serviceAccountName: default
+            terminationGracePeriodSeconds: 30

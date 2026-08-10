@@ -1,8 +1,8 @@
 {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://deployah.dev/schemas/v1-alpha.3/manifest.json",
-    "title": "Deployah Spec v1-alpha.3",
-    "description": "Deployah developer manifest (deployah.yaml). Environments are a map, context is platform-owned, expose replaces ingress.",
+    "$id": "https://deployah.dev/schemas/v1-alpha.4/manifest.json",
+    "title": "Deployah Spec v1-alpha.4",
+    "description": "Deployah developer manifest (deployah.yaml). Environments are a map, context is platform-owned, expose replaces ingress. Supports role: worker and Prometheus metrics.",
     "type": "object",
     "additionalProperties": false,
     "required": ["apiVersion", "project", "components"],
@@ -10,8 +10,8 @@
         "apiVersion": {
             "type": "string",
             "title": "API Version",
-            "description": "Schema version. Must be 'v1-alpha.3'.",
-            "const": "v1-alpha.3"
+            "description": "Schema version. Must be 'v1-alpha.4'.",
+            "const": "v1-alpha.4"
         },
         "project": {
             "type": "string",
@@ -150,11 +150,26 @@
                 "port": {
                     "type": "integer",
                     "title": "Port",
-                    "description": "Primary container port for service components.",
-                    "default": 8080,
+                    "description": "Primary container port for service components. Not allowed on role: worker. Defaults to 8080 for services when omitted.",
                     "minimum": 1,
                     "maximum": 65535,
                     "examples": [8181, 9000]
+                },
+                "shutdownTimeout": {
+                    "type": "string",
+                    "title": "Shutdown Timeout",
+                    "description": "How long Kubernetes waits after SIGTERM before force-killing the pod (terminationGracePeriodSeconds). Defaults to 30s for services and 60s for workers.",
+                    "pattern": "^[1-9][0-9]*(s|m|h)$",
+                    "examples": ["30s", "60s", "2m"]
+                },
+                "metrics": {
+                    "title": "Metrics",
+                    "description": "Prometheus scraping configuration. Boolean shorthand or object. Services emit a ServiceMonitor; workers emit a PodMonitor. Workers require metrics.port when enabled. Requires prometheus-operator CRDs and platform profile metrics.monitorLabels.",
+                    "anyOf": [
+                        {"type": "boolean"},
+                        {"$ref": "#/$defs/Metrics"}
+                    ],
+                    "examples": [true, false, {"port": 9090, "path": "/metrics"}]
                 },
                 "replicas": {
                     "type": "integer",
@@ -414,10 +429,59 @@
                 {"ephemeralStorage": "2Gi"}
             ]
         },
+        "Metrics": {
+            "type": "object",
+            "title": "Metrics Configuration",
+            "description": "Prometheus scrape settings. enabled defaults to true when omitted. port is required for workers; for services it defaults to the component port.",
+            "additionalProperties": false,
+            "properties": {
+                "enabled": {
+                    "type": "boolean",
+                    "title": "Enabled",
+                    "description": "When false, disables scraping (useful for per-environment toggle via envsubst). Defaults to true when omitted.",
+                    "default": true
+                },
+                "port": {
+                    "type": "integer",
+                    "title": "Metrics Port",
+                    "description": "Container port exposing metrics. Required for workers. Defaults to the component port for services.",
+                    "minimum": 1,
+                    "maximum": 65535,
+                    "examples": [8080, 9090]
+                },
+                "path": {
+                    "type": "string",
+                    "title": "Metrics Path",
+                    "description": "HTTP path for metrics. Defaults to /metrics.",
+                    "pattern": "^/",
+                    "default": "/metrics",
+                    "examples": ["/metrics", "/actuator/prometheus"]
+                },
+                "interval": {
+                    "type": "string",
+                    "title": "Scrape Interval",
+                    "description": "Override the platform profile scrape interval.",
+                    "pattern": "^[1-9][0-9]*(s|m|h)$",
+                    "examples": ["15s", "30s", "1m"]
+                },
+                "scrapeTimeout": {
+                    "type": "string",
+                    "title": "Scrape Timeout",
+                    "description": "Override the platform profile scrape timeout.",
+                    "pattern": "^[1-9][0-9]*(s|m|h)$",
+                    "examples": ["5s", "10s"]
+                }
+            },
+            "examples": [
+                {"port": 9090},
+                {"port": 8080, "path": "/metrics", "interval": "30s"},
+                {"enabled": false}
+            ]
+        },
         "Health": {
             "type": "object",
             "title": "Health Checks",
-            "description": "HTTP health check configuration for service components.",
+            "description": "Health check configuration. Services support TCP/HTTP ready and alive checks. Workers support optional alive.exec only.",
             "additionalProperties": false,
             "properties": {
                 "ready": {
@@ -447,12 +511,19 @@
                         {
                             "type": "object",
                             "additionalProperties": false,
-                            "required": ["path"],
                             "properties": {
                                 "path": {
                                     "type": "string",
                                     "pattern": "^/",
                                     "examples": ["/livez", "/healthz", "/alive"]
+                                },
+                                "exec": {
+                                    "type": "array",
+                                    "title": "Exec Command",
+                                    "description": "Command run inside the container; exit 0 means alive. Mutually exclusive with path. Available for service and worker roles.",
+                                    "minItems": 1,
+                                    "items": {"type": "string"},
+                                    "examples": [["pgrep", "-f", "worker"], ["sh", "-c", "test -f /tmp/healthy"]]
                                 },
                                 "interval": {
                                     "type": "string",
@@ -466,12 +537,17 @@
                                     "default": "60s",
                                     "examples": ["60s", "2m", "5m"]
                                 }
-                            }
+                            },
+                            "oneOf": [
+                                {"required": ["path"]},
+                                {"required": ["exec"]}
+                            ]
                         }
                     ],
                     "examples": [
                         {"path": "/livez"},
                         {"path": "/livez", "interval": "10s", "restartAfter": "60s"},
+                        {"exec": ["pgrep", "-f", "worker"]},
                         false
                     ]
                 }
@@ -479,13 +555,14 @@
             "examples": [
                 {"ready": {"path": "/health"}},
                 {"ready": {"path": "/health"}, "alive": {"path": "/livez"}},
+                {"alive": {"exec": ["pgrep", "-f", "worker"]}},
                 {"ready": false, "alive": false}
             ]
         }
     },
     "examples": [
         {
-            "apiVersion": "v1-alpha.3",
+            "apiVersion": "v1-alpha.4",
             "project": "shop",
             "environments": {
                 "production": {
@@ -500,7 +577,14 @@
                     "expose": {
                         "domain": "public",
                         "subdomain": "api"
-                    }
+                    },
+                    "metrics": true
+                },
+                "worker": {
+                    "image": "my-worker:latest",
+                    "role": "worker",
+                    "command": ["./worker"],
+                    "metrics": {"port": 9090}
                 }
             }
         }

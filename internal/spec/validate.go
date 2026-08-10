@@ -87,7 +87,7 @@ func validateYAMLAgainstSchema(
 }
 
 // ValidateSpec validates spec YAML against the provided JSON schema.
-// version should be the version of the schema (e.g., "v1-alpha.3").
+// version should be the version of the schema (e.g., "v1-alpha.4").
 // This is a strict validation: unknown fields are not allowed.
 func ValidateSpec(specObj map[string]any, version string) error {
 	return validateYAMLAgainstSchema(
@@ -100,7 +100,7 @@ func ValidateSpec(specObj map[string]any, version string) error {
 
 // ValidateEnvironments validates environments YAML against the provided JSON
 // schema file.
-// version should be the version of the schema (e.g., "v1-alpha.3").
+// version should be the version of the schema (e.g., "v1-alpha.4").
 // This is a strict validation: unknown fields are not allowed.
 func ValidateEnvironments(specObj map[string]any, version string) error {
 	return validateYAMLAgainstSchema(
@@ -187,21 +187,45 @@ func ValidateComponentAutoscaling(component Component) error {
 	return nil
 }
 
+// ValidateComponentWorker rejects fields that workers must not set: port,
+// expose, health.ready, and health.alive.path. Workers may use
+// health.alive.exec and metrics with an explicit port.
+func ValidateComponentWorker(component Component) error {
+	if !component.Role.IsWorker() {
+		return nil
+	}
+	if component.Port > 0 {
+		return fmt.Errorf("port is not supported on role: worker; use metrics.port for scrape endpoints")
+	}
+	if component.Expose != nil {
+		return fmt.Errorf("expose is not supported on role: worker")
+	}
+	if component.Health == nil {
+		return nil
+	}
+	if component.Health.Ready != nil && !component.Health.Ready.Disabled {
+		return fmt.Errorf("health.ready is not supported on role: worker")
+	}
+	if component.Health.Alive != nil && !component.Health.Alive.Disabled &&
+		component.Health.Alive.Path != "" {
+		return fmt.Errorf("health.alive.path is not supported on role: worker; use health.alive.exec")
+	}
+	return nil
+}
+
 // ValidateComponentHealth validates the health check configuration of a
-// component. Health checks are only supported for role: service components.
+// component. Services support TCP/HTTP ready and alive checks. Workers
+// support optional alive.exec only (see [ValidateComponentWorker]).
 func ValidateComponentHealth(component Component) error {
 	if component.Health == nil {
 		return nil
 	}
 
-	// Role may still be "" here if this runs before defaults are filled in;
-	// the schema defaults it to service, so treat empty the same way.
-	if !component.Role.IsService() && component.Role != "" {
-		return fmt.Errorf("health checks are only supported for role: service components")
+	// Job role still rejects all health configuration.
+	if component.Role == ComponentRoleJob {
+		return fmt.Errorf("health checks are not supported for role: job components")
 	}
 
-	// No port check here: only service roles reach this point, and the
-	// schema defaults their port to 8080 after validation.
 	if component.Health.Ready != nil && !component.Health.Ready.Disabled {
 		if component.Health.Ready.Path != "" && component.Health.Ready.Path[0] != '/' {
 			return fmt.Errorf("health.ready.path must start with /")
@@ -209,12 +233,25 @@ func ValidateComponentHealth(component Component) error {
 	}
 
 	if component.Health.Alive != nil && !component.Health.Alive.Disabled {
-		if component.Health.Alive.Path != "" && component.Health.Alive.Path[0] != '/' {
+		alive := component.Health.Alive
+		hasPath := alive.Path != ""
+		hasExec := len(alive.Exec) > 0
+		if hasPath && hasExec {
+			return fmt.Errorf("health.alive.path and health.alive.exec are mutually exclusive")
+		}
+		if hasPath && alive.Path[0] != '/' {
 			return fmt.Errorf("health.alive.path must start with /")
 		}
+		if hasExec {
+			for i, part := range alive.Exec {
+				if strings.TrimSpace(part) == "" {
+					return fmt.Errorf("health.alive.exec[%d] must not be empty", i)
+				}
+			}
+		}
 
-		if component.Health.Alive.Interval != "" {
-			intervalSec, err := ParseDuration(component.Health.Alive.Interval)
+		if alive.Interval != "" {
+			intervalSec, err := ParseDuration(alive.Interval)
 			if err != nil {
 				return fmt.Errorf("health.alive.interval: %w", err)
 			}
@@ -223,8 +260,8 @@ func ValidateComponentHealth(component Component) error {
 			}
 		}
 
-		if component.Health.Alive.RestartAfter != "" {
-			restartSec, err := ParseDuration(component.Health.Alive.RestartAfter)
+		if alive.RestartAfter != "" {
+			restartSec, err := ParseDuration(alive.RestartAfter)
 			if err != nil {
 				return fmt.Errorf("health.alive.restartAfter: %w", err)
 			}
@@ -233,7 +270,7 @@ func ValidateComponentHealth(component Component) error {
 			}
 
 			// Validate that restartAfter >= interval so failureThreshold >= 1.
-			intervalStr := component.Health.Alive.Interval
+			intervalStr := alive.Interval
 			if intervalStr == "" {
 				intervalStr = DefaultLivenessInterval
 			}
@@ -243,11 +280,57 @@ func ValidateComponentHealth(component Component) error {
 			}
 			if restartSec < intervalSec {
 				return fmt.Errorf("health.alive.restartAfter (%s) must be greater than or equal to health.alive.interval (%s)",
-					component.Health.Alive.RestartAfter, intervalStr)
+					alive.RestartAfter, intervalStr)
 			}
 		}
 	}
 
+	return nil
+}
+
+// ValidateComponentMetrics validates Prometheus metrics configuration.
+// Workers require an explicit metrics.port when metrics are enabled.
+func ValidateComponentMetrics(component Component) error {
+	if component.Metrics == nil || !component.Metrics.IsEnabled() {
+		return nil
+	}
+	m := component.Metrics
+	if m.Path != "" && m.Path[0] != '/' {
+		return fmt.Errorf("metrics.path must start with /")
+	}
+	if m.Interval != "" {
+		if _, err := ParseDuration(m.Interval); err != nil {
+			return fmt.Errorf("metrics.interval: %w", err)
+		}
+	}
+	if m.ScrapeTimeout != "" {
+		if _, err := ParseDuration(m.ScrapeTimeout); err != nil {
+			return fmt.Errorf("metrics.scrapeTimeout: %w", err)
+		}
+	}
+	if component.Role.IsWorker() {
+		if m.Port <= 0 {
+			return fmt.Errorf("metrics.port is required when metrics are enabled on role: worker")
+		}
+	}
+	if m.Port != 0 && (m.Port < 1 || m.Port > 65535) {
+		return fmt.Errorf("metrics.port must be between 1 and 65535")
+	}
+	return nil
+}
+
+// ValidateComponentShutdownTimeout validates shutdownTimeout when set.
+func ValidateComponentShutdownTimeout(component Component) error {
+	if component.ShutdownTimeout == "" {
+		return nil
+	}
+	sec, err := ParseDuration(component.ShutdownTimeout)
+	if err != nil {
+		return fmt.Errorf("shutdownTimeout: %w", err)
+	}
+	if sec <= 0 {
+		return fmt.Errorf("shutdownTimeout must be a positive duration")
+	}
 	return nil
 }
 
@@ -315,7 +398,16 @@ func ValidateSpecComponents(spec *Spec) error {
 		if err := ValidateComponentReplicas(component); err != nil {
 			errs = append(errs, fmt.Errorf("component %s: %w", name, err))
 		}
+		if err := ValidateComponentWorker(component); err != nil {
+			errs = append(errs, fmt.Errorf("component %s: %w", name, err))
+		}
 		if err := ValidateComponentHealth(component); err != nil {
+			errs = append(errs, fmt.Errorf("component %s: %w", name, err))
+		}
+		if err := ValidateComponentMetrics(component); err != nil {
+			errs = append(errs, fmt.Errorf("component %s: %w", name, err))
+		}
+		if err := ValidateComponentShutdownTimeout(component); err != nil {
 			errs = append(errs, fmt.Errorf("component %s: %w", name, err))
 		}
 		if err := ValidateComponentExpose(component); err != nil {

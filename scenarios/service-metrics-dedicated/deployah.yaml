@@ -1,0 +1,15 @@
+# $schema: ../../internal/spec/schema/v1-alpha.4/manifest.json
+apiVersion: v1-alpha.4
+project: service-metrics-dedicated
+components:
+  api:
+    image: ghcr.io/acme/api:1.0.0
+    port: 8080
+    resourcePreset: small
+    environments: [production]
+    profiles: [observability]
+    metrics:
+      port: 9090
+      path: /metrics
+environments:
+  production: {}

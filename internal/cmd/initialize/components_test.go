@@ -6,9 +6,18 @@ import (
 	"github.com/google/shlex"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"nabat.dev/nabat"
+	"nabat.dev/nabat/nabattest"
 
 	"deployah.dev/deployah/internal/spec"
 )
+
+func nonInteractiveContext(t *testing.T) *nabat.Context {
+	t.Helper()
+	io, _, _, _ := nabattest.NewIO()
+	app := nabat.MustNew("test", nabat.WithIO(io))
+	return nabattest.Context(t, app)
+}
 
 // TestPresetLabel verifies preset labels include the preset name and its
 // request-level CPU/memory values, so the merged resources select is
@@ -172,4 +181,64 @@ func TestShlexSplit_QuotedArguments(t *testing.T) {
 	tokens, err := shlex.Split(`"hello world" --flag`)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"hello world", "--flag"}, tokens)
+}
+
+func TestCollectWorkerEssentials_DefaultsSkipOptionalFields(t *testing.T) {
+	t.Parallel()
+	c := nonInteractiveContext(t)
+	comp := &spec.Component{Role: spec.ComponentRoleWorker, Image: "worker:1"}
+	require.NoError(t, collectWorkerEssentials(c, comp, "worker"))
+	assert.Nil(t, comp.Command)
+	assert.Nil(t, comp.Args)
+	assert.Nil(t, comp.Metrics)
+}
+
+func TestCollectComponentMetricsPort_DefaultDeclines(t *testing.T) {
+	t.Parallel()
+	c := nonInteractiveContext(t)
+	comp := &spec.Component{Role: spec.ComponentRoleWorker}
+	require.NoError(t, collectComponentMetricsPort(c, comp, "worker"))
+	assert.Nil(t, comp.Metrics)
+}
+
+func TestCollectComponentExecHealth_DefaultDeclines(t *testing.T) {
+	t.Parallel()
+	c := nonInteractiveContext(t)
+	comp := &spec.Component{Role: spec.ComponentRoleWorker}
+	require.NoError(t, collectComponentExecHealth(c, comp, "worker"))
+	assert.Nil(t, comp.Health)
+}
+
+func TestCollectComponentAdvanced_DefaultSkips(t *testing.T) {
+	t.Parallel()
+	c := nonInteractiveContext(t)
+	comp := &spec.Component{Role: spec.ComponentRoleWorker, Image: "worker:1"}
+	require.NoError(t, collectComponentAdvanced(c, comp, "worker", []string{"dev"}))
+	assert.Empty(t, comp.Kind)
+	assert.Nil(t, comp.Health)
+}
+
+func TestApplyCollectedMetricsPort(t *testing.T) {
+	t.Parallel()
+	comp := &spec.Component{}
+	require.NoError(t, applyCollectedMetricsPort(comp, "9090"))
+	require.NotNil(t, comp.Metrics)
+	assert.Equal(t, 9090, comp.Metrics.Port)
+
+	err := applyCollectedMetricsPort(comp, "nope")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid metrics port")
+}
+
+func TestApplyCollectedExecHealth(t *testing.T) {
+	t.Parallel()
+	comp := &spec.Component{}
+	require.NoError(t, applyCollectedExecHealth(comp, "pgrep -f worker"))
+	require.NotNil(t, comp.Health)
+	require.NotNil(t, comp.Health.Alive)
+	assert.Equal(t, []string{"pgrep", "-f", "worker"}, comp.Health.Alive.Exec)
+
+	err := applyCollectedExecHealth(comp, "   ")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exec command must not be empty")
 }

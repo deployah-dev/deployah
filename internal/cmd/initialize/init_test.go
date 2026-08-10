@@ -19,7 +19,7 @@ func TestCheckOverwrite(t *testing.T) {
 	t.Parallel()
 
 	existing := filepath.Join(t.TempDir(), "deployah.yaml")
-	require.NoError(t, os.WriteFile(existing, []byte("apiVersion: v1-alpha.3\n"), 0o600))
+	require.NoError(t, os.WriteFile(existing, []byte("apiVersion: v1-alpha.4\n"), 0o600))
 	missing := filepath.Join(t.TempDir(), "missing.yaml")
 
 	tests := []struct {

@@ -242,12 +242,22 @@ func TestRequiredAPIs(t *testing.T) {
 			environment: "staging",
 			wantEmpty:   true,
 		},
+		{
+			name: "metrics enabled requires prometheus operator API",
+			manifest: &spec.Spec{
+				Components: map[string]spec.Component{
+					"api": {Metrics: &spec.ComponentMetrics{}},
+				},
+			},
+			environment:  "production",
+			wantContains: []string{"monitoring.coreos.com/v1"},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			reqs := requiredAPIs(tt.manifest, tt.environment, tt.resolved)
+			reqs := k8s.RequiredAPIs(tt.manifest, tt.environment, tt.resolved)
 			if tt.wantEmpty {
 				assert.Empty(t, reqs)
 				return

@@ -212,15 +212,15 @@ func collectComponentDetails(c *nabat.Context, componentName string, availableEn
 	return component, nil
 }
 
-// needsHealthCheckQuestion reports whether the health-check question
-// applies: a health probe needs a named port to attach to.
+// needsHealthCheckQuestion reports whether the HTTP health-check question
+// applies: a TCP/HTTP probe needs a named port to attach to.
 func needsHealthCheckQuestion(component spec.Component) bool {
 	return component.ListensOnPort()
 }
 
 // collectComponentEssentials asks the questions every component needs
 // regardless of role: role, image, resources, and (for service components
-// only) port and expose.
+// only) port and expose. Workers also get command and optional metrics port.
 func collectComponentEssentials(c *nabat.Context, component *spec.Component, componentName string) error {
 	if err := collectComponentRole(c, component, componentName); err != nil {
 		return fmt.Errorf("failed to collect component role: %w", err)
@@ -233,6 +233,12 @@ func collectComponentEssentials(c *nabat.Context, component *spec.Component, com
 	if component.Role.IsService() {
 		if err := collectComponentPort(c, component, componentName); err != nil {
 			return fmt.Errorf("failed to collect component port: %w", err)
+		}
+	}
+
+	if component.Role.IsWorker() {
+		if err := collectWorkerEssentials(c, component, componentName); err != nil {
+			return err
 		}
 	}
 
@@ -256,6 +262,7 @@ func collectComponentAdvanced(c *nabat.Context, component *spec.Component, compo
 		fmt.Sprintf("Configure advanced options for %s?", componentName),
 		nabat.WithAffirmative("Yes"),
 		nabat.WithNegative("No, use defaults"),
+		nabat.WithDefault(false),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to get advanced options preference: %w", err)
@@ -291,12 +298,15 @@ func collectComponentAdvanced(c *nabat.Context, component *spec.Component, compo
 		}
 	}
 
-	if err = collectComponentCommand(c, component, componentName); err != nil {
-		return fmt.Errorf("failed to collect component command: %w", err)
-	}
+	// Workers already answered command/args in essentials.
+	if !component.Role.IsWorker() {
+		if err = collectComponentCommand(c, component, componentName); err != nil {
+			return fmt.Errorf("failed to collect component command: %w", err)
+		}
 
-	if err = collectComponentArgs(c, component, componentName); err != nil {
-		return fmt.Errorf("failed to collect component args: %w", err)
+		if err = collectComponentArgs(c, component, componentName); err != nil {
+			return fmt.Errorf("failed to collect component args: %w", err)
+		}
 	}
 
 	if err = collectComponentConfigFiles(c, component, componentName); err != nil {
@@ -320,11 +330,31 @@ func collectComponentAdvanced(c *nabat.Context, component *spec.Component, compo
 			return fmt.Errorf("failed to collect component health check: %w", err)
 		}
 	}
+	if component.Role.IsWorker() {
+		if err = collectComponentExecHealth(c, component, componentName); err != nil {
+			return fmt.Errorf("failed to collect component exec health check: %w", err)
+		}
+	}
 
 	if err = collectComponentEnvironments(c, component, componentName, availableEnvironments); err != nil {
 		return fmt.Errorf("failed to collect component environments: %w", err)
 	}
 
+	return nil
+}
+
+// collectWorkerEssentials asks worker-only essentials: command, args, and
+// optional metrics port.
+func collectWorkerEssentials(c *nabat.Context, component *spec.Component, componentName string) error {
+	if err := collectComponentCommand(c, component, componentName); err != nil {
+		return fmt.Errorf("failed to collect component command: %w", err)
+	}
+	if err := collectComponentArgs(c, component, componentName); err != nil {
+		return fmt.Errorf("failed to collect component args: %w", err)
+	}
+	if err := collectComponentMetricsPort(c, component, componentName); err != nil {
+		return fmt.Errorf("failed to collect component metrics port: %w", err)
+	}
 	return nil
 }
 
@@ -564,6 +594,7 @@ func collectComponentCommand(c *nabat.Context, component *spec.Component, compon
 		fmt.Sprintf("Add custom command for %s? Would you like to override the container's default command?", componentName),
 		nabat.WithAffirmative("Yes"),
 		nabat.WithNegative("No, use image default"),
+		nabat.WithDefault(false),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to get command preference: %w", err)
@@ -595,6 +626,7 @@ func collectComponentArgs(c *nabat.Context, component *spec.Component, component
 		fmt.Sprintf("Add arguments for %s? Would you like to add arguments to the command?", componentName),
 		nabat.WithAffirmative("Yes"),
 		nabat.WithNegative("No"),
+		nabat.WithDefault(false),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to get args preference: %w", err)
@@ -796,6 +828,85 @@ func collectComponentHealth(c *nabat.Context, component *spec.Component, compone
 	component.Health = &spec.Health{
 		Ready: &spec.HealthReady{Path: path},
 		Alive: &spec.HealthAlive{Path: path},
+	}
+	return nil
+}
+
+// collectComponentMetricsPort optionally asks for a Prometheus metrics port
+// on workers (required when metrics are enabled).
+func collectComponentMetricsPort(c *nabat.Context, component *spec.Component, componentName string) error {
+	enable, err := c.Confirm(
+		fmt.Sprintf("Expose Prometheus metrics for %s?", componentName),
+		nabat.WithAffirmative("Yes"),
+		nabat.WithNegative("No"),
+		nabat.WithDefault(false),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to collect metrics preference: %w", err)
+	}
+	if !enable {
+		return nil
+	}
+	portStr, err := c.Input(
+		fmt.Sprintf("Metrics port for %s", componentName),
+		nabat.WithHint("9090"),
+		nabat.WithDefault("9090"),
+		nabat.WithValidate(spec.ValidatePort),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to collect metrics port: %w", err)
+	}
+	return applyCollectedMetricsPort(component, portStr)
+}
+
+// applyCollectedMetricsPort sets metrics.port from a wizard answer.
+func applyCollectedMetricsPort(component *spec.Component, portStr string) error {
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return fmt.Errorf("invalid metrics port: %w", err)
+	}
+	component.Metrics = &spec.ComponentMetrics{Port: port}
+	return nil
+}
+
+// collectComponentExecHealth optionally asks for an exec liveness command on
+// workers (process-exit is the default when omitted).
+func collectComponentExecHealth(c *nabat.Context, component *spec.Component, componentName string) error {
+	enable, err := c.Confirm(
+		fmt.Sprintf("Add an exec alive check for %s? (default is process-exit only)", componentName),
+		nabat.WithAffirmative("Yes"),
+		nabat.WithNegative("No"),
+		nabat.WithDefault(false),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to collect exec health preference: %w", err)
+	}
+	if !enable {
+		return nil
+	}
+	cmdStr, err := c.Input(
+		fmt.Sprintf("Alive exec command for %s (space-separated)", componentName),
+		nabat.WithHint("pgrep -f worker"),
+		nabat.WithDefault("pgrep -f worker"),
+		nabat.WithValidate(func(s string) error {
+			return validate.ValidateNonEmpty(s, "exec command")
+		}),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to collect exec health command: %w", err)
+	}
+	return applyCollectedExecHealth(component, cmdStr)
+}
+
+// applyCollectedExecHealth sets health.alive.exec from a space-separated
+// wizard answer.
+func applyCollectedExecHealth(component *spec.Component, cmdStr string) error {
+	parts := strings.Fields(cmdStr)
+	if len(parts) == 0 {
+		return fmt.Errorf("exec command must not be empty")
+	}
+	component.Health = &spec.Health{
+		Alive: &spec.HealthAlive{Exec: parts},
 	}
 	return nil
 }

@@ -1,0 +1,16 @@
+# $schema: ../../internal/spec/schema/v1-alpha.4/manifest.json
+apiVersion: v1-alpha.4
+project: worker-exec-health
+components:
+  worker:
+    role: worker
+    image: ghcr.io/acme/worker:1.0.0
+    resourcePreset: small
+    environments: [dev]
+    health:
+      alive:
+        exec: ["/bin/grpc_health_probe", "-addr=:50051"]
+        interval: 10s
+        restartAfter: 60s
+environments:
+  dev: {}

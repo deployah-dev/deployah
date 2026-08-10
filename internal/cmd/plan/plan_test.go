@@ -27,6 +27,8 @@ import (
 	"helm.sh/helm/v4/pkg/postrenderer"
 	"helm.sh/helm/v4/pkg/release/common"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/fake"
 	"nabat.dev/nabat"
 	"nabat.dev/nabat/nabattest"
 
@@ -37,6 +39,7 @@ import (
 
 	planengine "deployah.dev/deployah/internal/plan"
 	v1 "helm.sh/helm/v4/pkg/release/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // stubHelmClient implements [session.HelmClient] for plan command tests.
@@ -116,6 +119,29 @@ func sessionWithStub(stub *stubHelmClient) *session.Session {
 	}))
 }
 
+// sessionWithStubAndK8s builds a session with Helm and Kubernetes stubs so
+// runOnline can exercise API capability checks.
+func sessionWithStubAndK8s(stub *stubHelmClient, k8sClient kubernetes.Interface) *session.Session {
+	return session.New(
+		session.WithHelmFactory(func(*session.Session) (session.HelmClient, error) {
+			return stub, nil
+		}),
+		session.WithKubernetesFactory(func(*session.Session) (kubernetes.Interface, error) {
+			return k8sClient, nil
+		}),
+	)
+}
+
+func fakeClientWithAPIs(groupVersions ...string) *fake.Clientset {
+	cs := fake.NewClientset()
+	resources := make([]*metav1.APIResourceList, 0, len(groupVersions))
+	for _, gv := range groupVersions {
+		resources = append(resources, &metav1.APIResourceList{GroupVersion: gv})
+	}
+	cs.Resources = resources
+	return cs
+}
+
 func releaseAt(version int, status common.Status, manifest string) *v1.Release {
 	return &v1.Release{
 		Name:     "web-production",
@@ -186,7 +212,7 @@ data:
 `
 
 func testManifest() *spec.Spec {
-	return &spec.Spec{Project: "web", APIVersion: "v1-alpha.3"}
+	return &spec.Spec{Project: "web", APIVersion: "v1-alpha.4"}
 }
 
 func testOptions() *Options {
@@ -381,7 +407,7 @@ func TestRunOffline_PrintsPendingCRDs(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	specPath := filepath.Join(dir, "deployah.yaml")
-	writePlanExtras(t, dir, "deployah.yaml", "apiVersion: deployah.dev/v1-alpha.3\nproject: web\n")
+	writePlanExtras(t, dir, "deployah.yaml", "apiVersion: deployah.dev/v1-alpha.4\nproject: web\n")
 	writePlanExtras(t, dir, ".deployah/crds/widget.yaml", `
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
@@ -422,7 +448,7 @@ func TestRunOffline_LoadExtrasError(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	specPath := filepath.Join(dir, "deployah.yaml")
-	writePlanExtras(t, dir, "deployah.yaml", "apiVersion: deployah.dev/v1-alpha.3\nproject: web\n")
+	writePlanExtras(t, dir, "deployah.yaml", "apiVersion: deployah.dev/v1-alpha.4\nproject: web\n")
 	writePlanExtras(t, dir, ".deployah/manifests/bad.yaml", "not: [valid")
 	stub := &stubHelmClient{offlineResult: renderResult(deploymentV1)}
 	sess := session.New(
@@ -445,7 +471,7 @@ func TestRunOnline_PrintsPendingCRDs(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	specPath := filepath.Join(dir, "deployah.yaml")
-	writePlanExtras(t, dir, "deployah.yaml", "apiVersion: deployah.dev/v1-alpha.3\nproject: web\n")
+	writePlanExtras(t, dir, "deployah.yaml", "apiVersion: deployah.dev/v1-alpha.4\nproject: web\n")
 	writePlanExtras(t, dir, ".deployah/crds/widget.yaml", `
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
@@ -481,4 +507,46 @@ spec:
 	err := runOnline(c, sess, nil, testManifest(), testOptions(), nil)
 	require.NoError(t, err)
 	assert.Contains(t, out.String(), "CRDs: 1 pending from .deployah/crds/")
+}
+
+func TestRunOnline_MetricsRequiresPrometheusOperatorAPI(t *testing.T) {
+	t.Parallel()
+
+	manifest := &spec.Spec{
+		Project:    "shop",
+		APIVersion: spec.CurrentManifestVersion,
+		Components: map[string]spec.Component{
+			"api": {
+				Role:    spec.ComponentRoleService,
+				Image:   "api:1",
+				Port:    8080,
+				Metrics: &spec.ComponentMetrics{},
+			},
+		},
+	}
+	t.Run("missing monitoring API fails plan", func(t *testing.T) {
+		t.Parallel()
+		stub := &stubHelmClient{
+			historyErr:   helm.ErrReleaseNotFound,
+			renderResult: renderResult(deploymentV1),
+		}
+		sess := sessionWithStubAndK8s(stub, fakeClientWithAPIs("v1"))
+		c, _ := nabatContext(t)
+		err := runOnline(c, sess, nil, manifest, testOptions(), nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "monitoring.coreos.com/v1")
+	})
+
+	t.Run("monitoring API present allows plan", func(t *testing.T) {
+		t.Parallel()
+		stub := &stubHelmClient{
+			historyErr:   helm.ErrReleaseNotFound,
+			renderResult: renderResult(deploymentV1),
+		}
+		sess := sessionWithStubAndK8s(stub, fakeClientWithAPIs("v1", "monitoring.coreos.com/v1"))
+		c, out := nabatContext(t)
+		err := runOnline(c, sess, nil, manifest, testOptions(), nil)
+		require.NoError(t, err)
+		assert.NotEmpty(t, out.String())
+	})
 }

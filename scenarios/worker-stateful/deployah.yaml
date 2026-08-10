@@ -1,0 +1,17 @@
+# $schema: ../../internal/spec/schema/v1-alpha.4/manifest.json
+apiVersion: v1-alpha.4
+project: worker-stateful
+components:
+  worker:
+    role: worker
+    kind: stateful
+    image: busybox:1.36
+    command: ["sleep"]
+    args: ["infinity"]
+    resourcePreset: small
+    environments: [dev]
+    persistence:
+      size: 1Gi
+      mountPath: /data
+environments:
+  dev: {}

@@ -1,0 +1,2 @@
+expectedErrors:
+  - "port is not supported on role: worker"

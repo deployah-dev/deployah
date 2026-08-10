@@ -1,0 +1,2 @@
+expectedErrors:
+  - "metrics.port is required when metrics are enabled on role: worker"

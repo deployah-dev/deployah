@@ -1,0 +1,10 @@
+# $schema: ../../internal/spec/schema/platform/v1-alpha.3/platform.json
+apiVersion: platform/v1-alpha.3
+profiles:
+  observability:
+    metrics:
+      monitorLabels:
+        release: prometheus
+environments:
+  production:
+    context: prod

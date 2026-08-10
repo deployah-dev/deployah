@@ -79,3 +79,4 @@ spec:
                     timeoutSeconds: 3
             restartPolicy: Always
             serviceAccountName: default
+            terminationGracePeriodSeconds: 30

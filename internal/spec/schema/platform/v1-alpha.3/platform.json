@@ -1,8 +1,8 @@
 {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://deployah.dev/schemas/platform/v1-alpha.2/platform.json",
+    "$id": "https://deployah.dev/schemas/platform/v1-alpha.3/platform.json",
     "title": "Deployah Platform Config",
-    "description": "Platform-owned configuration file (deployah.platform.yaml). Defines Kubernetes contexts, domain bindings, storage classes per environment, and org-wide deployment profiles. Not subject to envsubst.",
+    "description": "Platform-owned configuration file (deployah.platform.yaml). Defines Kubernetes contexts, domain bindings, storage classes per environment, and org-wide deployment profiles including Prometheus monitor settings. Not subject to envsubst.",
     "type": "object",
     "additionalProperties": false,
     "required": ["apiVersion", "environments"],
@@ -10,8 +10,8 @@
         "apiVersion": {
             "type": "string",
             "title": "API Version",
-            "description": "Platform schema version. Must be 'platform/v1-alpha.2'.",
-            "const": "platform/v1-alpha.2"
+            "description": "Platform schema version. Must be 'platform/v1-alpha.3'.",
+            "const": "platform/v1-alpha.3"
         },
         "profiles": {
             "type": "object",
@@ -278,6 +278,9 @@
                 },
                 "maxResources": {
                     "$ref": "#/$defs/ProfileMaxResources"
+                },
+                "metrics": {
+                    "$ref": "#/$defs/ProfileMetrics"
                 }
             },
             "examples": [
@@ -293,8 +296,92 @@
                         "allowPrivilegeEscalation": false
                     },
                     "maxResources": {"cpu": "1000m", "memory": "2Gi"}
+                },
+                {
+                    "metrics": {
+                        "monitorLabels": {"release": "kube-prometheus-stack"},
+                        "interval": "30s",
+                        "scrapeTimeout": "10s"
+                    }
                 }
             ]
+        },
+        "ProfileMetrics": {
+            "type": "object",
+            "title": "Profile Metrics",
+            "description": "Platform-owned Prometheus Operator monitor defaults. Required monitorLabels when components enable metrics.",
+            "additionalProperties": false,
+            "properties": {
+                "monitorLabels": {
+                    "type": "object",
+                    "title": "Monitor Labels",
+                    "description": "Discovery labels applied to ServiceMonitor and PodMonitor resources. Required when a component enables metrics. Typically matches the Prometheus Operator serviceMonitorSelector (e.g. release: kube-prometheus-stack).",
+                    "additionalProperties": {
+                        "type": "string"
+                    },
+                    "examples": [{"release": "kube-prometheus-stack"}]
+                },
+                "monitorNamespace": {
+                    "type": "string",
+                    "title": "Monitor Namespace",
+                    "description": "Namespace where the ServiceMonitor or PodMonitor is created. Empty means the application namespace.",
+                    "minLength": 1,
+                    "examples": ["monitoring"]
+                },
+                "interval": {
+                    "type": "string",
+                    "title": "Scrape Interval",
+                    "description": "Default Prometheus scrape interval for monitors created from this profile.",
+                    "pattern": "^[1-9][0-9]*(s|m|h)$",
+                    "examples": ["30s", "1m"]
+                },
+                "scrapeTimeout": {
+                    "type": "string",
+                    "title": "Scrape Timeout",
+                    "description": "Default Prometheus scrape timeout for monitors created from this profile.",
+                    "pattern": "^[1-9][0-9]*(s|m|h)$",
+                    "examples": ["10s"]
+                },
+                "jobLabel": {
+                    "type": "string",
+                    "title": "Job Label",
+                    "description": "ServiceMonitor/PodMonitor jobLabel field.",
+                    "minLength": 1,
+                    "examples": ["app.kubernetes.io/name"]
+                },
+                "honorLabels": {
+                    "type": "boolean",
+                    "title": "Honor Labels",
+                    "description": "When true, prefer metric labels over target labels during scrape.",
+                    "default": false
+                },
+                "annotations": {
+                    "type": "object",
+                    "title": "Monitor Annotations",
+                    "description": "Annotations applied to ServiceMonitor and PodMonitor resources.",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "relabelings": {
+                    "type": "array",
+                    "title": "Relabelings",
+                    "description": "Prometheus relabel_configs applied to scrape endpoints.",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": true
+                    }
+                },
+                "metricRelabelings": {
+                    "type": "array",
+                    "title": "Metric Relabelings",
+                    "description": "Prometheus metric_relabel_configs applied to scrape endpoints.",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": true
+                    }
+                }
+            }
         },
         "PlatformToleration": {
             "type": "object",
@@ -373,7 +460,7 @@
     },
     "examples": [
         {
-            "apiVersion": "platform/v1-alpha.2",
+            "apiVersion": "platform/v1-alpha.3",
             "profiles": {
                 "default": {
                     "nodeSelector": {"workload": "general"}

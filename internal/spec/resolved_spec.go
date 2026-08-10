@@ -119,6 +119,7 @@ const (
 	ErrCodeComponentStorageClassNotFound = "COMPONENT_STORAGE_CLASS_NOT_FOUND"
 	ErrCodeProfileResourceExceeded       = "PROFILE_RESOURCE_EXCEEDED"
 	ErrCodeProfileOptOutBlocked          = "PROFILE_OPT_OUT_BLOCKED"
+	ErrCodeProfileMonitorLabelsMissing   = "PROFILE_MONITOR_LABELS_MISSING"
 )
 
 // ResolutionError is a resolution error that carries a machine-readable code.

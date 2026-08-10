@@ -1,0 +1,2 @@
+expectedErrors:
+  - "expose is not supported on role: worker"

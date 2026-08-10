@@ -32,13 +32,13 @@ import (
 
 // SupportedPlatformVersions lists platform schema versions that are
 // compatible with the current manifest API.
-var SupportedPlatformVersions = []string{"platform/v1-alpha.2"}
+var SupportedPlatformVersions = []string{"platform/v1-alpha.3"}
 
 // CurrentPlatformVersion is the platform apiVersion written by scaffold
 // helpers (init, cluster up). It is always the last entry in
 // SupportedPlatformVersions. Bump SupportedPlatformVersions first, then this
 // constant follows automatically at compile time.
-const CurrentPlatformVersion = "platform/v1-alpha.2"
+const CurrentPlatformVersion = "platform/v1-alpha.3"
 
 // LoadPlatform reads and validates the platform configuration file at path.
 // The file is never subject to envsubst. LoadPlatform performs:
@@ -209,7 +209,7 @@ func validatePlatformTLS(tls *PlatformTLS, envKey, domainKey string) error {
 }
 
 // IsSupportedPlatformVersion reports whether the given platform apiVersion
-// (e.g. "platform/v1-alpha.2") is supported by the current version of
+// (e.g. "platform/v1-alpha.3") is supported by the current version of
 // Deployah.
 func IsSupportedPlatformVersion(apiVersion string) bool {
 	return slices.Contains(SupportedPlatformVersions, apiVersion)

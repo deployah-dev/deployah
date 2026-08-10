@@ -1,0 +1,30 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+    annotations:
+        deployah.dev/project: worker-metrics
+        deployah.dev/source: spec
+    labels:
+        app.kubernetes.io/instance: worker-metrics-production
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: worker
+        deployah.dev/component: worker
+        deployah.dev/environment: production
+        deployah.dev/project: worker-metrics
+        helm.sh/chart: worker-0.1.0
+        release: prometheus
+    name: worker-metrics-production
+    namespace: default
+spec:
+    namespaceSelector:
+        matchNames:
+            - default
+    podMetricsEndpoints:
+        - interval: 30s
+          path: /metrics
+          port: metrics
+          scrapeTimeout: 10s
+    selector:
+        matchLabels:
+            app.kubernetes.io/instance: worker-metrics-production
+            app.kubernetes.io/name: worker

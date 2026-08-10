@@ -1,0 +1,2 @@
+expectedErrors:
+  - "health.alive.path is not supported on role: worker"

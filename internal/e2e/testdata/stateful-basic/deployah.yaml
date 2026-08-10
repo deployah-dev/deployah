@@ -1,4 +1,4 @@
-apiVersion: v1-alpha.3
+apiVersion: v1-alpha.4
 project: stateful-basic
 components:
   cache:

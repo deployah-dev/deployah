@@ -473,3 +473,88 @@ func TestValidateProfileAgainstComponent(t *testing.T) {
 		require.NoError(t, err)
 	})
 }
+
+func TestMergeProfiles_MonitorFields(t *testing.T) {
+	t.Parallel()
+	honorTrue := true
+	honorFalse := false
+	profiles := map[string]spec.PlatformProfile{
+		"a": {
+			Metrics: &spec.ProfileMetrics{
+				MonitorLabels:    map[string]string{"release": "a"},
+				MonitorNamespace: "monitoring",
+				Interval:         "30s",
+				Relabelings:      []any{map[string]any{"action": "keep"}},
+				Annotations:      map[string]string{"team": "platform"},
+				HonorLabels:      &honorFalse,
+			},
+		},
+		"b": {
+			Metrics: &spec.ProfileMetrics{
+				MonitorLabels:     map[string]string{"release": "b", "team": "obs"},
+				Interval:          "15s",
+				ScrapeTimeout:     "5s",
+				JobLabel:          "app",
+				HonorLabels:       &honorTrue,
+				MetricRelabelings: []any{map[string]any{"action": "drop"}},
+				Annotations:       map[string]string{"owner": "sre"},
+			},
+		},
+	}
+	merged, err := spec.MergeProfiles([]string{"a", "b"}, profiles)
+	require.NoError(t, err)
+	require.NotNil(t, merged.Metrics)
+	assert.Equal(t, map[string]string{"release": "b", "team": "obs"}, merged.Metrics.MonitorLabels)
+	assert.Equal(t, "monitoring", merged.Metrics.MonitorNamespace)
+	assert.Equal(t, "15s", merged.Metrics.Interval)
+	assert.Equal(t, "5s", merged.Metrics.ScrapeTimeout)
+	assert.Equal(t, "app", merged.Metrics.JobLabel)
+	require.NotNil(t, merged.Metrics.HonorLabels)
+	assert.True(t, *merged.Metrics.HonorLabels)
+	assert.Len(t, merged.Metrics.Relabelings, 1)
+	assert.Len(t, merged.Metrics.MetricRelabelings, 1)
+	assert.Equal(t, map[string]string{"team": "platform", "owner": "sre"}, merged.Metrics.Annotations)
+}
+
+func TestValidateProfileAgainstComponent_MonitorLabelsRequired(t *testing.T) {
+	t.Parallel()
+	comp := spec.Component{
+		Metrics: &spec.ComponentMetrics{Port: 9090},
+	}
+	err := spec.ValidateProfileAgainstComponent("worker", comp, spec.PlatformProfile{}, nil, "")
+	require.Error(t, err)
+	var re *spec.ResolutionError
+	require.ErrorAs(t, err, &re)
+	assert.Equal(t, spec.ErrCodeProfileMonitorLabelsMissing, re.Code)
+}
+
+func TestResolve_MetricsWithoutProfileErrors(t *testing.T) {
+	t.Parallel()
+	appSpec := &spec.Spec{
+		APIVersion:   spec.CurrentManifestVersion,
+		Project:      "shop",
+		Environments: map[string]spec.Environment{"production": {}},
+		Components: map[string]spec.Component{
+			"api": {
+				Role:    spec.ComponentRoleService,
+				Image:   "api:1",
+				Port:    8080,
+				Metrics: &spec.ComponentMetrics{},
+			},
+		},
+	}
+	platform := &spec.PlatformConfig{
+		APIVersion: spec.CurrentPlatformVersion,
+		Environments: map[string]spec.PlatformEnvironment{
+			"production": {Context: "prod"},
+		},
+	}
+	env := spec.NormalizeEnv("production")
+	_, report, err := spec.Resolve(appSpec, platform, env, spec.SubstitutionReport{})
+	require.Error(t, err)
+	var re *spec.ResolutionError
+	require.ErrorAs(t, err, &re)
+	assert.Equal(t, spec.ErrCodeProfileMonitorLabelsMissing, re.Code)
+	require.NotNil(t, report)
+	assert.Equal(t, spec.ErrCodeProfileMonitorLabelsMissing, report.ErrorCode)
+}

@@ -27,8 +27,15 @@ import (
 	"deployah.dev/deployah/internal/render"
 	"deployah.dev/deployah/internal/spec"
 
+	chartcommon "helm.sh/helm/v4/pkg/chart/common"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 )
+
+// offlineMonitorAPIVersion is appended to Helm Install.APIVersions on
+// DryRunClient installs so ServiceMonitor/PodMonitor templates can render
+// when there is no discovery client. Online plan/deploy still gate on
+// k8s.CheckAPIRequirements; real installs use cluster Capabilities.
+const offlineMonitorAPIVersion = "monitoring.coreos.com/v1"
 
 // RenderManifests renders the chart via Helm's DryRunClient strategy, so
 // hooks/templates see the same values, capabilities, and revision as a real
@@ -194,6 +201,10 @@ func (c *Client) renderInstall(ctx context.Context, releaseName string, ch *char
 	install.DisableOpenAPIValidation = true
 	install.Labels = labels
 	install.PostRenderer = postRenderer
+	// DryRunClient resets Capabilities to DefaultCapabilities (built-in
+	// APIs only). Append the Prometheus Operator GV so chart templates
+	// gated on .Capabilities.APIVersions.Has still render offline.
+	install.APIVersions = chartcommon.VersionSet{offlineMonitorAPIVersion}
 
 	rel, runErr := install.RunWithContext(ctx, ch, values)
 	if runErr != nil {

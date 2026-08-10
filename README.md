@@ -35,6 +35,8 @@ but for the deploy step: S2I builds your image, and Deployah runs your release.
 - [Platform file](#platform-file)
 - [Profiles](#profiles)
 - [Health checks](#health-checks)
+- [Worker components](#worker-components)
+- [Metrics](#metrics)
 - [Custom manifests and CRDs](#custom-manifests-and-crds)
 - [Commands](#commands)
 - [Environments and variables](#environments-and-variables)
@@ -109,7 +111,7 @@ Save this as `deployah.yaml` in an empty folder. It runs the public `nginx`
 image, so you do not need to build anything.
 
 ```yaml
-apiVersion: v1-alpha.3
+apiVersion: v1-alpha.4
 project: my-first-app
 components:
   web:
@@ -215,10 +217,23 @@ A few words you will see often.
   (StatefulSet with stable identity; optional per-pod volumes). See
   [Stateful workloads](#stateful-workloads) and
   [Storage classes](#storage-classes).
-- **What deploys today.** Deployah deploys `service` components as
-  `stateless` (Deployment) or `stateful` (StatefulSet). The `worker` and
-  `job` roles are in the schema but are not deployable yet, so a deploy that
-  uses them stops with a "not supported yet" error.
+- **Workload matrix.** `role` and `kind` combine independently. `job` is in
+  the schema but not deployable yet.
+
+  | Capability          | service+stateless | service+stateful | worker+stateless | worker+stateful |
+  |---------------------|:-----------------:|:----------------:|:----------------:|:---------------:|
+  | Deployment          | Y | - | Y | - |
+  | StatefulSet         | - | Y | - | Y |
+  | ClusterIP Service   | Y | Y | - | - |
+  | Headless Service    | - | Y | - | Y |
+  | Ingress             | Y | Y | - | - |
+  | HPA                 | Y | Y | Y | Y |
+  | Persistence         | Y | Y | Y | Y |
+  | Health (TCP/HTTP)   | Y | Y | - | - |
+  | Health (exec)       | Y | Y | Y | Y |
+  | ServiceMonitor      | Y | Y | - | - |
+  | PodMonitor          | - | - | Y | Y |
+
 - **Environment.** A target such as `dev`, `staging`, or `prod`. Each
   environment can use a different cluster, different files, and different
   variables. The platform file registers which environments exist; an entry
@@ -227,12 +242,12 @@ A few words you will see often.
   Kubernetes units. Use `resourcePreset: small` instead of writing exact values.
   This is not the same as a [profile](#profiles).
 - **Profile.** A named deployment policy owned by the platform team (node
-  placement, security context, domain and resource ceilings, and more).
-  Components select one or more with `profiles: [...]`. See [Profiles](#profiles).
-- **Health checks.** Deployah checks that your app is ready for traffic and
-  restarts it if it gets stuck. This happens automatically for every service
-  component. You can improve the checks by giving Deployah an HTTP endpoint to
-  call. See [Health checks](#health-checks).
+  placement, security context, domain and resource ceilings, monitor labels,
+  and more). Components select one or more with `profiles: [...]`. See
+  [Profiles](#profiles).
+- **Health checks.** Services get automatic TCP/HTTP ready and alive checks.
+  Workers use process-exit by default, or optional `health.alive.exec`. See
+  [Health checks](#health-checks) and [Worker components](#worker-components).
 - **Bring your own image.** Deployah does not build images. You give it an image
   that already exists in a registry your cluster can pull from. Build your image
   in CI (or locally), then let Deployah deploy it.
@@ -261,7 +276,7 @@ Here is a full example that shows the common fields. You do not need all of
 them; most have defaults.
 
 ```yaml
-apiVersion: v1-alpha.3             # required: the schema version
+apiVersion: v1-alpha.4             # required: the schema version
 project: shop                      # required: your project name
 
 components:                        # required: one or more components
@@ -276,6 +291,8 @@ components:                        # required: one or more components
     env:                           # planned: not applied to the container yet
       LOG_LEVEL: info
     resourcePreset: small          # nano|micro|small|medium|large|xlarge|2xlarge
+    shutdownTimeout: 30s           # how long Kubernetes waits for graceful stop
+    metrics: true                  # scrape /metrics on the app port (needs profile metrics.monitorLabels)
     expose:                        # optional: `expose: true` uses all defaults
       subdomain: api                # optional: defaults to the component name
       # domain: internal            # optional: defaults to the platform's default domain
@@ -287,6 +304,19 @@ components:                        # required: one or more components
       metrics:
         - type: cpu                # cpu | memory
           target: 70               # target usage percentage
+  worker:
+    role: worker                   # no port, expose, or Ingress
+    image: ghcr.io/acme/shop-worker:${TAG}
+    environments: [staging, prod]
+    command: ["/bin/worker"]
+    resourcePreset: small
+    shutdownTimeout: 60s           # workers default to 60s
+    metrics:                       # workers need an explicit scrape port
+      port: 9090
+      path: /metrics
+    health:
+      alive:
+        exec: ["/bin/grpc_health_probe", "-addr=:50051"]
 
 environments:                      # define your environments (a map, not a list)
   staging:
@@ -309,7 +339,7 @@ Top level:
 
 | Field | Required | Notes |
 |---|---|---|
-| `apiVersion` | Yes | The schema version. Must be `v1-alpha.3`. |
+| `apiVersion` | Yes | The schema version. Must be `v1-alpha.4`. |
 | `project` | Yes | Lowercase name (DNS-1123). Prefixes your Kubernetes resources. |
 | `components` | Yes | A map of component name to component settings. |
 | `environments` | Yes in practice | A map of environment name to environment settings. Keys support prefix-based wildcard matching, e.g. a `review` key matches `--environment review/pr-123`. |
@@ -319,27 +349,28 @@ Component:
 | Field | Default | Notes |
 |---|---|---|
 | `image` | none | The container image to run. You provide this. |
-| `role` | `service` | `service`, `worker`, or `job`. |
+| `role` | `service` | `service` or `worker` (`job` is accepted by the schema but not deployable yet). |
 | `kind` | `stateless` | `stateless` or `stateful`. |
-| `port` | `8080` | The port your app listens on (1 to 65535). |
+| `port` | `8080` (services) | App listen port (1 to 65535). Not allowed on workers. |
 | `command` / `args` | none | Override the image ENTRYPOINT and CMD. |
 | `env` | none | Environment variables (uppercase keys). |
 | `resourcePreset` | none | `nano`, `micro`, `small`, `medium`, `large`, `xlarge`, `2xlarge`. |
 | `resources` | none | `cpu`, `memory`, `ephemeralStorage` (Kubernetes units). |
-| `expose` | none | `true` for all defaults, or an object with `domain` (defaults to the platform's default domain), `subdomain` (defaults to the component name), and `apex`. See [Platform file](#platform-file). |
+| `expose` | none | Services only. `true` for all defaults, or an object with `domain`, `subdomain`, and `apex`. See [Platform file](#platform-file). |
 | `replicas` | `1` (chart) | Desired pod count. Cannot combine with `autoscaling.enabled`. |
 | `persistence` | none | Optional for `kind: stateful` (`size`, `mountPath`, optional logical `storageClass`). Omit for identity-only. Allowed on stateless (shared PVC, Recreate). See [Stateful workloads](#stateful-workloads). |
 | `autoscaling` | off | `enabled`, `minReplicas`, `maxReplicas`, `metrics`. |
+| `shutdownTimeout` | `30s` (service), `60s` (worker) | Graceful stop window; maps to `terminationGracePeriodSeconds`. |
+| `metrics` | off | `true`, `false`, or `{enabled?, port, path, interval?, scrapeTimeout?}`. See [Metrics](#metrics). |
 | `health` | auto | Ready and alive checks. See [Health checks](#health-checks). |
 | `environments` | none | Which environments deploy this component. |
 | `profiles` | none | List of platform profile names. Merged left to right. See [Profiles](#profiles). |
 
 > [!IMPORTANT]
-> Not deployed yet: the schema accepts `role: worker` and `role: job`, and
-> the `env`, `envFile`, and `configFile` fields, but Deployah does not apply
-> them at deploy time yet. Today, deploy a `service` as `stateless` or
-> `stateful` using `image`, `port`, `resources` or `resourcePreset`,
-> optional `persistence`, `expose`, `autoscaling`, and `profiles`.
+> Not deployed yet: the schema accepts `role: job`, and the `env`, `envFile`,
+> and `configFile` fields, but Deployah does not apply them at deploy time
+> yet. Changing `role` between `service` and `worker` on an existing release
+> is rejected; delete the release and redeploy.
 
 Environment:
 
@@ -421,7 +452,7 @@ Every example below is complete and valid. Copy one and change the values.
 **Smallest spec.** One service, one environment.
 
 ```yaml
-apiVersion: v1-alpha.3
+apiVersion: v1-alpha.4
 project: hello
 components:
   web:
@@ -434,7 +465,7 @@ environments:
 **Two components.** A web app and an API in one project.
 
 ```yaml
-apiVersion: v1-alpha.3
+apiVersion: v1-alpha.4
 project: shop
 components:
   web:
@@ -453,7 +484,7 @@ environments:
 from the platform file, not from here.
 
 ```yaml
-apiVersion: v1-alpha.3
+apiVersion: v1-alpha.4
 project: shop
 components:
   web:
@@ -475,7 +506,7 @@ comes from the platform file. Set `subdomain` only when you want a different
 label, and `apex: true` for the bare domain.
 
 ```yaml
-apiVersion: v1-alpha.3
+apiVersion: v1-alpha.4
 project: shop
 components:
   web:
@@ -488,7 +519,7 @@ components:
 **Set exact resources.** Use `resources` instead of a preset.
 
 ```yaml
-apiVersion: v1-alpha.3
+apiVersion: v1-alpha.4
 project: shop
 components:
   web:
@@ -505,7 +536,7 @@ environments:
 **Autoscale on CPU.** Scale between 2 and 6 replicas at 70% CPU.
 
 ```yaml
-apiVersion: v1-alpha.3
+apiVersion: v1-alpha.4
 project: shop
 components:
   web:
@@ -549,7 +580,7 @@ not require that floor.
 `size` and `mountPath` are required:
 
 ```yaml
-apiVersion: v1-alpha.3
+apiVersion: v1-alpha.4
 project: shop
 components:
   # Identity only: stable DNS / ordinals, no PVC
@@ -685,7 +716,7 @@ requires it. This file is not processed with `${...}` substitution: it holds
 real values, not templates.
 
 ```yaml
-apiVersion: platform/v1-alpha.2
+apiVersion: platform/v1-alpha.3
 profiles:
   default:
     nodeSelector:
@@ -809,7 +840,7 @@ components:
 
 ```yaml
 # deployah.platform.yaml (platform team)
-apiVersion: platform/v1-alpha.2
+apiVersion: platform/v1-alpha.3
 profiles:
   default:
     nodeSelector:
@@ -864,6 +895,7 @@ environments:
 | `storageClass` | string | Logical key from the target environment's `storageClasses` map. |
 | `allowedDomains` | list of string | Logical domain keys the component may expose on. Omitted (or null) means no constraint. An empty list (`[]`) is deny-all: no domain is allowed. |
 | `maxResources` | object | Ceiling on component resource **requests** (`cpu`, `memory`). Exceeding it is an error. |
+| `metrics` | object | Platform Prometheus policy. See [Metrics](#metrics). Fields: `monitorLabels` (required when a component enables metrics), `monitorNamespace`, `interval`, `scrapeTimeout`, `jobLabel`, `honorLabels`, `annotations`, `relabelings`, `metricRelabelings`. |
 
 #### Merge rules
 
@@ -872,9 +904,10 @@ right** (after prepending `default` when that profile exists):
 
 | Kind | Fields | Rule |
 |---|---|---|
-| Maps | `nodeSelector`, `podLabels`, `podAnnotations`, security contexts | Deep merge; last wins on key conflict |
-| Arrays | `tolerations` | Concatenate; identical entries are deduplicated |
-| Scalars | `storageClass` | Last non-empty wins |
+| Maps | `nodeSelector`, `podLabels`, `podAnnotations`, `metrics.monitorLabels`, `metrics.annotations`, security contexts | Deep merge; last wins on key conflict |
+| Arrays | `tolerations`, `metrics.relabelings`, `metrics.metricRelabelings` | Concatenate; identical `tolerations` entries are deduplicated |
+| Scalars | `storageClass`, `metrics.monitorNamespace`, `metrics.interval`, `metrics.scrapeTimeout`, `metrics.jobLabel` | Last non-empty wins |
+| Bools | `metrics.honorLabels` | Last non-nil wins |
 | Domains | `allowedDomains` | Intersection of profiles that set a list; omitted means no constraint; empty list is deny-all |
 | Ceilings | `maxResources` | Minimum (strictest) wins per resource |
 
@@ -1004,6 +1037,126 @@ components:
     health:
       ready: false
       alive: false
+```
+
+**Exec alive probe.** Use a command instead of HTTP when your process has
+no listen port, or when an in-container check is a better signal. `path` and
+`exec` are mutually exclusive. Services may use either; workers may use
+`exec` only (see [Worker components](#worker-components)).
+
+```yaml
+components:
+  api:
+    image: my-app:1.0.0
+    port: 8080
+    health:
+      alive:
+        exec: ["/bin/grpc_health_probe", "-addr=:8080"]
+        interval: 10s
+        restartAfter: 60s
+```
+
+## Worker components
+
+A `role: worker` component is a long-running process that does not serve
+inbound traffic. Deployah still runs it as a Deployment (`kind: stateless`)
+or StatefulSet (`kind: stateful`), with HPA and persistence available the
+same way as for services.
+
+Workers must not set:
+
+- `port` (use `metrics.port` when you need a scrape endpoint)
+- `expose` (no Ingress)
+- `health.ready` (there is no traffic gate)
+- `health.alive.path` (HTTP probes need an app port)
+
+By default, Kubernetes restarts a worker when the process exits. Optional
+`health.alive.exec` adds a command-based liveness probe:
+
+```yaml
+components:
+  worker:
+    role: worker
+    image: ghcr.io/acme/worker:1.0.0
+    environments: [production]
+    resourcePreset: small
+    shutdownTimeout: 60s
+    health:
+      alive:
+        exec: ["/bin/grpc_health_probe", "-addr=:50051"]
+```
+
+Stateful workers get a headless Service with a synthetic `identity` port
+(`9`) so peer DNS and stable network identity work without an app listen
+port. Stateless workers with no metrics get no Service.
+
+`shutdownTimeout` defaults to `60s` for workers (vs `30s` for services) and
+maps to `terminationGracePeriodSeconds`. Give workers enough time to finish
+in-flight work before the kubelet sends `SIGKILL`.
+
+Changing a component's `role` between `service` and `worker` on an existing
+release is not supported. Delete the release and redeploy.
+
+## Metrics
+
+Deployah can emit Prometheus Operator scrape configs when a component
+enables `metrics`. Services produce a `ServiceMonitor`; workers produce a
+`PodMonitor`. Your cluster must have the Prometheus Operator CRDs
+(`monitoring.coreos.com/v1`). `deployah plan` and `deployah deploy` check
+for that API group when metrics are enabled.
+
+Shape:
+
+| Form | Meaning |
+|---|---|
+| `metrics: true` | Enable scraping. Services scrape the app port at `/metrics`. Workers must set `port` instead. |
+| `metrics: false` | Explicitly off. |
+| `metrics: { ... }` | Object form with `enabled?`, `port`, `path`, `interval?`, `scrapeTimeout?`. |
+
+Defaults when enabled: `path` is `/metrics`. For services, omitted `port`
+uses the component port (ServiceMonitor endpoint port name `http`). A
+dedicated metrics port adds a container and Service port named `metrics`.
+Workers always require `metrics.port` and scrape via PodMonitor port name
+`metrics`.
+
+Platform profiles own discovery labels and scrape policy under
+`metrics:`. When component metrics are enabled, the merged profile must set
+`metrics.monitorLabels` (for example `release: prometheus` for the
+kube-prometheus-stack selector). Other profile metrics fields:
+`monitorNamespace`, `interval`, `scrapeTimeout`, `jobLabel`, `honorLabels`,
+`annotations`, `relabelings`, `metricRelabelings`.
+
+```yaml
+# deployah.yaml
+components:
+  api:
+    image: ghcr.io/acme/api:1.0.0
+    port: 8080
+    environments: [production]
+    profiles: [observability]
+    metrics: true
+  worker:
+    role: worker
+    image: ghcr.io/acme/worker:1.0.0
+    environments: [production]
+    profiles: [observability]
+    metrics:
+      port: 9090
+      path: /metrics
+```
+
+```yaml
+# deployah.platform.yaml
+apiVersion: platform/v1-alpha.3
+profiles:
+  observability:
+    metrics:
+      monitorLabels:
+        release: prometheus
+      interval: 30s
+environments:
+  production:
+    context: prod
 ```
 
 ## Custom manifests and CRDs
@@ -1646,11 +1799,11 @@ deployah <command> --help
 
 Deployah validates your spec and platform file with JSON Schema.
 
-- **Manifest schema version:** v1-alpha.3
-- **Manifest schema:** `internal/spec/schema/v1-alpha.3/manifest.json`
-- **Manifest environments schema:** `internal/spec/schema/v1-alpha.3/environments.json`
-- **Platform schema version:** platform/v1-alpha.2
-- **Platform schema:** `internal/spec/schema/platform/v1-alpha.2/platform.json`
+- **Manifest schema version:** v1-alpha.4
+- **Manifest schema:** `internal/spec/schema/v1-alpha.4/manifest.json`
+- **Manifest environments schema:** `internal/spec/schema/v1-alpha.4/environments.json`
+- **Platform schema version:** platform/v1-alpha.3
+- **Platform schema:** `internal/spec/schema/platform/v1-alpha.3/platform.json`
 
 For the latest schema and examples, see the
 [schema directory](internal/spec/schema/) in the repository.

@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: Service
+metadata:
+    annotations:
+        deployah.dev/project: service-metrics-dedicated
+        deployah.dev/source: spec
+    labels:
+        app.kubernetes.io/instance: service-metrics-dedicated-production
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: api
+        deployah.dev/component: api
+        deployah.dev/environment: production
+        deployah.dev/project: service-metrics-dedicated
+        helm.sh/chart: api-0.1.0
+    name: service-metrics-dedicated-production-api
+    namespace: default
+spec:
+    ports:
+        - name: http
+          port: 80
+          protocol: TCP
+          targetPort: http
+        - name: metrics
+          port: 9090
+          protocol: TCP
+          targetPort: metrics
+    selector:
+        app.kubernetes.io/instance: service-metrics-dedicated-production
+        app.kubernetes.io/name: api
+    sessionAffinity: None
+    type: ClusterIP
