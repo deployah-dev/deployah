@@ -15,6 +15,7 @@
 package spec
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -38,6 +39,16 @@ func TestComponentRole_IsService(t *testing.T) {
 	assert.True(t, ComponentRoleService.IsService())
 	assert.False(t, ComponentRoleWorker.IsService())
 	assert.False(t, ComponentRoleJob.IsService())
+}
+
+// TestComponentRole_IsWorker verifies only the "worker" role is treated
+// as a worker.
+func TestComponentRole_IsWorker(t *testing.T) {
+	t.Parallel()
+
+	assert.True(t, ComponentRoleWorker.IsWorker())
+	assert.False(t, ComponentRoleService.IsWorker())
+	assert.False(t, ComponentRoleJob.IsWorker())
 }
 
 // TestComponent_ListensOnPort verifies a component listens on a port only
@@ -259,4 +270,86 @@ image: my-app:latest
 `)
 		assert.Nil(t, c.Health)
 	})
+
+	t.Run("object with exec", func(t *testing.T) {
+		t.Parallel()
+		c := unmarshalComponent(t, `
+health:
+  alive:
+    exec: [pgrep, -f, worker]
+`)
+		require.NotNil(t, c.Health)
+		require.NotNil(t, c.Health.Alive)
+		assert.Equal(t, []string{"pgrep", "-f", "worker"}, c.Health.Alive.Exec)
+		assert.Empty(t, c.Health.Alive.Path)
+	})
+}
+
+// TestComponentMetrics_UnmarshalJSON covers true/false/object forms and
+// reject paths for metrics dual-parse.
+func TestComponentMetrics_UnmarshalJSON(t *testing.T) {
+	t.Parallel()
+
+	t.Run("true enables with defaults", func(t *testing.T) {
+		t.Parallel()
+		c := unmarshalComponent(t, "metrics: true\n")
+		require.NotNil(t, c.Metrics)
+		assert.False(t, c.Metrics.Disabled)
+		assert.True(t, c.Metrics.IsEnabled())
+	})
+
+	t.Run("false disables", func(t *testing.T) {
+		t.Parallel()
+		c := unmarshalComponent(t, "metrics: false\n")
+		require.NotNil(t, c.Metrics)
+		assert.True(t, c.Metrics.Disabled)
+		assert.False(t, c.Metrics.IsEnabled())
+	})
+
+	t.Run("object form", func(t *testing.T) {
+		t.Parallel()
+		c := unmarshalComponent(t, `
+metrics:
+  port: 9090
+  path: /metrics
+  interval: 15s
+`)
+		require.NotNil(t, c.Metrics)
+		assert.Equal(t, 9090, c.Metrics.Port)
+		assert.Equal(t, "/metrics", c.Metrics.Path)
+		assert.Equal(t, "15s", c.Metrics.Interval)
+		assert.True(t, c.Metrics.IsEnabled())
+	})
+
+	t.Run("enabled false in object", func(t *testing.T) {
+		t.Parallel()
+		c := unmarshalComponent(t, `
+metrics:
+  enabled: false
+  port: 9090
+`)
+		require.NotNil(t, c.Metrics)
+		assert.False(t, c.Metrics.IsEnabled())
+	})
+
+	t.Run("invalid scalar rejected", func(t *testing.T) {
+		t.Parallel()
+		var m ComponentMetrics
+		err := json.Unmarshal([]byte(`"nope"`), &m)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "metrics:")
+	})
+}
+
+// TestComponentMetrics_IsEnabled covers nil and pointer-enabled branches.
+func TestComponentMetrics_IsEnabled(t *testing.T) {
+	t.Parallel()
+
+	assert.False(t, (*ComponentMetrics)(nil).IsEnabled())
+	assert.False(t, (&ComponentMetrics{Disabled: true}).IsEnabled())
+	enabled := false
+	assert.False(t, (&ComponentMetrics{Enabled: &enabled}).IsEnabled())
+	enabled = true
+	assert.True(t, (&ComponentMetrics{Enabled: &enabled}).IsEnabled())
+	assert.True(t, (&ComponentMetrics{}).IsEnabled())
 }

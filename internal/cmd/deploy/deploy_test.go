@@ -242,6 +242,16 @@ func TestRequiredAPIs(t *testing.T) {
 			environment: "staging",
 			wantEmpty:   true,
 		},
+		{
+			name: "metrics enabled requires prometheus operator API",
+			manifest: &spec.Spec{
+				Components: map[string]spec.Component{
+					"api": {Metrics: &spec.ComponentMetrics{}},
+				},
+			},
+			environment:  "production",
+			wantContains: []string{"monitoring.coreos.com/v1"},
+		},
 	}
 
 	for _, tt := range tests {

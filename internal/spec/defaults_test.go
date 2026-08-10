@@ -919,6 +919,65 @@ func TestDefaultValuesCopy(t *testing.T) {
 	assert.NotEqual(t, original, copied)
 }
 
+// TestFillSpecWithDefaults_RoleDependentDefaults covers shutdownTimeout,
+// worker port omission, and metrics path/port defaults that schema alone
+// cannot express.
+func TestFillSpecWithDefaults_RoleDependentDefaults(t *testing.T) {
+	t.Parallel()
+
+	t.Run("empty role becomes service with service defaults", func(t *testing.T) {
+		t.Parallel()
+		m := &Spec{
+			APIVersion: CurrentManifestVersion,
+			Project:    "shop",
+			Components: map[string]Component{
+				"api": {Image: "api:1"},
+			},
+		}
+		require.NoError(t, FillSpecWithDefaults(m, CurrentManifestVersion))
+		api := m.Components["api"]
+		assert.Equal(t, ComponentRoleService, api.Role)
+		assert.Equal(t, DefaultServiceShutdownTimeout, api.ShutdownTimeout)
+		assert.Equal(t, 8080, api.Port)
+	})
+
+	t.Run("worker gets longer shutdown and no default port", func(t *testing.T) {
+		t.Parallel()
+		m := &Spec{
+			APIVersion: CurrentManifestVersion,
+			Project:    "shop",
+			Components: map[string]Component{
+				"worker": {Role: ComponentRoleWorker, Image: "worker:1"},
+			},
+		}
+		require.NoError(t, FillSpecWithDefaults(m, CurrentManifestVersion))
+		w := m.Components["worker"]
+		assert.Equal(t, DefaultWorkerShutdownTimeout, w.ShutdownTimeout)
+		assert.Equal(t, 0, w.Port)
+	})
+
+	t.Run("service metrics fills path and port from component port", func(t *testing.T) {
+		t.Parallel()
+		m := &Spec{
+			APIVersion: CurrentManifestVersion,
+			Project:    "shop",
+			Components: map[string]Component{
+				"api": {
+					Role:    ComponentRoleService,
+					Image:   "api:1",
+					Port:    8080,
+					Metrics: &ComponentMetrics{},
+				},
+			},
+		}
+		require.NoError(t, FillSpecWithDefaults(m, CurrentManifestVersion))
+		api := m.Components["api"]
+		require.NotNil(t, api.Metrics)
+		assert.Equal(t, DefaultMetricsPath, api.Metrics.Path)
+		assert.Equal(t, 8080, api.Metrics.Port)
+	})
+}
+
 // TestFillSpecWithDefaults_GuardClauses verifies the nil-spec and
 // empty-version guard clauses, which [TestFillSpecWithDefaults] above does
 // not exercise.

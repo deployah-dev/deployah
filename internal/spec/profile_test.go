@@ -525,3 +525,34 @@ func TestValidateProfileAgainstComponent_MonitorLabelsRequired(t *testing.T) {
 	require.ErrorAs(t, err, &re)
 	assert.Equal(t, spec.ErrCodeProfileMonitorLabelsMissing, re.Code)
 }
+
+func TestResolve_MetricsWithoutProfileErrors(t *testing.T) {
+	t.Parallel()
+	appSpec := &spec.Spec{
+		APIVersion:   spec.CurrentManifestVersion,
+		Project:      "shop",
+		Environments: map[string]spec.Environment{"production": {}},
+		Components: map[string]spec.Component{
+			"api": {
+				Role:    spec.ComponentRoleService,
+				Image:   "api:1",
+				Port:    8080,
+				Metrics: &spec.ComponentMetrics{},
+			},
+		},
+	}
+	platform := &spec.PlatformConfig{
+		APIVersion: spec.CurrentPlatformVersion,
+		Environments: map[string]spec.PlatformEnvironment{
+			"production": {Context: "prod"},
+		},
+	}
+	env := spec.NormalizeEnv("production")
+	_, report, err := spec.Resolve(appSpec, platform, env, spec.SubstitutionReport{})
+	require.Error(t, err)
+	var re *spec.ResolutionError
+	require.ErrorAs(t, err, &re)
+	assert.Equal(t, spec.ErrCodeProfileMonitorLabelsMissing, re.Code)
+	require.NotNil(t, report)
+	assert.Equal(t, spec.ErrCodeProfileMonitorLabelsMissing, report.ErrorCode)
+}

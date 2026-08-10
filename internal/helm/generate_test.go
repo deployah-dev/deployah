@@ -1146,6 +1146,81 @@ func TestMapSpecToChartValues_WorkerMetrics(t *testing.T) {
 	assert.Equal(t, map[string]string{"release": "kube-prometheus-stack"}, pm["labels"])
 }
 
+func TestMapSpecToChartValues_MonitorProfileFields(t *testing.T) {
+	t.Parallel()
+	honor := true
+	manifest := &spec.Spec{
+		APIVersion: spec.CurrentManifestVersion,
+		Project:    "shop",
+		Components: map[string]spec.Component{
+			"api": {
+				Role:  spec.ComponentRoleService,
+				Image: "ghcr.io/acme/api:1.0.0",
+				Port:  8080,
+				Metrics: &spec.ComponentMetrics{
+					Port:          9090,
+					Interval:      "10s",
+					ScrapeTimeout: "5s",
+				},
+			},
+		},
+	}
+	require.NoError(t, spec.FillSpecWithDefaults(manifest, spec.CurrentManifestVersion))
+	profile := &spec.PlatformProfile{Metrics: &spec.ProfileMetrics{
+		MonitorLabels:     map[string]string{"release": "prom"},
+		MonitorNamespace:  "monitoring",
+		Interval:          "30s",
+		ScrapeTimeout:     "10s",
+		JobLabel:          "app",
+		HonorLabels:       &honor,
+		Annotations:       map[string]string{"team": "obs"},
+		Relabelings:       []any{map[string]any{"action": "keep"}},
+		MetricRelabelings: []any{map[string]any{"action": "drop"}},
+	}}
+	resolved := &spec.ResolvedSpec{Components: map[string]spec.ResolvedComponent{
+		"api": {MergedProfile: profile},
+	}}
+	values, err := MapSpecToChartValues(manifest, "dev", resolved)
+	require.NoError(t, err)
+	sm := mustNestedMap(t, mustNestedMap(t, values, "api"), "serviceMonitor")
+	assert.Equal(t, true, sm["enabled"])
+	assert.Equal(t, "monitoring", sm["namespace"])
+	assert.Equal(t, "10s", sm["interval"], "component interval overrides profile")
+	assert.Equal(t, "5s", sm["scrapeTimeout"], "component scrapeTimeout overrides profile")
+	assert.Equal(t, "app", sm["jobLabel"])
+	assert.Equal(t, true, sm["honorLabels"])
+	assert.Equal(t, map[string]string{"team": "obs"}, sm["annotations"])
+	assert.Equal(t, map[string]string{"release": "prom"}, sm["labels"])
+	require.Len(t, sm["relabelings"], 1)
+	require.Len(t, sm["metricRelabelings"], 1)
+}
+
+func TestMapSpecToChartValues_NilProfileMetricsSkipped(t *testing.T) {
+	t.Parallel()
+	manifest := &spec.Spec{
+		APIVersion: spec.CurrentManifestVersion,
+		Project:    "shop",
+		Components: map[string]spec.Component{
+			"api": {
+				Role:    spec.ComponentRoleService,
+				Image:   "ghcr.io/acme/api:1.0.0",
+				Port:    8080,
+				Metrics: &spec.ComponentMetrics{},
+			},
+		},
+	}
+	require.NoError(t, spec.FillSpecWithDefaults(manifest, spec.CurrentManifestVersion))
+	resolved := &spec.ResolvedSpec{Components: map[string]spec.ResolvedComponent{
+		"api": {MergedProfile: &spec.PlatformProfile{}},
+	}}
+	values, err := MapSpecToChartValues(manifest, "dev", resolved)
+	require.NoError(t, err)
+	sm := mustNestedMap(t, mustNestedMap(t, values, "api"), "serviceMonitor")
+	assert.Equal(t, true, sm["enabled"])
+	assert.Nil(t, sm["labels"])
+	assert.Nil(t, sm["namespace"])
+}
+
 func TestMapSpecToChartValues_ServiceMetricsDedicatedPort(t *testing.T) {
 	t.Parallel()
 	manifest := &spec.Spec{

@@ -547,6 +547,17 @@ func TestValidateComponentHealth(t *testing.T) {
 			errMsg:    "mutually exclusive",
 		},
 		{
+			name: "empty exec part is invalid",
+			component: Component{
+				Role: ComponentRoleWorker,
+				Health: &Health{
+					Alive: &HealthAlive{Exec: []string{"pgrep", "  "}},
+				},
+			},
+			expectErr: true,
+			errMsg:    "health.alive.exec[1] must not be empty",
+		},
+		{
 			name: "health on job role is invalid",
 			component: Component{
 				Role:   ComponentRoleJob,
@@ -783,6 +794,33 @@ func TestValidateComponentMetrics(t *testing.T) {
 				Metrics: &ComponentMetrics{Disabled: true},
 			},
 		},
+		{
+			name: "invalid metrics interval",
+			component: Component{
+				Role:    ComponentRoleService,
+				Metrics: &ComponentMetrics{Interval: "not-a-duration"},
+			},
+			expectErr: true,
+			errMsg:    "metrics.interval",
+		},
+		{
+			name: "invalid metrics scrapeTimeout",
+			component: Component{
+				Role:    ComponentRoleService,
+				Metrics: &ComponentMetrics{ScrapeTimeout: "nope"},
+			},
+			expectErr: true,
+			errMsg:    "metrics.scrapeTimeout",
+		},
+		{
+			name: "metrics port out of range",
+			component: Component{
+				Role:    ComponentRoleService,
+				Metrics: &ComponentMetrics{Port: 70000},
+			},
+			expectErr: true,
+			errMsg:    "metrics.port must be between 1 and 65535",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -803,6 +841,10 @@ func TestValidateComponentShutdownTimeout(t *testing.T) {
 	assert.NoError(t, ValidateComponentShutdownTimeout(Component{}))
 	assert.NoError(t, ValidateComponentShutdownTimeout(Component{ShutdownTimeout: "60s"}))
 	err := ValidateComponentShutdownTimeout(Component{ShutdownTimeout: "0s"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "shutdownTimeout")
+
+	err = ValidateComponentShutdownTimeout(Component{ShutdownTimeout: "not-a-duration"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "shutdownTimeout")
 }
