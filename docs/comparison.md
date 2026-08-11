@@ -185,6 +185,22 @@ Choose another tool if you want:
   platform creates it.")
 - Werf and DevSpace give **more control** for people who already know Helm.
 
+## Further reading
+
+Deployah aims at one capability from DORA (DevOps Research and Assessment)
+research: deployment automation, the practice of deploying with the same
+process and packages across every environment, with configuration kept
+separate (<https://dora.dev/capabilities/deployment-automation/>).
+
+DORA's 2024 report found that internal developer platforms raise individual
+productivity, but can lower change stability and throughput unless they keep
+developers independent (<https://dora.dev/research/2024/dora-report/>). That
+trade-off is why Deployah installs nothing in your cluster: there is no
+in-cluster platform to run.
+
+These are background reading, not claims about Deployah. DORA studies teams
+and practices, not tools.
+
 ## Sources
 
 - DevSpace: <https://www.devspace.sh/>, <https://github.com/devspace-sh/devspace>
