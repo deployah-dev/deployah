@@ -111,6 +111,7 @@ Know these before you invest time:
   - [Examples](#examples)
 - **Understand the model**
   - [How Deployah works](#how-deployah-works)
+  - [What Deployah decides for you](#what-deployah-decides-for-you)
   - [Concepts](#concepts)
 - **Look things up**
   - [Guides](#guides)
@@ -267,7 +268,7 @@ flowchart LR
     end
     subgraph phase2["2. Resolve config"]
         direction TB
-        D["Pick environment"] --> E["Apply variables"] --> F["Fill defaults"]
+        D["Pick environment"] --> E["Apply variables"] --> F["Merge platform / defaults"]
     end
     subgraph phase3["3. Deploy"]
         direction TB
@@ -279,12 +280,49 @@ flowchart LR
 1. **Read the spec.** Deployah reads your `deployah.yaml` and checks it against a
    JSON Schema, so mistakes are caught early with clear messages.
 2. **Resolve config.** Deployah picks the environment you asked for, substitutes
-   your variables, and fills in sensible defaults.
+   your variables, merges the platform file and any profiles, and fills in
+   defaults.
 3. **Deploy.** Deployah builds Helm values from your spec and installs a Helm
    release on your cluster. You never write a Helm chart yourself.
 
+The spec is a smaller surface than the Kubernetes API on purpose, so step 2 adds
+fields you did not write. You can read the result before anything is applied:
+
+```sh
+deployah plan <environment> --offline --raw --yaml
+```
+
+`--offline` renders without touching a cluster, `--raw` prints raw Kubernetes
+field paths instead of the compact Deployah vocabulary, and `--yaml` shows
+changed fields as YAML blocks. For the resolved hostname, TLS mode, and context,
+use `deployah resolve <environment>` (also offline, `--output json` for CI).
+
 For how Deployah compares to similar tools (DevSpace, Werf, Score, Epinio,
 Kubero), see [docs/comparison.md](docs/comparison.md).
+
+## What Deployah decides for you
+
+These are the defaults step 2 fills in. Most are overridable.
+`deployah plan --raw` shows the rendered resources; `deployah resolve` shows
+hostname and TLS.
+
+| Decision | Default | Set it with |
+|---|---|---|
+| Workload type | Deployment; `stateful` gives a StatefulSet plus a headless Service | [`kind`](docs/workloads.md#stateful-workloads) |
+| Port | `8080` for services; workers get no port, Service, or Ingress | `port`, [`role`](docs/workloads.md#worker-components) |
+| Replicas | `1`, unless autoscaling is on | `replicas`, `autoscaling` |
+| Probes | Services with a port get three TCP checks: startup (up to 3 minutes), ready (every 5s, out of rotation after 15s), alive (every 10s, restart after 60s) | [`health`](docs/workloads.md#health-checks) |
+| Graceful stop | 30s for services, 60s for workers | `shutdownTimeout` |
+| CPU and memory | Nothing is set unless you ask; only requests are applied today (limits on presets and on `resources` are ignored) | [`resourcePreset`, `resources`](docs/spec-reference.md#resource-presets) |
+| Persistence | Access mode fixed at `ReadWriteOncePod` (stateful) or `ReadWriteOnce` (stateless); kept on delete and scale-down (`Retain`) | size and mount via [`persistence`](docs/workloads.md#access-mode-and-pvc-retention); retention via profile `pvcRetentionPolicy` (access mode is not settable) |
+| Hostname and TLS | When `expose` is set: component name plus the environment's default domain, TLS from the platform file | [`expose`](docs/platform.md), platform file |
+| Placement and security | From merged profiles, including the platform `default` profile when present | [`profiles`](docs/platform.md#profiles) |
+
+Deployah generates these common shapes: Deployment, StatefulSet, Service,
+headless Service, Ingress, HPA, PVC, ServiceMonitor, and PodMonitor. With
+`tls.mode: selfSigned` it also emits a TLS Secret for the hostname. Anything
+outside that set goes in as plain Kubernetes YAML under `.deployah/`; see
+[custom manifests and CRDs](docs/custom-manifests-and-crds.md).
 
 ## Concepts
 
@@ -397,7 +435,7 @@ These work with every command:
 | `deployah validate <environment>` | Also load the platform file and check the resolved configuration for that environment. |
 | `deployah resolve <environment>` | Preview the fully resolved hostname, TLS mode, and context, offline. Use `--output json` for machine-readable output. |
 | `deployah resolve --environments` | List every environment from both files: where it is registered, its context (or the kubeconfig fallback), domains, and overrides. |
-| `deployah plan <environment>` | Preview what a deploy would change, without applying anything. Extra manifests from `.deployah/manifests/` appear in the diff; pending CRDs are reported but not applied. Use `--offline` to render with no cluster access, `--drift` to also compare against live cluster state, or `--output json` for CI. |
+| `deployah plan <environment>` | Preview what a deploy would change, without applying anything. Extra manifests from `.deployah/manifests/` appear in the diff; pending CRDs are reported but not applied. Use `--offline` to render with no cluster access, `--raw` for raw Kubernetes field paths instead of the compact Deployah vocabulary, `--yaml` to show changed fields as YAML blocks, `--drift` to also compare against live cluster state, `--detailed-exitcode` to exit 2 when changes are pending, or `--output json` for CI. |
 | `deployah deploy <environment>` | Deploy your project. Shows the plan and asks for confirmation before applying; use `-y`/`--yes` to skip the prompt, `--reapply` to upgrade even with no changes, `--crds` for [CRD install policy](docs/custom-manifests-and-crds.md#crd-policy) (`create` or `create-replace`), `--explain` to print the resolution report first, `--force-hostname-change` to bypass the hostname guard, or `--resize-volumes` to grow [persistence](docs/workloads.md#growing-volumes) sizes. |
 | `deployah status <project>` | Show the status of a deployed project. Use `--detailed` for pod details, `-e` for an environment. |
 | `deployah logs <project>` | Stream logs. Filter with `--component`, `-e`, `--container`, `--since`, `--tail`. Use `--no-follow` for a one-off read. |
