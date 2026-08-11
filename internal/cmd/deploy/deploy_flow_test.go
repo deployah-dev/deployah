@@ -15,6 +15,7 @@
 package deploy
 
 import (
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -394,6 +395,34 @@ func TestApplyDeploy_CallsInstallAfterEmptyCRDs(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, stub.installCallCount)
 	assert.Contains(t, stderr.String(), "Deployed")
+}
+
+// TestApplyDeploy_PropagatesInstallErrorAfterCRDStep locks ordering: the CRD
+// step runs first (empty list is a successful no-op), then InstallApp. A
+// Helm failure after that step is returned to the caller. CRD survival
+// across deployah delete is covered by the e2e CRD lifecycle test.
+func TestApplyDeploy_PropagatesInstallErrorAfterCRDStep(t *testing.T) {
+	t.Parallel()
+	manifest := deployFlowManifestV1
+	stub := &stubHelmClient{
+		renderResults: []*render.RenderResult{testRenderResult(manifest)},
+		installErr:    errors.New("helm boom"),
+	}
+	cluster := newClusterWithStub(t, stub, nil)
+	sess := cluster.Session
+	planned := &deployPlan{
+		diff:    &planengine.Plan{Header: planengine.Header{Release: "web-production", Revision: 1}},
+		result:  testRenderResult(manifest),
+		cleanup: func() {},
+	}
+	c := nabatContext(t)
+	opts := &Options{Environment: "production", CRDs: string(extras.PolicyCreate)}
+
+	err := applyDeploy(c, sess, cluster, stub, nil, &spec.Spec{Project: "web"}, opts, nil, planned, nil, assertNever{}, &extras.Bundle{}, nil, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "deploy failed")
+	assert.Contains(t, err.Error(), "helm boom")
+	assert.Equal(t, 1, stub.installCallCount, "InstallApp must run after the CRD step")
 }
 
 // TestApplyDeploy_PropagatesCRDApplyError skips InstallApp when CRDs fail.

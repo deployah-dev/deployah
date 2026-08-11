@@ -17,9 +17,11 @@
 package e2e_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -45,6 +47,8 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apiextensionsclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -243,6 +247,84 @@ func (s *E2ESuite) TestStatefulScale() {
 		}
 	}
 	assert.GreaterOrEqual(t, matched, 2, "expected per-pod PVCs after scale-up")
+}
+
+const crdLifecycleName = "clusterwidgets.example.com"
+
+// TestCRDLifecycle covers CRD apply outside the Helm release: Established
+// before install, idle-Helm re-apply, create vs create-replace, and survival
+// across deployah delete.
+func (s *E2ESuite) TestCRDLifecycle() {
+	t := s.T()
+	src := filepath.Join(s.testdataDir, "crd-lifecycle")
+	require.DirExists(t, src)
+
+	dir := t.TempDir()
+	copyTree(t, src, dir)
+	t.Chdir(dir)
+
+	ext := newApiextensionsClient(t, s.kcPath, "kind-deployah")
+	t.Cleanup(func() {
+		// t.Context() is canceled just before Cleanup runs (Go 1.24+), so
+		// teardown API calls need an independent context.
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		// Best-effort: remove the fixture CRD so later suite runs stay clean.
+		if delCRDErr := ext.ApiextensionsV1().CustomResourceDefinitions().Delete(
+			cleanupCtx, crdLifecycleName, metav1.DeleteOptions{}); delCRDErr != nil {
+			t.Logf("cleanup CRD delete failed (non-fatal): %v", delCRDErr)
+		}
+		if delErr := runErr(t, "delete", "crd-lifecycle", "dev",
+			"--yes", "--wait", "--allow-missing-platform",
+			"--context", "kind-deployah"); delErr != nil {
+			t.Logf("cleanup delete failed (non-fatal): %v", delErr)
+		}
+	})
+
+	// First deploy installs the CRD and the release.
+	run(t, "deploy", "dev", "--context", "kind-deployah", "--yes", "--crds", "create")
+	crd := waitCRDEstablished(t, ext, crdLifecycleName)
+	assert.Equal(t, "crd-lifecycle", crd.Labels["e2e-marker"])
+
+	// Idle Helm plan must still visit CRDs (already present). Success messages
+	// go to stderr via nabat, so assert via a dedicated IO capture.
+	_, stderr := runCapture(t, "deploy", "dev", "--context", "kind-deployah", "--yes", "--crds", "create")
+	assert.Contains(t, stderr, "already present")
+	waitCRDEstablished(t, ext, crdLifecycleName)
+
+	// --crds create leaves an existing CRD alone when the file changes.
+	patched := strings.Replace(
+		readFixtureFile(t, filepath.Join(dir, ".deployah", "crds", "clusterwidget.yaml")),
+		`e2e-marker: "crd-lifecycle"`,
+		`e2e-marker: "create-skipped"`,
+		1,
+	)
+	require.NoError(t, os.WriteFile(
+		filepath.Join(dir, ".deployah", "crds", "clusterwidget.yaml"),
+		[]byte(patched), 0o600))
+	run(t, "deploy", "dev", "--context", "kind-deployah", "--yes", "--crds", "create")
+	crd = getCRD(t, ext, crdLifecycleName)
+	assert.Equal(t, "crd-lifecycle", crd.Labels["e2e-marker"],
+		"--crds create must not replace an existing CRD")
+
+	// --crds create-replace server-side-applies over the existing CRD.
+	run(t, "deploy", "dev", "--context", "kind-deployah", "--yes", "--crds", "create-replace")
+	require.NoError(t, wait.For(func(ctx context.Context) (bool, error) {
+		live, getErr := ext.ApiextensionsV1().CustomResourceDefinitions().Get(
+			ctx, crdLifecycleName, metav1.GetOptions{})
+		if getErr != nil {
+			return false, getErr
+		}
+		return live.Labels["e2e-marker"] == "create-skipped", nil
+	}, wait.WithTimeout(2*time.Minute), wait.WithInterval(time.Second)))
+
+	// CRDs are never pruned on uninstall.
+	run(t, "delete", "crd-lifecycle", "dev",
+		"--yes", "--wait", "--allow-missing-platform",
+		"--context", "kind-deployah")
+	_, err := ext.ApiextensionsV1().CustomResourceDefinitions().Get(
+		t.Context(), crdLifecycleName, metav1.GetOptions{})
+	require.NoError(t, err, "CRD must survive deployah delete")
 }
 
 // TestDeployScenarios deploys each discovered fixture and asserts expect.yaml.
@@ -492,18 +574,108 @@ func loadExpectations(t testing.TB, dir string) expectations {
 
 func run(t testing.TB, args ...string) string {
 	t.Helper()
-	io, _, out, errOut := nabattest.NewIO()
-	app := cmd.NewApp(nabat.WithIO(io))
+	stdout, _ := runCapture(t, args...)
+	return stdout
+}
+
+// runCapture runs deployah and returns stdout and stderr on success.
+func runCapture(t testing.TB, args ...string) (stdout, stderr string) {
+	t.Helper()
+	appIO, _, out, errOut := nabattest.NewIO()
+	app := cmd.NewApp(nabat.WithIO(appIO))
 	err := nabattest.Run(t, app, args)
 	require.NoErrorf(t, err, "deployah %s\nstderr:\n%s",
 		strings.Join(args, " "), errOut.String())
-	return out.String()
+	return out.String(), errOut.String()
+}
+
+func copyTree(t testing.TB, src, dst string) {
+	t.Helper()
+	err := filepath.WalkDir(src, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, relErr := filepath.Rel(src, path)
+		if relErr != nil {
+			return relErr
+		}
+		target := filepath.Join(dst, rel)
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o750)
+		}
+		in, openErr := os.Open(path) // #nosec G304 -- path under testdata/
+		if openErr != nil {
+			return openErr
+		}
+		defer in.Close()                                                                 //nolint:errcheck // read-only copy helper
+		out, createErr := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600) // #nosec G304 -- temp fixture copy
+		if createErr != nil {
+			return createErr
+		}
+		_, copyErr := io.Copy(out, in)
+		closeErr := out.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		return closeErr
+	})
+	require.NoError(t, err)
+}
+
+func readFixtureFile(t testing.TB, path string) string {
+	t.Helper()
+	raw, err := os.ReadFile(path) // #nosec G304 -- path under test-controlled temp dir
+	require.NoError(t, err)
+	return string(raw)
+}
+
+func newApiextensionsClient(t testing.TB, kubeconfigPath, contextName string) apiextensionsclient.Interface {
+	t.Helper()
+	rules := clientcmd.NewDefaultClientConfigLoadingRules()
+	rules.ExplicitPath = kubeconfigPath
+	overrides := &clientcmd.ConfigOverrides{CurrentContext: contextName}
+	restCfg, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+		rules, overrides).ClientConfig()
+	require.NoError(t, err)
+	cs, err := apiextensionsclient.NewForConfig(restCfg)
+	require.NoError(t, err)
+	return cs
+}
+
+func getCRD(t testing.TB, ext apiextensionsclient.Interface, name string) *apiextensionsv1.CustomResourceDefinition {
+	t.Helper()
+	crd, err := ext.ApiextensionsV1().CustomResourceDefinitions().Get(
+		t.Context(), name, metav1.GetOptions{})
+	require.NoError(t, err)
+	return crd
+}
+
+func waitCRDEstablished(t testing.TB, ext apiextensionsclient.Interface, name string) *apiextensionsv1.CustomResourceDefinition {
+	t.Helper()
+	var latest *apiextensionsv1.CustomResourceDefinition
+	require.NoError(t, wait.For(func(ctx context.Context) (bool, error) {
+		crd, err := ext.ApiextensionsV1().CustomResourceDefinitions().Get(
+			ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return false, err
+		}
+		latest = crd
+		for _, cond := range crd.Status.Conditions {
+			if cond.Type == apiextensionsv1.Established &&
+				cond.Status == apiextensionsv1.ConditionTrue {
+				return true, nil
+			}
+		}
+		return false, nil
+	}, wait.WithTimeout(2*time.Minute), wait.WithInterval(time.Second)))
+	require.NotNil(t, latest)
+	return latest
 }
 
 func runErr(t testing.TB, args ...string) error {
 	t.Helper()
-	io, _, _, errOut := nabattest.NewIO()
-	app := cmd.NewApp(nabat.WithIO(io))
+	appIO, _, _, errOut := nabattest.NewIO()
+	app := cmd.NewApp(nabat.WithIO(appIO))
 	err := nabattest.Run(t, app, args)
 	if err == nil {
 		return nil

@@ -194,3 +194,49 @@ func TestPrepareChart_CanceledContextReturnsImmediately(t *testing.T) {
 	_, err := PrepareChart(ctx, &spec.Spec{Project: "x"}, "prod", nil, NewChartCache(time.Hour))
 	require.ErrorIs(t, err, context.Canceled)
 }
+
+// TestGenerateKey_ResolvedSpecContentInvalidates verifies that when resolved
+// is non-nil, changes to resolved.Spec change the cache key. Callers must
+// keep the separate manifest parameter consistent with resolved.Spec (see
+// [PrepareChart]); a mismatched manifest would not invalidate the key on
+// its own.
+func TestGenerateKey_ResolvedSpecContentInvalidates(t *testing.T) {
+	t.Parallel()
+	cache := NewChartCache(time.Hour)
+
+	base := &spec.Spec{
+		APIVersion: "v1-alpha.4",
+		Project:    "cache-key",
+		Components: map[string]spec.Component{"web": serviceComponent()},
+	}
+	require.NoError(t, spec.FillSpecWithDefaults(base, "v1-alpha.4"))
+
+	changed := &spec.Spec{
+		APIVersion: "v1-alpha.4",
+		Project:    "cache-key",
+		Components: map[string]spec.Component{
+			"web": {
+				Role:  spec.ComponentRoleService,
+				Image: "my-app:v2",
+				Port:  8080,
+			},
+		},
+	}
+	require.NoError(t, spec.FillSpecWithDefaults(changed, "v1-alpha.4"))
+
+	resolvedA := &spec.ResolvedSpec{Spec: base, Env: spec.NormalizeEnv("production")}
+	resolvedB := &spec.ResolvedSpec{Spec: changed, Env: spec.NormalizeEnv("production")}
+
+	keyA, err := cache.GenerateKey(base, "production", resolvedA)
+	require.NoError(t, err)
+	keyB, err := cache.GenerateKey(base, "production", resolvedB)
+	require.NoError(t, err)
+	assert.NotEqual(t, keyA, keyB, "resolved.Spec content must be part of the cache key")
+
+	// Same resolved, different manifest argument: key is unchanged. This is
+	// why PrepareChart documents that manifest must match resolved.Spec.
+	keySameResolved, err := cache.GenerateKey(changed, "production", resolvedA)
+	require.NoError(t, err)
+	assert.Equal(t, keyA, keySameResolved,
+		"GenerateKey hashes resolved when non-nil, not the separate manifest parameter")
+}

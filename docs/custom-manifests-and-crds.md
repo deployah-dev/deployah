@@ -126,4 +126,14 @@ then applies the Helm release. If the Helm plan has no changes but
 left alone). CRDs are never pruned and are never deleted on uninstall. Extra
 manifests leave with the release.
 
+## Failure modes
+
+CRD apply and the Helm release are **not** one atomic operation. Deployah
+applies CRDs first, waits for `Established`, then installs or upgrades the
+release. If the Helm step fails after CRDs succeed, those CRDs stay in the
+cluster (Deployah never rolls them back). If CRD apply fails, Deployah does
+not call Helm. Re-run `deployah deploy` after fixing the failure; already
+present CRDs are left alone under `--crds create`, or updated under
+`--crds create-replace`.
+
 See the [README](../README.md) for the project overview and the other guides.

@@ -36,8 +36,11 @@ Kubernetes work. They **move it** to a platform team or to a server that runs
 inside your cluster.
 
 > **An honest note:** you do not need Helm to *use* Deployah. But the output is a
-> real Helm release, so a little Helm knowledge helps if you want to debug deeply.
-> For example, you can run `helm history` or `helm get` on what Deployah installed.
+> real Helm release, so a little Helm knowledge helps when you debug the release
+> itself (for example `helm history` or `helm get`). Custom CRDs under
+> `.deployah/crds/` are another place the abstraction thins: they are applied
+> outside the Helm release, with their own install policy. See
+> [Custom manifests and CRDs](custom-manifests-and-crds.md).
 
 ## How much Helm you need (from most to least)
 

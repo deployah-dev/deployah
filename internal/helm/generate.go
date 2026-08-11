@@ -88,6 +88,12 @@ func GenerateReleaseName(projectName, environmentName string) string {
 // PrepareChart returns [context.Canceled] or [context.DeadlineExceeded]
 // immediately; chart expansion itself is not interrupted mid-flight.
 //
+// When resolved is non-nil, the cache key hashes resolved (including
+// [spec.ResolvedSpec.Spec]), not the separate manifest parameter. Callers
+// must pass a manifest consistent with resolved.Spec: chart rendering still
+// reads component names and project from manifest, so a mismatched pair
+// could reuse a stale chart.
+//
 // On a cache miss, every 10th entry may start a background goroutine that
 // removes expired cache directories; that work outlives this call.
 //

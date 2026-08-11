@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -33,17 +34,17 @@ var (
 	ErrReleaseNotFound = errors.New("release not found")
 	// ErrReleaseAlreadyExists is returned when a Helm release already exists.
 	//
-	// Today this sentinel is produced only for user-facing wording in
-	// [Client.wrapHelmError] (via typed Kubernetes/Helm drivers when
-	// available, otherwise string matching). No caller matches it with
-	// [errors.Is] yet; treat it as message classification until one does.
+	// Produced by [Client.wrapHelmError] from typed Helm/Kubernetes errors
+	// when available, otherwise from Helm's plain "already exists" message.
+	// Callers may match with [errors.Is].
 	ErrReleaseAlreadyExists = errors.New("release already exists")
 	// ErrReleasePending is returned when a Helm release has an operation in progress.
 	//
-	// Today this sentinel is produced only for user-facing wording in
-	// [Client.wrapHelmError] via string matching on Helm's untyped pending
-	// messages. No caller matches it with [errors.Is] yet; treat it as
-	// message classification until one does.
+	// Only [Client.InstallApp] produces this sentinel, via a typed check of the
+	// newest revision's pending status (Status.IsPending) before upgrade.
+	// [Client.wrapHelmError] does not classify Helm's plain pending messages, so
+	// other action paths (and a rare race after the pre-check) surface those as
+	// generic helm failures. Callers may match with [errors.Is].
 	ErrReleasePending = errors.New("another operation is in progress")
 )
 
@@ -199,10 +200,14 @@ func (c *Client) Namespace() string {
 }
 
 // IsReachable reports whether the configured Kubernetes cluster is reachable.
-// Also works around helm/helm#32183: Helm v4.2.0 panics on a second
-// IsReachable call after the first one fails (typed-nil cached in
-// getKubeClient), so calling this once before InstallApp keeps InstallApp
-// from ever hitting that second call against a poisoned client.
+//
+// Also works around helm/helm#32183: Helm panics on a second IsReachable call
+// after the first one fails (typed-nil cached in getKubeClient), so calling
+// this once before InstallApp keeps InstallApp from ever hitting that second
+// call against a poisoned client. Upstream merged the fix in
+// https://github.com/helm/helm/pull/32184 (2026-06-18), but helm.sh/helm/v4
+// v4.2.3 still ships the buggy getKubeClient. Re-check getKubeClient on the
+// next Helm bump; the pre-call can be removed once the pin includes the fix.
 func (c *Client) IsReachable() error {
 	if err := c.config.KubeClient.IsReachable(); err != nil {
 		return fmt.Errorf("%w: %w", ErrClusterUnreachable, err)
@@ -231,6 +236,25 @@ func (c *Client) InstallApp(ctx context.Context, manifest *spec.Spec, environmen
 		"deployah.dev/version":     manifest.APIVersion,
 	}
 
+	releaseName := GenerateReleaseName(manifest.Project, environment)
+
+	// Decide install vs upgrade (and reject pending) before preparing the
+	// chart so a stuck pending release fails without chart work.
+	// History.Max is ignored by Helm (see [Client.GetReleaseHistory]), so
+	// sort by Version after a successful lookup rather than trusting order.
+	history := action.NewHistory(c.config)
+	histRels, histErr := history.Run(releaseName)
+	upgradeExisting := histErr == nil
+	if upgradeExisting {
+		rels, convErr := releaserListToV1(histRels)
+		if convErr != nil {
+			return fmt.Errorf("failed to convert release history: %w", convErr)
+		}
+		if newest := newestRelease(rels); newest != nil && newest.Info != nil && newest.Info.Status.IsPending() {
+			return fmt.Errorf("release '%s': %w", releaseName, ErrReleasePending)
+		}
+	}
+
 	chartPath, err := PrepareChart(ctx, manifest, environment, resolved, c.chartCache)
 	if err != nil {
 		return fmt.Errorf("failed to prepare chart: %w", err)
@@ -245,7 +269,8 @@ func (c *Client) InstallApp(ctx context.Context, manifest *spec.Spec, environmen
 		}()
 	}
 
-	// Values are empty for now, but will be populated later
+	// Values stay empty: the chart's own values.yaml, written by
+	// [PrepareChart], already carries the mapped spec data.
 	values := map[string]any{}
 
 	ch, err := loader.Load(chartPath)
@@ -253,15 +278,11 @@ func (c *Client) InstallApp(ctx context.Context, manifest *spec.Spec, environmen
 		return fmt.Errorf("failed to load chart: %w", err)
 	}
 
-	// Decide install vs upgrade by checking release history
-	history := action.NewHistory(c.config)
-	history.Max = 1
-	_, histErr := history.Run(GenerateReleaseName(manifest.Project, environment))
-
-	if histErr != nil {
-		// Not found -> install. For other errors, proceed with install attempt as well
+	if !upgradeExisting {
+		// Not found -> install. For other history errors, proceed with install
+		// attempt as well.
 		install := action.NewInstall(c.config)
-		install.ReleaseName = GenerateReleaseName(manifest.Project, environment)
+		install.ReleaseName = releaseName
 		install.Namespace = c.settings.Namespace()
 		install.CreateNamespace = true
 		install.Timeout = c.timeout
@@ -271,7 +292,7 @@ func (c *Client) InstallApp(ctx context.Context, manifest *spec.Spec, environmen
 		install.PostRenderer = postRenderer
 
 		if _, runErr := install.RunWithContext(ctx, ch, values); runErr != nil {
-			return c.wrapHelmError("install", GenerateReleaseName(manifest.Project, environment), runErr)
+			return c.wrapHelmError("install", releaseName, runErr)
 		}
 		return nil
 	}
@@ -284,11 +305,34 @@ func (c *Client) InstallApp(ctx context.Context, manifest *spec.Spec, environmen
 	upgrade.WaitStrategy = kube.StatusWatcherStrategy
 	upgrade.Labels = labels
 	upgrade.PostRenderer = postRenderer
-	_, err = upgrade.RunWithContext(ctx, GenerateReleaseName(manifest.Project, environment), ch, values)
+	_, err = upgrade.RunWithContext(ctx, releaseName, ch, values)
 	if err != nil {
-		return c.wrapHelmError("upgrade", GenerateReleaseName(manifest.Project, environment), err)
+		return c.wrapHelmError("upgrade", releaseName, err)
 	}
 	return nil
+}
+
+// newestRelease returns the release with the highest Version, or nil when
+// releases is empty. Helm does not guarantee history list order, so callers
+// must sort rather than take index 0.
+func newestRelease(releases []*v1.Release) *v1.Release {
+	if len(releases) == 0 {
+		return nil
+	}
+	sorted := slices.Clone(releases)
+	slices.SortFunc(sorted, func(a, b *v1.Release) int {
+		if a == nil && b == nil {
+			return 0
+		}
+		if a == nil {
+			return 1
+		}
+		if b == nil {
+			return -1
+		}
+		return b.Version - a.Version
+	})
+	return sorted[0]
 }
 
 // ListReleases returns release details in the current namespace.
@@ -435,8 +479,9 @@ func releaserListToV1(rs []release.Releaser) ([]*v1.Release, error) {
 // or inspect the underlying Helm/Kubernetes error text.
 //
 // Typed Kubernetes and Helm storage errors are classified first. String
-// matching remains only for Helm messages that still lack stable sentinels
-// (notably pending operations).
+// matching remains for Helm messages that still lack stable sentinels
+// (not-found, already-exists, connection failures). Pending releases are
+// rejected earlier by [Client.InstallApp] via Status.IsPending, not here.
 func (c *Client) wrapHelmError(operation, releaseName string, err error) error {
 	if errors.Is(err, driver.ErrReleaseNotFound) {
 		return fmt.Errorf("release '%s': %w: %w", releaseName, ErrReleaseNotFound, err)
@@ -461,14 +506,13 @@ func (c *Client) wrapHelmError(operation, releaseName string, err error) error {
 	}
 
 	// Helm still surfaces some conditions as plain strings only.
-	// Timeout/forbidden/unauthorized/already-exists string arms are omitted
-	// here because the typed checks above cover those Kubernetes cases.
+	// Timeout/forbidden/unauthorized string arms are omitted because the
+	// typed checks above cover those Kubernetes cases. Pending is omitted
+	// because InstallApp rejects it with a typed Status.IsPending check.
 	errMsg := err.Error()
 	switch {
 	case strings.Contains(errMsg, "not found"):
 		return fmt.Errorf("release '%s': %w: %w", releaseName, ErrReleaseNotFound, err)
-	case strings.Contains(errMsg, "another operation") || strings.Contains(errMsg, "pending"):
-		return fmt.Errorf("release '%s': %w: %w", releaseName, ErrReleasePending, err)
 	case strings.Contains(errMsg, "connection refused") || strings.Contains(errMsg, "dial"):
 		return fmt.Errorf("unable to connect to Kubernetes cluster: %w", err)
 	case strings.Contains(errMsg, "already exists"):

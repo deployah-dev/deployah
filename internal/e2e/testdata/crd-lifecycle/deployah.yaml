@@ -1,0 +1,10 @@
+apiVersion: v1-alpha.4
+project: crd-lifecycle
+components:
+  web:
+    image: nginx:latest
+    port: 80
+    environments: [dev]
+    resourcePreset: small
+environments:
+  dev: {}
