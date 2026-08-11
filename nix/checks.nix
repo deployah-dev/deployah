@@ -51,6 +51,17 @@ git-hooks.lib.${system}.run {
       excludes = [ "node_modules" ];
       settings.configuration = builtins.fromJSON (builtins.readFile ../.markdownlint.json);
     };
+    # markdownlint only validates heading anchors inside a single file, so a
+    # broken cross-file link or anchor (docs/platform.md#profiles) passes it.
+    # Offline mode skips network URLs, which keeps the hook fast and stable.
+    markdown-links = {
+      enable = true;
+      name = "markdown-links";
+      entry = "${pkgs.lychee}/bin/lychee --offline --include-fragments --no-progress '**/*.md'";
+      files = "\\.md$";
+      language = "system";
+      pass_filenames = false;
+    };
     go-mod-tidy = {
       enable = true;
       name = "go-mod-tidy";

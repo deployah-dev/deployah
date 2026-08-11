@@ -1,4 +1,4 @@
-# Code quality apps: fmt, lint, lint-md, tidy
+# Code quality apps: fmt, lint, lint-md, lint-links, tidy
 {
   pkgs,
   lib,
@@ -46,6 +46,14 @@ in
     description = "Lint Markdown files with markdownlint";
     script = ''
       exec ${pkgs.markdownlint-cli}/bin/markdownlint '**/*.md'
+    '';
+  };
+
+  lint-links = lib.mkApp {
+    name = "lint-links";
+    description = "Check relative Markdown links and heading anchors with lychee";
+    script = ''
+      exec ${pkgs.lychee}/bin/lychee --offline --include-fragments --no-progress '**/*.md'
     '';
   };
 

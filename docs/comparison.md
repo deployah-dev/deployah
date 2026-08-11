@@ -8,8 +8,9 @@ For Deployah, one question matters most:
 
 > **How much Helm and Kubernetes knowledge do you need?**
 
-Deployah's goal: **zero Helm knowledge**, **zero cluster-side setup**, and
-**one binary**.
+Deployah's goal: **no chart to maintain**, **zero cluster-side setup**, and
+**one binary**. You never write or maintain a Helm chart, and you still get a
+real Helm release.
 
 ## The Helm-knowledge question
 
@@ -91,7 +92,7 @@ must install a platform into a cluster first (Epinio, Kubero).
 | **Local cluster included?** | **Yes** (`deployah cluster up`, kind) | No | No | No | No | No |
 | **Builds your image?** | No (you bring it) | Yes (and a dev loop) | Yes (Dockerfile/Stapel) | No (you bring it) | Yes (buildpacks) | Yes (buildpacks) |
 | **Output** | **Helm release** | Helm release | Helm release (via Nelm) | Raw YAML (no install) | Helm release (hidden) | K8s objects via operator |
-| **Multi-component** (service/worker/job, stateless/stateful) | **Yes, named** (`kind: stateful` with per-pod PVCs; see [stateful workloads](../README.md#stateful-workloads)) | Partial | No (you template each) | No (one workload per file) | No (web apps) | web/worker/cron, plus DB add-ons |
+| **Multi-component** (service/worker/job, stateless/stateful) | **Yes, named** (`kind: stateful` with per-pod PVCs; see [stateful workloads](workloads.md#stateful-workloads)) | Partial | No (you template each) | No (one workload per file) | No (web apps) | web/worker/cron, plus DB add-ons |
 | **Multiple environments** | **Yes** (own context, config, env, vars) | Partial (profiles and vars) | Yes (env name; you template the diffs) | No (the platform decides) | Namespaces only | Pipelines (up to 4 stages) |
 | **Installs and day-2** | **Yes** | Yes (and dev mode) | Yes (converge/plan/dismiss/status/logs) | No (you run `kubectl apply`) | Yes (and UI) | Yes (and UI) |
 | **Maturity (mid-2026)** | Early, independent | Mature, CNCF, ~4.9k★ | Mature, CNCF, Flant, ~4.7k★ | Mature spec, CNCF | Active, ~585★ | Active, ~4.3k★ |
@@ -191,3 +192,5 @@ Choose another tool if you want:
 - Score: <https://score.dev/>, <https://github.com/score-spec/spec>
 - Epinio: <https://epinio.io/>, <https://github.com/epinio/epinio>
 - Kubero: <https://www.kubero.dev/>, <https://github.com/kubero-dev/kubero>
+
+See the [README](../README.md) for the project overview and the other guides.
