@@ -436,6 +436,14 @@ func (cl *Cluster) Namespace() string {
 	return DefaultNamespace
 }
 
+// sessionForContext returns a shallow Session copy targeted at this
+// cluster's resolved kube context, with cached clients cleared. Used by
+// Helm, Kubernetes, and RESTConfig so the three paths share one clone
+// helper.
+func (cl *Cluster) sessionForContext() *Session {
+	return cl.cloneWithContext(cl.kubeContext)
+}
+
 // Helm returns a memoized Helm client targeted at the resolved cluster.
 func (cl *Cluster) Helm() (HelmClient, error) {
 	cl.mu.Lock()
@@ -443,7 +451,7 @@ func (cl *Cluster) Helm() (HelmClient, error) {
 	if cl.helm != nil {
 		return cl.helm, nil
 	}
-	tmp := cl.cloneWithContext(cl.kubeContext)
+	tmp := cl.sessionForContext()
 	c, err := tmp.helmFactory(tmp)
 	if err != nil {
 		return nil, fmt.Errorf("helm client (namespace=%q, kubeconfig=%q): %w",
@@ -461,7 +469,7 @@ func (cl *Cluster) Kubernetes() (kubernetes.Interface, error) {
 	if cl.k8s != nil {
 		return cl.k8s, nil
 	}
-	tmp := cl.cloneWithContext(cl.kubeContext)
+	tmp := cl.sessionForContext()
 	cs, err := tmp.k8sFactory(tmp)
 	if err != nil {
 		return nil, fmt.Errorf("kubernetes client: %w", err)
@@ -474,7 +482,7 @@ func (cl *Cluster) Kubernetes() (kubernetes.Interface, error) {
 func (cl *Cluster) RESTConfig() (*rest.Config, error) {
 	cfg, err := rest.InClusterConfig()
 	if err != nil {
-		tmp := cl.cloneWithContext(cl.kubeContext)
+		tmp := cl.sessionForContext()
 		cfg, err = tmp.kubeconfigRESTConfig()
 		if err != nil {
 			return nil, fmt.Errorf("failed to build kubernetes config: %w (provide --kubeconfig or ensure KUBECONFIG/~/.kube/config is set)", err)
