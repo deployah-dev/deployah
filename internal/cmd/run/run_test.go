@@ -130,6 +130,43 @@ func TestResolveRunTask(t *testing.T) {
 	})
 }
 
+func TestRunTask_FlagValidation(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "negative count",
+			args: []string{"run", "migrate", "dev", "--count", "-1"},
+			want: "zero or positive",
+		},
+		{
+			name: "parallelism above indexed job limit",
+			args: []string{"run", "migrate", "dev", "--parallelism", "100001"},
+			want: "at most",
+		},
+		{
+			name: "parallelism greater than count",
+			args: []string{"run", "migrate", "dev", "--count", "2", "--parallelism", "3"},
+			want: "less than or equal to --count",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			io, _, _, _ := nabattest.NewIO()
+			app := nabat.MustNew("deployah", nabat.WithIO(io))
+			Register(app)
+			err := nabattest.Run(t, app, tt.args)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.want)
+		})
+	}
+}
+
 func TestExecuteRun_DetachAndWait(t *testing.T) {
 	t.Parallel()
 
@@ -178,6 +215,19 @@ func TestExecuteRun_DetachAndWait(t *testing.T) {
 		err := executeRun(c, cs, time.Minute, job, false)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "backoff limit exceeded")
+	})
+
+	t.Run("create error", func(t *testing.T) {
+		t.Parallel()
+		cs := fake.NewSimpleClientset()
+		cs.PrependReactor("create", "jobs", func(action k8stesting.Action) (bool, runtime.Object, error) {
+			return true, nil, fmt.Errorf("quota exceeded")
+		})
+		job := mustBuildJob(t, opts, "shop-dev-backfill-create")
+		c := nabatContext(t)
+		err := executeRun(c, cs, time.Minute, job, true)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "quota exceeded")
 	})
 }
 

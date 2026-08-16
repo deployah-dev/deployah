@@ -16,6 +16,7 @@ package k8s
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -119,6 +120,67 @@ func TestBuildTaskJob_FlagOverrides(t *testing.T) {
 	assert.Equal(t, int32(2), *job.Spec.Parallelism)
 }
 
+func TestJobGenerateName_Truncates(t *testing.T) {
+	t.Parallel()
+
+	got := jobGenerateName("shop-dev", "backfill")
+	assert.Equal(t, "shop-dev-backfill-", got)
+
+	long := jobGenerateName(strings.Repeat("a", 40), strings.Repeat("b", 40))
+	assert.Equal(t, jobGenerateNameMax, len(long))
+	assert.Equal(t, (strings.Repeat("a", 40) + "-" + strings.Repeat("b", 40) + "-")[:jobGenerateNameMax], long)
+}
+
+func TestBuildTaskJob_EphemeralStorageArgsAndTTL(t *testing.T) {
+	t.Parallel()
+
+	ttl := 30
+	job, err := BuildTaskJob(TaskJobOptions{
+		Project:     "shop",
+		Environment: "dev",
+		Namespace:   "default",
+		TaskName:    "migrate",
+		Task: spec.Task{
+			Image:   "busybox:1.36",
+			Command: []string{"migrate"},
+			Args:    []string{"up"},
+			Resources: spec.Resources{
+				CPU:              spec.MustQuantity("100m"),
+				Memory:           spec.MustQuantity("128Mi"),
+				EphemeralStorage: spec.MustQuantity("1Gi"),
+			},
+			TTLSecondsAfterFinished: &ttl,
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, job.Spec.Template.Spec.Containers, 1)
+	assert.Equal(t, []string{"up"}, job.Spec.Template.Spec.Containers[0].Args)
+	req := job.Spec.Template.Spec.Containers[0].Resources.Requests
+	assert.True(t, spec.MustQuantity("100m").Equal(req[corev1.ResourceCPU]))
+	assert.True(t, spec.MustQuantity("128Mi").Equal(req[corev1.ResourceMemory]))
+	assert.True(t, spec.MustQuantity("1Gi").Equal(req[corev1.ResourceEphemeralStorage]))
+	require.NotNil(t, job.Spec.TTLSecondsAfterFinished)
+	assert.Equal(t, int32(30), *job.Spec.TTLSecondsAfterFinished)
+}
+
+func TestCreateTaskJob_Error(t *testing.T) {
+	t.Parallel()
+
+	cs := fake.NewSimpleClientset()
+	cs.PrependReactor("create", "jobs", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("quota exceeded")
+	})
+	_, err := CreateTaskJob(t.Context(), cs, namedJob(t, TaskJobOptions{
+		Project:     "shop",
+		Environment: "dev",
+		Namespace:   "default",
+		TaskName:    "backfill",
+		Task:        spec.Task{Image: "busybox:1.36", Command: []string{"true"}},
+	}, "shop-dev-backfill-create"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "quota exceeded")
+}
+
 func TestCreateTaskJob_UniqueNames(t *testing.T) {
 	t.Parallel()
 
@@ -178,6 +240,36 @@ func TestWaitForJob_SuccessAndFailure(t *testing.T) {
 		err := WaitForJob(t.Context(), cs, "default", "bad")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "backoff limit exceeded")
+	})
+
+	t.Run("failed condition without message uses reason", func(t *testing.T) {
+		t.Parallel()
+		job := &batchv1.Job{
+			Name: "bad", Namespace: "default",
+			Spec: batchv1.JobSpec{Completions: new(int32(1))},
+			Status: batchv1.JobStatus{
+				Conditions: []batchv1.JobCondition{{
+					Type:   batchv1.JobFailed,
+					Status: "True",
+					Reason: "BackoffLimitExceeded",
+				}},
+			},
+		}
+		cs := fake.NewSimpleClientset(job)
+		err := WaitForJob(t.Context(), cs, "default", "bad")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "BackoffLimitExceeded")
+	})
+
+	t.Run("nil completions treats one success as done", func(t *testing.T) {
+		t.Parallel()
+		job := &batchv1.Job{
+			Name:      "ok",
+			Namespace: "default",
+			Status:    batchv1.JobStatus{Succeeded: 1},
+		}
+		cs := fake.NewSimpleClientset(job)
+		require.NoError(t, WaitForJob(t.Context(), cs, "default", "ok"))
 	})
 }
 
@@ -317,6 +409,22 @@ func TestListJobs(t *testing.T) {
 	assert.Equal(t, "shop-job", got[0].Name)
 }
 
+func TestListJobs_Error(t *testing.T) {
+	t.Parallel()
+
+	cs := fake.NewSimpleClientset()
+	cs.PrependReactor("list", "jobs", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("apiserver timeout")
+	})
+	_, err := ListJobs(t.Context(), cs, "default", "shop", "dev")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "apiserver timeout")
+
+	err = DeleteJobs(t.Context(), cs, "default", "shop", "dev")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "apiserver timeout")
+}
+
 func TestDeleteJobs(t *testing.T) {
 	t.Parallel()
 
@@ -447,11 +555,26 @@ func TestBuildTaskJob_AppliesProfile(t *testing.T) {
 		TaskName:    "migrate",
 		Task:        spec.Task{Image: "busybox:1.36", Command: []string{"true"}},
 		Profile: &spec.PlatformProfile{
-			NodeSelector: map[string]string{"workload": "batch"},
-			PodLabels:    map[string]string{"tier": "jobs"},
+			NodeSelector:   map[string]string{"workload": "batch"},
+			PodLabels:      map[string]string{"tier": "jobs"},
+			PodAnnotations: map[string]string{"team": "platform"},
+			Tolerations: []corev1.Toleration{
+				{Key: "batch", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule},
+			},
+			SecurityContext:          &corev1.PodSecurityContext{RunAsNonRoot: new(true)},
+			ContainerSecurityContext: &corev1.SecurityContext{ReadOnlyRootFilesystem: new(true)},
 		},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, map[string]string{"workload": "batch"}, job.Spec.Template.Spec.NodeSelector)
 	assert.Equal(t, "jobs", job.Spec.Template.Labels["tier"])
+	assert.Equal(t, "platform", job.Spec.Template.Annotations["team"])
+	require.Len(t, job.Spec.Template.Spec.Tolerations, 1)
+	assert.Equal(t, "batch", job.Spec.Template.Spec.Tolerations[0].Key)
+	require.NotNil(t, job.Spec.Template.Spec.SecurityContext)
+	require.NotNil(t, job.Spec.Template.Spec.SecurityContext.RunAsNonRoot)
+	assert.True(t, *job.Spec.Template.Spec.SecurityContext.RunAsNonRoot)
+	require.NotNil(t, job.Spec.Template.Spec.Containers[0].SecurityContext)
+	require.NotNil(t, job.Spec.Template.Spec.Containers[0].SecurityContext.ReadOnlyRootFilesystem)
+	assert.True(t, *job.Spec.Template.Spec.Containers[0].SecurityContext.ReadOnlyRootFilesystem)
 }

@@ -1440,3 +1440,112 @@ func TestResolve_TaskAppliesDefaultProfile(t *testing.T) {
 	assert.Equal(t, []string{"default"}, rt.Profiles)
 	assert.Equal(t, "general", rt.MergedProfile.NodeSelector["workload"])
 }
+
+func TestResolve_UnknownTaskEnvironmentFilterWarning(t *testing.T) {
+	t.Parallel()
+
+	appSpec := &spec.Spec{
+		Project: "shop",
+		Components: map[string]spec.Component{
+			"api": {Image: "nginx:latest"},
+		},
+		Tasks: map[string]spec.Task{
+			"migrate": {
+				From:         "api",
+				On:           spec.TaskOnPreDeploy,
+				Command:      []string{"true"},
+				Environments: []string{"stagign"},
+			},
+		},
+	}
+	_, report, err := spec.Resolve(appSpec, minimalPlatform(), spec.NormalizeEnv("production"), spec.SubstitutionReport{})
+	require.NoError(t, err)
+	require.NotEmpty(t, report.Warnings)
+	assert.Contains(t, report.Warnings[0], `task "migrate"`)
+	assert.Contains(t, report.Warnings[0], `"stagign"`)
+}
+
+func TestResolve_TaskProfilesRequirePlatform(t *testing.T) {
+	t.Parallel()
+
+	appSpec := &spec.Spec{
+		Project: "shop",
+		Components: map[string]spec.Component{
+			"api": {Image: "nginx:latest"},
+		},
+		Tasks: map[string]spec.Task{
+			"migrate": {
+				From:     "api",
+				On:       spec.TaskOnPreDeploy,
+				Command:  []string{"true"},
+				Profiles: []string{"batch"},
+			},
+		},
+	}
+	_, _, err := spec.Resolve(appSpec, nil, spec.NormalizeEnv("dev"), spec.SubstitutionReport{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no platform file")
+}
+
+func TestResolve_UnknownTaskProfile(t *testing.T) {
+	t.Parallel()
+
+	appSpec := &spec.Spec{
+		Project: "shop",
+		Components: map[string]spec.Component{
+			"api": {Image: "nginx:latest"},
+		},
+		Tasks: map[string]spec.Task{
+			"migrate": {
+				From:     "api",
+				On:       spec.TaskOnPreDeploy,
+				Command:  []string{"true"},
+				Profiles: []string{"missing"},
+			},
+		},
+	}
+	_, _, err := spec.Resolve(appSpec, platformWithProfiles(), spec.NormalizeEnv("production"), spec.SubstitutionReport{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `task "migrate"`)
+	assert.Contains(t, err.Error(), "missing")
+}
+
+func TestResolve_TaskCycle(t *testing.T) {
+	t.Parallel()
+
+	appSpec := &spec.Spec{
+		Project: "shop",
+		Components: map[string]spec.Component{
+			"api": {Image: "nginx:latest"},
+		},
+		Tasks: map[string]spec.Task{
+			"a": {From: "api", On: spec.TaskOnPreDeploy, After: []string{"b"}, Command: []string{"true"}},
+			"b": {From: "api", On: spec.TaskOnPreDeploy, After: []string{"a"}, Command: []string{"true"}},
+		},
+	}
+	_, _, err := spec.Resolve(appSpec, platformWithProfiles(), spec.NormalizeEnv("production"), spec.SubstitutionReport{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cycle")
+}
+
+func TestCrossCheckPlatformReferences_TaskProfilesWithoutSection(t *testing.T) {
+	t.Parallel()
+
+	appSpec := &spec.Spec{
+		Components: map[string]spec.Component{
+			"api": {Image: "nginx:latest"},
+		},
+		Tasks: map[string]spec.Task{
+			"migrate": {
+				From:     "api",
+				On:       spec.TaskOnPreDeploy,
+				Command:  []string{"true"},
+				Profiles: []string{"batch"},
+			},
+		},
+	}
+	problems, _ := spec.CrossCheckPlatformReferences(appSpec, minimalPlatform())
+	require.Len(t, problems, 1)
+	assert.Contains(t, problems[0], `task "migrate"`)
+	assert.Contains(t, problems[0], "no profiles section")
+}

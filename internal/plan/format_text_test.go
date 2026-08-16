@@ -389,6 +389,30 @@ func TestRenderText_TasksSection(t *testing.T) {
 			omits:    []string{"database must already be reachable"},
 		},
 		{
+			name: "postDeploy only skips empty groups",
+			plan: &Plan{
+				Tasks: []PlannedTask{{Name: "smoke", On: TaskOnPostDeploy, Timeout: "5m"}},
+			},
+			contains: []string{"Tasks:", "postDeploy", "smoke (timeout 5m) weight 0"},
+			omits:    []string{"preDeploy", "manual"},
+		},
+		{
+			name: "task without timeout",
+			plan: &Plan{
+				Tasks: []PlannedTask{{Name: "migrate", On: TaskOnPreDeploy}},
+			},
+			contains: []string{"migrate weight 0"},
+			omits:    []string{"timeout"},
+		},
+		{
+			name: "only manual group",
+			plan: &Plan{
+				Tasks: []PlannedTask{{Name: "backfill", On: TaskOnManual, Manual: true}},
+			},
+			contains: []string{"Tasks:", "manual (CLI only)", "backfill"},
+			omits:    []string{"preDeploy", "weight"},
+		},
+		{
 			name:  "no tasks omits section",
 			plan:  &Plan{Header: Header{FreshInstall: true}},
 			omits: []string{"Tasks:"},

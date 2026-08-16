@@ -300,6 +300,40 @@ func TestSpec_MergedTask(t *testing.T) {
 
 	_, ok = m.MergedTask("missing")
 	assert.False(t, ok)
+
+	var nilSpec *Spec
+	_, ok = nilSpec.MergedTask("migrate")
+	assert.False(t, ok)
+	assert.Nil(t, nilSpec.TaskNames())
+}
+
+func TestSpec_TaskNames(t *testing.T) {
+	t.Parallel()
+
+	assert.Nil(t, (*Spec)(nil).TaskNames())
+	assert.Nil(t, (&Spec{}).TaskNames())
+	m := shopSpec(map[string]Task{
+		"seed":    {From: "api", On: TaskOnPreDeploy, Command: []string{"true"}},
+		"migrate": {From: "api", On: TaskOnPreDeploy, Command: []string{"true"}},
+	})
+	assert.Equal(t, []string{"migrate", "seed"}, m.TaskNames())
+}
+
+func TestTask_EffectiveImage(t *testing.T) {
+	t.Parallel()
+
+	parent := &Component{Image: "ghcr.io/acme/shop:1.2.3"}
+	assert.Equal(t, "busybox:1.36", Task{Image: "busybox:1.36"}.EffectiveImage(parent))
+	assert.Equal(t, parent.Image, Task{From: "api"}.EffectiveImage(parent))
+	assert.Empty(t, Task{}.EffectiveImage(nil))
+}
+
+func TestTask_UsesParentImage(t *testing.T) {
+	t.Parallel()
+
+	assert.True(t, Task{From: "api"}.UsesParentImage())
+	assert.False(t, Task{From: "api", Image: "busybox:1.36"}.UsesParentImage())
+	assert.False(t, Task{Image: "busybox:1.36"}.UsesParentImage())
 }
 
 func TestSpec_tasksInEnvironment(t *testing.T) {
@@ -719,6 +753,82 @@ func TestValidateSpecTasks(t *testing.T) {
 			}),
 			wantErr: "from or image is required",
 		},
+		{
+			name: "invalid task name",
+			spec: shopSpec(map[string]Task{
+				"Migrate": {From: "api", On: TaskOnPreDeploy, Command: []string{"true"}},
+			}),
+			wantErr: "is invalid",
+		},
+		{
+			name: "after contains an empty name",
+			spec: shopSpec(map[string]Task{
+				"seed": {From: "api", On: TaskOnPreDeploy, After: []string{"  "}, Command: []string{"true"}},
+			}),
+			wantErr: "after contains an empty name",
+		},
+		{
+			name: "after includes itself",
+			spec: shopSpec(map[string]Task{
+				"migrate": {From: "api", On: TaskOnPreDeploy, After: []string{"migrate"}, Command: []string{"true"}},
+			}),
+			wantErr: "after cannot include itself",
+		},
+		{
+			name: "backoffLimit exceeds int32",
+			spec: shopSpec(map[string]Task{
+				"migrate": {
+					From:         "api",
+					On:           TaskOnPreDeploy,
+					Command:      []string{"true"},
+					BackoffLimit: new(math.MaxInt32 + 1),
+				},
+			}),
+			wantErr: "outside the int32 range",
+		},
+		{
+			name: "ttlSecondsAfterFinished exceeds int32",
+			spec: shopSpec(map[string]Task{
+				"migrate": {
+					From:                    "api",
+					On:                      TaskOnPreDeploy,
+					Command:                 []string{"true"},
+					TTLSecondsAfterFinished: new(math.MaxInt32 + 1),
+				},
+			}),
+			wantErr: "outside the int32 range",
+		},
+		{
+			name: "invalid timeout",
+			spec: shopSpec(map[string]Task{
+				"migrate": {From: "api", On: TaskOnPreDeploy, Command: []string{"true"}, Timeout: "not-a-duration"},
+			}),
+			wantErr: "timeout",
+		},
+		{
+			name: "environments slash-star suffix",
+			spec: shopSpec(map[string]Task{
+				"migrate": {
+					From:         "api",
+					On:           TaskOnPreDeploy,
+					Command:      []string{"true"},
+					Environments: []string{"review/*"},
+				},
+			}),
+			wantErr: `"/*" suffix is not supported`,
+		},
+		{
+			name: "empty profile name",
+			spec: shopSpec(map[string]Task{
+				"migrate": {
+					From:     "api",
+					On:       TaskOnPreDeploy,
+					Command:  []string{"true"},
+					Profiles: []string{" "},
+				},
+			}),
+			wantErr: "profile name must not be empty",
+		},
 	}
 
 	for _, tt := range tests {
@@ -733,6 +843,14 @@ func TestValidateSpecTasks(t *testing.T) {
 			assert.Contains(t, err.Error(), tt.wantErr)
 		})
 	}
+}
+
+func TestValidateSpecTasks_Nil(t *testing.T) {
+	t.Parallel()
+
+	err := ValidateSpecTasks(nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "spec cannot be nil")
 }
 
 func TestCheckHookTaskTimeouts(t *testing.T) {
@@ -756,6 +874,17 @@ func TestCheckHookTaskTimeouts(t *testing.T) {
 	err = CheckHookTaskTimeouts(long, 10*time.Minute)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "migrate")
+
+	err = CheckHookTaskTimeouts(tasks, 0)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "session timeout must be a positive duration")
+
+	err = CheckHookTaskTimeouts(map[string]Task{
+		"migrate": {On: TaskOnPreDeploy, Timeout: "not-a-duration"},
+	}, 10*time.Minute)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "timeout")
+	assert.NotContains(t, err.Error(), "use --detach")
 }
 
 func TestCheckTaskTimeout(t *testing.T) {

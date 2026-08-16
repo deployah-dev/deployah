@@ -269,6 +269,51 @@ func TestHookTasksForChart(t *testing.T) {
 	}
 }
 
+func TestMapTaskToChartValues_DigestArgsEphemeralTTL(t *testing.T) {
+	t.Parallel()
+
+	ttl := 60
+	m := &spec.Spec{Project: "shop"}
+	rt := spec.ResolvedTask{
+		Task: spec.Task{
+			Image:   "nginx@sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+			On:      spec.TaskOnPreDeploy,
+			Command: []string{"migrate"},
+			Args:    []string{"up"},
+			Resources: spec.Resources{
+				CPU:              spec.MustQuantity("100m"),
+				Memory:           spec.MustQuantity("128Mi"),
+				EphemeralStorage: spec.MustQuantity("1Gi"),
+			},
+			TTLSecondsAfterFinished: &ttl,
+			Timeout:                 spec.DefaultHookTaskTimeout,
+		},
+		HookWeight: 2,
+	}
+
+	vals, err := mapTaskToChartValues(m, "migrate", rt, "dev")
+	require.NoError(t, err)
+
+	image := mustNestedMap(t, vals, "image")
+	assert.Equal(t, "docker.io/library/nginx", image["repository"])
+	assert.Equal(t, "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", image["digest"])
+	_, hasTag := image["tag"]
+	assert.False(t, hasTag)
+	assert.Equal(t, []string{"migrate"}, vals["command"])
+	assert.Equal(t, []string{"up"}, vals["args"])
+
+	resources := mustNestedMap(t, vals, "resources")
+	requests := mustNestedMap(t, resources, "requests")
+	assert.Equal(t, "100m", requests["cpu"])
+	assert.Equal(t, "128Mi", requests["memory"])
+	assert.Equal(t, "1Gi", requests["ephemeral-storage"])
+
+	job := mustNestedMap(t, vals, "job")
+	assert.Equal(t, 2, job["hookWeight"])
+	assert.Equal(t, 60, job["ttlSecondsAfterFinished"])
+	assert.Equal(t, 300, job["activeDeadlineSeconds"])
+}
+
 func TestHookTasksForChart_Cycle(t *testing.T) {
 	t.Parallel()
 

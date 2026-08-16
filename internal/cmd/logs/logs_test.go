@@ -19,6 +19,8 @@ import (
 	"github.com/stern/stern/stern"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"nabat.dev/nabat"
+	"nabat.dev/nabat/nabattest"
 )
 
 func TestLogContainerStates_IncludesTerminated(t *testing.T) {
@@ -29,4 +31,41 @@ func TestLogContainerStates_IncludesTerminated(t *testing.T) {
 	require.Len(t, states, 2)
 	assert.Equal(t, stern.RUNNING, string(states[0]))
 	assert.Equal(t, stern.TERMINATED, string(states[1]))
+}
+
+func TestRunLogs_FlagValidation(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "template and template-file together",
+			args: []string{"logs", "shop", "--template", "{{.Message}}", "--template-file", "log.tmpl"},
+			want: "cannot specify both --template and --template-file",
+		},
+		{
+			name: "resource missing name",
+			args: []string{"logs", "shop", "--resource", "job/"},
+			want: "resource format must be",
+		},
+		{
+			name: "resource missing slash",
+			args: []string{"logs", "shop", "--resource", "job"},
+			want: "resource format must be",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			io, _, _, _ := nabattest.NewIO()
+			app := nabat.MustNew("deployah", nabat.WithIO(io))
+			Register(app)
+			err := nabattest.Run(t, app, tt.args)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.want)
+		})
+	}
 }
