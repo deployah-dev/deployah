@@ -20,6 +20,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"deployah.dev/deployah/internal/spec"
 )
 
 // TestRenderText_HeaderAndMixedChanges covers the named case.
@@ -340,7 +342,180 @@ func TestRenderText_DriftSection_FreshInstallIsNoOp(t *testing.T) {
 	assert.NotContains(t, got, "No drift detected.")
 }
 
-// TestMapCompactPath covers the named case.
+func TestRenderText_TasksSection(t *testing.T) {
+	t.Parallel()
+
+	grouped := []PlannedTask{
+		{Name: "migrate", On: TaskOnPreDeploy, Timeout: "5m", HookWeight: 0},
+		{Name: "seed", On: TaskOnPreDeploy, Timeout: "5m", HookWeight: 1},
+		{Name: "smoke", On: TaskOnPostDeploy, Timeout: "5m", HookWeight: 0},
+		{Name: "backfill", On: TaskOnManual, Manual: true},
+	}
+	tests := []struct {
+		name     string
+		plan     *Plan
+		contains []string
+		omits    []string
+	}{
+		{
+			name: "groups by phase and notes first install",
+			plan: &Plan{
+				Header: Header{
+					Project:      "shop",
+					Environment:  "dev",
+					Release:      "shop-dev",
+					FreshInstall: true,
+				},
+				Tasks: grouped,
+			},
+			contains: []string{
+				"Tasks:",
+				"preDeploy",
+				"migrate (timeout 5m) weight 0",
+				"seed (timeout 5m) weight 1",
+				"postDeploy",
+				"manual (CLI only)",
+				"backfill",
+				"database must already be reachable",
+			},
+		},
+		{
+			name: "upgrade omits first install note",
+			plan: &Plan{
+				Header: Header{FreshInstall: false},
+				Tasks:  grouped[:1],
+			},
+			contains: []string{"Tasks:", "migrate (timeout 5m) weight 0"},
+			omits:    []string{"database must already be reachable"},
+		},
+		{
+			name: "postDeploy only skips empty groups",
+			plan: &Plan{
+				Tasks: []PlannedTask{{Name: "smoke", On: TaskOnPostDeploy, Timeout: "5m"}},
+			},
+			contains: []string{"Tasks:", "postDeploy", "smoke (timeout 5m) weight 0"},
+			omits:    []string{"preDeploy", "manual"},
+		},
+		{
+			name: "task without timeout",
+			plan: &Plan{
+				Tasks: []PlannedTask{{Name: "migrate", On: TaskOnPreDeploy}},
+			},
+			contains: []string{"migrate weight 0"},
+			omits:    []string{"timeout"},
+		},
+		{
+			name: "only manual group",
+			plan: &Plan{
+				Tasks: []PlannedTask{{Name: "backfill", On: TaskOnManual, Manual: true}},
+			},
+			contains: []string{"Tasks:", "manual (CLI only)", "backfill"},
+			omits:    []string{"preDeploy", "weight"},
+		},
+		{
+			name:  "no tasks omits section",
+			plan:  &Plan{Header: Header{FreshInstall: true}},
+			omits: []string{"Tasks:"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var buf strings.Builder
+			require.NoError(t, RenderText(&buf, tt.plan, TextOptions{}))
+			got := buf.String()
+			for _, s := range tt.contains {
+				assert.Contains(t, got, s)
+			}
+			for _, s := range tt.omits {
+				assert.NotContains(t, got, s)
+			}
+		})
+	}
+}
+
+func TestPlan_FirstInstallTaskNote(t *testing.T) {
+	t.Parallel()
+
+	const note = "preDeploy runs before other resources on a first install; the database must already be reachable."
+	tests := []struct {
+		name string
+		plan *Plan
+		want string
+	}{
+		{name: "nil plan", plan: nil, want: ""},
+		{name: "not fresh install", plan: &Plan{Tasks: []PlannedTask{{On: TaskOnPreDeploy}}}, want: ""},
+		{name: "fresh install without preDeploy", plan: &Plan{Header: Header{FreshInstall: true}, Tasks: []PlannedTask{{On: TaskOnManual}}}, want: ""},
+		{name: "fresh install with preDeploy", plan: &Plan{Header: Header{FreshInstall: true}, Tasks: []PlannedTask{{On: TaskOnPreDeploy}}}, want: note},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, tt.plan.FirstInstallTaskNote())
+		})
+	}
+}
+
+func TestTasksFromSpec(t *testing.T) {
+	t.Parallel()
+
+	m := &spec.Spec{
+		Project: "shop",
+		Components: map[string]spec.Component{
+			"api": {Image: "nginx:latest", Environments: []string{"prod"}},
+		},
+		Tasks: map[string]spec.Task{
+			"migrate": {From: "api", On: spec.TaskOnPreDeploy, Command: []string{"true"}},
+			"smoke":   {From: "api", On: spec.TaskOnPostDeploy, Environments: []string{"dev", "prod"}, Command: []string{"true"}},
+			"nightly": {From: "api", On: spec.TaskOnManual, Environments: []string{"prod"}, Command: []string{"true"}},
+		},
+	}
+	tests := []struct {
+		name        string
+		environment string
+		want        []PlannedTask
+	}{
+		{
+			name:        "dev skips inherited prod-only parent",
+			environment: "dev",
+			want: []PlannedTask{
+				{Name: "smoke", On: TaskOnPostDeploy},
+			},
+		},
+		{
+			name:        "prod includes inherited and explicit",
+			environment: "prod",
+			want: []PlannedTask{
+				{Name: "migrate", On: TaskOnPreDeploy},
+				{Name: "nightly", On: TaskOnManual, Manual: true},
+				{Name: "smoke", On: TaskOnPostDeploy},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := TasksFromSpec(m, tt.environment, nil)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestTasksFromSpec_Cycle(t *testing.T) {
+	t.Parallel()
+	m := &spec.Spec{
+		Project: "shop",
+		Tasks: map[string]spec.Task{
+			"a": {On: spec.TaskOnPreDeploy, After: []string{"b"}, Command: []string{"true"}},
+			"b": {On: spec.TaskOnPreDeploy, After: []string{"a"}, Command: []string{"true"}},
+		},
+	}
+	_, err := TasksFromSpec(m, "dev", nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cycle")
+}
+
 func TestMapCompactPath(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -355,8 +530,11 @@ func TestMapCompactPath(t *testing.T) {
 		{"metadata.labels.foo", "", false},
 	}
 	for _, tt := range tests {
-		display, ok := mapCompactPath(tt.path)
-		assert.Equal(t, tt.ok, ok, "path %s", tt.path)
-		assert.Equal(t, tt.display, display, "path %s", tt.path)
+		t.Run(tt.path, func(t *testing.T) {
+			t.Parallel()
+			display, ok := mapCompactPath(tt.path)
+			assert.Equal(t, tt.ok, ok)
+			assert.Equal(t, tt.display, display)
+		})
 	}
 }

@@ -99,6 +99,9 @@ func runManifestOnly(c *nabat.Context, rt *session.Session) error {
 		if compErr := spec.ValidateSpecComponents(rawSpec); compErr != nil {
 			return compErr
 		}
+		if taskErr := spec.ValidateSpecTasks(rawSpec); taskErr != nil {
+			return taskErr
+		}
 		platform, platformErr := rt.Platform()
 		if platformErr != nil {
 			return fmt.Errorf("platform file error: %w", platformErr)

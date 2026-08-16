@@ -35,6 +35,7 @@ import (
 	"deployah.dev/deployah/internal/cmd/list"
 	"deployah.dev/deployah/internal/cmd/logs"
 	"deployah.dev/deployah/internal/cmd/resolve"
+	"deployah.dev/deployah/internal/cmd/run"
 	"deployah.dev/deployah/internal/cmd/shell"
 	"deployah.dev/deployah/internal/cmd/status"
 	"deployah.dev/deployah/internal/cmd/validate"
@@ -67,7 +68,7 @@ func NewApp(opts ...nabat.Option) *nabat.App {
 		nabat.WithFlag("namespace", "", nabat.WithShort('n'), nabat.WithUsage("Kubernetes namespace to use for Deployah operations (defaults to current context namespace)"), nabat.WithPersistent()),
 		nabat.WithFlag("kubeconfig", "", nabat.WithShort('k'), nabat.WithUsage("Path to the kubeconfig file to use (defaults to standard kubeconfig resolution)"), nabat.WithPersistent()),
 		nabat.WithFlag("context", "", nabat.WithUsage("Kubernetes context to use (overrides the current context and any environment 'context' field)"), nabat.WithPersistent()),
-		nabat.WithFlag("timeout", session.DefaultTimeout, nabat.WithShort('t'), nabat.WithUsage("Timeout for Deployah operations (install/upgrade, list, status, logs, delete)"), nabat.WithPersistent()),
+		nabat.WithFlag("timeout", session.DefaultTimeout, nabat.WithShort('t'), nabat.WithUsage("Timeout for Deployah operations (install/upgrade, list, status, logs, delete, run)"), nabat.WithPersistent()),
 		nabat.WithExtension(logging.New(logging.WithVerboseFlag("debug"))),
 		// plan.ErrChangesPresent is a normal CI signal (exit code 2, see
 		// Execute), not a failure, so it gets no error banner. Every other
@@ -127,6 +128,7 @@ func NewApp(opts ...nabat.Option) *nabat.App {
 	logs.Register(app)
 	planCmd.Register(app)
 	resolve.Register(app)
+	run.Register(app)
 	shell.Register(app)
 	status.Register(app)
 	validate.Register(app)

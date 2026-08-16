@@ -28,6 +28,12 @@
 //   - [ValidateSpec]: validate spec data against a schema version
 //   - [ValidateEnvironments]: validate environment definitions
 //   - [ValidateSpecComponents]: check component resources and autoscaling
+//   - [ValidateSpecTasks]: check task names, from, on, after, and fanout
+//
+// # Tasks
+//
+//   - [EffectiveTasks]: environment-scoped tasks from a spec or resolved result
+//   - [NewTaskJobSpec]: shared Job fields for the CLI builder and Helm values
 //
 // # Defaults
 //

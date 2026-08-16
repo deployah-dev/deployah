@@ -370,12 +370,13 @@ func TestMergeProfiles(t *testing.T) {
 	})
 }
 
-// TestValidateProfileAgainstComponent covers domain, storage, and ceiling
-// checks.
-func TestValidateProfileAgainstComponent(t *testing.T) {
+// TestValidateProfile covers domain, storage, and ceiling checks.
+func TestValidateProfile(t *testing.T) {
 	t.Parallel()
 
-	comp := spec.Component{
+	target := spec.ProfileTarget{
+		Subject: spec.ProfileSubjectComponent,
+		Name:    "api",
 		Resources: spec.Resources{
 			CPU:    spec.MustQuantity("2000m"),
 			Memory: spec.MustQuantity("1Gi"),
@@ -389,7 +390,7 @@ func TestValidateProfileAgainstComponent(t *testing.T) {
 
 	t.Run("domain not allowed", func(t *testing.T) {
 		t.Parallel()
-		err := spec.ValidateProfileAgainstComponent("api", comp, spec.PlatformProfile{
+		err := spec.ValidateProfile(target, spec.PlatformProfile{
 			AllowedDomains: []string{"public"},
 		}, env, "internal")
 		require.Error(t, err)
@@ -400,7 +401,7 @@ func TestValidateProfileAgainstComponent(t *testing.T) {
 
 	t.Run("empty allowedDomains deny-all", func(t *testing.T) {
 		t.Parallel()
-		err := spec.ValidateProfileAgainstComponent("api", comp, spec.PlatformProfile{
+		err := spec.ValidateProfile(target, spec.PlatformProfile{
 			AllowedDomains: []string{},
 		}, env, "public")
 		require.Error(t, err)
@@ -411,7 +412,7 @@ func TestValidateProfileAgainstComponent(t *testing.T) {
 
 	t.Run("domain ignored without expose key", func(t *testing.T) {
 		t.Parallel()
-		err := spec.ValidateProfileAgainstComponent("api", comp, spec.PlatformProfile{
+		err := spec.ValidateProfile(target, spec.PlatformProfile{
 			AllowedDomains: []string{"public"},
 		}, env, "")
 		require.NoError(t, err)
@@ -419,7 +420,7 @@ func TestValidateProfileAgainstComponent(t *testing.T) {
 
 	t.Run("storage class missing", func(t *testing.T) {
 		t.Parallel()
-		err := spec.ValidateProfileAgainstComponent("api", comp, spec.PlatformProfile{
+		err := spec.ValidateProfile(target, spec.PlatformProfile{
 			StorageClass: "missing",
 		}, env, "")
 		require.Error(t, err)
@@ -430,18 +431,34 @@ func TestValidateProfileAgainstComponent(t *testing.T) {
 
 	t.Run("cpu exceeds ceiling", func(t *testing.T) {
 		t.Parallel()
-		err := spec.ValidateProfileAgainstComponent("api", comp, spec.PlatformProfile{
+		err := spec.ValidateProfile(target, spec.PlatformProfile{
 			MaxResources: &spec.ProfileMaxResources{CPU: spec.MustQuantity("1000m")},
 		}, env, "")
 		require.Error(t, err)
 		var re *spec.ResolutionError
 		require.ErrorAs(t, err, &re)
 		assert.Equal(t, spec.ErrCodeProfileResourceExceeded, re.Code)
+		assert.Contains(t, re.Error(), `component "api"`)
+	})
+
+	t.Run("task kind in ceiling error", func(t *testing.T) {
+		t.Parallel()
+		taskTarget := spec.ProfileTarget{
+			Subject:   spec.ProfileSubjectTask,
+			Name:      "migrate",
+			Resources: target.Resources,
+		}
+		err := spec.ValidateProfile(taskTarget, spec.PlatformProfile{
+			MaxResources: &spec.ProfileMaxResources{CPU: spec.MustQuantity("1000m")},
+		}, env, "")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `task "migrate"`)
+		assert.NotContains(t, err.Error(), "component")
 	})
 
 	t.Run("memory exceeds ceiling", func(t *testing.T) {
 		t.Parallel()
-		err := spec.ValidateProfileAgainstComponent("api", comp, spec.PlatformProfile{
+		err := spec.ValidateProfile(target, spec.PlatformProfile{
 			MaxResources: &spec.ProfileMaxResources{Memory: spec.MustQuantity("512Mi")},
 		}, env, "")
 		require.Error(t, err)
@@ -453,7 +470,7 @@ func TestValidateProfileAgainstComponent(t *testing.T) {
 
 	t.Run("storage class with no environment storageClasses", func(t *testing.T) {
 		t.Parallel()
-		err := spec.ValidateProfileAgainstComponent("api", comp, spec.PlatformProfile{
+		err := spec.ValidateProfile(target, spec.PlatformProfile{
 			StorageClass: "fast",
 		}, &spec.PlatformEnvironment{}, "")
 		require.Error(t, err)
@@ -465,7 +482,7 @@ func TestValidateProfileAgainstComponent(t *testing.T) {
 
 	t.Run("within ceiling", func(t *testing.T) {
 		t.Parallel()
-		err := spec.ValidateProfileAgainstComponent("api", comp, spec.PlatformProfile{
+		err := spec.ValidateProfile(target, spec.PlatformProfile{
 			MaxResources:   &spec.ProfileMaxResources{CPU: spec.MustQuantity("2000m"), Memory: spec.MustQuantity("2Gi")},
 			StorageClass:   "fast",
 			AllowedDomains: []string{"public"},
@@ -516,12 +533,14 @@ func TestMergeProfiles_MonitorFields(t *testing.T) {
 	assert.Equal(t, map[string]string{"team": "platform", "owner": "sre"}, merged.Metrics.Annotations)
 }
 
-func TestValidateProfileAgainstComponent_MonitorLabelsRequired(t *testing.T) {
+func TestValidateProfile_MonitorLabelsRequired(t *testing.T) {
 	t.Parallel()
-	comp := spec.Component{
+	target := spec.ProfileTarget{
+		Subject: spec.ProfileSubjectComponent,
+		Name:    "worker",
 		Metrics: &spec.ComponentMetrics{Port: 9090},
 	}
-	err := spec.ValidateProfileAgainstComponent("worker", comp, spec.PlatformProfile{}, nil, "")
+	err := spec.ValidateProfile(target, spec.PlatformProfile{}, nil, "")
 	require.Error(t, err)
 	var re *spec.ResolutionError
 	require.ErrorAs(t, err, &re)

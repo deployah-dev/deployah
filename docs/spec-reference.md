@@ -1,9 +1,10 @@
 # Spec reference
 
 Your spec is a file named `deployah.yaml`. It has three required parts:
-`apiVersion`, `project`, and `components`. This page is the full field
-reference, the value rules the validator enforces, the resource presets, and a
-set of complete examples.
+`apiVersion`, `project`, and `components`. Optional `tasks` hold
+run-to-completion work. This page is the full field reference, the value
+rules the validator enforces, the resource presets, and a set of complete
+examples.
 
 `deployah.yaml` is the developer's half of the configuration: what to run, never
 where it runs. The other half is
@@ -14,13 +15,13 @@ Here is a full example that shows the common fields. You do not need all of
 them; most have defaults.
 
 ```yaml
-apiVersion: v1-alpha.4             # required: the schema version
+apiVersion: v1-alpha.5             # required: the schema version
 project: shop                      # required: your project name
 
 components:                        # required: one or more components
   api:
     image: ghcr.io/acme/shop-api:${TAG}  # tag comes from the environment below
-    role: service                  # service | worker | job (default: service)
+    role: service                  # service | worker (default: service)
     kind: stateless                 # stateless | stateful (default: stateless)
     port: 8080                     # the port your app listens on (default: 8080)
     environments: [staging, prod]  # which environments deploy this component
@@ -77,9 +78,10 @@ Top level:
 
 | Field | Required | Notes |
 |---|---|---|
-| `apiVersion` | Yes | The schema version. Must be `v1-alpha.4`. |
+| `apiVersion` | Yes | The schema version. Must be `v1-alpha.5`. |
 | `project` | Yes | Lowercase name (DNS-1123). Prefixes your Kubernetes resources. |
 | `components` | Yes | A map of component name to component settings. |
+| `tasks` | No | A map of task name to run-to-completion work. Names must not collide with component names. See [Tasks](#tasks). |
 | `environments` | Yes in practice | Environment **overrides**: a map of environment name to per-environment settings (`variables`, `envFile`). Keys support prefix-based wildcard matching, e.g. a `review` key matches `--environment review/pr-123`. Which environments exist is owned by the platform file's registry. |
 
 Component:
@@ -87,7 +89,7 @@ Component:
 | Field | Default | Notes |
 |---|---|---|
 | `image` | none | The container image to run. You provide this. |
-| `role` | `service` | `service` or `worker` (`job` is accepted by the schema but not deployable yet). |
+| `role` | `service` | `service` or `worker`. |
 | `kind` | `stateless` | `stateless` or `stateful`. |
 | `port` | `8080` (services) | App listen port (1 to 65535). Not allowed on workers. |
 | `command` / `args` | none | Override the image ENTRYPOINT and CMD. |
@@ -105,10 +107,37 @@ Component:
 | `profiles` | none | List of platform profile names. Merged left to right. See [Profiles](platform.md#profiles). |
 
 > [!IMPORTANT]
-> Not deployed yet: the schema accepts `role: job`, and the `env`, `envFile`,
-> and `configFile` fields, but Deployah does not apply them at deploy time
-> yet. Changing `role` between `service` and `worker` on an existing release
-> is rejected; delete the release and redeploy.
+> Component `env`, `envFile`, and `configFile` are not applied to Deployments
+> yet. Task `env` **is** inlined onto the Job. Changing `role` between
+> `service` and `worker` on an existing release is rejected; delete the
+> release and redeploy.
+
+## Tasks
+
+Quote `"on"` in YAML 1.1 so parsers do not treat it as a boolean. `on` is a
+single value, not a list. See [Tasks](tasks.md) for how-to examples.
+
+| Field | Default | Notes |
+|---|---|---|
+| `from` | none | Component to inherit env, environments, profiles, and resources from. Also copies envFile and configFile paths. |
+| `image` | from `from` | Replaces the parent image when set. `from` and/or `image` is required. |
+| `command` / `args` | none | `command` is required when using the parent image. |
+| `"on"` | none (required) | `preDeploy`, `postDeploy`, or `manual`. |
+| `after` | none | Task names in the **same** `on` that must finish first. The dependency must be active in every environment the dependent is. Not allowed on `manual`. |
+| `env` | inherited | Overlay on the parent map. Inlined onto the Job. |
+| `envFile` / `configFile` | inherited | Inherited as fields; not mounted in this release. |
+| `environments` | inherited | Replaces the parent filter when set. |
+| `profiles` | inherited | Replaces the parent list when set. Applied to the Job pod (node selector, tolerations, security context). |
+| `resourcePreset` / `resources` | inherited | Same rules as components. |
+| `fanout` | count 1, parallelism 1 | Integer (`fanout: 4`) or `{count, parallelism}`. Applies to every `on`. `parallelism` must be `<= count` and at most 100000 (Kubernetes Indexed Job limit). |
+| `timeout` | `5m` for hooks | Duration such as `5m`. Hook timeout must be less than the session `--timeout` at deploy or run time (default `10m`). Raise `--timeout` for a longer hook. No default for `manual`. |
+| `backoffLimit` | `3` | Retries before the run is marked failed. |
+| `ttlSecondsAfterFinished` | none (CLI runs: 7 days) | Seconds to keep a finished run. |
+
+`deployah run <task> <environment>` creates a Job for any task. It runs only
+that task, not the tasks in its `after` list. Hook and CLI Jobs use the
+default ServiceAccount in the release namespace. An exported chart overrides
+a task the same way as a component (`--set migrate.image.tag=1.2.4`).
 
 Environment:
 
@@ -190,7 +219,7 @@ Every example below is complete and valid. Copy one and change the values.
 **Smallest spec.** One service, one environment.
 
 ```yaml
-apiVersion: v1-alpha.4
+apiVersion: v1-alpha.5
 project: hello
 components:
   web:
@@ -203,7 +232,7 @@ environments:
 **Two components.** A web app and an API in one project.
 
 ```yaml
-apiVersion: v1-alpha.4
+apiVersion: v1-alpha.5
 project: shop
 components:
   web:
@@ -222,7 +251,7 @@ environments:
 from the platform file, not from here.
 
 ```yaml
-apiVersion: v1-alpha.4
+apiVersion: v1-alpha.5
 project: shop
 components:
   web:
@@ -244,7 +273,7 @@ comes from the platform file. Set `subdomain` only when you want a different
 label, and `apex: true` for the bare domain.
 
 ```yaml
-apiVersion: v1-alpha.4
+apiVersion: v1-alpha.5
 project: shop
 components:
   web:
@@ -257,7 +286,7 @@ components:
 **Set exact resources.** Use `resources` instead of a preset.
 
 ```yaml
-apiVersion: v1-alpha.4
+apiVersion: v1-alpha.5
 project: shop
 components:
   web:
@@ -274,7 +303,7 @@ environments:
 **Autoscale on CPU.** Scale between 2 and 6 replicas at 70% CPU.
 
 ```yaml
-apiVersion: v1-alpha.4
+apiVersion: v1-alpha.5
 project: shop
 components:
   web:

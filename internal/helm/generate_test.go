@@ -287,11 +287,11 @@ func TestMapSpecToChartValues_EnvironmentFilterPrefixMatch(t *testing.T) {
 			comp := serviceComponent()
 			comp.Environments = tt.filter
 			m := &spec.Spec{
-				APIVersion: "v1-alpha.4",
+				APIVersion: spec.CurrentManifestVersion,
 				Project:    "shop",
 				Components: map[string]spec.Component{"web": comp},
 			}
-			require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.4"))
+			require.NoError(t, spec.FillSpecWithDefaults(m, spec.CurrentManifestVersion))
 
 			vals, err := MapSpecToChartValues(m, tt.environment, nil)
 			require.NoError(t, err)
@@ -312,7 +312,7 @@ func TestMapSpecToChartValues_SelfSignedTLS(t *testing.T) {
 
 	subdomain := "api"
 	m := &spec.Spec{
-		APIVersion: "v1-alpha.4",
+		APIVersion: spec.CurrentManifestVersion,
 		Project:    "shop",
 		Environments: map[string]spec.Environment{
 			"local": {},
@@ -329,7 +329,7 @@ func TestMapSpecToChartValues_SelfSignedTLS(t *testing.T) {
 			},
 		},
 	}
-	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.4"))
+	require.NoError(t, spec.FillSpecWithDefaults(m, spec.CurrentManifestVersion))
 
 	resolved := &spec.ResolvedSpec{
 		Spec: m,
@@ -375,7 +375,7 @@ func TestMapSpecToChartValues_SelfSignedTLS_Unmaterialized(t *testing.T) {
 
 	subdomain := "api"
 	m := &spec.Spec{
-		APIVersion: "v1-alpha.4",
+		APIVersion: spec.CurrentManifestVersion,
 		Project:    "shop",
 		Environments: map[string]spec.Environment{
 			"local": {},
@@ -392,7 +392,7 @@ func TestMapSpecToChartValues_SelfSignedTLS_Unmaterialized(t *testing.T) {
 			},
 		},
 	}
-	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.4"))
+	require.NoError(t, spec.FillSpecWithDefaults(m, spec.CurrentManifestVersion))
 
 	resolved := &spec.ResolvedSpec{
 		Spec: m,
@@ -418,7 +418,7 @@ func TestMapSpecToChartValues_SecretNameTLS(t *testing.T) {
 
 	subdomain := "api"
 	m := &spec.Spec{
-		APIVersion: "v1-alpha.4",
+		APIVersion: spec.CurrentManifestVersion,
 		Project:    "shop",
 		Environments: map[string]spec.Environment{
 			"production": {},
@@ -435,7 +435,7 @@ func TestMapSpecToChartValues_SecretNameTLS(t *testing.T) {
 			},
 		},
 	}
-	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.4"))
+	require.NoError(t, spec.FillSpecWithDefaults(m, spec.CurrentManifestVersion))
 
 	resolved := &spec.ResolvedSpec{
 		Spec: m,
@@ -466,7 +466,7 @@ func TestMapSpecToChartValues_CertManagerTLS(t *testing.T) {
 
 	subdomain := "api"
 	m := &spec.Spec{
-		APIVersion: "v1-alpha.4",
+		APIVersion: spec.CurrentManifestVersion,
 		Project:    "shop",
 		Environments: map[string]spec.Environment{
 			"production": {},
@@ -483,7 +483,7 @@ func TestMapSpecToChartValues_CertManagerTLS(t *testing.T) {
 			},
 		},
 	}
-	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.4"))
+	require.NoError(t, spec.FillSpecWithDefaults(m, spec.CurrentManifestVersion))
 
 	resolved := &spec.ResolvedSpec{
 		Spec: m,
@@ -514,7 +514,7 @@ func TestMapSpecToChartValues_Autoscaling(t *testing.T) {
 	t.Parallel()
 
 	m := &spec.Spec{
-		APIVersion: "v1-alpha.4",
+		APIVersion: spec.CurrentManifestVersion,
 		Project:    "shop",
 		Environments: map[string]spec.Environment{
 			"production": {},
@@ -536,7 +536,7 @@ func TestMapSpecToChartValues_Autoscaling(t *testing.T) {
 			},
 		},
 	}
-	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.4"))
+	require.NoError(t, spec.FillSpecWithDefaults(m, spec.CurrentManifestVersion))
 
 	vals, err := MapSpecToChartValues(m, "production", nil)
 	require.NoError(t, err)
@@ -556,7 +556,7 @@ func TestMapSpecToChartValues_Profiles(t *testing.T) {
 	t.Parallel()
 
 	m := &spec.Spec{
-		APIVersion: "v1-alpha.4",
+		APIVersion: spec.CurrentManifestVersion,
 		Project:    "shop",
 		Environments: map[string]spec.Environment{
 			"production": {},
@@ -569,7 +569,7 @@ func TestMapSpecToChartValues_Profiles(t *testing.T) {
 			},
 		},
 	}
-	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.4"))
+	require.NoError(t, spec.FillSpecWithDefaults(m, spec.CurrentManifestVersion))
 
 	resolved := &spec.ResolvedSpec{
 		Spec: m,
@@ -643,7 +643,7 @@ func TestMapSpecToChartValues_StatefulComponent(t *testing.T) {
 
 	replicas := 2
 	m := &spec.Spec{
-		APIVersion: "v1-alpha.4",
+		APIVersion: spec.CurrentManifestVersion,
 		Project:    "shop",
 		Environments: map[string]spec.Environment{
 			"production": {},
@@ -662,7 +662,7 @@ func TestMapSpecToChartValues_StatefulComponent(t *testing.T) {
 			},
 		},
 	}
-	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.4"))
+	require.NoError(t, spec.FillSpecWithDefaults(m, spec.CurrentManifestVersion))
 
 	resolved := &spec.ResolvedSpec{
 		Spec: m,
@@ -713,7 +713,7 @@ func TestMapSpecToChartValues_StatefulIdentityOnly(t *testing.T) {
 
 	replicas := 2
 	m := &spec.Spec{
-		APIVersion: "v1-alpha.4",
+		APIVersion: spec.CurrentManifestVersion,
 		Project:    "shop",
 		Environments: map[string]spec.Environment{
 			"production": {},
@@ -728,7 +728,7 @@ func TestMapSpecToChartValues_StatefulIdentityOnly(t *testing.T) {
 			},
 		},
 	}
-	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.4"))
+	require.NoError(t, spec.FillSpecWithDefaults(m, spec.CurrentManifestVersion))
 
 	vals, err := MapSpecToChartValues(m, "production", nil)
 	require.NoError(t, err)
@@ -746,7 +746,7 @@ func TestMapSpecToChartValues_StatelessWithPersistence(t *testing.T) {
 	t.Parallel()
 
 	m := &spec.Spec{
-		APIVersion: "v1-alpha.4",
+		APIVersion: spec.CurrentManifestVersion,
 		Project:    "shop",
 		Environments: map[string]spec.Environment{
 			"production": {},
@@ -764,7 +764,7 @@ func TestMapSpecToChartValues_StatelessWithPersistence(t *testing.T) {
 			},
 		},
 	}
-	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.4"))
+	require.NoError(t, spec.FillSpecWithDefaults(m, spec.CurrentManifestVersion))
 
 	vals, err := MapSpecToChartValues(m, "production", nil)
 	require.NoError(t, err)
@@ -784,7 +784,7 @@ func TestMapSpecToChartValues_Replicas(t *testing.T) {
 
 	replicas := 3
 	m := &spec.Spec{
-		APIVersion: "v1-alpha.4",
+		APIVersion: spec.CurrentManifestVersion,
 		Project:    "shop",
 		Environments: map[string]spec.Environment{
 			"production": {},
@@ -798,7 +798,7 @@ func TestMapSpecToChartValues_Replicas(t *testing.T) {
 			},
 		},
 	}
-	require.NoError(t, spec.FillSpecWithDefaults(m, "v1-alpha.4"))
+	require.NoError(t, spec.FillSpecWithDefaults(m, spec.CurrentManifestVersion))
 
 	vals, err := MapSpecToChartValues(m, "production", nil)
 	require.NoError(t, err)

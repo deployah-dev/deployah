@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: Service
+metadata:
+    annotations:
+        deployah.dev/project: task-pre-post-hooks
+        deployah.dev/source: spec
+    labels:
+        app.kubernetes.io/instance: task-pre-post-hooks-dev
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: api
+        deployah.dev/component: api
+        deployah.dev/environment: dev
+        deployah.dev/project: task-pre-post-hooks
+        helm.sh/chart: api-0.1.0
+    name: task-pre-post-hooks-dev-api
+    namespace: default
+spec:
+    ports:
+        - name: http
+          port: 80
+          protocol: TCP
+          targetPort: http
+    selector:
+        app.kubernetes.io/instance: task-pre-post-hooks-dev
+        app.kubernetes.io/name: api
+    sessionAffinity: None
+    type: ClusterIP

@@ -88,18 +88,16 @@ For how Deployah compares to DevSpace, Werf, Score, Epinio, and Kubero, see
 
 Know these before you invest time:
 
-- **`env` is not applied yet.** The `env` field on a component passes schema
-  validation but does not reach the running container. Put runtime values in
-  your image or your app's own config for now. See
+- **`env` is not applied to Deployments yet.** The `env` field on a component
+  passes schema validation but does not reach the running container. Task
+  `env` is inlined onto Jobs. See
   [Two kinds of variables](docs/configuration.md#two-kinds-of-variables).
-- **`role: job` is not deployable yet.** It exists in the schema; only
-  `service` and `worker` deploy today.
 - **Deployah does not build images.** Give it an image that already exists in a
   registry your cluster can pull from.
 - **Stateful with persistence needs Kubernetes 1.32 or newer.** Deployah checks
   the API version and fails fast on older clusters. Identity-only stateful
   components have no such floor.
-- **The schemas are alpha.** App manifests are at `v1-alpha.4` and platform
+- **The schemas are alpha.** App manifests are at `v1-alpha.5` and platform
   files at `platform/v1-alpha.3`; expect breaking changes between releases.
 
 ## Contents
@@ -193,7 +191,7 @@ Save this as `deployah.yaml` in an empty folder. It runs the public `nginx`
 image, so you do not need to build anything.
 
 ```yaml
-apiVersion: v1-alpha.4
+apiVersion: v1-alpha.5
 project: my-first-app
 components:
   web:
@@ -335,15 +333,16 @@ A few words you will see often.
 - **Role.** What a component is for:
   - `service`: it serves traffic and can be exposed (the default).
   - `worker`: a long-running background task, not exposed.
-  - `job`: a one-off task that runs and then stops.
+- **Task.** Run-to-completion work (`preDeploy`, `postDeploy`, or `manual`).
+  See [Tasks](docs/tasks.md).
 - **Kind.** The component's `kind` field: `stateless` (the default, easy to
   scale) or `stateful` (StatefulSet with stable identity; optional per-pod
   volumes). This field has nothing to do with Kind, the tool that runs the
   optional local cluster. See
   [Stateful workloads](docs/workloads.md#stateful-workloads) and
   [Storage classes](docs/platform.md#storage-classes).
-- **Workload matrix.** `role` and `kind` combine independently. `job` is in
-  the schema but not deployable yet.
+- **Workload matrix.** `role` and `kind` combine independently. Run-to-completion
+  work is `tasks:`, not a component role.
 
   | Capability          | service+stateless | service+stateful | worker+stateless | worker+stateful |
   |---------------------|:-----------------:|:----------------:|:----------------:|:---------------:|
@@ -396,6 +395,7 @@ The README covers the shape of the tool. The details live in `docs/`:
 | [Spec reference](docs/spec-reference.md) | Every `deployah.yaml` field, value rules, resource presets, and full examples. |
 | [Platform file](docs/platform.md) | Contexts, domains, TLS modes, storage classes, and profiles. |
 | [Workloads](docs/workloads.md) | Stateful components and volumes, workers, health checks, metrics. |
+| [Tasks](docs/tasks.md) | Migrations, smoke checks, `deployah run`, and fanout. |
 | [Configuration](docs/configuration.md) | Environment selection, variables, `.env` files, precedence rules. |
 | [Networking](docs/networking.md) | Reaching your app, and how the local cluster resolves hostnames. |
 | [Custom manifests and CRDs](docs/custom-manifests-and-crds.md) | Ship plain Kubernetes YAML alongside the release. |
@@ -437,6 +437,7 @@ These work with every command:
 | `deployah resolve --environments` | List every environment from both files: where it is registered, its context (or the kubeconfig fallback), domains, and overrides. |
 | `deployah plan <environment>` | Preview what a deploy would change, without applying anything. Extra manifests from `.deployah/manifests/` appear in the diff; pending CRDs are reported but not applied. Use `--offline` to render with no cluster access, `--raw` for raw Kubernetes field paths instead of the compact Deployah vocabulary, `--yaml` to show changed fields as YAML blocks, `--drift` to also compare against live cluster state, `--detailed-exitcode` to exit 2 when changes are pending, or `--output json` for CI. |
 | `deployah deploy <environment>` | Deploy your project. Shows the plan and asks for confirmation before applying; use `-y`/`--yes` to skip the prompt, `--reapply` to upgrade even with no changes, `--crds` for [CRD install policy](docs/custom-manifests-and-crds.md#crd-policy) (`create` or `create-replace`), `--explain` to print the resolution report first, `--force-hostname-change` to bypass the hostname guard, or `--resize-volumes` to grow [persistence](docs/workloads.md#growing-volumes) sizes. |
+| `deployah run <task> <environment>` | Run a spec task as a one-off Job. Wait is the default; `--detach` returns after create. `--count` / `--parallelism` override fanout for that run. |
 | `deployah status <project>` | Show the status of a deployed project. Use `--detailed` for pod details, `-e` for an environment. |
 | `deployah logs <project>` | Stream logs. Filter with `--component`, `-e`, `--container`, `--since`, `--tail`. Use `--no-follow` for a one-off read. |
 | `deployah shell <project>` | Open a shell in a running container. Choose with `--component` and `--container`. |
@@ -456,9 +457,9 @@ These work with every command:
 
 Deployah validates your spec and platform file with JSON Schema.
 
-- **Manifest schema version:** v1-alpha.4
-- **Manifest schema:** `internal/spec/schema/v1-alpha.4/manifest.json`
-- **Manifest environments schema:** `internal/spec/schema/v1-alpha.4/environments.json`
+- **Manifest schema version:** v1-alpha.5
+- **Manifest schema:** `internal/spec/schema/v1-alpha.5/manifest.json`
+- **Manifest environments schema:** `internal/spec/schema/v1-alpha.5/environments.json`
 - **Platform schema version:** platform/v1-alpha.3
 - **Platform schema:** `internal/spec/schema/platform/v1-alpha.3/platform.json`
 

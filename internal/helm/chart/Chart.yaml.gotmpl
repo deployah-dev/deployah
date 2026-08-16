@@ -13,7 +13,11 @@ dependencies:
     version: "~0.1.0-alpha.1"
     repository: "file://charts/deployah"
     import-values:
-{{- range $name, $component := .Spec.Components }}
+{{- range $name := .ComponentNames }}
+      - child: exports.defaults
+        parent: {{ $name }}
+{{- end }}
+{{- range $name := .TaskNames }}
       - child: exports.defaults
         parent: {{ $name }}
 {{- end }}

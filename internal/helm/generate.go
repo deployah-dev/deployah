@@ -68,8 +68,12 @@ type ChartData struct {
 	}
 	// Values is the data map for values.yaml templating.
 	Values map[string]any
-	// Spec is the source Deployah spec for dynamic sub-charts.
-	Spec *spec.Spec
+	// ComponentNames are the sorted names of the component sub-charts
+	// created for this environment.
+	ComponentNames []string
+	// TaskNames are the sorted names of the task sub-charts created for this
+	// environment. Only hook tasks get one.
+	TaskNames []string
 }
 
 // GenerateReleaseName returns the Helm release name for project and
@@ -128,6 +132,14 @@ func PrepareChart(ctx context.Context, manifest *spec.Spec, desiredEnvironment s
 
 	const root = "chart"
 
+	// Resolve the sub-chart names once, before creating anything on disk, so
+	// Chart.yaml and the sub-chart directories below cannot disagree.
+	componentNames := activeComponentNames(manifest, desiredEnvironment)
+	taskNames, err := hookTaskNames(manifest, desiredEnvironment, resolved)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve task sub-chart names: %w", err)
+	}
+
 	tmpDir, err := os.MkdirTemp("", "deployah-chart-*")
 	if err != nil {
 		return "", fmt.Errorf("failed to create temp dir: %w", err)
@@ -137,7 +149,8 @@ func PrepareChart(ctx context.Context, manifest *spec.Spec, desiredEnvironment s
 	chartData.Chart.Name = manifest.Project
 	chartData.Chart.Version = "0.1.0"
 	chartData.Values = map[string]any{}
-	chartData.Spec = manifest
+	chartData.ComponentNames = componentNames
+	chartData.TaskNames = taskNames
 
 	err = fs.WalkDir(ChartTemplateFS, root, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -181,8 +194,11 @@ func PrepareChart(ctx context.Context, manifest *spec.Spec, desiredEnvironment s
 			return nil
 		}
 
-		// Prepend "_" so Helm sees files go:embed excludes (those starting with "_").
-		if strings.Contains(path, "templates/") {
+		// Prepend "_" so Helm sees files go:embed excludes (those starting
+		// with "_"). Only library templates under charts/ are partials
+		// (define helpers). Parent chart/templates/ files are real
+		// resources and must keep their names so Helm renders them.
+		if strings.Contains(path, "charts/") && strings.Contains(path, "templates/") {
 			ext := filepath.Ext(d.Name())
 			base := strings.TrimSuffix(d.Name(), ext)
 			if slices.Contains([]string{".yaml", ".tpl", ".txt"}, ext) {
@@ -200,8 +216,11 @@ func PrepareChart(ctx context.Context, manifest *spec.Spec, desiredEnvironment s
 		return "", fmt.Errorf("failed to expand embedded chart: %w", err)
 	}
 
-	if err = createComponentSubCharts(tmpDir, manifest, desiredEnvironment); err != nil {
+	if err = createComponentSubCharts(tmpDir, componentNames); err != nil {
 		return "", fmt.Errorf("failed to create component sub-charts: %w", err)
+	}
+	if err = createTaskSubCharts(tmpDir, taskNames); err != nil {
+		return "", fmt.Errorf("failed to create task sub-charts: %w", err)
 	}
 
 	values, err := MapSpecToChartValues(manifest, desiredEnvironment, resolved)
@@ -224,23 +243,19 @@ func PrepareChart(ctx context.Context, manifest *spec.Spec, desiredEnvironment s
 	return createChartCopy(tmpDir)
 }
 
-// createComponentSubCharts creates sub-chart directories for each
-// component active in desiredEnvironment. A component excluded from this
-// environment gets no subchart at all: an empty subchart would still
-// render default-valued resources (e.g. a Service from app.yaml's base
-// values.yaml), leaking them into an environment the component was never
-// meant to reach.
-func createComponentSubCharts(chartDir string, manifest *spec.Spec, desiredEnvironment string) error {
+// createComponentSubCharts creates a sub-chart directory for each name in
+// componentNames, as returned by [activeComponentNames]. A component
+// excluded from the target environment is absent from that list and gets no
+// subchart at all: an empty subchart would still render default-valued
+// resources (e.g. a Service from app.yaml's base values.yaml), leaking them
+// into an environment the component was never meant to reach.
+func createComponentSubCharts(chartDir string, componentNames []string) error {
 	chartsDir := filepath.Join(chartDir, "charts")
 	if err := os.MkdirAll(chartsDir, 0o750); err != nil {
 		return fmt.Errorf("failed to create charts directory: %w", err)
 	}
 
-	for componentName, component := range manifest.Components {
-		if !componentActiveInEnvironment(component, desiredEnvironment) {
-			continue
-		}
-
+	for _, componentName := range componentNames {
 		componentChartDir := filepath.Join(chartsDir, componentName)
 		if err := os.MkdirAll(componentChartDir, 0o750); err != nil {
 			return fmt.Errorf("failed to create component chart directory for %s: %w", componentName, err)
@@ -281,12 +296,25 @@ func createComponentAppTemplate(templatesDir string) error {
 	return os.WriteFile(filepath.Join(templatesDir, "app.yaml"), []byte(appTemplate), 0o600)
 }
 
+// activeComponentNames returns the sorted names of the components that get a
+// sub-chart in desiredEnvironment.
+func activeComponentNames(manifest *spec.Spec, desiredEnvironment string) []string {
+	names := make([]string, 0, len(manifest.Components))
+	for name, component := range manifest.Components {
+		if componentActiveInEnvironment(component, desiredEnvironment) {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	return names
+}
+
 // componentActiveInEnvironment reports whether component belongs in the
 // chart for desiredEnvironment: true when it has no explicit Environments
 // filter (active everywhere), or desiredEnvironment matches one of them
 // via [spec.MatchEnvKey] (the same matcher [spec.Resolve] uses). Shared by
-// [MapSpecToChartValues] and [createComponentSubCharts] so both agree on
-// the active component set.
+// [MapSpecToChartValues] and [activeComponentNames] so values and sub-charts
+// agree on the active component set.
 func componentActiveInEnvironment(component spec.Component, desiredEnvironment string) bool {
 	if len(component.Environments) == 0 {
 		return true
@@ -327,9 +355,6 @@ func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string, resolved *spe
 			},
 		}
 
-		if component.Role == spec.ComponentRoleJob {
-			return nil, fmt.Errorf("role %s is not supported yet", component.Role)
-		}
 		// TODO: Implement handling for component envFile
 		//   Exclude Deployah-specific environment variables (those prefixed with DPY_VAR_) and provide the remaining variables to the component
 
@@ -553,15 +578,22 @@ func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string, resolved *spe
 		values[componentName] = componentValues
 	}
 
+	resolvedTasks, err := applyTaskChartValues(values, m, desiredEnvironment, resolved)
+	if err != nil {
+		return nil, err
+	}
+
 	// Write the deployah.resolved block so the hostname guard can compare
-	// values across deploys.
-	if len(resolvedComponents) > 0 {
-		values["deployah"] = map[string]any{
+	// values across deploys, and so plan/guards can see active tasks.
+	if len(resolvedComponents) > 0 || len(resolvedTasks) > 0 {
+		deployahVals := map[string]any{
 			"resolved": map[string]any{
 				"schemaVersion": resolvedSchemaVersion,
 				"components":    resolvedComponents,
+				"tasks":         resolvedTasks,
 			},
 		}
+		values["deployah"] = deployahVals
 	}
 
 	return values, nil

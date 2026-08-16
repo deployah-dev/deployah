@@ -2,6 +2,8 @@
 
 How Deployah turns a component into a Kubernetes workload: stateful sets and
 volumes, background workers, health checks, and Prometheus metrics.
+Run-to-completion work lives under `tasks:` (see [Tasks](tasks.md)), not as
+a component role.
 
 ## Stateful workloads
 
@@ -29,7 +31,7 @@ not require that floor.
 `size` and `mountPath` are required:
 
 ```yaml
-apiVersion: v1-alpha.4
+apiVersion: v1-alpha.5
 project: shop
 components:
   # Identity only: stable DNS / ordinals, no PVC

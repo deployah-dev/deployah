@@ -287,6 +287,9 @@ func buildValidatedSpec(config *ProjectConfig) (*spec.Spec, error) {
 	if err = spec.ValidateSpecComponents(&specData); err != nil {
 		return nil, fmt.Errorf("component validation failed: %w", err)
 	}
+	if err = spec.ValidateSpecTasks(&specData); err != nil {
+		return nil, fmt.Errorf("task validation failed: %w", err)
+	}
 
 	if err = spec.FillSpecWithDefaults(&specData, specData.APIVersion); err != nil {
 		return nil, fmt.Errorf("failed to apply defaults to spec: %w", err)

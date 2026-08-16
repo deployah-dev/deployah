@@ -34,7 +34,7 @@ deployah cluster up [flags]
   -n, --namespace string       Kubernetes namespace to use for Deployah operations (defaults to current context namespace)
       --platform-file string   Path to the platform config file (overrides DEPLOYAH_PLATFORM_FILE and the default same-directory lookup)
   -s, --spec string            Path to the Deployah spec file (YAML or JSON) (default "deployah.yaml")
-  -t, --timeout duration       Timeout for Deployah operations (install/upgrade, list, status, logs, delete) (default 10m0s)
+  -t, --timeout duration       Timeout for Deployah operations (install/upgrade, list, status, logs, delete, run) (default 10m0s)
 ```
 
 ### SEE ALSO

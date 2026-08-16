@@ -1,6 +1,5 @@
 .git
 .github
-.cursor
 .direnv
 .envrc
 .env*

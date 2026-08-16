@@ -1,0 +1,15 @@
+freshInstall: true
+hooksChanged: true
+
+changes:
+  - action: add
+    kind: Deployment
+    name: plan-tasks-section-dev-api
+  - action: add
+    kind: Service
+    name: plan-tasks-section-dev-api
+
+summary:
+  add: 2
+  change: 0
+  destroy: 0

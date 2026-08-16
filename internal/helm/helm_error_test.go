@@ -223,11 +223,11 @@ func TestInstallApp_PendingReleaseRejects(t *testing.T) {
 	}
 
 	manifest := &spec.Spec{
-		APIVersion: "v1-alpha.4",
+		APIVersion: spec.CurrentManifestVersion,
 		Project:    "pending-app",
 		Components: map[string]spec.Component{"web": serviceComponent()},
 	}
-	require.NoError(t, spec.FillSpecWithDefaults(manifest, "v1-alpha.4"))
+	require.NoError(t, spec.FillSpecWithDefaults(manifest, spec.CurrentManifestVersion))
 	releaseName := GenerateReleaseName(manifest.Project, "production")
 
 	now := time.Now()

@@ -288,3 +288,72 @@ func TestRenderJSON_DriftChangesAndIncomplete(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, []any{"ConfigMap/default/web-config"}, incomplete)
 }
+
+func TestRenderJSON_TasksSection(t *testing.T) {
+	t.Parallel()
+
+	note := (&Plan{
+		Header: Header{FreshInstall: true},
+		Tasks:  []PlannedTask{{On: TaskOnPreDeploy}},
+	}).FirstInstallTaskNote()
+	tests := []struct {
+		name     string
+		plan     *Plan
+		want     []JSONTask
+		wantNote string
+		wantRaw  []string
+	}{
+		{
+			name: "fresh install with preDeploy",
+			plan: &Plan{
+				Header: Header{
+					Project:      "shop",
+					Environment:  "dev",
+					Release:      "shop-dev",
+					FreshInstall: true,
+				},
+				Tasks: []PlannedTask{
+					{Name: "migrate", On: TaskOnPreDeploy, Timeout: "5m", HookWeight: 0},
+					{Name: "backfill", On: TaskOnManual, Manual: true},
+				},
+			},
+			want: []JSONTask{
+				{Name: "migrate", On: TaskOnPreDeploy, Timeout: "5m", HookWeight: 0},
+				{Name: "backfill", On: TaskOnManual, Manual: true},
+			},
+			wantNote: note,
+			wantRaw:  []string{`"hook_weight": 0`},
+		},
+		{
+			name: "upgrade omits first install note",
+			plan: &Plan{
+				Header: Header{FreshInstall: false},
+				Tasks:  []PlannedTask{{Name: "migrate", On: TaskOnPreDeploy, HookWeight: 0}},
+			},
+			want:    []JSONTask{{Name: "migrate", On: TaskOnPreDeploy, HookWeight: 0}},
+			wantRaw: []string{`"hook_weight": 0`},
+		},
+		{
+			name: "fresh install without preDeploy omits note",
+			plan: &Plan{
+				Header: Header{FreshInstall: true},
+				Tasks:  []PlannedTask{{Name: "backfill", On: TaskOnManual, Manual: true}},
+			},
+			want: []JSONTask{{Name: "backfill", On: TaskOnManual, Manual: true}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var buf strings.Builder
+			require.NoError(t, RenderJSON(&buf, tt.plan))
+			var doc JSONDocument
+			require.NoError(t, json.Unmarshal([]byte(buf.String()), &doc))
+			assert.Equal(t, tt.want, doc.Tasks)
+			assert.Equal(t, tt.wantNote, doc.FirstInstallNote)
+			for _, raw := range tt.wantRaw {
+				assert.Contains(t, buf.String(), raw)
+			}
+		})
+	}
+}

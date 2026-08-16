@@ -295,6 +295,10 @@ func Load(ctx context.Context, path, desiredEnv string, platform *PlatformConfig
 		return nil, fmt.Errorf("validation failed: %w", err)
 	}
 
+	if err = ValidateSpecTasks(&finalSpec); err != nil {
+		return nil, fmt.Errorf("validation failed: %w", err)
+	}
+
 	if err = FillSpecWithDefaults(&finalSpec, version); err != nil {
 		return nil, fmt.Errorf("failed to apply defaults: %w", err)
 	}

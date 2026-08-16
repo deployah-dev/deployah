@@ -212,7 +212,7 @@ data:
 `
 
 func testManifest() *spec.Spec {
-	return &spec.Spec{Project: "web", APIVersion: "v1-alpha.4"}
+	return &spec.Spec{Project: "web", APIVersion: spec.CurrentManifestVersion}
 }
 
 func testOptions() *Options {

@@ -875,6 +875,40 @@ exports:
       ##
       labels: {}
 
+    ## Job: run-to-completion work (Deployah tasks)
+    ##
+    job:
+      ## @param job.enabled Create a Job for this subchart
+      ##
+      enabled: false
+
+      ## @param job.completions Indexed Job completions (fanout count)
+      ##
+      completions: 1
+
+      ## @param job.parallelism How many indexed copies may run at once
+      ##
+      parallelism: 1
+
+      ## @param job.backoffLimit Retries before the Job is marked failed
+      ##
+      backoffLimit: 3
+
+      ## @param job.ttlSecondsAfterFinished Seconds to keep a finished Job (0 deletes immediately). Omitted when unset.
+      ##
+
+      ## @param job.hook Helm hook events (empty for non-hook Jobs)
+      ##
+      hook: ""
+
+      ## @param job.hookWeight Helm hook-weight
+      ##
+      hookWeight: 0
+
+      ## @param job.hookDeletePolicy Helm hook-delete-policy
+      ##
+      hookDeletePolicy: before-hook-creation,hook-succeeded
+
     ## Cronjob: create jobs on a repeated schedule
     ## Ref: https://kubernetes.io/docs/concepts/workloads/controllers/cron-jobs/
     ##

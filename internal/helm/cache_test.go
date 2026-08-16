@@ -38,11 +38,11 @@ func TestPrepareChart_CacheSurvivesCallerCleanup(t *testing.T) {
 	t.Parallel()
 	cache := NewChartCache(time.Hour)
 	manifest := &spec.Spec{
-		APIVersion: "v1-alpha.4",
+		APIVersion: spec.CurrentManifestVersion,
 		Project:    "cache-test",
 		Components: map[string]spec.Component{"web": serviceComponent()},
 	}
-	require.NoError(t, spec.FillSpecWithDefaults(manifest, "v1-alpha.4"))
+	require.NoError(t, spec.FillSpecWithDefaults(manifest, spec.CurrentManifestVersion))
 
 	returnedPath, err := PrepareChart(t.Context(), manifest, "production", nil, cache)
 	require.NoError(t, err)
@@ -52,11 +52,7 @@ func TestPrepareChart_CacheSurvivesCallerCleanup(t *testing.T) {
 
 	cachedPath, found := cache.get(key)
 	require.True(t, found, "PrepareChart must register a cache entry on a miss")
-	t.Cleanup(func() {
-		if removeErr := os.RemoveAll(cachedPath); removeErr != nil {
-			t.Logf("cleanup: remove cached chart dir: %v", removeErr)
-		}
-	})
+	t.Cleanup(func() { removeChartDir(t, cachedPath) })
 
 	assert.NotEqual(t, returnedPath, cachedPath,
 		"PrepareChart must return a copy on a cache miss, not the cache's own backing directory")
@@ -67,6 +63,26 @@ func TestPrepareChart_CacheSurvivesCallerCleanup(t *testing.T) {
 
 	_, stillFound := cache.get(key)
 	assert.True(t, stillFound, "the cache entry must survive the caller cleaning up its own returned copy")
+}
+
+// backdate rewinds an entry's creation time so TTL behavior can be tested
+// without sleeping. It takes the same lock as the production accessors.
+func (c *ChartCache) backdate(tb testing.TB, cacheKey string, d time.Duration) {
+	tb.Helper()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	entry, exists := c.entries[cacheKey]
+	require.True(tb, exists, "no cache entry %q to backdate", cacheKey)
+	entry.createdAt = entry.createdAt.Add(-d)
+}
+
+// removeChartDir deletes a prepared chart directory. Cleanup failures are
+// logged rather than failed, so they cannot mask the test result.
+func removeChartDir(tb testing.TB, path string) {
+	tb.Helper()
+	if err := os.RemoveAll(path); err != nil {
+		tb.Logf("cleanup: remove chart dir %s: %v", path, err)
+	}
 }
 
 // TestPrepareChart_RequiresCache verifies PrepareChart rejects a nil cache.
@@ -137,23 +153,23 @@ func TestChartCache_GetMissExpiredAndMissingDir(t *testing.T) {
 // TestChartCache_CleanupExpired removes expired entries and their directories.
 func TestChartCache_CleanupExpired(t *testing.T) {
 	t.Parallel()
-	cache := NewChartCache(time.Millisecond)
+	cache := NewChartCache(time.Hour)
 	dir := t.TempDir()
 	keep := t.TempDir()
 	cache.set("old", dir)
 	cache.set("fresh", keep)
 
-	require.Eventually(t, func() bool {
-		_, ok := cache.get("old")
-		return !ok
-	}, 50*time.Millisecond, time.Millisecond)
+	// Backdate "old" rather than waiting out a short TTL: with a TTL small
+	// enough to sleep through, any scheduling delay before cleanupExpired
+	// runs expires "fresh" too and the test fails on a loaded machine.
+	cache.backdate(t, "old", 2*time.Hour)
+	_, found := cache.get("old")
+	require.False(t, found, "backdated entry must read as expired")
 
-	// Refresh the fresh entry so only "old" is past TTL when cleanup runs.
-	cache.set("fresh", keep)
 	cache.cleanupExpired()
 
 	assert.Equal(t, 1, cache.entryCount())
-	_, found := cache.get("fresh")
+	_, found = cache.get("fresh")
 	assert.True(t, found)
 	_, err := os.Stat(dir)
 	assert.ErrorIs(t, err, os.ErrNotExist)
@@ -205,14 +221,14 @@ func TestGenerateKey_ResolvedSpecContentInvalidates(t *testing.T) {
 	cache := NewChartCache(time.Hour)
 
 	base := &spec.Spec{
-		APIVersion: "v1-alpha.4",
+		APIVersion: spec.CurrentManifestVersion,
 		Project:    "cache-key",
 		Components: map[string]spec.Component{"web": serviceComponent()},
 	}
-	require.NoError(t, spec.FillSpecWithDefaults(base, "v1-alpha.4"))
+	require.NoError(t, spec.FillSpecWithDefaults(base, spec.CurrentManifestVersion))
 
 	changed := &spec.Spec{
-		APIVersion: "v1-alpha.4",
+		APIVersion: spec.CurrentManifestVersion,
 		Project:    "cache-key",
 		Components: map[string]spec.Component{
 			"web": {
@@ -222,7 +238,7 @@ func TestGenerateKey_ResolvedSpecContentInvalidates(t *testing.T) {
 			},
 		},
 	}
-	require.NoError(t, spec.FillSpecWithDefaults(changed, "v1-alpha.4"))
+	require.NoError(t, spec.FillSpecWithDefaults(changed, spec.CurrentManifestVersion))
 
 	resolvedA := &spec.ResolvedSpec{Spec: base, Env: spec.NormalizeEnv("production")}
 	resolvedB := &spec.ResolvedSpec{Spec: changed, Env: spec.NormalizeEnv("production")}

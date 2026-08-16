@@ -1,0 +1,21 @@
+# $schema: ../../internal/spec/schema/v1-alpha.5/manifest.json
+apiVersion: v1-alpha.5
+project: error-task-after-env
+components:
+  api:
+    image: nginx:latest
+    port: 8080
+    environments: [dev]
+tasks:
+  migrate:
+    from: api
+    "on": preDeploy
+    environments: [prod]
+    command: ["true"]
+  seed:
+    from: api
+    "on": preDeploy
+    after: [migrate]
+    command: ["true"]
+environments:
+  dev: {}

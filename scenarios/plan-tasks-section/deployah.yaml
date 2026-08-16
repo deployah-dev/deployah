@@ -1,0 +1,24 @@
+# $schema: ../../internal/spec/schema/v1-alpha.5/manifest.json
+apiVersion: v1-alpha.5
+project: plan-tasks-section
+components:
+  api:
+    image: nginx:latest
+    port: 8080
+    environments: [dev]
+    resourcePreset: small
+tasks:
+  migrate:
+    from: api
+    "on": preDeploy
+    command: ["migrate", "up"]
+  smoke:
+    from: api
+    "on": postDeploy
+    command: ["curl", "-f", "http://api/health"]
+  backfill:
+    from: api
+    "on": manual
+    command: ["backfill"]
+environments:
+  dev: {}

@@ -30,7 +30,7 @@ func TestShowSummaryAndSave_RoleAwareComponentsProduceValidSpec(t *testing.T) {
 	outputPath := filepath.Join(dir, "deployah.yaml")
 
 	// One component per role the wizard offers: service (with a port and
-	// an HTTP health check), worker, and job.
+	// an HTTP health check) and worker.
 	config := &ProjectConfig{
 		Name:             "shop",
 		EnvironmentNames: []string{"local"},
@@ -48,11 +48,6 @@ func TestShowSummaryAndSave_RoleAwareComponentsProduceValidSpec(t *testing.T) {
 			"worker": {
 				Role:           spec.ComponentRoleWorker,
 				Image:          "shop/worker:1.0.0",
-				ResourcePreset: spec.ResourcePresetSmall,
-			},
-			"migrate": {
-				Role:           spec.ComponentRoleJob,
-				Image:          "shop/migrate:1.0.0",
 				ResourcePreset: spec.ResourcePresetSmall,
 			},
 		},

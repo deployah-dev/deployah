@@ -1,0 +1,21 @@
+# $schema: ../../internal/spec/schema/v1-alpha.5/manifest.json
+apiVersion: v1-alpha.5
+project: error-task-cycle
+components:
+  api:
+    image: nginx:latest
+    port: 8080
+    environments: [dev]
+tasks:
+  first:
+    from: api
+    "on": preDeploy
+    after: [second]
+    command: ["true"]
+  second:
+    from: api
+    "on": preDeploy
+    after: [first]
+    command: ["true"]
+environments:
+  dev: {}

@@ -20,7 +20,7 @@ deployah [flags]
   -n, --namespace string       Kubernetes namespace to use for Deployah operations (defaults to current context namespace)
       --platform-file string   Path to the platform config file (overrides DEPLOYAH_PLATFORM_FILE and the default same-directory lookup)
   -s, --spec string            Path to the Deployah spec file (YAML or JSON) (default "deployah.yaml")
-  -t, --timeout duration       Timeout for Deployah operations (install/upgrade, list, status, logs, delete) (default 10m0s)
+  -t, --timeout duration       Timeout for Deployah operations (install/upgrade, list, status, logs, delete, run) (default 10m0s)
 ```
 
 ### SEE ALSO
@@ -33,6 +33,7 @@ deployah [flags]
 * [deployah logs](deployah_logs.md)  - View logs for a deployed project
 * [deployah plan](deployah_plan.md)  - Preview the changes a deploy would make
 * [deployah resolve](deployah_resolve.md)  - Show the fully resolved configuration for an environment
+* [deployah run](deployah_run.md)  - Run a spec task as a one-off Job
 * [deployah shell](deployah_shell.md)  - Connect to a shell in a container
 * [deployah status](deployah_status.md)  - Display the status of a project
 * [deployah validate](deployah_validate.md)  - Validate a Deployah spec

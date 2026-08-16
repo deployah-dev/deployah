@@ -1,0 +1,2 @@
+expectedErrors:
+  - "command is required when using the parent image"

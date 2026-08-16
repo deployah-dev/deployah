@@ -1,0 +1,1090 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://deployah.dev/schemas/v1-alpha.5/manifest.json",
+  "title": "Deployah Spec v1-alpha.5",
+  "description": "Deployah developer manifest (deployah.yaml). Environments are a map, context is platform-owned, expose replaces ingress. Components are service or worker. Run-to-completion work lives under tasks.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "apiVersion",
+    "project",
+    "components"
+  ],
+  "properties": {
+    "apiVersion": {
+      "type": "string",
+      "title": "API Version",
+      "description": "Schema version. Must be 'v1-alpha.5'.",
+      "const": "v1-alpha.5"
+    },
+    "project": {
+      "type": "string",
+      "title": "Project Name",
+      "description": "The project name used to identify deployments and prefix Kubernetes resources. Must be a valid DNS-1123 subdomain.",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "minLength": 3,
+      "maxLength": 64
+    },
+    "environments": {
+      "type": "object",
+      "title": "Environments",
+      "description": "Optional map of environment names to developer overrides (envFile, variables). Which environments exist is owned by the platform file when one is present. Keys support prefix-based wildcard matching.",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+        "minLength": 2
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/Environment"
+      }
+    },
+    "components": {
+      "type": "object",
+      "title": "Components",
+      "description": "Map of component names to their configuration.",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+        "minLength": 2,
+        "maxLength": 63
+      },
+      "minProperties": 1,
+      "additionalProperties": {
+        "$ref": "#/$defs/Component"
+      }
+    },
+    "tasks": {
+      "type": "object",
+      "title": "Tasks",
+      "description": "Map of task names to run-to-completion work. Names must not collide with component names.",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+        "minLength": 2,
+        "maxLength": 63
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/Task"
+      }
+    }
+  },
+  "$defs": {
+    "Environment": {
+      "type": "object",
+      "title": "Environment",
+      "description": "Developer-owned environment definition. Context is platform-owned and lives in deployah.platform.yaml.",
+      "additionalProperties": false,
+      "properties": {
+        "envFile": {
+          "type": "string",
+          "title": "Environment File",
+          "description": "Path to a dotenv file for variable substitution in this environment.",
+          "examples": [
+            ".env.production"
+          ]
+        },
+        "configFile": {
+          "type": "string",
+          "title": "Configuration File",
+          "description": "Path to an environment-specific configuration file.",
+          "examples": [
+            "config.production.yaml"
+          ]
+        },
+        "variables": {
+          "type": "object",
+          "title": "Inline Variables",
+          "description": "Inline key-value variable overrides for this environment.",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[A-Z0-9]+(?:_[A-Z0-9]+)*$"
+          },
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "boolean"
+            ]
+          },
+          "examples": [
+            {
+              "APP_ENV": "production",
+              "REPLICAS": 3,
+              "DEBUG": false
+            }
+          ]
+        }
+      },
+      "examples": [
+        {
+          "envFile": ".env.production",
+          "configFile": "config.production.yaml"
+        },
+        {}
+      ]
+    },
+    "Component": {
+      "type": "object",
+      "title": "Component",
+      "description": "A deployable unit in the project.",
+      "additionalProperties": false,
+      "required": [
+        "image"
+      ],
+      "properties": {
+        "role": {
+          "type": "string",
+          "title": "Component Role",
+          "description": "Deployment strategy. service for HTTP services, worker for background processes.",
+          "default": "service",
+          "enum": [
+            "service",
+            "worker"
+          ]
+        },
+        "kind": {
+          "type": "string",
+          "title": "Component Kind",
+          "description": "'stateless' for interchangeable Deployment replicas. 'stateful' for StatefulSet replicas with stable network identity; optional persistence for per-pod PVCs.",
+          "default": "stateless",
+          "enum": [
+            "stateless",
+            "stateful"
+          ]
+        },
+        "image": {
+          "type": "string",
+          "title": "Container Image",
+          "description": "Container image reference, including optional tag or digest.",
+          "minLength": 1,
+          "examples": [
+            "nginx:1.28.0-alpine",
+            "nginx@sha256:37075895d8461222f53afa7804aec2c57d69f9842995705cc54a0c4a70d68fc9",
+            "myregistry.com/myapp/backend:2.0",
+            "wait4x/wait4x:latest"
+          ]
+        },
+        "command": {
+          "type": "array",
+          "title": "Command",
+          "description": "Container entrypoint override.",
+          "items": {
+            "type": "string"
+          },
+          "examples": [
+            [
+              "python",
+              "app.py"
+            ],
+            [
+              "bash",
+              "-c",
+              "echo Hello, World!"
+            ]
+          ]
+        },
+        "args": {
+          "type": "array",
+          "title": "Arguments",
+          "description": "Container command argument override.",
+          "items": {
+            "type": "string"
+          },
+          "examples": [
+            [
+              "--port",
+              "8080"
+            ],
+            [
+              "--config",
+              "/etc/config.yaml"
+            ]
+          ]
+        },
+        "port": {
+          "type": "integer",
+          "title": "Port",
+          "description": "Primary container port for service components. Not allowed on role: worker. Defaults to 8080 for services when omitted.",
+          "minimum": 1,
+          "maximum": 65535,
+          "examples": [
+            8181,
+            9000
+          ]
+        },
+        "shutdownTimeout": {
+          "type": "string",
+          "title": "Shutdown Timeout",
+          "description": "How long Kubernetes waits after SIGTERM before force-killing the pod (terminationGracePeriodSeconds). Defaults to 30s for services and 60s for workers.",
+          "pattern": "^[1-9][0-9]*(s|m|h)$",
+          "examples": [
+            "30s",
+            "60s",
+            "2m"
+          ]
+        },
+        "metrics": {
+          "title": "Metrics",
+          "description": "Prometheus scraping configuration. Boolean shorthand or object. Services emit a ServiceMonitor; workers emit a PodMonitor. Workers require metrics.port when enabled. Requires prometheus-operator CRDs and platform profile metrics.monitorLabels.",
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "$ref": "#/$defs/Metrics"
+            }
+          ],
+          "examples": [
+            true,
+            false,
+            {
+              "port": 9090,
+              "path": "/metrics"
+            }
+          ]
+        },
+        "replicas": {
+          "type": "integer",
+          "title": "Replicas",
+          "description": "Desired replica count when autoscaling is disabled. Default is 1. Mutually exclusive with autoscaling.enabled.",
+          "default": 1,
+          "minimum": 1,
+          "examples": [
+            1,
+            2,
+            3
+          ]
+        },
+        "persistence": {
+          "$ref": "#/$defs/Persistence"
+        },
+        "expose": {
+          "title": "Expose",
+          "description": "Boolean shorthand or object. 'expose: true' exposes with all defaults (the environment's default domain, the component name as subdomain, platform TLS); 'expose: false' equals omitting the block.",
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "$ref": "#/$defs/Expose"
+            }
+          ],
+          "examples": [
+            true,
+            {
+              "subdomain": "api"
+            }
+          ]
+        },
+        "envFile": {
+          "type": "string",
+          "title": "Component Environment File",
+          "description": "Component-specific dotenv file path.",
+          "examples": [
+            ".env.api",
+            ".env.api.production"
+          ]
+        },
+        "configFile": {
+          "type": "string",
+          "title": "Component Configuration File",
+          "description": "Component-specific configuration file path.",
+          "examples": [
+            "config.api.yaml",
+            "config.api.production.yaml"
+          ]
+        },
+        "environments": {
+          "type": "array",
+          "title": "Environment Filter",
+          "description": "Restrict this component to the listed environment names. When absent the component is active in all environments. Entries support prefix-based wildcard matching, e.g. 'review' matches an --environment value of 'review/pr-123'.",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          },
+          "examples": [
+            [
+              "production"
+            ],
+            [
+              "review",
+              "staging"
+            ]
+          ]
+        },
+        "autoscaling": {
+          "$ref": "#/$defs/Autoscaling"
+        },
+        "resources": {
+          "$ref": "#/$defs/Resources"
+        },
+        "resourcePreset": {
+          "type": "string",
+          "title": "Resource Preset",
+          "description": "Named resource profile. Cannot be combined with explicit resources.",
+          "enum": [
+            "nano",
+            "micro",
+            "small",
+            "medium",
+            "large",
+            "xlarge",
+            "2xlarge"
+          ],
+          "examples": [
+            "small",
+            "medium",
+            "xlarge"
+          ]
+        },
+        "profiles": {
+          "type": "array",
+          "title": "Profiles",
+          "description": "Logical names of platform-defined deployment profiles. Multiple profiles are merged left to right. An empty array opts out of the default profile when no default is defined; when a default profile exists, an empty array is rejected. Requires a profiles section in the platform file.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "examples": [
+            [
+              "public-web"
+            ],
+            [
+              "public-web",
+              "high-security"
+            ]
+          ]
+        },
+        "env": {
+          "type": "object",
+          "title": "Environment Variables",
+          "description": "Static environment variables for the container.",
+          "propertyNames": {
+            "pattern": "^[A-Z_][A-Z0-9_]*$"
+          },
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "boolean"
+            ]
+          },
+          "examples": [
+            {
+              "NODE_ENV": "production",
+              "DEBUG": true,
+              "MAX_RETRIES": 5,
+              "TIMEOUT": 30.5
+            }
+          ]
+        },
+        "health": {
+          "$ref": "#/$defs/Health"
+        }
+      }
+    },
+    "Persistence": {
+      "type": "object",
+      "title": "Persistence",
+      "description": "Durable storage configuration. Optional on kind: stateful (per-pod volumeClaimTemplates when set; omit for identity-only). Allowed on kind: stateless (shared PVC; forces Recreate strategy; rejects replicas > 1 and autoscaling).",
+      "additionalProperties": false,
+      "required": [
+        "size",
+        "mountPath"
+      ],
+      "properties": {
+        "size": {
+          "type": "string",
+          "title": "Size",
+          "description": "Requested volume size as a Kubernetes quantity.",
+          "pattern": "^[1-9][0-9]*(Ki|Mi|Gi|Ti|Pi|Ei)$",
+          "examples": [
+            "1Gi",
+            "20Gi",
+            "100Gi"
+          ]
+        },
+        "mountPath": {
+          "type": "string",
+          "title": "Mount Path",
+          "description": "Absolute path where the volume is mounted in the container.",
+          "pattern": "^/",
+          "minLength": 1,
+          "examples": [
+            "/data",
+            "/var/lib/postgresql/data"
+          ]
+        },
+        "storageClass": {
+          "type": "string",
+          "title": "Storage Class",
+          "description": "Logical storage class key from the platform environment's storageClasses map. Overrides the profile storageClass when set.",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "minLength": 1,
+          "examples": [
+            "fast",
+            "standard"
+          ]
+        }
+      },
+      "examples": [
+        {
+          "size": "20Gi",
+          "mountPath": "/data"
+        },
+        {
+          "size": "50Gi",
+          "mountPath": "/var/lib/postgresql/data",
+          "storageClass": "fast"
+        }
+      ]
+    },
+    "Expose": {
+      "type": "object",
+      "title": "Expose",
+      "description": "Exposes the component via an ingress rule resolved against the platform domain configuration. All fields are optional: the domain defaults to the environment's only (or default-marked) domain, and the subdomain defaults to the component name.",
+      "additionalProperties": false,
+      "properties": {
+        "domain": {
+          "type": "string",
+          "title": "Domain Key",
+          "description": "Domain key referencing an entry in the platform environment's domains map. When absent, the environment's only domain is used, or the one marked 'default: true' in the platform file.",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "minLength": 1,
+          "examples": [
+            "public",
+            "internal"
+          ]
+        },
+        "subdomain": {
+          "type": "string",
+          "title": "Subdomain",
+          "description": "DNS label prepended to baseDomain to form the FQDN. When absent the component name is used. Must be a valid DNS-1123 label. Mutually exclusive with apex.",
+          "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
+          "minLength": 1,
+          "examples": [
+            "api",
+            "www"
+          ]
+        },
+        "apex": {
+          "type": "boolean",
+          "title": "Apex",
+          "description": "Expose the component at the baseDomain itself instead of a subdomain. Mutually exclusive with subdomain.",
+          "default": false,
+          "examples": [
+            true
+          ]
+        }
+      },
+      "examples": [
+        {
+          "subdomain": "api"
+        },
+        {
+          "domain": "internal"
+        },
+        {
+          "apex": true
+        }
+      ]
+    },
+    "Autoscaling": {
+      "type": "object",
+      "title": "Autoscaling",
+      "description": "Horizontal pod autoscaling configuration.",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "minReplicas",
+        "maxReplicas"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether autoscaling is enabled.",
+          "default": false
+        },
+        "minReplicas": {
+          "type": "integer",
+          "description": "Minimum number of replicas.",
+          "default": 2,
+          "minimum": 1
+        },
+        "maxReplicas": {
+          "type": "integer",
+          "description": "Maximum number of replicas.",
+          "default": 5,
+          "minimum": 1
+        },
+        "metrics": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "target"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "cpu",
+                  "memory"
+                ]
+              },
+              "target": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          },
+          "default": [
+            {
+              "type": "cpu",
+              "target": 75
+            }
+          ],
+          "examples": [
+            [
+              {
+                "type": "cpu",
+                "target": 70
+              },
+              {
+                "type": "memory",
+                "target": 80
+              }
+            ]
+          ]
+        }
+      },
+      "examples": [
+        {
+          "enabled": true,
+          "minReplicas": 2,
+          "maxReplicas": 6,
+          "metrics": [
+            {
+              "type": "cpu",
+              "target": 70
+            }
+          ]
+        },
+        {
+          "enabled": true,
+          "minReplicas": 3,
+          "maxReplicas": 10,
+          "metrics": [
+            {
+              "type": "cpu",
+              "target": 65
+            },
+            {
+              "type": "memory",
+              "target": 75
+            }
+          ]
+        }
+      ]
+    },
+    "Resources": {
+      "type": "object",
+      "title": "Resources",
+      "description": "CPU and memory requests/limits.",
+      "additionalProperties": false,
+      "properties": {
+        "cpu": {
+          "type": "string",
+          "pattern": "^([1-9][0-9]*m?|[1-9][0-9]*|0m)$",
+          "examples": [
+            "500m",
+            "1"
+          ]
+        },
+        "memory": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*(Ki|Mi|Gi|Ti|Pi|Ei)$",
+          "examples": [
+            "256Mi",
+            "1Gi"
+          ]
+        },
+        "ephemeralStorage": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*(Ki|Mi|Gi|Ti|Pi|Ei)$",
+          "examples": [
+            "500Mi",
+            "2Gi"
+          ]
+        }
+      },
+      "examples": [
+        {
+          "cpu": "500m",
+          "memory": "512Mi"
+        },
+        {
+          "ephemeralStorage": "2Gi"
+        }
+      ]
+    },
+    "Metrics": {
+      "type": "object",
+      "title": "Metrics Configuration",
+      "description": "Prometheus scrape settings. enabled defaults to true when omitted. port is required for workers; for services it defaults to the component port.",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "title": "Enabled",
+          "description": "When false, disables scraping (useful for per-environment toggle via envsubst). Defaults to true when omitted.",
+          "default": true
+        },
+        "port": {
+          "type": "integer",
+          "title": "Metrics Port",
+          "description": "Container port exposing metrics. Required for workers. Defaults to the component port for services.",
+          "minimum": 1,
+          "maximum": 65535,
+          "examples": [
+            8080,
+            9090
+          ]
+        },
+        "path": {
+          "type": "string",
+          "title": "Metrics Path",
+          "description": "HTTP path for metrics. Defaults to /metrics.",
+          "pattern": "^/",
+          "default": "/metrics",
+          "examples": [
+            "/metrics",
+            "/actuator/prometheus"
+          ]
+        },
+        "interval": {
+          "type": "string",
+          "title": "Scrape Interval",
+          "description": "Override the platform profile scrape interval.",
+          "pattern": "^[1-9][0-9]*(s|m|h)$",
+          "examples": [
+            "15s",
+            "30s",
+            "1m"
+          ]
+        },
+        "scrapeTimeout": {
+          "type": "string",
+          "title": "Scrape Timeout",
+          "description": "Override the platform profile scrape timeout.",
+          "pattern": "^[1-9][0-9]*(s|m|h)$",
+          "examples": [
+            "5s",
+            "10s"
+          ]
+        }
+      },
+      "examples": [
+        {
+          "port": 9090
+        },
+        {
+          "port": 8080,
+          "path": "/metrics",
+          "interval": "30s"
+        },
+        {
+          "enabled": false
+        }
+      ]
+    },
+    "Health": {
+      "type": "object",
+      "title": "Health Checks",
+      "description": "Health check configuration. Services support TCP/HTTP ready and alive checks. Workers support optional alive.exec only.",
+      "additionalProperties": false,
+      "properties": {
+        "ready": {
+          "oneOf": [
+            {
+              "type": "boolean",
+              "const": false
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "path"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "pattern": "^/",
+                  "examples": [
+                    "/health",
+                    "/ready",
+                    "/healthz"
+                  ]
+                }
+              }
+            }
+          ],
+          "examples": [
+            {
+              "path": "/health"
+            },
+            false
+          ]
+        },
+        "alive": {
+          "oneOf": [
+            {
+              "type": "boolean",
+              "const": false
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "pattern": "^/",
+                  "examples": [
+                    "/livez",
+                    "/healthz",
+                    "/alive"
+                  ]
+                },
+                "exec": {
+                  "type": "array",
+                  "title": "Exec Command",
+                  "description": "Command run inside the container; exit 0 means alive. Mutually exclusive with path. Available for service and worker roles.",
+                  "minItems": 1,
+                  "items": {
+                    "type": "string"
+                  },
+                  "examples": [
+                    [
+                      "pgrep",
+                      "-f",
+                      "worker"
+                    ],
+                    [
+                      "sh",
+                      "-c",
+                      "test -f /tmp/healthy"
+                    ]
+                  ]
+                },
+                "interval": {
+                  "type": "string",
+                  "pattern": "^[1-9][0-9]*(s|m|h)$",
+                  "default": "10s",
+                  "examples": [
+                    "10s",
+                    "30s",
+                    "1m"
+                  ]
+                },
+                "restartAfter": {
+                  "type": "string",
+                  "pattern": "^[1-9][0-9]*(s|m|h)$",
+                  "default": "60s",
+                  "examples": [
+                    "60s",
+                    "2m",
+                    "5m"
+                  ]
+                }
+              },
+              "oneOf": [
+                {
+                  "required": [
+                    "path"
+                  ]
+                },
+                {
+                  "required": [
+                    "exec"
+                  ]
+                }
+              ]
+            }
+          ],
+          "examples": [
+            {
+              "path": "/livez"
+            },
+            {
+              "path": "/livez",
+              "interval": "10s",
+              "restartAfter": "60s"
+            },
+            {
+              "exec": [
+                "pgrep",
+                "-f",
+                "worker"
+              ]
+            },
+            false
+          ]
+        }
+      },
+      "examples": [
+        {
+          "ready": {
+            "path": "/health"
+          }
+        },
+        {
+          "ready": {
+            "path": "/health"
+          },
+          "alive": {
+            "path": "/livez"
+          }
+        },
+        {
+          "alive": {
+            "exec": [
+              "pgrep",
+              "-f",
+              "worker"
+            ]
+          }
+        },
+        {
+          "ready": false,
+          "alive": false
+        }
+      ]
+    },
+    "Task": {
+      "type": "object",
+      "title": "Task",
+      "description": "Run-to-completion work triggered on deploy or via the CLI.",
+      "additionalProperties": false,
+      "required": [
+        "on"
+      ],
+      "anyOf": [
+        {
+          "required": [
+            "from"
+          ]
+        },
+        {
+          "required": [
+            "image"
+          ]
+        }
+      ],
+      "properties": {
+        "from": {
+          "type": "string",
+          "title": "From",
+          "description": "Component name to inherit env, envFile, configFile, environments, profiles, and resources from. Does not copy command, args, or service-only fields.",
+          "minLength": 1,
+          "examples": [
+            "api"
+          ]
+        },
+        "image": {
+          "type": "string",
+          "title": "Container Image",
+          "description": "Container image. When omitted, the image from from is used. When set, it replaces the parent image.",
+          "minLength": 1
+        },
+        "command": {
+          "type": "array",
+          "title": "Command",
+          "description": "Container entrypoint override. Required when using the parent image.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "args": {
+          "type": "array",
+          "title": "Arguments",
+          "description": "Container command argument override.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "on": {
+          "type": "string",
+          "title": "Trigger",
+          "description": "When the task runs. preDeploy and postDeploy run on every install and upgrade. manual runs only via the CLI.",
+          "enum": [
+            "preDeploy",
+            "postDeploy",
+            "manual"
+          ]
+        },
+        "after": {
+          "type": "array",
+          "title": "After",
+          "description": "Task names that must finish first in the same on phase. Not allowed on manual tasks.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "env": {
+          "type": "object",
+          "title": "Environment Variables",
+          "description": "Static environment variables. Overlay the inherited map from from.",
+          "propertyNames": {
+            "pattern": "^[A-Z_][A-Z0-9_]*$"
+          },
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "boolean"
+            ]
+          }
+        },
+        "envFile": {
+          "type": "string",
+          "title": "Environment File"
+        },
+        "configFile": {
+          "type": "string",
+          "title": "Configuration File"
+        },
+        "environments": {
+          "type": "array",
+          "title": "Environment Filter",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "profiles": {
+          "type": "array",
+          "title": "Profiles",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "resources": {
+          "$ref": "#/$defs/Resources"
+        },
+        "resourcePreset": {
+          "type": "string",
+          "title": "Resource Preset",
+          "enum": [
+            "nano",
+            "micro",
+            "small",
+            "medium",
+            "large",
+            "xlarge",
+            "2xlarge"
+          ]
+        },
+        "fanout": {
+          "title": "Fanout",
+          "description": "How many indexed copies to run. Integer shorthand (count, parallelism 1) or an object. Applies to preDeploy, postDeploy, and manual.",
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "$ref": "#/$defs/Fanout"
+            }
+          ]
+        },
+        "timeout": {
+          "type": "string",
+          "title": "Timeout",
+          "description": "How long a single run may take. Defaults to 5m for preDeploy and postDeploy. Hook timeout must be less than the CLI --timeout used at deploy or run time (default 10m).",
+          "pattern": "^[1-9][0-9]*(s|m|h)$"
+        },
+        "backoffLimit": {
+          "type": "integer",
+          "title": "Backoff Limit",
+          "description": "Retries before the run is marked failed. Defaults to 3.",
+          "minimum": 0,
+          "default": 3
+        },
+        "ttlSecondsAfterFinished": {
+          "type": "integer",
+          "title": "TTL Seconds After Finished",
+          "minimum": 0
+        }
+      }
+    },
+    "Fanout": {
+      "type": "object",
+      "title": "Fanout",
+      "description": "Indexed copy count and how many may run at once.",
+      "additionalProperties": false,
+      "properties": {
+        "count": {
+          "type": "integer",
+          "title": "Count",
+          "minimum": 1
+        },
+        "parallelism": {
+          "type": "integer",
+          "title": "Parallelism",
+          "description": "How many copies may run at once. Must not exceed count. Kubernetes Indexed Jobs reject values above 100000.",
+          "minimum": 1,
+          "maximum": 100000,
+          "default": 1
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "apiVersion": "v1-alpha.5",
+      "project": "shop",
+      "environments": {
+        "production": {
+          "envFile": ".env.production"
+        },
+        "local": {}
+      },
+      "components": {
+        "api": {
+          "image": "my-app:latest",
+          "port": 8080,
+          "expose": {
+            "domain": "public",
+            "subdomain": "api"
+          },
+          "metrics": true
+        },
+        "worker": {
+          "image": "my-worker:latest",
+          "role": "worker",
+          "command": [
+            "./worker"
+          ],
+          "metrics": {
+            "port": 9090
+          }
+        }
+      },
+      "tasks": {
+        "migrate": {
+          "from": "api",
+          "on": "preDeploy",
+          "command": [
+            "migrate",
+            "up"
+          ]
+        }
+      }
+    }
+  ]
+}

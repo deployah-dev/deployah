@@ -25,7 +25,7 @@ import (
 
 // Spec defines the structure of the project spec.
 type Spec struct {
-	// APIVersion is the schema version of the spec (e.g., "v1-alpha.4").
+	// APIVersion is the schema version of the spec (e.g., "v1-alpha.5").
 	APIVersion string `json:"apiVersion,omitempty" yaml:"apiVersion,omitempty"`
 	// Project is the project name.
 	Project string `json:"project" yaml:"project"`
@@ -35,6 +35,8 @@ type Spec struct {
 	Environments map[string]Environment `json:"environments,omitempty" yaml:"environments,omitempty"`
 	// Components is a map of component names to their configuration.
 	Components map[string]Component `json:"components" yaml:"components"`
+	// Tasks is a map of task names to run-to-completion work.
+	Tasks map[string]Task `json:"tasks,omitempty" yaml:"tasks,omitempty"`
 }
 
 // EnvironmentNames returns the sorted list of environment names defined in the
@@ -389,12 +391,10 @@ const (
 	ComponentRoleService ComponentRole = "service"
 	// ComponentRoleWorker runs background or queue-processing workloads.
 	ComponentRoleWorker ComponentRole = "worker"
-	// ComponentRoleJob runs a finite batch or one-off task.
-	ComponentRoleJob ComponentRole = "job"
 )
 
 // IsService reports whether r is the "service" role, the only role that
-// listens on a port or gets exposed via an ingress rule. Worker and job
+// listens on a port or gets exposed via an ingress rule. Worker
 // components run without inbound traffic.
 func (r ComponentRole) IsService() bool {
 	return r == ComponentRoleService

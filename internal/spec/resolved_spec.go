@@ -37,6 +37,8 @@ type ResolvedSpec struct {
 	KubeContext string
 	// Components holds the per-component resolved data.
 	Components map[string]ResolvedComponent
+	// Tasks holds the per-task resolved data for tasks active in Env.
+	Tasks map[string]ResolvedTask
 	// Warnings is the list of non-fatal resolution warnings.
 	Warnings []string
 }
@@ -74,6 +76,22 @@ type ResolvedComponent struct {
 	DomainKey string
 }
 
+// ResolvedTask holds the merged, environment-filtered task used for chart
+// generation and deployah run.
+type ResolvedTask struct {
+	// Task is the task after from-merge and defaults.
+	Task Task
+	// HookWeight is the Helm hook-weight for preDeploy/postDeploy tasks.
+	// Zero for independent hooks; unused for manual tasks.
+	HookWeight int
+	// Profiles is the ordered list of profile names applied after default
+	// prepend. Empty when no profiles apply.
+	Profiles []string
+	// MergedProfile is the left-to-right merge of Profiles. Nil when no
+	// profiles apply.
+	MergedProfile *PlatformProfile
+}
+
 // ResolutionReport holds the provenance of each resolved field, enabling
 // the resolve command and deploy --explain to trace where each value came from.
 type ResolutionReport struct {
@@ -91,8 +109,9 @@ type ResolutionReport struct {
 
 // ResolvedField holds provenance for a single resolved value.
 type ResolvedField struct {
-	// Component is the component name this field belongs to, or empty for
-	// top-level fields.
+	// Component is the component or task name this field belongs to, or
+	// empty for top-level fields. Components and tasks share one name
+	// pool, so the name is unambiguous.
 	Component string
 	// Path is the spec path, e.g. "expose.host".
 	Path string

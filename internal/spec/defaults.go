@@ -66,14 +66,14 @@ const componentsPrefixLength = len(ComponentsPrefix)
 // and pattern extraction operations.
 //
 // Cache keys follow the format: "{version}-{schemaType}"
-// Example: "v1-alpha.4-spec", "v1-alpha.4-environments"
+// Example: "v1-alpha.5-spec", "v1-alpha.5-environments"
 var (
 	// compiledSchemaCache stores compiled JSON schemas with their raw data
-	// Key format: "v1-alpha.4-spec" -> schemaInfo{compiled, rawData}
+	// Key format: "v1-alpha.5-spec" -> schemaInfo{compiled, rawData}
 	compiledSchemaCache = make(map[string]*schemaInfo)
 
 	// patternCache stores extracted component name patterns from schemas
-	// Key format: "v1-alpha.4" -> "^[a-zA-Z0-9_-]+$"
+	// Key format: "v1-alpha.5" -> "^[a-zA-Z0-9_-]+$"
 	patternCache = make(map[string]string)
 
 	// schemaMutex protects concurrent access to the caches
@@ -270,7 +270,7 @@ func (w *defaultsWalker) walk(schemaData any, path string, defaults DefaultValue
 	}
 
 	// Handle map-typed additionalProperties combined with a propertyNames
-	// pattern (the v1-alpha.4 layout for components/environments); the
+	// pattern (the object-map layout for components/environments); the
 	// pattern plays the same role as a patternProperties key.
 	if addProps, exists := schemaMap["additionalProperties"].(map[string]any); exists {
 		pattern := ".*"
@@ -321,47 +321,51 @@ func GetDefaultValues(version string, schemaType schema.SchemaType) (DefaultValu
 // concrete Resources, then clears ResourcePreset so it does not conflict
 // with the now-populated Resources during validation. Components that
 // already set Resources are left untouched; components with neither
-// Resources nor a preset get [ResourcePresetSmall]. Only the preset's
+// Resources nor a preset get [ResourcePresetSmall]. Tasks follow the same
+// rules, except a task with from and no own resources or preset is left
+// empty so [Task.MergeFrom] can copy the parent. Only the preset's
 // "requests" values are applied; "limits" are not used.
-func resolveResourcePresets(spec *Spec) error {
+func resolveResourcePresets(spec *Spec) {
 	for componentName, component := range spec.Components {
-		// Only resolve if ResourcePreset is set and Resources are empty
-		if component.ResourcePreset != "" && !component.Resources.ResourcesSet() {
-			if presetResources, exists := ResourcePresetMappings[component.ResourcePreset]; exists {
-				// Clone quantities so callers do not share mutable pointers from
-				// the package-level ResourcePresetMappings table.
-				req := presetResources["requests"]
-				component.Resources = Resources{
-					CPU:              cloneQuantity(req.CPU),
-					Memory:           cloneQuantity(req.Memory),
-					EphemeralStorage: cloneQuantity(req.EphemeralStorage),
-				}
-				// Clear the resourcePreset field after converting to resources
-				// to avoid validation conflicts
-				component.ResourcePreset = ""
-				spec.Components[componentName] = component
-				continue
-			}
-		}
-
-		// If neither explicit resources nor a preset is provided, apply a default preset at spec layer
-		if component.ResourcePreset == "" && !component.Resources.ResourcesSet() {
-			if presetResources, exists := ResourcePresetMappings[ResourcePresetSmall]; exists {
-				component.ResourcePreset = ResourcePresetSmall
-				req := presetResources["requests"]
-				component.Resources = Resources{
-					CPU:              cloneQuantity(req.CPU),
-					Memory:           cloneQuantity(req.Memory),
-					EphemeralStorage: cloneQuantity(req.EphemeralStorage),
-				}
-				// Clear the resourcePreset field after converting to resources
-				// to avoid validation conflicts
-				component.ResourcePreset = ""
-				spec.Components[componentName] = component
-			}
-		}
+		applyResourcePreset(&component.ResourcePreset, &component.Resources)
+		spec.Components[componentName] = component
 	}
-	return nil
+	for taskName, task := range spec.Tasks {
+		// A task with from and nothing of its own inherits the parent's
+		// resources in [Task.MergeFrom], so leave it empty here.
+		if task.From != "" && task.ResourcePreset == "" && !task.Resources.ResourcesSet() {
+			continue
+		}
+		applyResourcePreset(&task.ResourcePreset, &task.Resources)
+		spec.Tasks[taskName] = task
+	}
+}
+
+// applyResourcePreset fills resources from preset when resources are empty,
+// then clears preset so validation does not see both. An empty preset falls
+// back to [ResourcePresetSmall]. Explicit resources win, and an unknown
+// preset is left in place for validation to report.
+func applyResourcePreset(preset *ResourcePreset, resources *Resources) {
+	if resources.ResourcesSet() {
+		return
+	}
+	name := *preset
+	if name == "" {
+		name = ResourcePresetSmall
+	}
+	presetResources, exists := ResourcePresetMappings[name]
+	if !exists {
+		return
+	}
+	// Clone quantities so callers do not share mutable pointers from the
+	// package-level ResourcePresetMappings table.
+	req := presetResources["requests"]
+	*resources = Resources{
+		CPU:              cloneQuantity(req.CPU),
+		Memory:           cloneQuantity(req.Memory),
+		EphemeralStorage: cloneQuantity(req.EphemeralStorage),
+	}
+	*preset = ""
 }
 
 // FillSpecWithDefaults fills spec with defaults from the JSON schemas for
@@ -402,10 +406,19 @@ func FillSpecWithDefaults(spec *Spec, version string) error {
 		spec.Components[componentName] = component
 	}
 
-	// Resolve resource presets after applying schema defaults
-	if err = resolveResourcePresets(spec); err != nil {
-		return fmt.Errorf("failed to resolve resource presets: %w", err)
+	if spec.Tasks == nil {
+		spec.Tasks = make(map[string]Task)
 	}
+	for taskName, task := range spec.Tasks {
+		if err = applyDefaultsRecursively(&task, specDefaults, "tasks."+taskName, version); err != nil {
+			return fmt.Errorf("failed to apply defaults to task %s: %w", taskName, err)
+		}
+		applyTaskDefaults(&task)
+		spec.Tasks[taskName] = task
+	}
+
+	// Resolve resource presets after applying schema defaults
+	resolveResourcePresets(spec)
 
 	// Merge spec and environment defaults for environments
 	mergedDefaults := make(DefaultValues)
@@ -867,6 +880,22 @@ func applyRoleDependentDefaults(c *Component) {
 		if c.Role.IsService() && c.Metrics.Port == 0 {
 			c.Metrics.Port = c.Port
 		}
+	}
+}
+
+func applyTaskDefaults(t *Task) {
+	if t.Fanout.Count <= 0 {
+		t.Fanout.Count = DefaultFanoutCount
+	}
+	if t.Fanout.Parallelism <= 0 {
+		t.Fanout.Parallelism = DefaultFanoutParallelism
+	}
+	if t.BackoffLimit == nil {
+		n := DefaultBackoffLimit
+		t.BackoffLimit = &n
+	}
+	if t.On.IsHook() && t.Timeout == "" {
+		t.Timeout = DefaultHookTaskTimeout
 	}
 }
 

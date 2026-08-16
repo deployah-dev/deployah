@@ -1,0 +1,20 @@
+Project:     plan-tasks-section
+Environment: dev
+Release:     plan-tasks-section-dev (fresh install)
+Namespace:   default
+
+Tasks:
+  preDeploy
+    migrate (timeout 5m) weight 0
+  postDeploy
+    smoke (timeout 5m) weight 0
+  manual (CLI only)
+    backfill
+Note: preDeploy runs before other resources on a first install; the database must already be reachable.
+
++ Deployment/plan-tasks-section-dev-api
++ Service/plan-tasks-section-dev-api
+
+Note: Helm hooks changed for this release (not shown above).
+
+Plan: 2 to add, 0 to change, 0 to destroy.

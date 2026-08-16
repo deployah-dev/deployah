@@ -3,6 +3,7 @@ package delete
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"nabat.dev/nabat"
@@ -11,6 +12,7 @@ import (
 	"deployah.dev/deployah/internal/cli"
 	"deployah.dev/deployah/internal/cmd/cmdopts"
 	"deployah.dev/deployah/internal/helm"
+	"deployah.dev/deployah/internal/k8s"
 	"deployah.dev/deployah/internal/session"
 	"deployah.dev/deployah/internal/spec"
 
@@ -49,17 +51,21 @@ type DeletePreview struct {
 	Revision     int            `json:"revision" yaml:"revision"`
 	LastDeployed string         `json:"lastDeployed" yaml:"lastDeployed"`
 	Resources    []ResourceInfo `json:"resources,omitempty" yaml:"resources,omitempty"`
+	// Jobs are leftover CLI or hook Jobs labeled for this project and
+	// environment. Live delete removes them even when the Helm release is
+	// already gone.
+	Jobs []string `json:"jobs,omitempty" yaml:"jobs,omitempty"`
 }
 
 // Register adds the delete command to app.
 func Register(app *nabat.App) {
 	app.MustCommand("delete",
 		nabat.WithDescription("Delete a deployed project in an environment"),
-		nabat.WithLongDescription("Delete (uninstall) a deployed project in an environment from the Kubernetes cluster."),
+		nabat.WithLongDescription("Delete (uninstall) a deployed project in an environment from the Kubernetes cluster. Also deletes leftover Jobs labeled for the project and environment, including CLI runs. --dry-run lists those Jobs even when the Helm release is already gone."),
 		nabat.WithAliases("uninstall", "remove"),
 		nabat.WithArg("project", "", nabat.WithRequired(), nabat.WithUsage("Project name to delete"), nabat.WithPrompt("Project name", "", nabat.WithHint("e.g. my-app"))),
 		nabat.WithArg("environment", "", nabat.WithRequired(), nabat.WithUsage("Environment to delete from"), nabat.WithPrompt("Environment", "", nabat.WithHint("e.g. production"))),
-		nabat.WithFlag("yes", false, nabat.WithShort('y'), nabat.WithUsage("Skip confirmation prompt and continue even if the release is not found")),
+		nabat.WithFlag("yes", false, nabat.WithShort('y'), nabat.WithUsage("Skip confirmation prompt")),
 		nabat.WithFlag("dry-run", false, nabat.WithUsage("Simulate the deletion without actually removing the project")),
 		nabat.WithFlag("show-resources", false, nabat.WithUsage("Show detailed resources that would be deleted (implies --dry-run)")),
 		nabat.WithSelectFlag("output", cli.OutputFormatTree, cli.DeleteOutputFormats, nabat.WithShort('o'), nabat.WithUsage("Output format for dry-run preview")),
@@ -134,29 +140,31 @@ func runDelete(c *nabat.Context) error {
 	c.Logger().Debug("checking project status", "project", opts.Project, "environment", opts.Environment)
 	release, err := helmClient.GetRelease(c, opts.Project, opts.Environment)
 	if err != nil {
-		if errors.Is(err, helm.ErrReleaseNotFound) {
-			c.Warn("Project not found", "project", opts.Project, "environment", opts.Environment)
-			if !opts.Yes {
-				return fmt.Errorf("project '%s' in environment '%s': %w — use --yes to ignore", opts.Project, opts.Environment, helm.ErrReleaseNotFound)
-			}
-			c.Info("Continuing with --yes despite missing project", "project", opts.Project)
-		} else {
+		if !errors.Is(err, helm.ErrReleaseNotFound) {
 			return fmt.Errorf("check project status: %w", err)
 		}
+		release = nil
+	}
+
+	jobs, jobErr := listLabeledJobNames(c, cluster, opts.Project, opts.Environment)
+	if jobErr != nil {
+		return jobErr
 	}
 
 	if opts.DryRun {
-		return renderDryRunPreview(c, opts.Project, opts.Environment, release, opts.ShowResources, opts.Output)
+		return renderDryRunPreview(c, opts.Project, opts.Environment, release, jobs, opts.ShowResources, opts.Output)
+	}
+
+	if nothingToDelete(release, jobs) {
+		c.Warn("Project not found, nothing to delete", "project", opts.Project, "environment", opts.Environment)
+		return nil
 	}
 
 	targetCtx := cluster.Context()
 	if fallback, current := cluster.ContextFallback(); fallback {
 		targetCtx = current
 	}
-	prompt := fmt.Sprintf("Delete project '%s' in environment '%s'?", opts.Project, opts.Environment)
-	if targetCtx != "" {
-		prompt = fmt.Sprintf("Delete project '%s' in environment '%s' (context: %s)?", opts.Project, opts.Environment, targetCtx)
-	}
+	prompt := deleteConfirmPrompt(opts.Project, opts.Environment, targetCtx, release, jobs)
 	confirmed, confirmErr := c.Confirm(
 		prompt,
 		nabat.WithAffirmative("Yes, delete it"),
@@ -172,27 +180,63 @@ func runDelete(c *nabat.Context) error {
 		return nil
 	}
 
-	err = c.Spinner(
-		func(_ *nabat.Spinner) error {
-			return helmClient.DeleteRelease(c, opts.Project, opts.Environment, opts.Wait)
-		},
-		nabat.WithTitle(fmt.Sprintf("Deleting '%s' in '%s'...", opts.Project, opts.Environment)),
-	)
-	if err != nil {
-		return fmt.Errorf("delete release: %w", err)
+	if release != nil {
+		err = c.Spinner(
+			func(_ *nabat.Spinner) error {
+				return helmClient.DeleteRelease(c, opts.Project, opts.Environment, opts.Wait)
+			},
+			nabat.WithTitle(fmt.Sprintf("Deleting '%s' in '%s'...", opts.Project, opts.Environment)),
+		)
+		if err != nil {
+			return fmt.Errorf("delete release: %w", err)
+		}
+	}
+
+	if delErr := deleteLabeledJobs(c, cluster, opts.Project, opts.Environment); delErr != nil {
+		return delErr
 	}
 
 	c.Success("Deleted", "project", opts.Project, "environment", opts.Environment)
 	return nil
 }
 
-func renderDryRunPreview(c *nabat.Context, project, environment string, release *v1.Release, showResources bool, format string) error {
-	if release == nil {
-		c.Warn("DRY RUN: Project not found — nothing to delete", "project", project, "environment", environment)
+func deleteLabeledJobs(c *nabat.Context, cluster *session.Cluster, project, environment string) error {
+	cs, err := cluster.Kubernetes()
+	if err != nil {
+		c.Warn("Kubernetes client unavailable; leftover Jobs were not deleted", "err", err)
+		return nil
+	}
+	if err = k8s.DeleteJobs(c, cs, cluster.Namespace(), project, environment); err != nil {
+		return fmt.Errorf("delete leftover jobs: %w", err)
+	}
+	return nil
+}
+
+func listLabeledJobNames(c *nabat.Context, cluster *session.Cluster, project, environment string) ([]string, error) {
+	cs, err := cluster.Kubernetes()
+	if err != nil {
+		c.Warn("Kubernetes client unavailable; leftover Jobs were not listed", "err", err)
+		return nil, nil
+	}
+	jobs, err := k8s.ListJobs(c, cs, cluster.Namespace(), project, environment)
+	if err != nil {
+		return nil, fmt.Errorf("list leftover jobs: %w", err)
+	}
+	names := make([]string, 0, len(jobs))
+	for i := range jobs {
+		names = append(names, jobs[i].Name)
+	}
+	slices.Sort(names)
+	return names, nil
+}
+
+func renderDryRunPreview(c *nabat.Context, project, environment string, release *v1.Release, jobs []string, showResources bool, format string) error {
+	if nothingToDelete(release, jobs) {
+		c.Warn("DRY RUN: Project not found, nothing to delete", "project", project, "environment", environment)
 		return nil
 	}
 
-	preview := buildPreview(project, environment, release, showResources)
+	preview := buildPreview(project, environment, release, jobs, showResources)
 
 	switch format {
 	case cli.OutputFormatJSON:
@@ -204,15 +248,21 @@ func renderDryRunPreview(c *nabat.Context, project, environment string, release 
 	}
 }
 
-func buildPreview(project, environment string, release *v1.Release, showResources bool) *DeletePreview {
+func buildPreview(project, environment string, release *v1.Release, jobs []string, showResources bool) *DeletePreview {
 	p := &DeletePreview{
-		Project:      project,
-		Environment:  environment,
-		Release:      release.Name,
-		Namespace:    release.Namespace,
-		Status:       "unknown",
-		LastDeployed: "unknown",
+		Project:     project,
+		Environment: environment,
+		Jobs:        jobs,
 	}
+	if release == nil {
+		p.Status = "not found"
+		p.LastDeployed = "unknown"
+		return p
+	}
+	p.Release = release.Name
+	p.Namespace = release.Namespace
+	p.Status = "unknown"
+	p.LastDeployed = "unknown"
 	if release.Info != nil {
 		p.Status = release.Info.Status.String()
 		if !release.Info.LastDeployed.IsZero() {
@@ -228,25 +278,65 @@ func buildPreview(project, environment string, release *v1.Release, showResource
 	return p
 }
 
-func renderTree(c *nabat.Context, project, environment string, preview *DeletePreview) error {
-	c.Warn("DRY RUN — no changes will be made")
+func nothingToDelete(release *v1.Release, jobs []string) bool {
+	return release == nil && len(jobs) == 0
+}
 
-	children := []nabat.TreeNode{
-		{Value: fmt.Sprintf("Release: %s", preview.Release)},
-		{Value: fmt.Sprintf("Namespace: %s", preview.Namespace)},
-		{Value: fmt.Sprintf("Status: %s", preview.Status)},
-		{Value: fmt.Sprintf("Revision: %d", preview.Revision)},
-		{Value: fmt.Sprintf("Last Deployed: %s", preview.LastDeployed)},
+func deleteConfirmPrompt(project, environment, targetCtx string, release *v1.Release, jobs []string) string {
+	var b strings.Builder
+	if release != nil {
+		fmt.Fprintf(&b, "Delete project '%s' in environment '%s'", project, environment)
+	} else {
+		fmt.Fprintf(&b, "Delete leftover Jobs for project '%s' in environment '%s': %s",
+			project, environment, strings.Join(jobs, ", "))
+	}
+	if targetCtx != "" {
+		fmt.Fprintf(&b, " (context: %s)", targetCtx)
+	}
+	b.WriteByte('?')
+	return b.String()
+}
+
+func renderTree(c *nabat.Context, project, environment string, preview *DeletePreview) error {
+	c.Warn("DRY RUN, no changes will be made")
+
+	var children []nabat.TreeNode
+	if preview.Release != "" {
+		children = []nabat.TreeNode{
+			{Value: fmt.Sprintf("Release: %s", preview.Release)},
+			{Value: fmt.Sprintf("Namespace: %s", preview.Namespace)},
+			{Value: fmt.Sprintf("Status: %s", preview.Status)},
+			{Value: fmt.Sprintf("Revision: %d", preview.Revision)},
+			{Value: fmt.Sprintf("Last Deployed: %s", preview.LastDeployed)},
+		}
+	} else {
+		children = []nabat.TreeNode{
+			{Value: "Helm release: not found"},
+		}
 	}
 
 	if len(preview.Resources) > 0 {
 		children = append(children, buildResourceNodes(preview.Resources))
 	}
+	if len(preview.Jobs) > 0 {
+		leaves := make([]nabat.TreeNode, 0, len(preview.Jobs))
+		for _, name := range preview.Jobs {
+			leaves = append(leaves, nabat.TreeNode{Value: name})
+		}
+		children = append(children, nabat.TreeNode{
+			Value:    fmt.Sprintf("Leftover Jobs (%d)", len(preview.Jobs)),
+			Children: leaves,
+		})
+	}
 
 	root := fmt.Sprintf("%s (%s)", project, environment)
 	c.Tree(root, children, nabat.WithTreeEnumerator(nabat.TreeRoundedEnumerator()))
 
-	c.Warn("This permanently deletes all resources and Helm release history")
+	if preview.Release != "" {
+		c.Warn("This permanently deletes all resources and Helm release history")
+	} else {
+		c.Warn("This deletes leftover Jobs labeled for this project and environment")
+	}
 	c.Info("To perform the actual deletion, run without --dry-run",
 		"command", fmt.Sprintf("deployah delete %s %s", project, environment),
 	)
