@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -114,6 +115,10 @@ func RenderText(w io.Writer, p *Plan, opts TextOptions) error {
 	ApplyMasking(p)
 
 	if err := writeHeader(w, p.Header, opts); err != nil {
+		return err
+	}
+
+	if err := writeTasks(w, p, opts); err != nil {
 		return err
 	}
 
@@ -369,6 +374,68 @@ func writeHookNote(w io.Writer, p *Plan, opts TextOptions) error {
 	note := opts.Theme.Style(theme.TextMuted).Render("Note: Helm hooks changed for this release (not shown above).")
 	_, err := fmt.Fprintln(w, "\n"+note)
 	return err
+}
+
+func writeTasks(w io.Writer, p *Plan, opts TextOptions) error {
+	if len(p.Tasks) == 0 {
+		return nil
+	}
+
+	heading := opts.Theme.Style(theme.TextTitle).Render("Tasks:")
+	if _, err := fmt.Fprintln(w, "\n"+heading); err != nil {
+		return err
+	}
+
+	groups := []struct {
+		title string
+		on    string
+	}{
+		{TaskOnPreDeploy, TaskOnPreDeploy},
+		{TaskOnPostDeploy, TaskOnPostDeploy},
+		{"manual (CLI only)", TaskOnManual},
+	}
+	for _, g := range groups {
+		var items []PlannedTask
+		for _, task := range p.Tasks {
+			if task.On == g.on {
+				items = append(items, task)
+			}
+		}
+		if g.on != TaskOnManual {
+			slices.SortFunc(items, func(a, b PlannedTask) int {
+				if a.HookWeight != b.HookWeight {
+					return a.HookWeight - b.HookWeight
+				}
+				return strings.Compare(a.Name, b.Name)
+			})
+		}
+		if len(items) == 0 {
+			continue
+		}
+		if _, err := fmt.Fprintf(w, "  %s\n", g.title); err != nil {
+			return err
+		}
+		for _, task := range items {
+			line := "    " + task.Name
+			if task.Timeout != "" {
+				line += " (timeout " + task.Timeout + ")"
+			}
+			if !task.Manual {
+				line += fmt.Sprintf(" weight %d", task.HookWeight)
+			}
+			if _, err := fmt.Fprintln(w, line); err != nil {
+				return err
+			}
+		}
+	}
+
+	if note := p.FirstInstallTaskNote(); note != "" {
+		styled := opts.Theme.Style(theme.TextMuted).Render("Note: " + note)
+		if _, err := fmt.Fprintln(w, styled); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // String renders the summary trailer, e.g.

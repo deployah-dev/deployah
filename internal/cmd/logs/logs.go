@@ -118,9 +118,9 @@ func runLogs(c *nabat.Context) error {
 		return fmt.Errorf("parse label selector: %w", err)
 	}
 
-	containerState, err := stern.NewContainerState(stern.RUNNING)
+	containerStates, err := logContainerStates()
 	if err != nil {
-		return fmt.Errorf("invalid container-state %q: %w", containerState, err)
+		return err
 	}
 
 	funs := map[string]any{
@@ -164,7 +164,7 @@ func runLogs(c *nabat.Context) error {
 		Template:            tmpl,
 		LabelSelector:       labelSelector,
 		FieldSelector:       fields.Everything(),
-		ContainerStates:     []stern.ContainerState{containerState},
+		ContainerStates:     containerStates,
 		Follow:              !opts.NoFollow,
 		Resource:            opts.Resource,
 		OnlyLogLines:        opts.OnlyLogLines,
@@ -196,4 +196,16 @@ func runLogs(c *nabat.Context) error {
 		return fmt.Errorf("stream logs for project %s: %w", opts.Project, err)
 	}
 	return nil
+}
+
+func logContainerStates() ([]stern.ContainerState, error) {
+	running, err := stern.NewContainerState(stern.RUNNING)
+	if err != nil {
+		return nil, fmt.Errorf("invalid container-state %q: %w", stern.RUNNING, err)
+	}
+	terminated, err := stern.NewContainerState(stern.TERMINATED)
+	if err != nil {
+		return nil, fmt.Errorf("invalid container-state %q: %w", stern.TERMINATED, err)
+	}
+	return []stern.ContainerState{running, terminated}, nil
 }

@@ -32,6 +32,31 @@ error: variable ${IMAGE} not found
 Define the variable in the environment's `variables`, or in your env file or
 shell with the `DPY_VAR_` prefix.
 
+**Hook task failed and was kept.**
+
+A failed `preDeploy` or `postDeploy` Job is not deleted. Read it with
+`deployah logs <project> --component=<task> --no-follow`, fix the command or
+the database, then deploy again. Helm recreates the Job (`before-hook-creation`).
+
+**Deploy timed out while hooks were still running.**
+
+Hook timeout defaults to `5m` and must be less than the `--timeout` used for
+that deploy (default `10m`). Increase `--timeout` so it stays above every hook
+timeout. A spec may set a hook timeout longer than the default `10m`; deploy
+then needs a matching `--timeout`. Deployah does not raise the flag for you.
+Serial hooks can add up to more than `--timeout`; plan shows each hook timeout
+so you can see the budget.
+
+**A task did not run on deploy.**
+
+`"on": manual` tasks only run via `deployah run`. Hook tasks skipped for this
+environment have an `environments` filter that does not match.
+
+**preDeploy cannot reach the database on first install.**
+
+On a first install, `preDeploy` runs before Deployments and Services. The
+database must already be reachable. See [Tasks](tasks.md#first-install-and-the-database).
+
 **Cannot connect to Kubernetes.**
 
 ```sh

@@ -558,15 +558,6 @@ func TestValidateComponentHealth(t *testing.T) {
 			errMsg:    "health.alive.exec[1] must not be empty",
 		},
 		{
-			name: "health on job role is invalid",
-			component: Component{
-				Role:   ComponentRoleJob,
-				Health: &Health{Ready: &HealthReady{Path: "/health"}},
-			},
-			expectErr: true,
-			errMsg:    "health checks are not supported for role: job",
-		},
-		{
 			name: "ready path without leading slash is invalid",
 			component: Component{
 				Role:   ComponentRoleService,

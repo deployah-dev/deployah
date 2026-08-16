@@ -146,6 +146,18 @@ func runDeploy(c *nabat.Context) error {
 		printExplain(c, resolvedSpec)
 	}
 
+	effective, effErr := spec.EffectiveTasks(manifest, opts.Environment, resolvedSpec)
+	if effErr != nil {
+		return effErr
+	}
+	tasks := make(map[string]spec.Task, len(effective))
+	for name, rt := range effective {
+		tasks[name] = rt.Task
+	}
+	if timeoutErr := spec.CheckHookTaskTimeouts(tasks, sess.Timeout()); timeoutErr != nil {
+		return timeoutErr
+	}
+
 	cluster, err := sess.Target(c, opts.Environment)
 	if err != nil {
 		return fmt.Errorf("target cluster: %w", err)

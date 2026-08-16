@@ -4,7 +4,7 @@ Delete a deployed project in an environment
 
 ### Synopsis
 
-Delete (uninstall) a deployed project in an environment from the Kubernetes cluster.
+Delete (uninstall) a deployed project in an environment from the Kubernetes cluster. Also deletes leftover Jobs labeled for the project and environment, including CLI runs. --dry-run lists those Jobs even when the Helm release is already gone.
 
 ```text
 deployah delete <project> <environment> [flags]
@@ -18,7 +18,7 @@ deployah delete <project> <environment> [flags]
   -o, --output string            Output format for dry-run preview (default "tree")
       --show-resources           Show detailed resources that would be deleted (implies --dry-run)
       --wait                     Wait until all Kubernetes resources are fully deleted before returning (uses stable legacy polling; suitable for CI)
-  -y, --yes                      Skip confirmation prompt and continue even if the release is not found
+  -y, --yes                      Skip confirmation prompt
 ```
 
 ### Options inherited from parent commands
@@ -31,7 +31,7 @@ deployah delete <project> <environment> [flags]
   -n, --namespace string       Kubernetes namespace to use for Deployah operations (defaults to current context namespace)
       --platform-file string   Path to the platform config file (overrides DEPLOYAH_PLATFORM_FILE and the default same-directory lookup)
   -s, --spec string            Path to the Deployah spec file (YAML or JSON) (default "deployah.yaml")
-  -t, --timeout duration       Timeout for Deployah operations (install/upgrade, list, status, logs, delete) (default 10m0s)
+  -t, --timeout duration       Timeout for Deployah operations (install/upgrade, list, status, logs, delete, run) (default 10m0s)
 ```
 
 ### SEE ALSO

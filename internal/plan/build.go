@@ -17,6 +17,7 @@ package plan
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"helm.sh/helm/v4/pkg/postrenderer"
 
@@ -85,6 +86,49 @@ func BuildPlan(ctx context.Context, client BuildClient, manifest *spec.Spec, env
 		FreshInstall: prevRelease == nil,
 		Warning:      warning,
 	}
+	p.Tasks, err = TasksFromSpec(manifest, environment, resolved)
+	if err != nil {
+		return nil, nil, cleanup, fmt.Errorf("tasks: %w", err)
+	}
 
 	return p, result, cleanup, nil
+}
+
+// TasksFromSpec builds the plan Tasks section from the spec. When resolved
+// is nil, only tasks that apply to environment are included.
+func TasksFromSpec(manifest *spec.Spec, environment string, resolved *spec.ResolvedSpec) ([]PlannedTask, error) {
+	tasks, err := spec.EffectiveTasks(manifest, environment, resolved)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(tasks))
+	for name := range tasks {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	out := make([]PlannedTask, 0, len(names))
+	for _, name := range names {
+		rt := tasks[name]
+		out = append(out, PlannedTask{
+			Name:       name,
+			On:         plannedTaskOn(rt.Task.On),
+			Timeout:    rt.Task.Timeout,
+			HookWeight: rt.HookWeight,
+			Manual:     rt.Task.On == spec.TaskOnManual,
+		})
+	}
+	return out, nil
+}
+
+func plannedTaskOn(on spec.TaskOn) string {
+	switch on {
+	case spec.TaskOnPreDeploy:
+		return TaskOnPreDeploy
+	case spec.TaskOnPostDeploy:
+		return TaskOnPostDeploy
+	case spec.TaskOnManual:
+		return TaskOnManual
+	default:
+		return string(on)
+	}
 }

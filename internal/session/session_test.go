@@ -61,7 +61,7 @@ users:
 
 // minimalSpecYAML is a self-contained spec fixture with a valid apiVersion
 // and a single component, reused by Spec/ParseManifest tests.
-const minimalSpecYAML = `apiVersion: v1-alpha.4
+const minimalSpecYAML = `apiVersion: v1-alpha.5
 project: demo
 components:
   web:

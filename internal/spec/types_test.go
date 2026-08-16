@@ -38,7 +38,6 @@ func TestComponentRole_IsService(t *testing.T) {
 
 	assert.True(t, ComponentRoleService.IsService())
 	assert.False(t, ComponentRoleWorker.IsService())
-	assert.False(t, ComponentRoleJob.IsService())
 }
 
 // TestComponentRole_IsWorker verifies only the "worker" role is treated
@@ -48,7 +47,6 @@ func TestComponentRole_IsWorker(t *testing.T) {
 
 	assert.True(t, ComponentRoleWorker.IsWorker())
 	assert.False(t, ComponentRoleService.IsWorker())
-	assert.False(t, ComponentRoleJob.IsWorker())
 }
 
 // TestComponent_ListensOnPort verifies a component listens on a port only
@@ -64,7 +62,6 @@ func TestComponent_ListensOnPort(t *testing.T) {
 		{name: "service with port", component: Component{Role: ComponentRoleService, Port: 8080}, want: true},
 		{name: "service without a port", component: Component{Role: ComponentRoleService, Port: 0}, want: false},
 		{name: "worker with a port set", component: Component{Role: ComponentRoleWorker, Port: 8080}, want: false},
-		{name: "job with a port set", component: Component{Role: ComponentRoleJob, Port: 8080}, want: false},
 	}
 
 	for _, tt := range tests {

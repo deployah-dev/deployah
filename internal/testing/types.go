@@ -263,7 +263,21 @@ func (suite *IntegrationTestSuite) renderChart(t *testing.T, testDir string, man
 		return nil, fmt.Errorf("render chart: %w", err)
 	}
 
-	return parseManifestYAML(result.Manifest)
+	manifests, parseErr := parseManifestYAML(result.Manifest)
+	if parseErr != nil {
+		return nil, parseErr
+	}
+	for _, h := range result.Hooks {
+		if h == nil || h.Manifest == "" {
+			continue
+		}
+		hookObjs, hookErr := parseManifestYAML(h.Manifest)
+		if hookErr != nil {
+			return nil, fmt.Errorf("parse hook %s: %w", h.Name, hookErr)
+		}
+		manifests = append(manifests, hookObjs...)
+	}
+	return manifests, nil
 }
 
 // parseManifestYAML decodes a "---"-concatenated Kubernetes YAML string
@@ -325,6 +339,7 @@ func (suite *IntegrationTestSuite) validateAgainstExpected(t *testing.T, manifes
 // golden file per manifest.
 func (suite *IntegrationTestSuite) writeGoldenManifests(t *testing.T, manifests []unstructured.Unstructured, expectedDir string) {
 	t.Helper()
+	require.NoError(t, os.MkdirAll(expectedDir, 0o750))
 	entries, err := os.ReadDir(expectedDir)
 	require.NoError(t, err)
 	for _, entry := range entries {

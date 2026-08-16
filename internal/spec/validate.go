@@ -87,7 +87,7 @@ func validateYAMLAgainstSchema(
 }
 
 // ValidateSpec validates spec YAML against the provided JSON schema.
-// version should be the version of the schema (e.g., "v1-alpha.4").
+// version should be the version of the schema (e.g., "v1-alpha.5").
 // This is a strict validation: unknown fields are not allowed.
 func ValidateSpec(specObj map[string]any, version string) error {
 	return validateYAMLAgainstSchema(
@@ -100,7 +100,7 @@ func ValidateSpec(specObj map[string]any, version string) error {
 
 // ValidateEnvironments validates environments YAML against the provided JSON
 // schema file.
-// version should be the version of the schema (e.g., "v1-alpha.4").
+// version should be the version of the schema (e.g., "v1-alpha.5").
 // This is a strict validation: unknown fields are not allowed.
 func ValidateEnvironments(specObj map[string]any, version string) error {
 	return validateYAMLAgainstSchema(
@@ -112,14 +112,9 @@ func ValidateEnvironments(specObj map[string]any, version string) error {
 }
 
 // ValidateAPIVersion checks the spec apiVersion field for presence, type,
-// and validity.
+// and membership in [SupportedManifestVersions].
 // Returns the apiVersion string if valid, or an error otherwise.
 func ValidateAPIVersion(specObj map[string]any) (string, error) {
-	validVersions, err := schema.GetValidManifestVersions()
-	if err != nil {
-		return "", fmt.Errorf("failed to get valid spec versions: %w", err)
-	}
-
 	apiVersionVal, ok := specObj["apiVersion"]
 	if !ok {
 		return "", fmt.Errorf("spec is missing 'apiVersion' field")
@@ -130,8 +125,8 @@ func ValidateAPIVersion(specObj map[string]any) (string, error) {
 		return "", fmt.Errorf("'apiVersion' field must be a non-empty string")
 	}
 
-	if !slices.Contains(validVersions, apiVersionStr) {
-		return "", fmt.Errorf("unsupported spec schema version: %s (valid: %v)", apiVersionStr, validVersions)
+	if !slices.Contains(SupportedManifestVersions, apiVersionStr) {
+		return "", fmt.Errorf("unsupported spec schema version: %s (this release requires %s)", apiVersionStr, strings.Join(SupportedManifestVersions, ", "))
 	}
 
 	return apiVersionStr, nil
@@ -145,17 +140,27 @@ func ValidateAPIVersion(specObj map[string]any) (string, error) {
 // It cannot have both resources and resourcePreset, or an empty resources
 // object.
 func ValidateComponentResources(component Component) error {
-	hasResources := component.Resources.ResourcesSet()
-	hasPreset := component.ResourcePreset != ""
+	if err := validateResources(component.Resources, component.ResourcePreset); err != nil {
+		return fmt.Errorf("component %w", err)
+	}
+	return nil
+}
+
+// validateResources reports when resources and resourcePreset are both set,
+// or when a resources block is present but empty. Callers add the subject
+// (component or task name) when they wrap the error.
+func validateResources(resources Resources, preset ResourcePreset) error {
+	hasResources := resources.ResourcesSet()
+	hasPreset := preset != ""
 
 	if hasResources && hasPreset {
-		return fmt.Errorf("component cannot have both 'resources' and 'resourcePreset' fields")
+		return fmt.Errorf("cannot have both 'resources' and 'resourcePreset' fields")
 	}
 
 	// Check if resources object is present but empty (resources: {} or
 	// zero quantities). Pointers let us detect an explicitly set block.
-	if !hasResources && component.Resources.ResourcesPresent() {
-		return fmt.Errorf("component cannot have empty 'resources' object - either specify actual resource values or remove the resources field entirely")
+	if !hasResources && resources.ResourcesPresent() {
+		return fmt.Errorf("cannot have empty 'resources' object - either specify actual resource values or remove the resources field entirely")
 	}
 
 	// Both empty is allowed (will use defaults)
@@ -219,11 +224,6 @@ func ValidateComponentWorker(component Component) error {
 func ValidateComponentHealth(component Component) error {
 	if component.Health == nil {
 		return nil
-	}
-
-	// Job role still rejects all health configuration.
-	if component.Role == ComponentRoleJob {
-		return fmt.Errorf("health checks are not supported for role: job components")
 	}
 
 	if component.Health.Ready != nil && !component.Health.Ready.Disabled {

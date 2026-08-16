@@ -355,3 +355,8 @@ issues:
 run:
   # Timeout for total work
   timeout: 5m
+  # Without these, every //go:build e2e and //go:build integration file is
+  # invisible to the linter, so the e2e and scenario suites go unchecked.
+  build-tags:
+    - e2e
+    - integration

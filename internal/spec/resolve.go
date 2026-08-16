@@ -46,6 +46,7 @@ func Resolve(
 		Spec:       appSpec,
 		Env:        env,
 		Components: make(map[string]ResolvedComponent),
+		Tasks:      make(map[string]ResolvedTask),
 	}
 
 	// Resolve Kubernetes context from platform.
@@ -134,6 +135,10 @@ func Resolve(
 		resolved.Components[compName] = rc
 	}
 
+	if err := resolveTasks(appSpec, env, platform, platformEnv, resolved, report); err != nil {
+		return nil, report, err
+	}
+
 	return resolved, report, nil
 }
 
@@ -173,7 +178,7 @@ func resolveComponent(
 
 	profileNames, err := ResolveProfileNames(comp.Profiles, platformProfiles)
 	if err != nil {
-		return rc, result, err
+		return rc, result, fmt.Errorf("component %q: %w", name, err)
 	}
 	if len(profileNames) > 0 {
 		merged, mergeErr := MergeProfiles(profileNames, platformProfiles)
@@ -386,17 +391,10 @@ func validateMergedProfile(
 	domainKey string,
 ) error {
 	if merged != nil {
-		return ValidateProfileAgainstComponent(name, comp, *merged, platformEnv, domainKey)
+		return ValidateProfile(componentProfileTarget(name, comp), *merged, platformEnv, domainKey)
 	}
 	if comp.Metrics.IsEnabled() {
-		return &ResolutionError{
-			Code: ErrCodeProfileMonitorLabelsMissing,
-			Message: fmt.Sprintf(
-				"component %q has metrics enabled but the merged profile has no metrics.monitorLabels; "+
-					"set metrics.monitorLabels on a platform profile so Prometheus Operator can discover the monitor",
-				name,
-			),
-		}
+		return newMonitorLabelsError(ProfileSubjectComponent, name)
 	}
 	return nil
 }
@@ -502,6 +500,16 @@ func unknownEnvironmentNameWarnings(appSpec *Spec, registry []string) []string {
 			}
 		}
 	}
+
+	for _, taskName := range appSpec.TaskNames() {
+		for _, entry := range appSpec.Tasks[taskName].Environments {
+			if _, ok := matchEnvKey(entry, registry); !ok {
+				warnings = append(warnings, fmt.Sprintf(
+					"task %q environments filter entry %q matches no environment in the platform file (available: %s)",
+					taskName, entry, joinStrings(registry)))
+			}
+		}
+	}
 	return warnings
 }
 
@@ -579,6 +587,26 @@ func CrossCheckPlatformReferences(appSpec *Spec, platform *PlatformConfig) (prob
 			}
 		}
 	}
+
+	for _, name := range appSpec.TaskNames() {
+		task := appSpec.Tasks[name]
+		if len(task.Profiles) == 0 {
+			continue
+		}
+		if platform.Profiles == nil {
+			problems = append(problems, fmt.Sprintf(
+				"task %q sets profiles but the platform file has no profiles section",
+				name))
+			continue
+		}
+		for _, profileName := range task.Profiles {
+			if _, ok := platform.Profiles[profileName]; !ok {
+				problems = append(problems, fmt.Sprintf(
+					"task %q references profile %q which is not defined in the platform file (available: %s)",
+					name, profileName, joinStrings(profileKeys)))
+			}
+		}
+	}
 	return problems, warnings
 }
 
@@ -617,6 +645,7 @@ func ResolveForDisplay(
 			Spec:       appSpec,
 			Env:        env,
 			Components: make(map[string]ResolvedComponent),
+			Tasks:      make(map[string]ResolvedTask),
 		}
 		return resolved, report, nil
 	}
@@ -637,4 +666,60 @@ func PlatformEnvContext(platform *PlatformConfig, envName string) string {
 		return platform.Environments[matched].Context
 	}
 	return ""
+}
+
+func resolveTasks(appSpec *Spec, env EnvIdentity, platform *PlatformConfig, platformEnv *PlatformEnvironment, resolved *ResolvedSpec, report *ResolutionReport) error {
+	weights, err := AssignHookWeights(appSpec.Tasks)
+	if err != nil {
+		return err
+	}
+	var platformProfiles map[string]PlatformProfile
+	if platform != nil {
+		platformProfiles = platform.Profiles
+	}
+	for _, name := range appSpec.TaskNames() {
+		task, ok := appSpec.MergedTask(name)
+		if !ok || !task.activeInEnvironment(env.Original) {
+			continue
+		}
+		if len(task.Profiles) > 0 && platform == nil {
+			return &ResolutionError{
+				Code: ErrCodePlatformNotFound,
+				Message: fmt.Sprintf(
+					"task %q sets profiles but no platform file was found; "+
+						"pass --platform-file or create %s",
+					name, DefaultPlatformPath,
+				),
+			}
+		}
+		profileNames, profErr := ResolveProfileNames(task.Profiles, platformProfiles)
+		if profErr != nil {
+			return fmt.Errorf("task %q: %w", name, profErr)
+		}
+		rt := ResolvedTask{Task: task, HookWeight: weights[name], Profiles: profileNames}
+		if len(profileNames) > 0 {
+			merged, mergeErr := MergeProfiles(profileNames, platformProfiles)
+			if mergeErr != nil {
+				return fmt.Errorf("task %q: %w", name, mergeErr)
+			}
+			rt.MergedProfile = &merged
+			if profileErr := ValidateProfile(taskProfileTarget(name, task), merged, platformEnv, ""); profileErr != nil {
+				return profileErr
+			}
+			report.Fields = append(report.Fields, ResolvedField{
+				Component: name,
+				Path:      "profiles",
+				Value:     strings.Join(profileNames, ", "),
+				Source:    "platform profiles (merged left to right)",
+			})
+		}
+		resolved.Tasks[name] = rt
+		report.Fields = append(report.Fields, ResolvedField{
+			Component: name,
+			Path:      "on",
+			Value:     string(task.On),
+			Source:    "spec tasks." + name + ".on",
+		})
+	}
+	return nil
 }

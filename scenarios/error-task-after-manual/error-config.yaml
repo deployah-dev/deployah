@@ -1,0 +1,2 @@
+expectedErrors:
+  - "after is not allowed on manual tasks"

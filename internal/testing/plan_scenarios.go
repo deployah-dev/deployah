@@ -62,9 +62,8 @@ type PlanConfig struct {
 	Changes []PlanConfigChange `yaml:"changes"`
 	// Summary is the expected change tally.
 	Summary PlanConfigSummary `yaml:"summary"`
-	// HooksChanged asserts [plan.Plan.HooksChanged]. Always false in this
-	// scenario suite today: the embedded chart defines no hooks, so this
-	// only documents the plumbing for when one is added.
+	// HooksChanged asserts [plan.Plan.HooksChanged]. True when hook tasks
+	// are present on a fresh install (Helm reports hook manifests).
 	HooksChanged bool `yaml:"hooksChanged"`
 	// Masked lists field paths (as they appear in a Changes[].Fields[]
 	// entry's Path) that [plan.ApplyMasking] must flag as masked. Every
@@ -148,6 +147,7 @@ func RunPlanScenarioTest(t *testing.T, scenario PlanTestScenario) {
 			Namespace:    current.Namespace,
 			FreshInstall: previous.Manifest == "",
 		}
+		p.Tasks = current.Tasks
 		if cfg.Warning != "" {
 			p.Header.Warning = cfg.Warning
 		}
@@ -169,6 +169,7 @@ type manifestSide struct {
 	Environment string
 	ReleaseName string
 	Namespace   string
+	Tasks       []plan.PlannedTask
 }
 
 // resolvePreviousSide resolves a scenario's previous manifest: a raw
@@ -269,6 +270,7 @@ func renderManifestFile(t *testing.T, dir, filename string) manifestSide {
 		Environment: envName,
 		ReleaseName: result.ReleaseName,
 		Namespace:   result.Namespace,
+		Tasks:       mustPlanTasks(t, manifest, envName, resolved),
 	}
 }
 
@@ -357,4 +359,11 @@ func checkJSONGolden(t *testing.T, dir string, p *plan.Plan) {
 	var buf strings.Builder
 	require.NoError(t, plan.RenderJSON(&buf, p))
 	compareOrUpdateGolden(t, goldenPath, buf.String())
+}
+
+func mustPlanTasks(t *testing.T, manifest *spec.Spec, environment string, resolved *spec.ResolvedSpec) []plan.PlannedTask {
+	t.Helper()
+	tasks, err := plan.TasksFromSpec(manifest, environment, resolved)
+	require.NoError(t, err)
+	return tasks
 }

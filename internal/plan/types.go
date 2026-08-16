@@ -159,6 +159,44 @@ type Plan struct {
 	// (e.g. missing RBAC), so the plan can say it is incomplete instead of
 	// silently omitting them.
 	DriftIncomplete []string
+
+	// Tasks lists spec tasks active in this environment, grouped by the
+	// renderer into preDeploy, postDeploy, and manual.
+	Tasks []PlannedTask
+}
+
+const (
+	// TaskOnPreDeploy is a hook that runs before other resources.
+	TaskOnPreDeploy = "preDeploy"
+	// TaskOnPostDeploy is a hook that runs after the app is ready.
+	TaskOnPostDeploy = "postDeploy"
+	// TaskOnManual is a task that runs only via the CLI.
+	TaskOnManual = "manual"
+)
+
+// PlannedTask is one spec task shown in the plan Tasks section.
+type PlannedTask struct {
+	Name       string
+	On         string
+	Timeout    string
+	HookWeight int
+	Manual     bool
+}
+
+// FirstInstallTaskNote returns a warning when this plan is a fresh install
+// that includes a preDeploy task. Helm runs those hooks before other
+// resources, so the database they talk to must already exist. It returns
+// "" otherwise.
+func (p *Plan) FirstInstallTaskNote() string {
+	if p == nil || !p.Header.FreshInstall {
+		return ""
+	}
+	for _, task := range p.Tasks {
+		if task.On == TaskOnPreDeploy {
+			return "preDeploy runs before other resources on a first install; the database must already be reachable."
+		}
+	}
+	return ""
 }
 
 // HasChanges reports whether applying this plan would change the cluster:

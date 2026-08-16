@@ -46,9 +46,10 @@ It helps to know there are two different things:
    image tag or the ingress host. This works today and is described below.
 2. **Container environment variables.** These are the variables your app reads
    at runtime. You would set them with the `env` field on a component. Note:
-   that field is accepted by the schema but is **not applied to the running
-   container yet** (it is planned). For now, put runtime values into your image
-   or your app's own config.
+   that field is accepted by the schema but is **not applied to Deployments
+   yet**. Task `env` (inherited from `from` or set on the task) **is** inlined
+   onto the Job. For components, put runtime values into your image or your
+   app's own config for now.
 
 ### Substitution variables
 

@@ -1,0 +1,29 @@
+apiVersion: v1-alpha.5
+project: taskdemo
+components:
+  api:
+    image: nginx:latest
+    port: 80
+    environments: [dev]
+    resourcePreset: nano
+    env:
+      DATABASE_URL: postgres://example
+tasks:
+  migrate:
+    from: api
+    image: busybox:1.36
+    "on": preDeploy
+    command: ["true"]
+    fanout: 2
+  smoke:
+    from: api
+    image: busybox:1.36
+    "on": postDeploy
+    command: ["true"]
+  backfill:
+    from: api
+    image: busybox:1.36
+    "on": manual
+    command: ["echo", "backfill-ok"]
+environments:
+  dev: {}

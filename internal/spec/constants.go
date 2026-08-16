@@ -14,12 +14,14 @@
 
 package spec
 
+import "time"
+
 // File and Path Constants
 const (
 	// CurrentManifestVersion is the manifest apiVersion written by the init
-	// command and expected by the current resolver. Bump this when a new
-	// schema version is added alongside a new schema directory.
-	CurrentManifestVersion = "v1-alpha.4"
+	// command. During alpha, only this version has an embedded schema. Bump
+	// it and replace the schema directory when the spec changes.
+	CurrentManifestVersion = "v1-alpha.5"
 
 	// DefaultSpecPath is the default path for the Deployah spec file
 	DefaultSpecPath = "deployah.yaml"
@@ -42,6 +44,10 @@ const (
 	// ConfigFileSuffix is the suffix for configuration files
 	ConfigFileSuffix = ".yaml"
 )
+
+// SupportedManifestVersions is the apiVersion values this release will load.
+// During alpha this is only [CurrentManifestVersion].
+var SupportedManifestVersions = []string{CurrentManifestVersion}
 
 // Environment Variables
 const (
@@ -80,6 +86,9 @@ const (
 
 	// ComponentsPrefix is the prefix for component paths in schemas
 	ComponentsPrefix = "components."
+
+	// TasksPrefix is the prefix for task paths in schemas
+	TasksPrefix = "tasks."
 
 	// EnvironmentsPrefix is the prefix for environment paths in schemas
 	EnvironmentsPrefix = "environments."
@@ -151,6 +160,32 @@ const (
 	// DefaultWorkerShutdownTimeout is the default shutdownTimeout for
 	// worker components (terminationGracePeriodSeconds).
 	DefaultWorkerShutdownTimeout = "60s"
+
+	// DefaultHookTaskTimeout is the default timeout for preDeploy and
+	// postDeploy tasks when timeout is omitted.
+	DefaultHookTaskTimeout = "5m"
+
+	// DefaultDeployTimeout is the default CLI --timeout. Hook task
+	// timeouts must be strictly less than the session --timeout at
+	// deploy or run time.
+	DefaultDeployTimeout = 10 * time.Minute
+
+	// DefaultBackoffLimit is the default Job retry count for tasks.
+	DefaultBackoffLimit = 3
+
+	// DefaultFanoutCount is the default fanout count when omitted.
+	DefaultFanoutCount = 1
+
+	// DefaultFanoutParallelism is the default fanout parallelism when omitted.
+	DefaultFanoutParallelism = 1
+
+	// MaxFanoutParallelism is the largest allowed fanout.parallelism.
+	// Kubernetes rejects Indexed Jobs when parallelism is above 10^5.
+	MaxFanoutParallelism = 100_000
+
+	// DefaultCLIJobTTLSeconds is how long CLI-triggered Jobs are kept
+	// after they finish (7 days).
+	DefaultCLIJobTTLSeconds = 7 * 24 * 60 * 60
 
 	// DefaultMetricsPath is the default HTTP path for Prometheus metrics.
 	DefaultMetricsPath = "/metrics"

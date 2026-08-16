@@ -132,7 +132,7 @@ func TestKindFromLabel(t *testing.T) {
 }
 
 // TestNeedsHealthCheckQuestion verifies the health-check question follows
-// [spec.Component.ListensOnPort]: worker and job components never get the
+// [spec.Component.ListensOnPort]: worker components never get the
 // question, and a service component without a port doesn't either.
 func TestNeedsHealthCheckQuestion(t *testing.T) {
 	t.Parallel()
@@ -155,11 +155,6 @@ func TestNeedsHealthCheckQuestion(t *testing.T) {
 		{
 			name:      "worker with a port set does not",
 			component: spec.Component{Role: spec.ComponentRoleWorker, Port: 8080},
-			want:      false,
-		},
-		{
-			name:      "job with a port set does not",
-			component: spec.Component{Role: spec.ComponentRoleJob, Port: 8080},
 			want:      false,
 		},
 	}

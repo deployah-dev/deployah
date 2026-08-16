@@ -14,12 +14,17 @@
 
 package session
 
-import "time"
+import (
+	"time"
+
+	"deployah.dev/deployah/internal/spec"
+)
 
 // Session defaults.
 const (
 	// DefaultTimeout is the default timeout for Helm operations.
-	DefaultTimeout = 10 * time.Minute
+	// It is [spec.DefaultDeployTimeout].
+	DefaultTimeout = spec.DefaultDeployTimeout
 
 	// DefaultStorageDriver is the default Helm storage driver.
 	DefaultStorageDriver = "secret"

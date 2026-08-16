@@ -49,8 +49,19 @@ type JSONDocument struct {
 	// Drift and DriftIncomplete are omitted when there is nothing to report
 	// (either --drift wasn't requested, or it found nothing); the schema
 	// does not distinguish those two cases.
-	Drift           []JSONChange `json:"drift,omitempty"`
-	DriftIncomplete []string     `json:"drift_incomplete,omitempty"`
+	Drift            []JSONChange `json:"drift,omitempty"`
+	DriftIncomplete  []string     `json:"drift_incomplete,omitempty"`
+	Tasks            []JSONTask   `json:"tasks,omitempty"`
+	FirstInstallNote string       `json:"first_install_note,omitempty"`
+}
+
+// JSONTask is one entry in [JSONDocument.Tasks].
+type JSONTask struct {
+	Name       string `json:"name"`
+	On         string `json:"on"`
+	Timeout    string `json:"timeout,omitempty"`
+	HookWeight int    `json:"hook_weight"`
+	Manual     bool   `json:"manual,omitempty"`
 }
 
 // JSONChange is one entry in [JSONDocument.Changes].
@@ -118,6 +129,11 @@ func NewJSONDocument(p *Plan) *JSONDocument {
 		doc.Drift = append(doc.Drift, toJSONChange(c))
 	}
 	doc.DriftIncomplete = p.DriftIncomplete
+
+	for _, task := range p.Tasks {
+		doc.Tasks = append(doc.Tasks, JSONTask(task))
+	}
+	doc.FirstInstallNote = p.FirstInstallTaskNote()
 
 	return doc
 }

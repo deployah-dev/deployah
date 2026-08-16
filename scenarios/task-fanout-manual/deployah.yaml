@@ -1,0 +1,19 @@
+# $schema: ../../internal/spec/schema/v1-alpha.5/manifest.json
+apiVersion: v1-alpha.5
+project: task-fanout-manual
+components:
+  api:
+    image: nginx:latest
+    port: 8080
+    environments: [dev]
+    resourcePreset: small
+tasks:
+  backfill:
+    from: api
+    "on": manual
+    command: ["backfill"]
+    fanout:
+      count: 4
+      parallelism: 2
+environments:
+  dev: {}

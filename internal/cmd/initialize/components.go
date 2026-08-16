@@ -27,7 +27,6 @@ func validateComponentNameUnique(name string, existing map[string]spec.Component
 var roleOrder = []spec.ComponentRole{
 	spec.ComponentRoleService,
 	spec.ComponentRoleWorker,
-	spec.ComponentRoleJob,
 }
 
 // roleLabels maps each role to a select label with a short explanation and
@@ -36,7 +35,6 @@ var roleOrder = []spec.ComponentRole{
 var roleLabels = map[spec.ComponentRole]string{
 	spec.ComponentRoleService: "service - handles HTTP requests (web apps, APIs)",
 	spec.ComponentRoleWorker:  "worker  - long-running background process, no HTTP (queue consumers)",
-	spec.ComponentRoleJob:     "job     - runs a task to completion, then exits (migrations, batch tasks)",
 }
 
 // roleFromLabel reverses roleLabels. It reports false when label does not

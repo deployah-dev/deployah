@@ -209,7 +209,7 @@ func minimalPlatform() *spec.PlatformConfig {
 
 func minimalSpec(subdomain *string) *spec.Spec {
 	return &spec.Spec{
-		APIVersion: "v1-alpha.4",
+		APIVersion: spec.CurrentManifestVersion,
 		Project:    "shop",
 		Environments: map[string]spec.Environment{
 			"production": {},
@@ -245,7 +245,7 @@ func TestResolve_FQDN(t *testing.T) {
 // the platform registry warn, while prefix-style entries stay warning-free.
 func TestResolve_UnknownEnvironmentNameWarnings(t *testing.T) {
 	appSpec := &spec.Spec{
-		APIVersion: "v1-alpha.4",
+		APIVersion: spec.CurrentManifestVersion,
 		Project:    "shop",
 		Environments: map[string]spec.Environment{
 			"production": {},
@@ -382,7 +382,7 @@ func TestResolve_DomainGapError(t *testing.T) {
 func TestResolve_FQDNCollision(t *testing.T) {
 	// Two components resolving to the same FQDN (apex on same domain).
 	appSpec := &spec.Spec{
-		APIVersion: "v1-alpha.4",
+		APIVersion: spec.CurrentManifestVersion,
 		Project:    "shop",
 		Environments: map[string]spec.Environment{
 			"production": {},
@@ -417,7 +417,7 @@ func TestResolve_WildcardStaticSubdomainWarning(t *testing.T) {
 		},
 	}
 	appSpec := &spec.Spec{
-		APIVersion: "v1-alpha.4",
+		APIVersion: spec.CurrentManifestVersion,
 		Project:    "shop",
 		Environments: map[string]spec.Environment{
 			"review": {},
@@ -456,7 +456,7 @@ func TestResolve_WildcardDynamicSubdomainNoWarning(t *testing.T) {
 		},
 	}
 	appSpec := &spec.Spec{
-		APIVersion: "v1-alpha.4",
+		APIVersion: spec.CurrentManifestVersion,
 		Project:    "shop",
 		Environments: map[string]spec.Environment{
 			"review": {},
@@ -726,7 +726,7 @@ func TestResolve_ErrorCode_DomainGap(t *testing.T) {
 func TestResolve_ErrorCode_InvalidDNS(t *testing.T) {
 	// Subdomain with invalid characters (not dynamic).
 	appSpec := &spec.Spec{
-		APIVersion: "v1-alpha.4",
+		APIVersion: spec.CurrentManifestVersion,
 		Project:    "shop",
 		Environments: map[string]spec.Environment{
 			"production": {},
@@ -746,7 +746,7 @@ func TestResolve_ErrorCode_InvalidDNS(t *testing.T) {
 // TestResolve_ErrorCode_FQDNCollision verifies platform spec behavior.
 func TestResolve_ErrorCode_FQDNCollision(t *testing.T) {
 	appSpec := &spec.Spec{
-		APIVersion: "v1-alpha.4",
+		APIVersion: spec.CurrentManifestVersion,
 		Project:    "shop",
 		Environments: map[string]spec.Environment{
 			"production": {},
@@ -769,7 +769,7 @@ func TestResolve_DynamicSubdomainSkipsDNSValidation(t *testing.T) {
 	// Subdomain contains ${PR_NUMBER} which is not a valid DNS label, but
 	// the prescan marks it as dynamic so resolution should succeed.
 	appSpec := &spec.Spec{
-		APIVersion: "v1-alpha.4",
+		APIVersion: spec.CurrentManifestVersion,
 		Project:    "shop",
 		Environments: map[string]spec.Environment{
 			"review": {},
@@ -800,7 +800,7 @@ func TestResolve_DynamicSubdomainSkipsDNSValidation(t *testing.T) {
 func TestResolve_StaticInvalidSubdomainFailsDNS(t *testing.T) {
 	// Same invalid subdomain but NOT marked as dynamic: should fail.
 	appSpec := &spec.Spec{
-		APIVersion: "v1-alpha.4",
+		APIVersion: spec.CurrentManifestVersion,
 		Project:    "shop",
 		Environments: map[string]spec.Environment{
 			"review": {},
@@ -1032,7 +1032,7 @@ func TestResolve_Profiles(t *testing.T) {
 		{
 			name: "domain ignored without expose",
 			appSpec: &spec.Spec{
-				APIVersion:   "v1-alpha.4",
+				APIVersion:   spec.CurrentManifestVersion,
 				Project:      "shop",
 				Environments: map[string]spec.Environment{"production": {}},
 				Components: map[string]spec.Component{
@@ -1049,7 +1049,7 @@ func TestResolve_Profiles(t *testing.T) {
 		{
 			name: "storage class missing in environment",
 			appSpec: &spec.Spec{
-				APIVersion:   "v1-alpha.4",
+				APIVersion:   spec.CurrentManifestVersion,
 				Project:      "shop",
 				Environments: map[string]spec.Environment{"local": {}},
 				Components: map[string]spec.Component{
@@ -1063,7 +1063,7 @@ func TestResolve_Profiles(t *testing.T) {
 		{
 			name: "storage class resolved to className",
 			appSpec: &spec.Spec{
-				APIVersion:   "v1-alpha.4",
+				APIVersion:   spec.CurrentManifestVersion,
 				Project:      "shop",
 				Environments: map[string]spec.Environment{"production": {}},
 				Components: map[string]spec.Component{
@@ -1204,7 +1204,7 @@ func TestResolve_ComponentStorageClass(t *testing.T) {
 	t.Run("component key wins over profile", func(t *testing.T) {
 		t.Parallel()
 		appSpec := &spec.Spec{
-			APIVersion:   "v1-alpha.4",
+			APIVersion:   spec.CurrentManifestVersion,
 			Project:      "shop",
 			Environments: map[string]spec.Environment{"production": {}},
 			Components: map[string]spec.Component{
@@ -1234,7 +1234,7 @@ func TestResolve_ComponentStorageClass(t *testing.T) {
 	t.Run("unknown component key errors", func(t *testing.T) {
 		t.Parallel()
 		appSpec := &spec.Spec{
-			APIVersion:   "v1-alpha.4",
+			APIVersion:   spec.CurrentManifestVersion,
 			Project:      "shop",
 			Environments: map[string]spec.Environment{"production": {}},
 			Components: map[string]spec.Component{
@@ -1257,7 +1257,7 @@ func TestResolve_ComponentStorageClass(t *testing.T) {
 		t.Parallel()
 		p := minimalPlatform()
 		appSpec := &spec.Spec{
-			APIVersion:   "v1-alpha.4",
+			APIVersion:   spec.CurrentManifestVersion,
 			Project:      "shop",
 			Environments: map[string]spec.Environment{"local": {}},
 			Components: map[string]spec.Component{
@@ -1296,6 +1296,7 @@ func TestResolveForDisplay(t *testing.T) {
 			check: func(t *testing.T, appSpec *spec.Spec, resolved *spec.ResolvedSpec, _ *spec.ResolutionReport) {
 				t.Helper()
 				assert.Empty(t, resolved.Components)
+				assert.NotNil(t, resolved.Tasks, "partial result must carry the same maps as Resolve")
 				assert.Equal(t, appSpec, resolved.Spec)
 			},
 		},
@@ -1340,4 +1341,102 @@ func TestCrossCheckPlatformReferences_UnknownProfile(t *testing.T) {
 	problems, _ := spec.CrossCheckPlatformReferences(appSpec, platform)
 	require.Len(t, problems, 1)
 	assert.Contains(t, problems[0], `"missing"`)
+}
+
+func TestCrossCheckPlatformReferences_UnknownTaskProfile(t *testing.T) {
+	t.Parallel()
+	appSpec := &spec.Spec{
+		Components: map[string]spec.Component{
+			"api": {Image: "nginx:latest"},
+		},
+		Tasks: map[string]spec.Task{
+			"migrate": {From: "api", On: spec.TaskOnPreDeploy, Command: []string{"true"}, Profiles: []string{"missing"}},
+		},
+	}
+	platform := platformWithProfiles()
+	problems, _ := spec.CrossCheckPlatformReferences(appSpec, platform)
+	require.Len(t, problems, 1)
+	assert.Contains(t, problems[0], `task "migrate"`)
+	assert.Contains(t, problems[0], `"missing"`)
+}
+
+// TestResolve_TasksScopedToEnvironment locks in the contract [spec.EffectiveTasks]
+// relies on: a resolved spec already holds only the tasks for its environment.
+func TestResolve_TasksScopedToEnvironment(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		component   spec.Component
+		task        spec.Task
+		environment string
+		wantTask    bool
+	}{
+		{
+			name:        "no filter runs everywhere",
+			component:   spec.Component{Image: "nginx:latest"},
+			task:        spec.Task{From: "api", On: spec.TaskOnPreDeploy, Command: []string{"true"}},
+			environment: "local",
+			wantTask:    true,
+		},
+		{
+			name:        "own filter excludes other environment",
+			component:   spec.Component{Image: "nginx:latest"},
+			task:        spec.Task{From: "api", On: spec.TaskOnPreDeploy, Command: []string{"true"}, Environments: []string{"production"}},
+			environment: "local",
+			wantTask:    false,
+		},
+		{
+			name:        "own filter includes matching environment",
+			component:   spec.Component{Image: "nginx:latest"},
+			task:        spec.Task{From: "api", On: spec.TaskOnPreDeploy, Command: []string{"true"}, Environments: []string{"production"}},
+			environment: "production",
+			wantTask:    true,
+		},
+		{
+			name:        "filter inherited from parent component excludes",
+			component:   spec.Component{Image: "nginx:latest", Environments: []string{"production"}},
+			task:        spec.Task{From: "api", On: spec.TaskOnPreDeploy, Command: []string{"true"}},
+			environment: "local",
+			wantTask:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			appSpec := &spec.Spec{
+				Project:    "shop",
+				Components: map[string]spec.Component{"api": tt.component},
+				Tasks:      map[string]spec.Task{"migrate": tt.task},
+			}
+			resolved, _, err := spec.Resolve(
+				appSpec, platformWithProfiles(), spec.NormalizeEnv(tt.environment), spec.SubstitutionReport{},
+			)
+			require.NoError(t, err)
+			_, ok := resolved.Tasks["migrate"]
+			assert.Equal(t, tt.wantTask, ok)
+		})
+	}
+}
+
+func TestResolve_TaskAppliesDefaultProfile(t *testing.T) {
+	t.Parallel()
+	appSpec := &spec.Spec{
+		Project: "shop",
+		Components: map[string]spec.Component{
+			"api": {Image: "nginx:latest"},
+		},
+		Tasks: map[string]spec.Task{
+			"migrate": {From: "api", On: spec.TaskOnPreDeploy, Command: []string{"true"}},
+		},
+	}
+	platform := platformWithProfiles()
+	resolved, _, err := spec.Resolve(appSpec, platform, spec.NormalizeEnv("production"), spec.SubstitutionReport{})
+	require.NoError(t, err)
+	rt, ok := resolved.Tasks["migrate"]
+	require.True(t, ok)
+	require.NotNil(t, rt.MergedProfile)
+	assert.Equal(t, []string{"default"}, rt.Profiles)
+	assert.Equal(t, "general", rt.MergedProfile.NodeSelector["workload"])
 }

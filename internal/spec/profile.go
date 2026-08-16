@@ -61,7 +61,7 @@ func ResolveProfileNames(componentProfiles []string, platformProfiles map[string
 	if platformProfiles == nil {
 		return nil, &ResolutionError{
 			Code: ErrCodeProfileNotFound,
-			Message: "component sets profiles but the platform file has no profiles section; " +
+			Message: "sets profiles but the platform file has no profiles section; " +
 				"add a root-level profiles map to deployah.platform.yaml",
 		}
 	}
@@ -205,16 +205,77 @@ func mergePVCRetentionPolicy(base, overlay *PVCRetentionPolicy) *PVCRetentionPol
 	return out
 }
 
-// ValidateProfileAgainstComponent checks domain, storage class, and resource
-// ceiling constraints from the merged profile against the component and
-// target environment.
-func ValidateProfileAgainstComponent(
-	compName string,
-	comp Component,
+// ProfileSubject is the kind of spec object a profile is checked against.
+type ProfileSubject string
+
+const (
+	// ProfileSubjectComponent is a [Component].
+	ProfileSubjectComponent ProfileSubject = "component"
+	// ProfileSubjectTask is a [Task].
+	ProfileSubjectTask ProfileSubject = "task"
+)
+
+// ProfileTarget is the part of a component or task that profile constraints
+// apply to.
+type ProfileTarget struct {
+	// Subject is whether the target is a component or a task. It appears in
+	// error messages.
+	Subject ProfileSubject
+	// Name is the component or task name.
+	Name string
+	// Resources are the explicit resource requests. Empty falls back to
+	// ResourcePreset.
+	Resources Resources
+	// ResourcePreset names the preset used when Resources is empty. Empty
+	// means [ResourcePresetSmall].
+	ResourcePreset ResourcePreset
+	// Metrics is the component metrics block. Always nil for tasks, which
+	// cannot enable metrics.
+	Metrics *ComponentMetrics
+}
+
+func componentProfileTarget(name string, comp Component) ProfileTarget {
+	return ProfileTarget{
+		Subject:        ProfileSubjectComponent,
+		Name:           name,
+		Resources:      comp.Resources,
+		ResourcePreset: comp.ResourcePreset,
+		Metrics:        comp.Metrics,
+	}
+}
+
+func taskProfileTarget(name string, task Task) ProfileTarget {
+	return ProfileTarget{
+		Subject:        ProfileSubjectTask,
+		Name:           name,
+		Resources:      task.Resources,
+		ResourcePreset: task.ResourcePreset,
+	}
+}
+
+// newMonitorLabelsError reports metrics enabled with no monitorLabels on the
+// merged profile. Shared so the with-profile and no-profile paths cannot
+// drift.
+func newMonitorLabelsError(subject ProfileSubject, name string) *ResolutionError {
+	return &ResolutionError{
+		Code: ErrCodeProfileMonitorLabelsMissing,
+		Message: fmt.Sprintf(
+			"%s %q has metrics enabled but the merged profile has no metrics.monitorLabels; "+
+				"set metrics.monitorLabels on a platform profile so Prometheus Operator can discover the monitor",
+			subject, name,
+		),
+	}
+}
+
+// ValidateProfile checks domain, storage class, and resource ceiling
+// constraints from the merged profile against target.
+func ValidateProfile(
+	target ProfileTarget,
 	merged PlatformProfile,
 	platformEnv *PlatformEnvironment,
 	domainKey string,
 ) error {
+	subject, name := target.Subject, target.Name
 	// Non-nil AllowedDomains (including empty) means the profile constrains
 	// domains; nil means unconstrained.
 	if merged.AllowedDomains != nil && domainKey != "" {
@@ -222,8 +283,8 @@ func ValidateProfileAgainstComponent(
 			return &ResolutionError{
 				Code: ErrCodeProfileDomainNotAllowed,
 				Message: fmt.Sprintf(
-					"component %q expose.domain %q is not allowed by its profiles (allowed: %s)",
-					compName, domainKey, joinStrings(merged.AllowedDomains),
+					"%s %q expose.domain %q is not allowed by its profiles (allowed: %s)",
+					subject, name, domainKey, joinStrings(merged.AllowedDomains),
 				),
 			}
 		}
@@ -234,8 +295,8 @@ func ValidateProfileAgainstComponent(
 			return &ResolutionError{
 				Code: ErrCodeProfileStorageClassNotFound,
 				Message: fmt.Sprintf(
-					"component %q profile references storageClass %q but the environment has no storageClasses",
-					compName, merged.StorageClass,
+					"%s %q profile references storageClass %q but the environment has no storageClasses",
+					subject, name, merged.StorageClass,
 				),
 			}
 		}
@@ -244,44 +305,38 @@ func ValidateProfileAgainstComponent(
 			return &ResolutionError{
 				Code: ErrCodeProfileStorageClassNotFound,
 				Message: fmt.Sprintf(
-					"component %q profile references storageClass %q but environment does not define it (available: %s)",
-					compName, merged.StorageClass, joinStrings(available),
+					"%s %q profile references storageClass %q but environment does not define it (available: %s)",
+					subject, name, merged.StorageClass, joinStrings(available),
 				),
 			}
 		}
 	}
 
 	if merged.MaxResources != nil {
-		if err := checkResourceCeiling(compName, comp, merged.MaxResources); err != nil {
+		if err := checkResourceCeiling(target, merged.MaxResources); err != nil {
 			return err
 		}
 	}
 
-	if comp.Metrics.IsEnabled() && (merged.Metrics == nil || len(merged.Metrics.MonitorLabels) == 0) {
-		return &ResolutionError{
-			Code: ErrCodeProfileMonitorLabelsMissing,
-			Message: fmt.Sprintf(
-				"component %q has metrics enabled but the merged profile has no metrics.monitorLabels; "+
-					"set metrics.monitorLabels on a platform profile so Prometheus Operator can discover the monitor",
-				compName,
-			),
-		}
+	if target.Metrics.IsEnabled() && (merged.Metrics == nil || len(merged.Metrics.MonitorLabels) == 0) {
+		return newMonitorLabelsError(subject, name)
 	}
 
 	return nil
 }
 
-func checkResourceCeiling(compName string, comp Component, max *ProfileMaxResources) error {
+func checkResourceCeiling(target ProfileTarget, max *ProfileMaxResources) error {
+	subject, name := target.Subject, target.Name
 	// Compare against effective requests (explicit resources, named preset, or
 	// the default small preset) so validate/resolve match deploy after Load.
-	req := effectiveResourceRequests(comp)
+	req := effectiveResourceRequests(target)
 	if quantitySet(max.CPU) && quantitySet(req.CPU) {
 		if req.CPU.Cmp(*max.CPU) > 0 {
 			return &ResolutionError{
 				Code: ErrCodeProfileResourceExceeded,
 				Message: fmt.Sprintf(
-					"component %q CPU request %s exceeds profile maxResources.cpu %s",
-					compName, req.CPU.String(), max.CPU.String(),
+					"%s %q CPU request %s exceeds profile maxResources.cpu %s",
+					subject, name, req.CPU.String(), max.CPU.String(),
 				),
 			}
 		}
@@ -291,8 +346,8 @@ func checkResourceCeiling(compName string, comp Component, max *ProfileMaxResour
 			return &ResolutionError{
 				Code: ErrCodeProfileResourceExceeded,
 				Message: fmt.Sprintf(
-					"component %q memory request %s exceeds profile maxResources.memory %s",
-					compName, req.Memory.String(), max.Memory.String(),
+					"%s %q memory request %s exceeds profile maxResources.memory %s",
+					subject, name, req.Memory.String(), max.Memory.String(),
 				),
 			}
 		}
@@ -302,11 +357,11 @@ func checkResourceCeiling(compName string, comp Component, max *ProfileMaxResour
 
 // effectiveResourceRequests returns the resource requests deploy would apply:
 // explicit resources when set, otherwise the named or default small preset.
-func effectiveResourceRequests(comp Component) Resources {
-	if comp.Resources.ResourcesSet() {
-		return comp.Resources
+func effectiveResourceRequests(target ProfileTarget) Resources {
+	if target.Resources.ResourcesSet() {
+		return target.Resources
 	}
-	preset := comp.ResourcePreset
+	preset := target.ResourcePreset
 	if preset == "" {
 		preset = ResourcePresetSmall
 	}

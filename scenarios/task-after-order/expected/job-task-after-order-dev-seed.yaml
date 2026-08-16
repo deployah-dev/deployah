@@ -1,0 +1,50 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+    annotations:
+        deployah.dev/project: task-after-order
+        deployah.dev/source: spec
+        helm.sh/hook: pre-install,pre-upgrade
+        helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+        helm.sh/hook-weight: "1"
+    labels:
+        app.kubernetes.io/instance: task-after-order-dev
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: seed
+        deployah.dev/component: seed
+        deployah.dev/environment: dev
+        deployah.dev/project: task-after-order
+        helm.sh/chart: seed-0.1.0
+    name: task-after-order-dev-seed
+    namespace: default
+spec:
+    activeDeadlineSeconds: 300
+    backoffLimit: 3
+    completionMode: Indexed
+    completions: 1
+    parallelism: 1
+    template:
+        metadata:
+            labels:
+                app.kubernetes.io/instance: task-after-order-dev
+                app.kubernetes.io/managed-by: Helm
+                app.kubernetes.io/name: seed
+                deployah.dev/component: seed
+                deployah.dev/environment: dev
+                deployah.dev/project: task-after-order
+                helm.sh/chart: seed-0.1.0
+        spec:
+            automountServiceAccountToken: false
+            containers:
+                - command:
+                    - seed
+                  image: docker.io/library/nginx:latest
+                  imagePullPolicy: Always
+                  name: seed
+                  resources:
+                    limits: {}
+                    requests:
+                        cpu: 500m
+                        ephemeral-storage: 50Mi
+                        memory: 512Mi
+            restartPolicy: OnFailure
