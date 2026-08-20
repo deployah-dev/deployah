@@ -16,6 +16,7 @@ package localkube
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"log/slog"
 	"testing"
@@ -23,6 +24,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	corev1 "k8s.io/api/core/v1"
 	kindv1alpha4 "sigs.k8s.io/kind/pkg/apis/config/v1alpha4"
 )
 
@@ -248,4 +250,119 @@ func TestLoadImageArchive_usesCustomSpoolDir(t *testing.T) {
 	// We can't call loadImageArchive without a real Kind cluster, so we test
 	// the spool-dir plumbing at the config level.
 	assert.Equal(t, customDir, kp.spoolDir)
+}
+
+func TestNewKindProvider(t *testing.T) {
+	t.Parallel()
+	p, err := newKindProvider(&config{
+		runtime:   RuntimeDocker,
+		logger:    slog.New(slog.DiscardHandler),
+		eventFunc: func(Event) {},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "kind", p.backendName())
+	assert.Equal(t, RuntimeDocker, p.resolvedRuntime)
+}
+
+func TestResolveKindRuntime(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		in      Runtime
+		want    Runtime
+		wantErr bool
+	}{
+		{name: "docker", in: RuntimeDocker, want: RuntimeDocker},
+		{name: "podman", in: RuntimePodman, want: RuntimePodman},
+		{name: "nerdctl", in: RuntimeNerdctl, want: RuntimeNerdctl},
+		{name: "unsupported", in: Runtime(99), wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, _, err := resolveKindRuntime(tc.in)
+			if tc.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "unsupported runtime")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestDetectRuntimeFromOption(t *testing.T) {
+	t.Parallel()
+	got := detectRuntimeFromOption(nil)
+	assert.Contains(t, []Runtime{RuntimeDocker, RuntimePodman, RuntimeNerdctl}, got)
+}
+
+func TestIsCommandAvailable(t *testing.T) {
+	t.Parallel()
+	assert.False(t, isCommandAvailable("localkube-no-such-command", "info"))
+	assert.True(t, isCommandAvailable("true", "info"))
+}
+
+func TestKindProvider_CanceledContext(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	p := &kindProvider{}
+
+	t.Run("delete", func(t *testing.T) {
+		t.Parallel()
+		err := p.delete(ctx, "dev", nil)
+		assert.ErrorIs(t, err, context.Canceled)
+	})
+	t.Run("list", func(t *testing.T) {
+		t.Parallel()
+		_, err := p.list(ctx)
+		assert.ErrorIs(t, err, context.Canceled)
+	})
+	t.Run("inspect", func(t *testing.T) {
+		t.Parallel()
+		_, err := p.inspect(ctx, "dev")
+		assert.ErrorIs(t, err, context.Canceled)
+	})
+	t.Run("kubeconfig", func(t *testing.T) {
+		t.Parallel()
+		_, err := p.kubeConfigBytes(ctx, "dev")
+		assert.ErrorIs(t, err, context.Canceled)
+	})
+}
+
+func TestIsNodeReady(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		node *corev1.Node
+		want bool
+	}{
+		{
+			name: "ready",
+			node: &corev1.Node{Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{
+				{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+			}}},
+			want: true,
+		},
+		{
+			name: "not ready",
+			node: &corev1.Node{Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{
+				{Type: corev1.NodeReady, Status: corev1.ConditionFalse},
+			}}},
+			want: false,
+		},
+		{
+			name: "missing condition",
+			node: &corev1.Node{},
+			want: false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, isNodeReady(tc.node))
+		})
+	}
 }

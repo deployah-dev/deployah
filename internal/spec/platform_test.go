@@ -72,8 +72,100 @@ environments:
 
 // TestLoadPlatform_MissingFile verifies platform spec behavior.
 func TestLoadPlatform_MissingFile(t *testing.T) {
+	t.Parallel()
 	_, err := spec.LoadPlatform("/nonexistent/path.yaml")
 	require.Error(t, err)
+	assert.Contains(t, err.Error(), "platform file not found")
+}
+
+func TestLoadPlatform_EmptyPath(t *testing.T) {
+	t.Parallel()
+	_, err := spec.LoadPlatform("")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must not be empty")
+}
+
+func TestLoadPlatform_ReadError(t *testing.T) {
+	t.Parallel()
+	_, err := spec.LoadPlatform(t.TempDir())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to read platform file")
+}
+
+func TestLoadPlatform_InvalidYAML(t *testing.T) {
+	t.Parallel()
+	path := writeTempFile(t, ":\n  - [")
+	_, err := spec.LoadPlatform(path)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to parse platform YAML")
+}
+
+func TestLoadPlatform_APIVersion(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		yaml    string
+		wantErr string
+	}{
+		{
+			name:    "missing",
+			yaml:    "environments:\n  local: {}\n",
+			wantErr: "missing 'apiVersion'",
+		},
+		{
+			name:    "empty string",
+			yaml:    "apiVersion: \"\"\nenvironments:\n  local: {}\n",
+			wantErr: "must be a non-empty string",
+		},
+		{
+			name:    "not a string",
+			yaml:    "apiVersion: 1\nenvironments:\n  local: {}\n",
+			wantErr: "must be a non-empty string",
+		},
+		{
+			name:    "missing platform prefix",
+			yaml:    "apiVersion: v1-alpha.3\nenvironments:\n  local: {}\n",
+			wantErr: "must start with 'platform/'",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := spec.LoadPlatform(writeTempFile(t, tc.yaml))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantErr)
+		})
+	}
+}
+
+func TestIsSupportedPlatformVersion(t *testing.T) {
+	t.Parallel()
+	assert.True(t, spec.IsSupportedPlatformVersion(spec.CurrentPlatformVersion))
+	assert.False(t, spec.IsSupportedPlatformVersion("platform/v0-unknown"))
+	assert.False(t, spec.IsSupportedPlatformVersion(""))
+}
+
+func TestLoadPlatform_SchemaValidation(t *testing.T) {
+	t.Parallel()
+	path := writeTempFile(t, "apiVersion: platform/v1-alpha.3\n")
+	_, err := spec.LoadPlatform(path)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "platform file validation failed")
+}
+
+func TestLoadPlatform_StorageClasses(t *testing.T) {
+	t.Parallel()
+	yaml := `
+apiVersion: platform/v1-alpha.3
+environments:
+  production:
+    storageClasses:
+      fast:
+        className: gp3
+`
+	p, err := spec.LoadPlatform(writeTempFile(t, yaml))
+	require.NoError(t, err)
+	assert.Equal(t, "gp3", p.Environments["production"].StorageClasses["fast"].ClassName)
 }
 
 // TestLoadPlatform_InvalidVersion verifies platform spec behavior.
@@ -681,6 +773,78 @@ func TestEnsurePlatformEnvironments_NewFileWritesSchema(t *testing.T) {
 	require.NoError(t, loadErr)
 	assert.Equal(t, "kind-deployah", p.Environments["local"].Context)
 	assert.Empty(t, p.Environments["production"].Context)
+}
+
+func TestEnsurePlatformEnvironments_EmptyNames(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "deployah.platform.yaml")
+
+	created, added, err := spec.EnsurePlatformEnvironments(path, "127.0.0.1", nil)
+	require.NoError(t, err)
+	assert.False(t, created)
+	assert.Empty(t, added)
+
+	_, statErr := os.Stat(path)
+	assert.True(t, os.IsNotExist(statErr))
+}
+
+func TestEnsurePlatformEnvironments_EmptyPathUsesDefault(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	created, added, err := spec.EnsurePlatformEnvironments("", "127.0.0.1", []string{"staging"})
+	require.NoError(t, err)
+	assert.True(t, created)
+	assert.Empty(t, added)
+
+	p, loadErr := spec.LoadPlatform(spec.DefaultPlatformPath)
+	require.NoError(t, loadErr)
+	assert.Empty(t, p.Environments["staging"].Context)
+}
+
+func TestScaffoldPlatformFile_EmptyPathUsesDefault(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	created, err := spec.ScaffoldPlatformFile("", "127.0.0.1", []string{"staging"})
+	require.NoError(t, err)
+	assert.True(t, created)
+
+	p, loadErr := spec.LoadPlatform(spec.DefaultPlatformPath)
+	require.NoError(t, loadErr)
+	assert.Empty(t, p.Environments["staging"].Context)
+}
+
+func TestScaffoldPlatformFile_StatError(t *testing.T) {
+	t.Parallel()
+	_, err := spec.ScaffoldPlatformFile(fileAsParentPath(t), "127.0.0.1", []string{"local"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "stat platform file")
+}
+
+func TestEnsurePlatformEnvironments_StatError(t *testing.T) {
+	t.Parallel()
+	_, _, err := spec.EnsurePlatformEnvironments(fileAsParentPath(t), "127.0.0.1", []string{"local"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "stat platform file")
+}
+
+func TestEnsurePlatformEnvironments_LoadError(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "deployah.platform.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("not: [valid"), 0o600))
+
+	created, added, err := spec.EnsurePlatformEnvironments(path, "127.0.0.1", []string{"staging"})
+	require.Error(t, err)
+	assert.False(t, created)
+	assert.Empty(t, added)
+	assert.Contains(t, err.Error(), "load platform file")
+}
+
+func fileAsParentPath(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	notDir := filepath.Join(dir, "not-a-dir")
+	require.NoError(t, os.WriteFile(notDir, []byte("x"), 0o600))
+	return filepath.Join(notDir, "deployah.platform.yaml")
 }
 
 // TestMissingPlatformEnvironments_NilPlatform verifies every requested name
