@@ -13,8 +13,8 @@ import (
 	"deployah.dev/deployah/internal/spec"
 )
 
-// TestCheckOverwrite verifies --force skips the prompt, a missing file
-// proceeds, and a non-interactive overwrite fails closed.
+// TestCheckOverwrite verifies --force skips the prompt and a missing file
+// proceeds without asking.
 func TestCheckOverwrite(t *testing.T) {
 	t.Parallel()
 
@@ -27,8 +27,6 @@ func TestCheckOverwrite(t *testing.T) {
 		path        string
 		skipPrompt  bool
 		wantProceed bool
-		wantErrIs   error
-		wantHint    string
 	}{
 		{
 			name:        "skipPrompt with existing file always proceeds",
@@ -48,14 +46,6 @@ func TestCheckOverwrite(t *testing.T) {
 			skipPrompt:  false,
 			wantProceed: true,
 		},
-		{
-			name:        "no skipPrompt, existing file, non-interactive fails closed",
-			path:        existing,
-			skipPrompt:  false,
-			wantProceed: false,
-			wantErrIs:   nabat.ErrConfirmationRequired,
-			wantHint:    "--force",
-		},
 	}
 
 	for _, tt := range tests {
@@ -66,17 +56,28 @@ func TestCheckOverwrite(t *testing.T) {
 			c := nabattest.Context(t, app)
 
 			proceed, err := checkOverwrite(c, tt.path, tt.skipPrompt)
-			if tt.wantErrIs != nil {
-				require.ErrorIs(t, err, tt.wantErrIs)
-				var ce *nabat.ConfirmationError
-				require.ErrorAs(t, err, &ce)
-				assert.Equal(t, tt.wantHint, ce.BypassHint)
-			} else {
-				require.NoError(t, err)
-			}
+			require.NoError(t, err)
 			assert.Equal(t, tt.wantProceed, proceed)
 		})
 	}
+}
+
+func TestCheckOverwrite_RequiresTTY(t *testing.T) {
+	t.Parallel()
+
+	existing := filepath.Join(t.TempDir(), "deployah.yaml")
+	require.NoError(t, os.WriteFile(existing, []byte("apiVersion: v1-alpha.5\n"), 0o600))
+
+	io, _, _, _ := nabattest.NewIO()
+	app := nabat.MustNew("test", nabat.WithIO(io))
+	c := nabattest.Context(t, app)
+
+	proceed, err := checkOverwrite(c, existing, false)
+	require.ErrorIs(t, err, nabat.ErrConfirmationRequired)
+	var ce *nabat.ConfirmationError
+	require.ErrorAs(t, err, &ce)
+	assert.Equal(t, "--force", ce.BypassHint)
+	assert.False(t, proceed)
 }
 
 func TestCheckOverwrite_StatError(t *testing.T) {
@@ -217,4 +218,13 @@ func TestRunInit_NoTTYIsInteractiveError(t *testing.T) {
 	err := nabattest.Run(t, app, []string{"init"})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, errNotInteractive)
+}
+
+func TestCollectProjectName_RequiresTTY(t *testing.T) {
+	t.Parallel()
+	io, _, _, _ := nabattest.NewIO()
+	app := nabat.MustNew("test", nabat.WithIO(io))
+	err := collectProjectName(nabattest.Context(t, app), &ProjectConfig{})
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "failed to collect project name")
 }

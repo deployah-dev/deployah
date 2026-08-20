@@ -817,14 +817,14 @@ func TestScaffoldPlatformFile_StatError(t *testing.T) {
 	t.Parallel()
 	_, err := spec.ScaffoldPlatformFile(fileAsParentPath(t), "127.0.0.1", []string{"local"})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "stat platform file")
+	assert.ErrorContains(t, err, "stat platform file")
 }
 
 func TestEnsurePlatformEnvironments_StatError(t *testing.T) {
 	t.Parallel()
 	_, _, err := spec.EnsurePlatformEnvironments(fileAsParentPath(t), "127.0.0.1", []string{"local"})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "stat platform file")
+	assert.ErrorContains(t, err, "stat platform file")
 }
 
 func TestEnsurePlatformEnvironments_LoadError(t *testing.T) {
@@ -836,7 +836,7 @@ func TestEnsurePlatformEnvironments_LoadError(t *testing.T) {
 	require.Error(t, err)
 	assert.False(t, created)
 	assert.Empty(t, added)
-	assert.Contains(t, err.Error(), "load platform file")
+	assert.ErrorContains(t, err, "load platform file")
 }
 
 func fileAsParentPath(t *testing.T) string {

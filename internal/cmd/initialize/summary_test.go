@@ -26,16 +26,6 @@ func testConfig(t *testing.T, name string, envNames []string, components map[str
 	}
 }
 
-// nabatContext builds a minimal *nabat.Context for tests that call
-// functions requiring one. Non-TTY: any prompt reachable from the tested
-// function must have a fallback, or must not be reached.
-func nabatContext(t *testing.T) *nabat.Context {
-	t.Helper()
-	io, _, _, _ := nabattest.NewIO()
-	app := nabat.MustNew("test", nabat.WithIO(io))
-	return nabattest.Context(t, app)
-}
-
 func readSpecFile(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path) // #nosec G304 -- path is from t.TempDir()
@@ -137,7 +127,7 @@ func TestShowSummaryAndSave_ServiceHealthCheckWithoutPortIsValid(t *testing.T) {
 		},
 	})
 
-	c := nabatContext(t)
+	c := nonInteractiveContext(t)
 	saved, err := showSummaryAndSave(c, config)
 	require.NoError(t, err)
 	require.True(t, saved)
@@ -216,7 +206,7 @@ func TestShowSummaryAndSave_PlatformWriteError(t *testing.T) {
 	})
 	require.NoError(t, os.Mkdir(config.PlatformPath, 0o750))
 
-	c := nabatContext(t)
+	c := nonInteractiveContext(t)
 	saved, err := showSummaryAndSave(c, config)
 	require.Error(t, err)
 	assert.False(t, saved)
@@ -296,7 +286,7 @@ func TestShowSummaryAndSave_DryRunWritesNothing(t *testing.T) {
 	})
 	config.DryRun = true
 
-	c := nabatContext(t)
+	c := nonInteractiveContext(t)
 	saved, err := showSummaryAndSave(c, config)
 	require.NoError(t, err)
 	require.True(t, saved)
@@ -434,4 +424,207 @@ func TestSparseSpec_RoundTripLoadFillsPort(t *testing.T) {
 	require.NoError(t, spec.ValidateSpecComponents(loaded))
 	assert.Equal(t, spec.DefaultServicePort, loaded.Components["web"].Port)
 	assert.Equal(t, spec.ComponentRoleService, loaded.Components["web"].Role)
+}
+
+func TestJoinWithAnd(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		items []string
+		want  string
+	}{
+		{name: "empty", want: ""},
+		{name: "one", items: []string{"local"}, want: "local"},
+		{name: "two", items: []string{"local", "staging"}, want: "local and staging"},
+		{name: "three", items: []string{"a", "b", "c"}, want: "a, b, and c"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, joinWithAnd(tt.items))
+		})
+	}
+}
+
+func TestVerbHave(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, "has", verbHave(1))
+	assert.Equal(t, "have", verbHave(2))
+}
+
+func TestPlatformPath(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	specPath := filepath.Join(dir, "deployah.yaml")
+	assert.Equal(t, "custom.yaml", platformPath(&ProjectConfig{
+		SpecPath:     specPath,
+		PlatformPath: "custom.yaml",
+	}))
+	assert.Equal(t, filepath.Join(dir, spec.DefaultPlatformPath), platformPath(&ProjectConfig{
+		SpecPath: specPath,
+	}))
+}
+
+func TestLocalDomain(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		env  spec.PlatformEnvironment
+		want string
+	}{
+		{name: "empty", want: ""},
+		{
+			name: "blank bases are skipped",
+			env: spec.PlatformEnvironment{Domains: map[string]spec.PlatformDomain{
+				"empty":  {},
+				"public": {BaseDomain: "example.com"},
+			}},
+			want: "example.com",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, localDomain(tt.env))
+		})
+	}
+}
+
+func TestPrintPlatformSummary(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		envNames []string
+		platform *spec.PlatformConfig
+		want     []string
+		notWant  []string
+	}{
+		{
+			name:     "nil platform prints path only",
+			envNames: []string{"staging"},
+			want:     []string{"Platform:", "Environments: staging"},
+			notWant:  []string{"local:"},
+		},
+		{
+			name:     "empty local entry skips the local line",
+			envNames: []string{"local"},
+			platform: &spec.PlatformConfig{Environments: map[string]spec.PlatformEnvironment{
+				"local": {},
+			}},
+			want:    []string{"Environments: local"},
+			notWant: []string{"local:"},
+		},
+		{
+			name:     "local with context and domain",
+			envNames: []string{"local"},
+			platform: &spec.PlatformConfig{Environments: map[string]spec.PlatformEnvironment{
+				"local": {
+					Context: "kind-deployah",
+					Domains: map[string]spec.PlatformDomain{
+						"public": {BaseDomain: "127.0.0.1.nip.io"},
+					},
+				},
+			}},
+			want: []string{"local: context kind-deployah, domain 127.0.0.1.nip.io"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			io, _, stdout, _ := nabattest.NewIO()
+			app := nabat.MustNew("test", nabat.WithIO(io))
+			printPlatformSummary(nabattest.Context(t, app), "deployah.platform.yaml", tt.envNames, tt.platform)
+			got := stdout.String()
+			for _, want := range tt.want {
+				assert.Contains(t, got, want)
+			}
+			for _, notWant := range tt.notWant {
+				assert.NotContains(t, got, notWant)
+			}
+		})
+	}
+}
+
+func TestPrintNextSteps_NoEnvironments(t *testing.T) {
+	t.Parallel()
+	io, _, stdout, _ := nabattest.NewIO()
+	app := nabat.MustNew("test", nabat.WithIO(io))
+	printNextSteps(nabattest.Context(t, app), &ProjectConfig{SpecPath: "deployah.yaml"})
+	got := stdout.String()
+	assert.Contains(t, got, "Fill in context and domains")
+	assert.NotContains(t, got, "deployah deploy ")
+}
+
+func TestWarnExposeWithoutDomains_NoExpose(t *testing.T) {
+	t.Parallel()
+	io, _, _, stderr := nabattest.NewIO()
+	app := nabat.MustNew("test", nabat.WithIO(io))
+	warnExposeWithoutDomains(nabattest.Context(t, app), &ProjectConfig{
+		EnvironmentNames: []string{"production"},
+		Components:       map[string]spec.Component{"web": {Image: "nginx:latest"}},
+	}, nil)
+	assert.NotContains(t, stderr.String(), "no domains yet")
+}
+
+func TestWarnExposeWithoutDomains_LocalOnly(t *testing.T) {
+	t.Parallel()
+	io, _, _, stderr := nabattest.NewIO()
+	app := nabat.MustNew("test", nabat.WithIO(io))
+	warnExposeWithoutDomains(nabattest.Context(t, app), &ProjectConfig{
+		EnvironmentNames: []string{"local"},
+		Components: map[string]spec.Component{
+			"web": {Image: "nginx:latest", Expose: &spec.Expose{}},
+		},
+	}, nil)
+	assert.NotContains(t, stderr.String(), "no domains yet")
+}
+
+func TestWriteSpecFile_EmptyPathUsesDefault(t *testing.T) {
+	t.Chdir(t.TempDir())
+	sparse := sparseSpec(&ProjectConfig{
+		Name: "shop",
+		Components: map[string]spec.Component{
+			"web": {Image: "nginx:latest", ResourcePreset: spec.ResourcePresetSmall},
+		},
+	})
+	require.NoError(t, writeSpecFile(&sparse, ""))
+	require.FileExists(t, spec.DefaultSpecPath)
+}
+
+func TestBuildValidatedSpec_InvalidComponent(t *testing.T) {
+	t.Parallel()
+	_, err := buildValidatedSpec(&ProjectConfig{
+		Name: "shop",
+		Components: map[string]spec.Component{
+			"web": {},
+		},
+	})
+	require.Error(t, err)
+}
+
+func TestShowSummaryAndSave_EmptyPlatformPath(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	config := &ProjectConfig{
+		Name:             "shop",
+		EnvironmentNames: []string{"local"},
+		Components: map[string]spec.Component{
+			"web": {Image: "nginx:latest", ResourcePreset: spec.ResourcePresetSmall},
+		},
+		SpecPath: filepath.Join(dir, "deployah.yaml"),
+	}
+	saved, err := showSummaryAndSave(nonInteractiveContext(t), config)
+	require.NoError(t, err)
+	require.True(t, saved)
+	require.FileExists(t, filepath.Join(dir, spec.DefaultPlatformPath))
+}
+
+func TestScaffoldExtrasDirs_MkdirError(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	notDir := filepath.Join(dir, "not-a-dir")
+	require.NoError(t, os.WriteFile(notDir, []byte("x"), 0o600))
+	_, err := scaffoldExtrasDirs(notDir)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "create")
 }

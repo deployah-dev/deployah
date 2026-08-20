@@ -12,6 +12,9 @@ import (
 	"deployah.dev/deployah/internal/spec"
 )
 
+// nonInteractiveContext returns a Context whose IO is not a TTY. Prompts
+// without WithDefault or WithPrefill fail; Select and MultiSelect return
+// their defaults.
 func nonInteractiveContext(t *testing.T) *nabat.Context {
 	t.Helper()
 	io, _, _, _ := nabattest.NewIO()
@@ -206,7 +209,6 @@ func TestApplyComponentEssentials(t *testing.T) {
 		answers    componentEssentialsAnswers
 		want       spec.Component
 		wantCustom bool
-		wantErr    string
 	}{
 		{
 			name: "service local expose small",
@@ -274,6 +276,29 @@ func TestApplyComponentEssentials(t *testing.T) {
 			},
 			wantCustom: true,
 		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var got spec.Component
+			custom, err := applyComponentEssentials(&got, tt.answers)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantCustom, custom)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestApplyComponentEssentials_Error(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		answers componentEssentialsAnswers
+		want    string
+	}{
 		{
 			name: "unrecognized role",
 			answers: componentEssentialsAnswers{
@@ -281,7 +306,7 @@ func TestApplyComponentEssentials(t *testing.T) {
 				image:         "nginx:latest",
 				resourceLabel: presets.label(spec.ResourcePresetSmall),
 			},
-			wantErr: "unrecognized role selection",
+			want: "unrecognized role selection",
 		},
 		{
 			name: "unrecognized resources",
@@ -291,7 +316,7 @@ func TestApplyComponentEssentials(t *testing.T) {
 				portStr:       "8080",
 				resourceLabel: "not a preset",
 			},
-			wantErr: "unrecognized resource selection",
+			want: "unrecognized resource selection",
 		},
 		{
 			name: "invalid service port",
@@ -301,24 +326,17 @@ func TestApplyComponentEssentials(t *testing.T) {
 				portStr:       "nope",
 				resourceLabel: presets.label(spec.ResourcePresetSmall),
 			},
-			wantErr: "invalid port number",
+			want: "invalid port number",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-
 			var got spec.Component
-			custom, err := applyComponentEssentials(&got, tt.answers)
-			if tt.wantErr != "" {
-				require.Error(t, err)
-				assert.ErrorContains(t, err, tt.wantErr)
-				return
-			}
-			require.NoError(t, err)
-			assert.Equal(t, tt.wantCustom, custom)
-			assert.Equal(t, tt.want, got)
+			_, err := applyComponentEssentials(&got, tt.answers)
+			require.Error(t, err)
+			assert.ErrorContains(t, err, tt.want)
 		})
 	}
 }
@@ -328,31 +346,18 @@ func TestApplyComponentEssentials(t *testing.T) {
 func TestApplyCollectedMetricsPort(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name    string
-		portStr string
-		want    int
-		wantErr string
-	}{
-		{name: "valid port", portStr: "9090", want: 9090},
-		{name: "invalid port", portStr: "nope", wantErr: "invalid metrics port"},
-	}
+	comp := &spec.Component{}
+	require.NoError(t, applyCollectedMetricsPort(comp, "9090"))
+	require.NotNil(t, comp.Metrics)
+	assert.Equal(t, 9090, comp.Metrics.Port)
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			comp := &spec.Component{}
-			err := applyCollectedMetricsPort(comp, tt.portStr)
-			if tt.wantErr != "" {
-				require.Error(t, err)
-				assert.ErrorContains(t, err, tt.wantErr)
-				return
-			}
-			require.NoError(t, err)
-			require.NotNil(t, comp.Metrics)
-			assert.Equal(t, tt.want, comp.Metrics.Port)
-		})
-	}
+func TestApplyCollectedMetricsPort_Error(t *testing.T) {
+	t.Parallel()
+
+	err := applyCollectedMetricsPort(&spec.Component{}, "nope")
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "invalid metrics port")
 }
 
 // TestApplyCollectedExecHealth verifies a space-separated command becomes
@@ -360,30 +365,189 @@ func TestApplyCollectedMetricsPort(t *testing.T) {
 func TestApplyCollectedExecHealth(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name    string
-		cmdStr  string
-		want    []string
-		wantErr string
-	}{
-		{name: "valid command", cmdStr: "pgrep -f worker", want: []string{"pgrep", "-f", "worker"}},
-		{name: "blank command", cmdStr: "   ", wantErr: "exec command must not be empty"},
-	}
+	comp := &spec.Component{}
+	require.NoError(t, applyCollectedExecHealth(comp, "pgrep -f worker"))
+	require.NotNil(t, comp.Health)
+	require.NotNil(t, comp.Health.Alive)
+	assert.Equal(t, []string{"pgrep", "-f", "worker"}, comp.Health.Alive.Exec)
+}
 
+func TestApplyCollectedExecHealth_Error(t *testing.T) {
+	t.Parallel()
+
+	err := applyCollectedExecHealth(&spec.Component{}, "   ")
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "exec command must not be empty")
+}
+
+func TestValidateComponentNameUnique(t *testing.T) {
+	t.Parallel()
+	existing := map[string]spec.Component{"web": {}}
+	require.NoError(t, validateComponentNameUnique("api", existing))
+}
+
+func TestValidateComponentNameUnique_Error(t *testing.T) {
+	t.Parallel()
+	existing := map[string]spec.Component{"web": {}}
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "invalid name", in: "Web", want: "component name"},
+		{name: "duplicate", in: "web", want: "already exists"},
+	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			comp := &spec.Component{}
-			err := applyCollectedExecHealth(comp, tt.cmdStr)
-			if tt.wantErr != "" {
-				require.Error(t, err)
-				assert.ErrorContains(t, err, tt.wantErr)
-				return
-			}
-			require.NoError(t, err)
-			require.NotNil(t, comp.Health)
-			require.NotNil(t, comp.Health.Alive)
-			assert.Equal(t, tt.want, comp.Health.Alive.Exec)
+			err := validateComponentNameUnique(tt.in, existing)
+			require.Error(t, err)
+			assert.ErrorContains(t, err, tt.want)
 		})
 	}
+}
+
+func TestLabeledListLabels(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, []string{roles[0].label, roles[1].label}, roles.labels())
+	assert.Equal(t, []string{kinds[0].label, kinds[1].label}, kinds.labels())
+}
+
+func TestCollectComponentKind_DefaultStateless(t *testing.T) {
+	t.Parallel()
+	comp := &spec.Component{}
+	require.NoError(t, collectComponentKind(nonInteractiveContext(t), comp, "web"))
+	assert.Equal(t, spec.ComponentKindStateless, comp.Kind)
+}
+
+func TestCollectComponentReplicas_Default(t *testing.T) {
+	t.Parallel()
+	comp := &spec.Component{}
+	require.NoError(t, collectComponentReplicas(nonInteractiveContext(t), comp, "db"))
+	require.NotNil(t, comp.Replicas)
+	assert.Equal(t, 1, *comp.Replicas)
+}
+
+func TestCollectComponentCommand_DefaultSkips(t *testing.T) {
+	t.Parallel()
+	comp := &spec.Component{}
+	require.NoError(t, collectComponentCommand(nonInteractiveContext(t), comp, "web"))
+	assert.Nil(t, comp.Command)
+}
+
+func TestCollectComponentArgs_DefaultSkips(t *testing.T) {
+	t.Parallel()
+	comp := &spec.Component{}
+	require.NoError(t, collectComponentArgs(nonInteractiveContext(t), comp, "web"))
+	assert.Nil(t, comp.Args)
+}
+
+func TestCollectComponentEnvironments(t *testing.T) {
+	t.Parallel()
+
+	t.Run("single environment is assigned without a prompt", func(t *testing.T) {
+		t.Parallel()
+		comp := &spec.Component{}
+		require.NoError(t, collectComponentEnvironments(nonInteractiveContext(t), comp, "web", []string{"local"}))
+		assert.Equal(t, []string{"local"}, comp.Environments)
+	})
+
+	t.Run("multiple environments keep the default selection", func(t *testing.T) {
+		t.Parallel()
+		comp := &spec.Component{}
+		require.NoError(t, collectComponentEnvironments(nonInteractiveContext(t), comp, "web", []string{"local", "staging"}))
+		assert.Equal(t, []string{"local", "staging"}, comp.Environments)
+	})
+}
+
+func TestCollectComponentEnvironments_Error(t *testing.T) {
+	t.Parallel()
+	comp := &spec.Component{}
+	err := collectComponentEnvironments(nonInteractiveContext(t), comp, "web", nil)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "no environments available")
+}
+
+func TestCollectComponentAdvancedDetails_WorkerUsesSelectDefaults(t *testing.T) {
+	t.Parallel()
+	comp := &spec.Component{Role: spec.ComponentRoleWorker, Image: "worker:1"}
+	err := collectComponentAdvancedDetails(nonInteractiveContext(t), comp, "worker", []string{"local"})
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "failed to get config files preference")
+	assert.Equal(t, spec.ComponentKindStateless, comp.Kind)
+	assert.Nil(t, comp.Command)
+	assert.Nil(t, comp.Args)
+	assert.Nil(t, comp.Metrics)
+}
+
+func TestCollectComponents_NameRequiresTTY(t *testing.T) {
+	t.Parallel()
+	config := &ProjectConfig{Components: map[string]spec.Component{}}
+	err := collectComponents(nonInteractiveContext(t), config)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "failed to collect component name")
+}
+
+func TestCollectComponentName_RequiresTTY(t *testing.T) {
+	t.Parallel()
+	_, err := collectComponentName(nonInteractiveContext(t), map[string]spec.Component{})
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "failed to collect component name")
+}
+
+func TestCollectComponentConfigFiles_RequiresTTY(t *testing.T) {
+	t.Parallel()
+	err := collectComponentConfigFiles(nonInteractiveContext(t), &spec.Component{}, "web")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, nabat.ErrConfirmationRequired)
+}
+
+func TestCollectComponentEssentials_ImageRequiresTTY(t *testing.T) {
+	t.Parallel()
+	err := collectComponentEssentials(nonInteractiveContext(t), &spec.Component{}, "web", []string{"local"})
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "failed to collect component image")
+}
+
+func TestCollectComponentPersistence_RequiresTTY(t *testing.T) {
+	t.Parallel()
+	err := collectComponentPersistence(nonInteractiveContext(t), &spec.Component{}, "db")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, nabat.ErrConfirmationRequired)
+}
+
+func TestCollectComponentAutoscaling_RequiresTTY(t *testing.T) {
+	t.Parallel()
+	err := collectComponentAutoscaling(nonInteractiveContext(t), &spec.Component{}, "web")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, nabat.ErrConfirmationRequired)
+}
+
+func TestCollectComponentEnvironmentVariables_RequiresTTY(t *testing.T) {
+	t.Parallel()
+	err := collectComponentEnvironmentVariables(nonInteractiveContext(t), &spec.Component{}, "web")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, nabat.ErrConfirmationRequired)
+}
+
+func TestCollectComponentHealth_RequiresTTY(t *testing.T) {
+	t.Parallel()
+	err := collectComponentHealth(nonInteractiveContext(t), &spec.Component{}, "web")
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "failed to collect health check path")
+}
+
+func TestCollectComponentCustomResources_RequiresTTY(t *testing.T) {
+	t.Parallel()
+	err := collectComponentCustomResources(nonInteractiveContext(t), &spec.Component{}, "web")
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "failed to get custom resources")
+}
+
+func TestCollectComponentExposeOptions_RequiresTTY(t *testing.T) {
+	t.Parallel()
+	comp := &spec.Component{Expose: &spec.Expose{}}
+	err := collectComponentExposeOptions(nonInteractiveContext(t), comp, "web")
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "failed to get expose options")
 }

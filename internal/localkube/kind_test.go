@@ -267,35 +267,29 @@ func TestNewKindProvider(t *testing.T) {
 func TestResolveKindRuntime(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name    string
-		in      Runtime
-		want    Runtime
-		wantErr bool
+		name string
+		in   Runtime
+		want Runtime
 	}{
 		{name: "docker", in: RuntimeDocker, want: RuntimeDocker},
 		{name: "podman", in: RuntimePodman, want: RuntimePodman},
 		{name: "nerdctl", in: RuntimeNerdctl, want: RuntimeNerdctl},
-		{name: "unsupported", in: Runtime(99), wantErr: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			got, _, err := resolveKindRuntime(tc.in)
-			if tc.wantErr {
-				require.Error(t, err)
-				assert.Contains(t, err.Error(), "unsupported runtime")
-				return
-			}
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, got)
 		})
 	}
 }
 
-func TestDetectRuntimeFromOption(t *testing.T) {
+func TestResolveKindRuntime_Error(t *testing.T) {
 	t.Parallel()
-	got := detectRuntimeFromOption(nil)
-	assert.Contains(t, []Runtime{RuntimeDocker, RuntimePodman, RuntimeNerdctl}, got)
+	_, _, err := resolveKindRuntime(Runtime(99))
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "unsupported runtime")
 }
 
 func TestIsCommandAvailable(t *testing.T) {

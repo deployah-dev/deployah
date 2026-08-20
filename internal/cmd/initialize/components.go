@@ -17,7 +17,7 @@ import (
 
 func validateComponentNameUnique(name string, existing map[string]spec.Component) error {
 	if err := spec.ValidateComponentName(name); err != nil {
-		return fmt.Errorf("failed to validate component name: %w", err)
+		return err
 	}
 	if _, exists := existing[name]; exists {
 		return fmt.Errorf("component '%s' already exists", name)
@@ -122,6 +122,9 @@ func collectComponents(c *nabat.Context, config *ProjectConfig) error {
 	for {
 		name, component, err := collectComponentDetails(c, config.EnvironmentNames, config.Components)
 		if err != nil {
+			if name == "" {
+				return err
+			}
 			return fmt.Errorf("failed to collect details for component %s: %w", name, err)
 		}
 		config.Components[name] = component
@@ -152,11 +155,11 @@ func collectComponentDetails(c *nabat.Context, envNames []string, existing map[s
 	var component spec.Component
 	err = collectComponentEssentials(c, &component, name, envNames)
 	if err != nil {
-		return name, component, err
+		return name, spec.Component{}, err
 	}
 	err = collectComponentAdvanced(c, &component, name, envNames)
 	if err != nil {
-		return name, component, err
+		return name, spec.Component{}, err
 	}
 	return name, component, nil
 }
@@ -324,17 +327,16 @@ func collectComponentAdvanced(c *nabat.Context, component *spec.Component, compo
 // collectComponentAdvancedDetails asks the optional questions behind the
 // advanced gate. The gate itself lives in [collectComponentAdvanced].
 func collectComponentAdvancedDetails(c *nabat.Context, component *spec.Component, componentName string, availableEnvironments []string) error {
-	var err error
-	if err = collectComponentKind(c, component, componentName); err != nil {
-		return fmt.Errorf("failed to collect component kind: %w", err)
+	if err := collectComponentKind(c, component, componentName); err != nil {
+		return err
 	}
 
 	if component.Kind == spec.ComponentKindStateful {
-		if err = collectComponentPersistence(c, component, componentName); err != nil {
-			return fmt.Errorf("failed to collect component persistence: %w", err)
+		if err := collectComponentPersistence(c, component, componentName); err != nil {
+			return err
 		}
-		if err = collectComponentReplicas(c, component, componentName); err != nil {
-			return fmt.Errorf("failed to collect component replicas: %w", err)
+		if err := collectComponentReplicas(c, component, componentName); err != nil {
+			return err
 		}
 		if component.Persistence != nil {
 			c.Printf("Note: set a profile storageClass (or persistence.storageClass) in deployah.platform.yaml for this stateful component.\n")
@@ -342,57 +344,53 @@ func collectComponentAdvancedDetails(c *nabat.Context, component *spec.Component
 	}
 
 	if component.Expose != nil {
-		if err = collectComponentExposeOptions(c, component, componentName); err != nil {
-			return fmt.Errorf("failed to collect component expose options: %w", err)
+		if err := collectComponentExposeOptions(c, component, componentName); err != nil {
+			return err
 		}
 	}
 
-	if err = collectComponentCommand(c, component, componentName); err != nil {
-		return fmt.Errorf("failed to collect component command: %w", err)
+	if err := collectComponentCommand(c, component, componentName); err != nil {
+		return err
 	}
 
-	if err = collectComponentArgs(c, component, componentName); err != nil {
-		return fmt.Errorf("failed to collect component args: %w", err)
+	if err := collectComponentArgs(c, component, componentName); err != nil {
+		return err
 	}
 
 	if component.Role.IsWorker() {
-		if err = collectComponentMetricsPort(c, component, componentName); err != nil {
-			return fmt.Errorf("failed to collect component metrics port: %w", err)
+		if err := collectComponentMetricsPort(c, component, componentName); err != nil {
+			return err
 		}
 	}
 
-	if err = collectComponentConfigFiles(c, component, componentName); err != nil {
-		return fmt.Errorf("failed to collect component config files: %w", err)
+	if err := collectComponentConfigFiles(c, component, componentName); err != nil {
+		return err
 	}
 
 	// Autoscaling is skipped for stateful in the init wizard; HPA remains
 	// available via the written deployah.yaml for advanced users.
 	if component.Kind != spec.ComponentKindStateful {
-		if err = collectComponentAutoscaling(c, component, componentName); err != nil {
-			return fmt.Errorf("failed to collect component autoscaling: %w", err)
+		if err := collectComponentAutoscaling(c, component, componentName); err != nil {
+			return err
 		}
 	}
 
-	if err = collectComponentEnvironmentVariables(c, component, componentName); err != nil {
-		return fmt.Errorf("failed to collect component environment variables: %w", err)
+	if err := collectComponentEnvironmentVariables(c, component, componentName); err != nil {
+		return err
 	}
 
 	if component.ListensOnPort() {
-		if err = collectComponentHealth(c, component, componentName); err != nil {
-			return fmt.Errorf("failed to collect component health check: %w", err)
+		if err := collectComponentHealth(c, component, componentName); err != nil {
+			return err
 		}
 	}
 	if component.Role.IsWorker() {
-		if err = collectComponentExecHealth(c, component, componentName); err != nil {
-			return fmt.Errorf("failed to collect component exec health check: %w", err)
+		if err := collectComponentExecHealth(c, component, componentName); err != nil {
+			return err
 		}
 	}
 
-	if err = collectComponentEnvironments(c, component, componentName, availableEnvironments); err != nil {
-		return fmt.Errorf("failed to collect component environments: %w", err)
-	}
-
-	return nil
+	return collectComponentEnvironments(c, component, componentName, availableEnvironments)
 }
 
 func collectComponentKind(c *nabat.Context, component *spec.Component, componentName string) error {
@@ -851,7 +849,7 @@ func collectComponentEnvironments(c *nabat.Context, component *spec.Component, c
 	}
 
 	if len(availableEnvironments) == 1 {
-		component.Environments = availableEnvironments
+		component.Environments = slices.Clone(availableEnvironments)
 		return nil
 	}
 
