@@ -53,60 +53,63 @@ func sampleCreds() map[string]currus.AuthEntry {
 	}
 }
 
-// TestBuildDockerConfigJSON_Basic verifies that credentials are serialized into
-// the expected dockerconfigjson structure.
-func TestBuildDockerConfigJSON_Basic(t *testing.T) {
+// TestBuildDockerConfigJSON verifies credentials serialize into the
+// dockerconfigjson auths map.
+func TestBuildDockerConfigJSON(t *testing.T) {
 	t.Parallel()
 
-	data, err := buildDockerConfigJSON(sampleCreds())
-	require.NoError(t, err)
-
-	var cfg dockerConfigJSON
-	require.NoError(t, json.Unmarshal(data, &cfg))
-
-	require.Contains(t, cfg.Auths, "https://index.docker.io/v1/")
-	require.Contains(t, cfg.Auths, "ghcr.io")
-
-	dh := cfg.Auths["https://index.docker.io/v1/"]
-	assert.Equal(t, "dockeruser", dh.Username)
-	assert.Equal(t, "dockerpass", dh.Password)
-	assert.Equal(t, "ZG9ja2VydXNlcjpkb2NrZXJwYXNz", dh.Auth)
-}
-
-// TestBuildDockerConfigJSON_IdentityToken verifies that an identity token is
-// stored in the auth entry and username/password fields are left empty.
-func TestBuildDockerConfigJSON_IdentityToken(t *testing.T) {
-	t.Parallel()
-
-	creds := map[string]currus.AuthEntry{
-		"myregistry.azurecr.io": {
-			ServerURL:     "myregistry.azurecr.io",
-			IdentityToken: "eyJhbGciOiJSUzI1NiJ9.test",
+	tests := []struct {
+		name  string
+		creds map[string]currus.AuthEntry
+		want  map[string]dockerConfigAuth
+	}{
+		{
+			name:  "username and password entries",
+			creds: sampleCreds(),
+			want: map[string]dockerConfigAuth{
+				"https://index.docker.io/v1/": {
+					Username: "dockeruser",
+					Password: "dockerpass",
+					Auth:     "ZG9ja2VydXNlcjpkb2NrZXJwYXNz",
+				},
+				"ghcr.io": {
+					Username: "ghuser",
+					Password: "ghtoken",
+					Auth:     "Z2h1c2VyOmdodG9rZW4=",
+				},
+			},
+		},
+		{
+			name: "identity token leaves username and password empty",
+			creds: map[string]currus.AuthEntry{
+				"myregistry.azurecr.io": {
+					ServerURL:     "myregistry.azurecr.io",
+					IdentityToken: "eyJhbGciOiJSUzI1NiJ9.test",
+				},
+			},
+			want: map[string]dockerConfigAuth{
+				"myregistry.azurecr.io": {
+					IdentityToken: "eyJhbGciOiJSUzI1NiJ9.test",
+				},
+			},
+		},
+		{
+			name:  "empty map produces no auths",
+			creds: map[string]currus.AuthEntry{},
+			want:  map[string]dockerConfigAuth{},
 		},
 	}
-	data, err := buildDockerConfigJSON(creds)
-	require.NoError(t, err)
 
-	var cfg dockerConfigJSON
-	require.NoError(t, json.Unmarshal(data, &cfg))
-
-	entry := cfg.Auths["myregistry.azurecr.io"]
-	assert.Empty(t, entry.Username)
-	assert.Empty(t, entry.Password)
-	assert.Equal(t, "eyJhbGciOiJSUzI1NiJ9.test", entry.IdentityToken)
-}
-
-// TestBuildDockerConfigJSON_Empty verifies that an empty credential map
-// produces a valid JSON payload with no auths entries.
-func TestBuildDockerConfigJSON_Empty(t *testing.T) {
-	t.Parallel()
-
-	data, err := buildDockerConfigJSON(map[string]currus.AuthEntry{})
-	require.NoError(t, err)
-
-	var cfg dockerConfigJSON
-	require.NoError(t, json.Unmarshal(data, &cfg))
-	assert.Empty(t, cfg.Auths)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			data, err := buildDockerConfigJSON(tt.creds)
+			require.NoError(t, err)
+			var cfg dockerConfigJSON
+			require.NoError(t, json.Unmarshal(data, &cfg))
+			assert.Equal(t, tt.want, cfg.Auths)
+		})
+	}
 }
 
 // TestApplyRegistryAuthSecret_Create verifies that the first apply creates the

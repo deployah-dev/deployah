@@ -536,6 +536,10 @@ func TestScaffoldPlatformFile_RegistersAllEnvironments(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, created)
 
+	data, readErr := os.ReadFile(path) // #nosec G304 -- path is from t.TempDir()
+	require.NoError(t, readErr)
+	assert.Contains(t, string(data), spec.SchemaModeline(spec.PlatformSchemaURL()))
+
 	p, loadErr := spec.LoadPlatform(path)
 	require.NoError(t, loadErr)
 	require.Len(t, p.Environments, 2)
@@ -593,6 +597,90 @@ func TestScaffoldPlatformFile_DoesNotOverwriteExisting(t *testing.T) {
 	require.NoError(t, readErr)
 	assert.Contains(t, string(data), "prod")
 	assert.NotContains(t, string(data), "local")
+}
+
+func TestEnsurePlatformEnvironments_CreatesAndMerges(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "deployah.platform.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("apiVersion: platform/v1-alpha.3\nenvironments:\n  prod:\n    context: prod\n"), 0o600))
+
+	created, added, err := spec.EnsurePlatformEnvironments(path, "127.0.0.1", []string{"local", "staging"})
+	require.NoError(t, err)
+	assert.False(t, created)
+	assert.Equal(t, []string{"local", "staging"}, added)
+
+	p, loadErr := spec.LoadPlatform(path)
+	require.NoError(t, loadErr)
+	assert.Equal(t, "prod", p.Environments["prod"].Context)
+	local, hasLocal := p.Environments["local"]
+	require.True(t, hasLocal)
+	assert.Equal(t, "kind-deployah", local.Context)
+	staging, hasStaging := p.Environments["staging"]
+	require.True(t, hasStaging)
+	assert.Empty(t, staging.Context)
+
+	created, added, err = spec.EnsurePlatformEnvironments(path, "127.0.0.1", []string{"local", "staging"})
+	require.NoError(t, err)
+	assert.False(t, created)
+	assert.Empty(t, added)
+}
+
+func TestEnsurePlatformEnvironments_AddsOnlyMissingNames(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "deployah.platform.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("apiVersion: platform/v1-alpha.3\nenvironments:\n  staging:\n    context: existing\n"), 0o600))
+
+	created, added, err := spec.EnsurePlatformEnvironments(path, "127.0.0.1", []string{"local", "staging", "production"})
+	require.NoError(t, err)
+	assert.False(t, created)
+	assert.Equal(t, []string{"local", "production"}, added)
+
+	p, loadErr := spec.LoadPlatform(path)
+	require.NoError(t, loadErr)
+	assert.Equal(t, "existing", p.Environments["staging"].Context)
+	assert.Equal(t, "kind-deployah", p.Environments["local"].Context)
+	assert.Empty(t, p.Environments["production"].Context)
+}
+
+func TestEnsurePlatformEnvironments_DoesNotReplaceEmptyLocal(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "deployah.platform.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("apiVersion: platform/v1-alpha.3\nenvironments:\n  local: {}\n"), 0o600))
+
+	created, added, err := spec.EnsurePlatformEnvironments(path, "127.0.0.1", []string{"local"})
+	require.NoError(t, err)
+	assert.False(t, created)
+	assert.Empty(t, added)
+
+	p, loadErr := spec.LoadPlatform(path)
+	require.NoError(t, loadErr)
+	local, hasLocal := p.Environments["local"]
+	require.True(t, hasLocal)
+	assert.Empty(t, local.Context)
+	assert.Empty(t, local.Domains)
+}
+
+func TestEnsurePlatformEnvironments_NewFileWritesSchema(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "nested", "deployah.platform.yaml")
+
+	created, added, err := spec.EnsurePlatformEnvironments(path, "127.0.0.1", []string{"local", "production"})
+	require.NoError(t, err)
+	assert.True(t, created)
+	assert.Empty(t, added)
+
+	data, readErr := os.ReadFile(path) // #nosec G304 -- path is from t.TempDir()
+	require.NoError(t, readErr)
+	assert.Contains(t, string(data), spec.SchemaModeline(spec.PlatformSchemaURL()))
+
+	p, loadErr := spec.LoadPlatform(path)
+	require.NoError(t, loadErr)
+	assert.Equal(t, "kind-deployah", p.Environments["local"].Context)
+	assert.Empty(t, p.Environments["production"].Context)
 }
 
 // TestMissingPlatformEnvironments_NilPlatform verifies every requested name

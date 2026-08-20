@@ -96,7 +96,7 @@ type Component struct {
 	// Autoscaling configures horizontal pod autoscaling.
 	Autoscaling *Autoscaling `json:"autoscaling,omitempty" yaml:"autoscaling,omitempty"`
 	// Resources sets explicit CPU, memory, and storage requests and limits.
-	Resources Resources `json:"resources" yaml:"resources,omitempty"`
+	Resources Resources `json:"resources,omitzero" yaml:"resources,omitempty"`
 	// ResourcePreset selects a named resource profile when Resources is empty.
 	ResourcePreset ResourcePreset `json:"resourcePreset,omitempty" yaml:"resourcePreset,omitempty"`
 	// Expose exposes the component via an ingress rule resolved against the

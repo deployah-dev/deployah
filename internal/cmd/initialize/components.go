@@ -2,6 +2,7 @@ package initialize
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -9,6 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	"nabat.dev/nabat"
 
+	"deployah.dev/deployah/internal/localkube"
 	"deployah.dev/deployah/internal/spec"
 	"deployah.dev/deployah/internal/validate"
 )
@@ -23,79 +25,75 @@ func validateComponentNameUnique(name string, existing map[string]spec.Component
 	return nil
 }
 
-// roleOrder lists component roles in display order for the role select.
-var roleOrder = []spec.ComponentRole{
-	spec.ComponentRoleService,
-	spec.ComponentRoleWorker,
+// labeled is one select option: the spec value and the string shown in
+// the prompt.
+type labeled[T comparable] struct {
+	value T
+	label string
 }
 
-// roleLabels maps each role to a select label with a short explanation and
-// concrete examples, following the same example-driven pattern as
-// presetLabel.
-var roleLabels = map[spec.ComponentRole]string{
-	spec.ComponentRoleService: "service - handles HTTP requests (web apps, APIs)",
-	spec.ComponentRoleWorker:  "worker  - long-running background process, no HTTP (queue consumers)",
+// labeledList is an ordered set of select options. Slice order is display
+// order.
+type labeledList[T comparable] []labeled[T]
+
+// labels returns the display strings in slice order.
+func (items labeledList[T]) labels() []string {
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		out = append(out, item.label)
+	}
+	return out
 }
 
-// roleFromLabel reverses roleLabels. It reports false when label does not
-// match any known role.
-func roleFromLabel(label string) (spec.ComponentRole, bool) {
-	for _, r := range roleOrder {
-		if roleLabels[r] == label {
-			return r, true
+// fromLabel reports the spec value for a display string. ok is false when
+// label matches no option.
+func (items labeledList[T]) fromLabel(label string) (T, bool) {
+	for _, item := range items {
+		if item.label == label {
+			return item.value, true
 		}
 	}
-	return "", false
+	var zero T
+	return zero, false
 }
 
-// kindOrder lists component kinds in display order for the kind select.
-var kindOrder = []spec.ComponentKind{
-	spec.ComponentKindStateless,
-	spec.ComponentKindStateful,
-}
-
-// kindLabels maps each kind to a select label with a short explanation.
-var kindLabels = map[spec.ComponentKind]string{
-	spec.ComponentKindStateless: "stateless - remembers nothing on disk; replicas scale freely",
-	spec.ComponentKindStateful:  "stateful  - stable replica identity (optional persistent volume)",
-}
-
-// kindFromLabel reverses kindLabels. It reports false when label does not
-// match any known kind.
-func kindFromLabel(label string) (spec.ComponentKind, bool) {
-	for _, k := range kindOrder {
-		if kindLabels[k] == label {
-			return k, true
+// label returns the display string for value, or empty if value is not in
+// the list.
+func (items labeledList[T]) label(value T) string {
+	for _, item := range items {
+		if item.value == value {
+			return item.label
 		}
 	}
-	return "", false
+	return ""
 }
 
-// presetOrder lists resource presets in display order, smallest to largest.
-var presetOrder = []spec.ResourcePreset{
-	spec.ResourcePresetNano,
-	spec.ResourcePresetMicro,
-	spec.ResourcePresetSmall,
-	spec.ResourcePresetMedium,
-	spec.ResourcePresetLarge,
-	spec.ResourcePresetXLarge,
-	spec.ResourcePreset2XLarge,
+var roles = labeledList[spec.ComponentRole]{
+	{spec.ComponentRoleService, "service - handles HTTP requests (web apps, APIs)"},
+	{spec.ComponentRoleWorker, "worker  - long-running background process, no HTTP (queue consumers)"},
+}
+
+var kinds = labeledList[spec.ComponentKind]{
+	{spec.ComponentKindStateless, "stateless - remembers nothing on disk; replicas scale freely"},
+	{spec.ComponentKindStateful, "stateful  - stable replica identity (optional persistent volume)"},
 }
 
 // customResourcesLabel is the merged resources select entry that opens the
 // manual CPU/memory/storage form instead of picking a preset.
 const customResourcesLabel = "Custom... (enter CPU/memory/storage manually)"
 
-// presetLabels maps each resource preset to its display label. Built once at
-// init so concurrent callers never race on Quantity.String against the shared
-// [spec.ResourcePresetMappings] quantities.
-var presetLabels = func() map[spec.ResourcePreset]string {
-	m := make(map[spec.ResourcePreset]string, len(presetOrder))
-	for _, p := range presetOrder {
-		m[p] = formatPresetLabel(p)
-	}
-	return m
-}()
+// presets lists resource presets smallest to largest. Labels are built at
+// init so concurrent callers never race on Quantity.String against the
+// shared [spec.ResourcePresetMappings] quantities.
+var presets = labeledList[spec.ResourcePreset]{
+	{spec.ResourcePresetNano, formatPresetLabel(spec.ResourcePresetNano)},
+	{spec.ResourcePresetMicro, formatPresetLabel(spec.ResourcePresetMicro)},
+	{spec.ResourcePresetSmall, formatPresetLabel(spec.ResourcePresetSmall)},
+	{spec.ResourcePresetMedium, formatPresetLabel(spec.ResourcePresetMedium)},
+	{spec.ResourcePresetLarge, formatPresetLabel(spec.ResourcePresetLarge)},
+	{spec.ResourcePresetXLarge, formatPresetLabel(spec.ResourcePresetXLarge)},
+	{spec.ResourcePreset2XLarge, formatPresetLabel(spec.ResourcePreset2XLarge)},
+}
 
 // formatPresetLabel formats a resource preset with its request values, e.g.
 // "small - 500m CPU / 512Mi memory".
@@ -111,153 +109,200 @@ func formatPresetLabel(p spec.ResourcePreset) string {
 	return fmt.Sprintf("%s - %s CPU / %s memory", p, cpu, memory)
 }
 
-// presetLabel returns the display label for a resource preset.
+// presetLabel returns the display label for a resource preset. Unknown
+// presets still render, with "?" for missing CPU and memory.
 func presetLabel(p spec.ResourcePreset) string {
-	if label, ok := presetLabels[p]; ok {
+	if label := presets.label(p); label != "" {
 		return label
 	}
 	return formatPresetLabel(p)
 }
 
-// presetFromLabel reverses presetLabel. It reports false when label does not
-// match any known preset (i.e. the caller picked customResourcesLabel).
-func presetFromLabel(label string) (spec.ResourcePreset, bool) {
-	for _, p := range presetOrder {
-		if presetLabels[p] == label {
-			return p, true
-		}
-	}
-	return "", false
-}
-
-// resolveComponents implements the flag > prompt > default resolution
-// order for components.
-func resolveComponents(c *nabat.Context, config *ProjectConfig, useDefaults bool) error {
-	if useDefaults {
-		// --set covers per-field overrides on top of this single default
-		// component.
-		config.Components[DefaultComponentName] = spec.Component{
-			Role:           spec.ComponentRoleService,
-			Image:          DefaultComponentImage,
-			ResourcePreset: spec.ResourcePresetSmall,
-		}
-		return nil
-	}
-
-	return collectComponents(c, config)
-}
-
 func collectComponents(c *nabat.Context, config *ProjectConfig) error {
-	continueAdding := true
-	selectedEnvironments := config.EnvironmentNames
-
-	for continueAdding {
-		var componentName string
-		var addAnother bool
-
-		err := c.Form(
-			nabat.WithFormTitle(StepComponents),
-			nabat.WithFormField(&componentName, "Component Name",
-				"Enter the name of the component (e.g., web, api, worker, db)",
-				nabat.WithHint("web"),
-				nabat.WithValidate(func(s string) error {
-					return validateComponentNameUnique(s, config.Components)
-				}),
-			),
-			nabat.WithFormField(&addAnother, "Add another component?", "",
-				nabat.WithAffirmative("Yes, add another"),
-				nabat.WithNegative("No, I'm done"),
-			),
-		)
+	for {
+		name, component, err := collectComponentDetails(c, config.EnvironmentNames, config.Components)
 		if err != nil {
-			return fmt.Errorf("failed to collect component name: %w", err)
+			return fmt.Errorf("failed to collect details for component %s: %w", name, err)
 		}
+		config.Components[name] = component
 
-		if componentName != "" {
-			var component spec.Component
-			component, err = collectComponentDetails(c, componentName, selectedEnvironments)
-			if err != nil {
-				return fmt.Errorf("failed to collect details for component %s: %w", componentName, err)
-			}
-			config.Components[componentName] = component
+		addAnother, confirmErr := c.Confirm(
+			"Add another component?",
+			nabat.WithAffirmative("Yes, add another"),
+			nabat.WithNegative("No, I'm done"),
+			nabat.WithPrefill(false),
+		)
+		if confirmErr != nil {
+			return fmt.Errorf("failed to confirm another component: %w", confirmErr)
 		}
-
-		continueAdding = addAnother
-
-		if !addAnother && len(config.Components) == 0 {
-			c.Warn("You must add at least one component to your project.")
-			continueAdding = true
+		if !addAnother {
+			return nil
 		}
 	}
-
-	return nil
 }
 
-// collectComponentDetails collects a component's configuration in two parts:
-// essentials, which are always asked, and an advanced block behind a single
-// gate.
-func collectComponentDetails(c *nabat.Context, componentName string, availableEnvironments []string) (spec.Component, error) {
-	component := spec.Component{}
-
-	if err := collectComponentEssentials(c, &component, componentName); err != nil {
-		return component, err
+// collectComponentDetails collects one component: name, essentials, then
+// the advanced gate. The first component is collected before add-another
+// is asked, so at least one component is always present.
+func collectComponentDetails(c *nabat.Context, envNames []string, existing map[string]spec.Component) (string, spec.Component, error) {
+	name, err := collectComponentName(c, existing)
+	if err != nil {
+		return "", spec.Component{}, err
 	}
-
-	if err := collectComponentAdvanced(c, &component, componentName, availableEnvironments); err != nil {
-		return component, err
+	var component spec.Component
+	err = collectComponentEssentials(c, &component, name, envNames)
+	if err != nil {
+		return name, component, err
 	}
-
-	return component, nil
+	err = collectComponentAdvanced(c, &component, name, envNames)
+	if err != nil {
+		return name, component, err
+	}
+	return name, component, nil
 }
 
-// needsHealthCheckQuestion reports whether the HTTP health-check question
-// applies: a TCP/HTTP probe needs a named port to attach to.
-func needsHealthCheckQuestion(component spec.Component) bool {
-	return component.ListensOnPort()
+func collectComponentName(c *nabat.Context, existing map[string]spec.Component) (string, error) {
+	name, err := c.Input(
+		"Component name ("+descComponentName+")",
+		nabat.WithHint("web"),
+		nabat.WithValidate(func(s string) error {
+			return validateComponentNameUnique(s, existing)
+		}),
+	)
+	if err != nil {
+		return "", fmt.Errorf("failed to collect component name: %w", err)
+	}
+	return name, nil
 }
 
-// collectComponentEssentials asks the questions every component needs
-// regardless of role: role, image, resources, and (for service components
-// only) port and expose. Workers also get command and optional metrics port.
-func collectComponentEssentials(c *nabat.Context, component *spec.Component, componentName string) error {
-	if err := collectComponentRole(c, component, componentName); err != nil {
+// collectComponentEssentials asks role, image, port, resources, and expose
+// as separate prompts so each form is height-homogeneous. Port and expose
+// are asked only for services; expose only when local is selected.
+func collectComponentEssentials(c *nabat.Context, component *spec.Component, name string, envNames []string) error {
+	roleLabel, err := c.Select(
+		fmt.Sprintf("Role for %s - how does this component run?", name),
+		roles.labels(),
+		roles.label(spec.ComponentRoleService),
+	)
+	if err != nil {
 		return fmt.Errorf("failed to collect component role: %w", err)
 	}
+	role, ok := roles.fromLabel(roleLabel)
+	if !ok {
+		return fmt.Errorf("unrecognized role selection %q", roleLabel)
+	}
 
-	if err := collectComponentImage(c, component, componentName); err != nil {
+	image, err := c.Input(
+		fmt.Sprintf(promptImageFmt, name),
+		nabat.WithHint("nginx:latest"),
+		nabat.WithValidate(func(s string) error {
+			return validate.ValidateNonEmpty(s, "image")
+		}),
+	)
+	if err != nil {
 		return fmt.Errorf("failed to collect component image: %w", err)
 	}
 
-	if component.Role.IsService() {
-		if err := collectComponentPort(c, component, componentName); err != nil {
-			return fmt.Errorf("failed to collect component port: %w", err)
+	answers := componentEssentialsAnswers{
+		roleLabel: roleLabel,
+		image:     image,
+		askExpose: role.IsService() && slices.Contains(envNames, DefaultEnvironmentName),
+	}
+
+	if role.IsService() {
+		portStr, portErr := c.Input(
+			fmt.Sprintf("Port for %s", name),
+			nabat.WithHint(strconv.Itoa(spec.DefaultServicePort)),
+			nabat.WithPrefill(strconv.Itoa(spec.DefaultServicePort)),
+			nabat.WithValidate(spec.ValidatePort),
+		)
+		if portErr != nil {
+			return fmt.Errorf("failed to collect component port: %w", portErr)
+		}
+		answers.portStr = portStr
+	}
+
+	resourceLabel, err := c.Select(
+		fmt.Sprintf("Resources for %s - Select a resource preset or enter custom values", name),
+		append(presets.labels(), customResourcesLabel),
+		presets.label(spec.ResourcePresetSmall),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to collect resources: %w", err)
+	}
+	answers.resourceLabel = resourceLabel
+
+	if answers.askExpose {
+		expose, exposeErr := c.Confirm(
+			fmt.Sprintf(promptExposeFmt, name, name, localkube.DefaultIngressIP),
+			nabat.WithAffirmative("Yes"),
+			nabat.WithNegative("No"),
+			nabat.WithPrefill(true),
+		)
+		if exposeErr != nil {
+			return fmt.Errorf("failed to collect component expose: %w", exposeErr)
+		}
+		answers.expose = expose
+	}
+
+	custom, err := applyComponentEssentials(component, answers)
+	if err != nil {
+		return err
+	}
+	if !custom {
+		return nil
+	}
+	return collectComponentCustomResources(c, component, name)
+}
+
+// componentEssentialsAnswers is the submitted state of the essentials prompts.
+type componentEssentialsAnswers struct {
+	roleLabel     string
+	image         string
+	portStr       string
+	resourceLabel string
+	expose        bool
+	askExpose     bool
+}
+
+// applyComponentEssentials copies the essentials answers onto component.
+// It returns true when the user chose custom resources so the caller can
+// collect them.
+func applyComponentEssentials(component *spec.Component, a componentEssentialsAnswers) (custom bool, err error) {
+	role, ok := roles.fromLabel(a.roleLabel)
+	if !ok {
+		return false, fmt.Errorf("unrecognized role selection %q", a.roleLabel)
+	}
+	component.Role = role
+	component.Image = a.image
+
+	if role.IsService() {
+		port, atoiErr := strconv.Atoi(a.portStr)
+		if atoiErr != nil {
+			return false, fmt.Errorf("invalid port number: %w", atoiErr)
+		}
+		component.Port = port
+		if a.askExpose && a.expose {
+			component.Expose = &spec.Expose{}
 		}
 	}
 
-	if component.Role.IsWorker() {
-		if err := collectWorkerEssentials(c, component, componentName); err != nil {
-			return err
-		}
+	if a.resourceLabel == customResourcesLabel {
+		return true, nil
 	}
-
-	if err := collectComponentResources(c, component, componentName); err != nil {
-		return fmt.Errorf("failed to collect component resources: %w", err)
+	preset, ok := presets.fromLabel(a.resourceLabel)
+	if !ok {
+		return false, fmt.Errorf("unrecognized resource selection %q", a.resourceLabel)
 	}
-
-	if component.Role.IsService() {
-		if err := collectComponentExpose(c, component, componentName); err != nil {
-			return fmt.Errorf("failed to collect component expose: %w", err)
-		}
-	}
-
-	return nil
+	component.ResourcePreset = preset
+	return false, nil
 }
 
 // collectComponentAdvanced asks the remaining, optional questions behind a
 // single "configure advanced options" gate.
 func collectComponentAdvanced(c *nabat.Context, component *spec.Component, componentName string, availableEnvironments []string) error {
 	advanced, err := c.Confirm(
-		fmt.Sprintf("Configure advanced options for %s?", componentName),
+		fmt.Sprintf(promptAdvancedFmt, componentName),
 		nabat.WithAffirmative("Yes"),
 		nabat.WithNegative("No, use defaults"),
 		nabat.WithDefault(false),
@@ -267,13 +312,19 @@ func collectComponentAdvanced(c *nabat.Context, component *spec.Component, compo
 	}
 
 	if !advanced {
-		// Zero values for every advanced field: FillSpecWithDefaults later
-		// applies the schema defaults (e.g. kind: stateless), and a nil
-		// Environments means "active everywhere" per the schema, rather
-		// than the older behavior of always writing an explicit list.
+		// Zero values for every advanced field stay omitted in the written
+		// spec. Schema defaults (e.g. kind: stateless) apply at load time,
+		// and a nil Environments means "active everywhere".
 		return nil
 	}
 
+	return collectComponentAdvancedDetails(c, component, componentName, availableEnvironments)
+}
+
+// collectComponentAdvancedDetails asks the optional questions behind the
+// advanced gate. The gate itself lives in [collectComponentAdvanced].
+func collectComponentAdvancedDetails(c *nabat.Context, component *spec.Component, componentName string, availableEnvironments []string) error {
+	var err error
 	if err = collectComponentKind(c, component, componentName); err != nil {
 		return fmt.Errorf("failed to collect component kind: %w", err)
 	}
@@ -296,14 +347,17 @@ func collectComponentAdvanced(c *nabat.Context, component *spec.Component, compo
 		}
 	}
 
-	// Workers already answered command/args in essentials.
-	if !component.Role.IsWorker() {
-		if err = collectComponentCommand(c, component, componentName); err != nil {
-			return fmt.Errorf("failed to collect component command: %w", err)
-		}
+	if err = collectComponentCommand(c, component, componentName); err != nil {
+		return fmt.Errorf("failed to collect component command: %w", err)
+	}
 
-		if err = collectComponentArgs(c, component, componentName); err != nil {
-			return fmt.Errorf("failed to collect component args: %w", err)
+	if err = collectComponentArgs(c, component, componentName); err != nil {
+		return fmt.Errorf("failed to collect component args: %w", err)
+	}
+
+	if component.Role.IsWorker() {
+		if err = collectComponentMetricsPort(c, component, componentName); err != nil {
+			return fmt.Errorf("failed to collect component metrics port: %w", err)
 		}
 	}
 
@@ -323,7 +377,7 @@ func collectComponentAdvanced(c *nabat.Context, component *spec.Component, compo
 		return fmt.Errorf("failed to collect component environment variables: %w", err)
 	}
 
-	if needsHealthCheckQuestion(*component) {
+	if component.ListensOnPort() {
 		if err = collectComponentHealth(c, component, componentName); err != nil {
 			return fmt.Errorf("failed to collect component health check: %w", err)
 		}
@@ -341,60 +395,17 @@ func collectComponentAdvanced(c *nabat.Context, component *spec.Component, compo
 	return nil
 }
 
-// collectWorkerEssentials asks worker-only essentials: command, args, and
-// optional metrics port.
-func collectWorkerEssentials(c *nabat.Context, component *spec.Component, componentName string) error {
-	if err := collectComponentCommand(c, component, componentName); err != nil {
-		return fmt.Errorf("failed to collect component command: %w", err)
-	}
-	if err := collectComponentArgs(c, component, componentName); err != nil {
-		return fmt.Errorf("failed to collect component args: %w", err)
-	}
-	if err := collectComponentMetricsPort(c, component, componentName); err != nil {
-		return fmt.Errorf("failed to collect component metrics port: %w", err)
-	}
-	return nil
-}
-
-func collectComponentRole(c *nabat.Context, component *spec.Component, componentName string) error {
-	labels := make([]string, 0, len(roleOrder))
-	for _, r := range roleOrder {
-		labels = append(labels, roleLabels[r])
-	}
-
-	choice, err := c.Select(
-		fmt.Sprintf("Role for %s - how does this component run?", componentName),
-		labels,
-		roleLabels[spec.ComponentRoleService],
-	)
-	if err != nil {
-		return fmt.Errorf("failed to collect component role: %w", err)
-	}
-
-	role, ok := roleFromLabel(choice)
-	if !ok {
-		return fmt.Errorf("unrecognized role selection %q", choice)
-	}
-	component.Role = role
-	return nil
-}
-
 func collectComponentKind(c *nabat.Context, component *spec.Component, componentName string) error {
-	labels := make([]string, 0, len(kindOrder))
-	for _, k := range kindOrder {
-		labels = append(labels, kindLabels[k])
-	}
-
 	choice, err := c.Select(
 		fmt.Sprintf("Kind for %s - Deployment or StatefulSet (stable identity)?", componentName),
-		labels,
-		kindLabels[spec.ComponentKindStateless],
+		kinds.labels(),
+		kinds.label(spec.ComponentKindStateless),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to collect component kind: %w", err)
 	}
 
-	kind, ok := kindFromLabel(choice)
+	kind, ok := kinds.fromLabel(choice)
 	if !ok {
 		return fmt.Errorf("unrecognized kind selection %q", choice)
 	}
@@ -473,83 +484,6 @@ func collectComponentReplicas(c *nabat.Context, component *spec.Component, compo
 	return nil
 }
 
-func collectComponentImage(c *nabat.Context, component *spec.Component, componentName string) error {
-	image, err := c.Input(
-		fmt.Sprintf("Image for %s", componentName),
-		nabat.WithHint("nginx:latest"),
-		nabat.WithValidate(func(s string) error {
-			return validate.ValidateNonEmpty(s, "image")
-		}),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to collect component image: %w", err)
-	}
-	component.Image = image
-	return nil
-}
-
-func collectComponentPort(c *nabat.Context, component *spec.Component, componentName string) error {
-	addPort, err := c.Confirm(
-		fmt.Sprintf("Add port for %s? Does this component need to expose a port?", componentName),
-		nabat.WithAffirmative("Yes"),
-		nabat.WithNegative("No"),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to collect port preference: %w", err)
-	}
-
-	if addPort {
-		var portStr string
-		portStr, err = c.Input(
-			fmt.Sprintf("Port for %s", componentName),
-			nabat.WithHint("8080"),
-			nabat.WithValidate(spec.ValidatePort),
-		)
-		if err != nil {
-			return fmt.Errorf("failed to collect port number: %w", err)
-		}
-		port, atoiErr := strconv.Atoi(portStr)
-		if atoiErr != nil {
-			return fmt.Errorf("invalid port number: %w", atoiErr)
-		}
-		component.Port = port
-	}
-
-	return nil
-}
-
-// collectComponentResources asks one merged question for a component's
-// resources: pick a preset or fall through to a manual form.
-func collectComponentResources(c *nabat.Context, component *spec.Component, componentName string) error {
-	labels := make([]string, 0, len(presetOrder)+1)
-	for _, p := range presetOrder {
-		labels = append(labels, presetLabel(p))
-	}
-	labels = append(labels, customResourcesLabel)
-
-	choice, err := c.Select(
-		fmt.Sprintf("Resources for %s — Select a resource preset or enter custom values", componentName),
-		labels,
-		presetLabel(spec.ResourcePresetSmall),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to collect resources: %w", err)
-	}
-
-	if choice == customResourcesLabel {
-		// Mutually exclusive with ResourcePreset below: setting both fields
-		// fails spec.ValidateComponentResources.
-		return collectComponentCustomResources(c, component, componentName)
-	}
-
-	preset, ok := presetFromLabel(choice)
-	if !ok {
-		return fmt.Errorf("unrecognized resource selection %q", choice)
-	}
-	component.ResourcePreset = preset
-	return nil
-}
-
 func collectComponentConfigFiles(c *nabat.Context, component *spec.Component, componentName string) error {
 	addConfigFiles, err := c.Confirm(
 		fmt.Sprintf("Add component-specific config files for %s? Would you like to specify custom environment and config files for this component?", componentName),
@@ -600,7 +534,7 @@ func collectComponentCommand(c *nabat.Context, component *spec.Component, compon
 
 	if addCommand {
 		commandStr, inputErr := c.Input(
-			fmt.Sprintf("Command for %s — Command to run in the container (space-separated)", componentName),
+			fmt.Sprintf("Command for %s - Command to run in the container (space-separated)", componentName),
 			nabat.WithHint("python app.py"),
 		)
 		if inputErr != nil {
@@ -632,7 +566,7 @@ func collectComponentArgs(c *nabat.Context, component *spec.Component, component
 
 	if addArgs {
 		argsStr, inputErr := c.Input(
-			fmt.Sprintf("Arguments for %s — Arguments to pass to the command (space-separated)", componentName),
+			fmt.Sprintf("Arguments for %s - Arguments to pass to the command (space-separated)", componentName),
 			nabat.WithHint("--port 8080 --debug"),
 		)
 		if inputErr != nil {
@@ -671,14 +605,14 @@ func collectComponentAutoscaling(c *nabat.Context, component *spec.Component, co
 			nabat.WithFormTitle(fmt.Sprintf("Autoscaling Configuration for %s", componentName)),
 			nabat.WithFormField(&minReplicasStr, "Minimum Replicas",
 				"Minimum number of replicas to maintain",
-				nabat.WithHint(strconv.Itoa(DefaultMinReplicas)),
-				nabat.WithPrefill(strconv.Itoa(DefaultMinReplicas)),
+				nabat.WithHint(strconv.Itoa(spec.DefaultMinReplicas)),
+				nabat.WithPrefill(strconv.Itoa(spec.DefaultMinReplicas)),
 				nabat.WithValidate(func(s string) error { return validate.ValidatePositiveInteger(s, "minimum replicas") }),
 			),
 			nabat.WithFormField(&maxReplicasStr, "Maximum Replicas",
 				"Maximum number of replicas allowed",
-				nabat.WithHint(strconv.Itoa(DefaultMaxReplicas)),
-				nabat.WithPrefill(strconv.Itoa(DefaultMaxReplicas)),
+				nabat.WithHint(strconv.Itoa(spec.DefaultMaxReplicas)),
+				nabat.WithPrefill(strconv.Itoa(spec.DefaultMaxReplicas)),
 				nabat.WithValidate(func(s string) error { return validate.ValidatePositiveInteger(s, "maximum replicas") }),
 			),
 		)
@@ -705,7 +639,7 @@ func collectComponentAutoscaling(c *nabat.Context, component *spec.Component, co
 		autoscaling.Metrics = []spec.Metric{
 			{
 				Type:   spec.MetricTypeCPU,
-				Target: DefaultCPUThreshold,
+				Target: spec.DefaultCPUTarget,
 			},
 		}
 
@@ -716,8 +650,7 @@ func collectComponentAutoscaling(c *nabat.Context, component *spec.Component, co
 }
 
 // collectComponentCustomResources collects explicit CPU/memory/storage
-// values. Called only when the merged resources select (see
-// collectComponentResources) resolves to customResourcesLabel.
+// values. Called only when the resources select is customResourcesLabel.
 func collectComponentCustomResources(c *nabat.Context, component *spec.Component, componentName string) error {
 	var cpu, memory, ephemeralStorage string
 	err := c.Form(
@@ -754,24 +687,6 @@ func collectComponentCustomResources(c *nabat.Context, component *spec.Component
 	}
 
 	component.Resources = resources
-	return nil
-}
-
-func collectComponentExpose(c *nabat.Context, component *spec.Component, componentName string) error {
-	addExpose, err := c.Confirm(
-		fmt.Sprintf("Expose %s on the internet? It gets its own hostname (%s.<domain>) and HTTPS from the platform", componentName, componentName),
-		nabat.WithAffirmative("Yes"),
-		nabat.WithNegative("No"),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to get expose preference: %w", err)
-	}
-
-	if addExpose {
-		// Zero value = all defaults; it is saved as `expose: true`. The
-		// advanced gate offers domain/subdomain customization.
-		component.Expose = &spec.Expose{}
-	}
 	return nil
 }
 
@@ -941,7 +856,7 @@ func collectComponentEnvironments(c *nabat.Context, component *spec.Component, c
 	}
 
 	selectedEnvs, err := c.MultiSelect(
-		fmt.Sprintf("Environment Selection for %s — Select one or more environments for this component", componentName),
+		fmt.Sprintf("Environment Selection for %s - Select one or more environments for this component", componentName),
 		availableEnvironments,
 		availableEnvironments,
 	)

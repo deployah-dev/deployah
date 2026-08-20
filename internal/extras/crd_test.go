@@ -171,6 +171,7 @@ func sampleCRDObject(t *testing.T, name string) Object {
 // TestApplyCRDs_CreateIfMissing exercises extras package behavior.
 func TestApplyCRDs_CreateIfMissing(t *testing.T) {
 	t.Parallel()
+
 	client := newFakeCRDClient()
 	client.establishAfterNGets = 1
 	existing := &apiextensionsv1.CustomResourceDefinition{
@@ -194,6 +195,7 @@ func TestApplyCRDs_CreateIfMissing(t *testing.T) {
 // TestApplyCRDs_CreateReplaceAppliesExisting exercises extras package behavior.
 func TestApplyCRDs_CreateReplaceAppliesExisting(t *testing.T) {
 	t.Parallel()
+
 	client := newFakeCRDClient()
 	client.establishAfterNGets = 1
 	client.objects["widgets.example.com"] = &apiextensionsv1.CustomResourceDefinition{
@@ -218,6 +220,7 @@ func TestApplyCRDs_CreateReplaceAppliesExisting(t *testing.T) {
 // TestApplyCRDs_CreateReplaceAppliesMissing exercises extras package behavior.
 func TestApplyCRDs_CreateReplaceAppliesMissing(t *testing.T) {
 	t.Parallel()
+
 	client := newFakeCRDClient()
 	client.establishAfterNGets = 1
 
@@ -235,6 +238,7 @@ func TestApplyCRDs_CreateReplaceAppliesMissing(t *testing.T) {
 // TestApplyCRDs_WaitsForEstablished exercises extras package behavior.
 func TestApplyCRDs_WaitsForEstablished(t *testing.T) {
 	t.Parallel()
+
 	client := newFakeCRDClient()
 	client.establishAfterNGets = 3
 
@@ -248,6 +252,7 @@ func TestApplyCRDs_WaitsForEstablished(t *testing.T) {
 // TestApplyCRDs_Timeout exercises extras package behavior.
 func TestApplyCRDs_Timeout(t *testing.T) {
 	t.Parallel()
+
 	client := newFakeCRDClient()
 	client.establishAfterNGets = 1_000_000
 
@@ -261,6 +266,7 @@ func TestApplyCRDs_Timeout(t *testing.T) {
 // TestApplyCRDs_WaitAPIError exercises extras package behavior.
 func TestApplyCRDs_WaitAPIError(t *testing.T) {
 	t.Parallel()
+
 	client := newFakeCRDClient()
 	client.objects["broken.example.com"] = &apiextensionsv1.CustomResourceDefinition{
 		Name: "broken.example.com",
@@ -278,6 +284,7 @@ func TestApplyCRDs_WaitAPIError(t *testing.T) {
 // TestApplyCRDs_Canceled exercises extras package behavior.
 func TestApplyCRDs_Canceled(t *testing.T) {
 	t.Parallel()
+
 	client := newFakeCRDClient()
 	client.establishAfterNGets = 1_000_000
 	ctx, cancel := context.WithCancel(t.Context())
@@ -294,6 +301,7 @@ func TestApplyCRDs_Canceled(t *testing.T) {
 // TestApplyCRDs_EmptyNoop exercises extras package behavior.
 func TestApplyCRDs_EmptyNoop(t *testing.T) {
 	t.Parallel()
+
 	client := newFakeCRDClient()
 	stats, err := applyCRDs(t.Context(), client, nil, PolicyCreate, time.Second)
 	require.NoError(t, err)
@@ -304,6 +312,7 @@ func TestApplyCRDs_EmptyNoop(t *testing.T) {
 // TestSSAPatchFromObject_StripsServerFields exercises extras package behavior.
 func TestSSAPatchFromObject_StripsServerFields(t *testing.T) {
 	t.Parallel()
+
 	o := sampleCRDObject(t, "widgets.example.com")
 	patch, err := ssaPatchFromObject(o)
 	require.NoError(t, err)
@@ -327,18 +336,18 @@ func TestSSAPatchFromObject_StripsServerFields(t *testing.T) {
 // never reach the fake client.
 func TestApplyCRDs_ExportedGuards(t *testing.T) {
 	t.Parallel()
-	ctx := t.Context()
+
 	crd := sampleCRDObject(t, "widgets.example.com")
 
-	stats, err := ApplyCRDs(ctx, nil, nil, PolicyCreate, time.Second)
+	stats, err := ApplyCRDs(t.Context(), nil, nil, PolicyCreate, time.Second)
 	require.NoError(t, err)
 	assert.Equal(t, CRDStats{}, stats)
 
-	_, err = ApplyCRDs(ctx, nil, []Object{crd}, PolicyCreate, time.Second)
+	_, err = ApplyCRDs(t.Context(), nil, []Object{crd}, PolicyCreate, time.Second)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cluster configuration is required")
 
-	_, err = ApplyCRDs(ctx, &rest.Config{Host: "https://127.0.0.1:1"}, []Object{crd}, Policy("nope"), time.Second)
+	_, err = ApplyCRDs(t.Context(), &rest.Config{Host: "https://127.0.0.1:1"}, []Object{crd}, Policy("nope"), time.Second)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown CRD policy")
 }
@@ -360,6 +369,7 @@ func TestApplyCRDs_DecodeAndClientErrors(t *testing.T) {
 
 	t.Run("empty name", func(t *testing.T) {
 		t.Parallel()
+
 		client := newFakeCRDClient()
 		_, err := applyCRDs(t.Context(), client, []Object{{
 			Path: "noname.yaml",

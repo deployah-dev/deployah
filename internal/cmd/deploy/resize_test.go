@@ -32,6 +32,7 @@ import (
 
 func TestRequireResizeFlag(t *testing.T) {
 	t.Parallel()
+
 	stateful := []persistenceResize{{
 		Component: "db", PreviousSize: "10Gi", NewSize: "20Gi", Stateful: true,
 	}}
@@ -53,6 +54,7 @@ func TestRequireResizeFlag(t *testing.T) {
 
 func TestResizeFailureHint(t *testing.T) {
 	t.Parallel()
+
 	stateful := resizeFailureHint([]persistenceResize{{Component: "db", Stateful: true}})
 	assert.Contains(t, stateful, "orphan-deleted")
 	assert.Contains(t, stateful, "PVCs may already be patched")
@@ -64,6 +66,7 @@ func TestResizeFailureHint(t *testing.T) {
 
 func TestDetectPersistenceResizes(t *testing.T) {
 	t.Parallel()
+
 	prev := previousResolvedComponents(releaseWithResolved("db", map[string]any{
 		"workloadKind":    "StatefulSet",
 		"persistenceSize": "10Gi",
@@ -96,6 +99,7 @@ func TestDetectPersistenceResizes(t *testing.T) {
 
 func TestDetectPersistenceResizes_Stateless(t *testing.T) {
 	t.Parallel()
+
 	prev := previousResolvedComponents(releaseWithResolved("web", map[string]any{
 		"workloadKind":    "Deployment",
 		"persistenceSize": "1Gi",
@@ -121,10 +125,9 @@ func TestDetectPersistenceResizes_Stateless(t *testing.T) {
 func TestResizeVolumes_HappyPath(t *testing.T) {
 	t.Parallel()
 
-	allow := true
 	sc := &storagev1.StorageClass{
 		Name:                 "fast-ssd",
-		AllowVolumeExpansion: &allow,
+		AllowVolumeExpansion: new(true),
 	}
 	sts := &appsv1.StatefulSet{
 		Name:      "shop-production-db",
@@ -141,8 +144,7 @@ func TestResizeVolumes_HappyPath(t *testing.T) {
 	}
 	qty10 := resource.MustParse("10Gi")
 	pvc := &corev1.PersistentVolumeClaim{
-		Name:      "data-shop-production-db-0",
-		Namespace: "default",
+		Name: "data-shop-production-db-0", Namespace: "default",
 		Labels: map[string]string{
 			"app.kubernetes.io/instance": "shop-production",
 			spec.LabelComponent:          "db",
@@ -182,10 +184,9 @@ func TestResizeVolumes_HappyPath(t *testing.T) {
 func TestResizeVolumes_StatelessSharedPVC(t *testing.T) {
 	t.Parallel()
 
-	allow := true
 	sc := &storagev1.StorageClass{
 		Name:                 "fast-ssd",
-		AllowVolumeExpansion: &allow,
+		AllowVolumeExpansion: new(true),
 	}
 	qty1 := resource.MustParse("1Gi")
 	pvc := &corev1.PersistentVolumeClaim{
@@ -218,10 +219,10 @@ func TestResizeVolumes_StatelessSharedPVC(t *testing.T) {
 
 func TestResizeVolumes_ExpansionNotAllowed(t *testing.T) {
 	t.Parallel()
-	allow := false
+
 	sc := &storagev1.StorageClass{
 		Name:                 "slow",
-		AllowVolumeExpansion: &allow,
+		AllowVolumeExpansion: new(false),
 	}
 	pvc := &corev1.PersistentVolumeClaim{
 		Name:      "shop-production-web",
@@ -243,13 +244,13 @@ func TestResizeVolumes_ExpansionNotAllowed(t *testing.T) {
 
 func TestResizeVolumes_DefaultStorageClass(t *testing.T) {
 	t.Parallel()
-	allow := true
+
 	sc := &storagev1.StorageClass{
 		Name: "standard",
 		Annotations: map[string]string{
 			defaultSCAnnotKey: "true",
 		},
-		AllowVolumeExpansion: &allow,
+		AllowVolumeExpansion: new(true),
 	}
 	pvc := &corev1.PersistentVolumeClaim{
 		Name:      "shop-production-web",
@@ -272,15 +273,14 @@ func TestResizeVolumes_DefaultStorageClass(t *testing.T) {
 
 func TestResizeVolumes_PrefersPVCStorageClassOverHint(t *testing.T) {
 	t.Parallel()
-	allowFast := true
-	allowSlow := false
+
 	fast := &storagev1.StorageClass{
 		Name:                 "fast-ssd",
-		AllowVolumeExpansion: &allowFast,
+		AllowVolumeExpansion: new(true),
 	}
 	slow := &storagev1.StorageClass{
 		Name:                 "slow",
-		AllowVolumeExpansion: &allowSlow,
+		AllowVolumeExpansion: new(false),
 	}
 	pvc := &corev1.PersistentVolumeClaim{
 		Name:      "shop-production-web",
@@ -304,25 +304,24 @@ func TestResizeVolumes_PrefersPVCStorageClassOverHint(t *testing.T) {
 
 func TestResolveStorageClassForExpansion_Order(t *testing.T) {
 	t.Parallel()
-	allow := true
 	defaultSC := &storagev1.StorageClass{
 		Name: "standard",
 		Annotations: map[string]string{
 			defaultSCAnnotKey: "true",
 		},
-		AllowVolumeExpansion: &allow,
+		AllowVolumeExpansion: new(true),
 	}
 	client := fake.NewSimpleClientset(defaultSC)
 
 	pvcWithClass := &corev1.PersistentVolumeClaim{
-		Name: "with-class",
+		Name: "with-class", Namespace: "default",
 		Spec: corev1.PersistentVolumeClaimSpec{StorageClassName: new("pvc-class")},
 	}
 	got, err := resolveStorageClassForExpansion(t.Context(), client, pvcWithClass, "hint-class")
 	require.NoError(t, err)
 	assert.Equal(t, "pvc-class", got)
 
-	pvcNoClass := &corev1.PersistentVolumeClaim{Name: "no-class"}
+	pvcNoClass := &corev1.PersistentVolumeClaim{Name: "no-class", Namespace: "default"}
 	got, err = resolveStorageClassForExpansion(t.Context(), client, pvcNoClass, "hint-class")
 	require.NoError(t, err)
 	assert.Equal(t, "hint-class", got)
@@ -335,15 +334,13 @@ func TestResolveStorageClassForExpansion_Order(t *testing.T) {
 func TestResizeVolumes_OrphanDeleteMissingStatefulSet(t *testing.T) {
 	t.Parallel()
 
-	allow := true
 	sc := &storagev1.StorageClass{
 		Name:                 "fast-ssd",
-		AllowVolumeExpansion: &allow,
+		AllowVolumeExpansion: new(true),
 	}
 	qty := resource.MustParse("10Gi")
 	pvc := &corev1.PersistentVolumeClaim{
-		Name:      "data-shop-production-db-0",
-		Namespace: "default",
+		Name: "data-shop-production-db-0", Namespace: "default",
 		Labels: map[string]string{
 			"app.kubernetes.io/instance": "shop-production",
 			spec.LabelComponent:          "db",
@@ -373,28 +370,25 @@ func TestResizeVolumes_OrphanDeleteMissingStatefulSet(t *testing.T) {
 func TestResizeVolumes_OrphanDeleteLeavesPods(t *testing.T) {
 	t.Parallel()
 
-	allow := true
 	sc := &storagev1.StorageClass{
 		Name:                 "fast-ssd",
-		AllowVolumeExpansion: &allow,
+		AllowVolumeExpansion: new(true),
 	}
 	sts := &appsv1.StatefulSet{
-		Name:      "shop-production-db",
-		Namespace: "default",
+		Name: "shop-production-db", Namespace: "default",
 		Labels: map[string]string{
 			"app.kubernetes.io/instance": "shop-production",
 			spec.LabelComponent:          "db",
 		},
 		Spec: appsv1.StatefulSetSpec{
 			VolumeClaimTemplates: []corev1.PersistentVolumeClaim{
-				{Name: "data"},
+				{Name: "data", Namespace: "default"},
 			},
 		},
 	}
 	qty := resource.MustParse("10Gi")
 	pvc := &corev1.PersistentVolumeClaim{
-		Name:      "data-shop-production-db-0",
-		Namespace: "default",
+		Name: "data-shop-production-db-0", Namespace: "default",
 		Labels: map[string]string{
 			"app.kubernetes.io/instance": "shop-production",
 			spec.LabelComponent:          "db",
@@ -414,10 +408,11 @@ func TestResizeVolumes_OrphanDeleteLeavesPods(t *testing.T) {
 		},
 	}
 	pod := &corev1.Pod{
-		Name:      "shop-production-db-0",
-		Namespace: "default",
-		Labels:    map[string]string{"app.kubernetes.io/instance": "shop-production"},
-		Status:    corev1.PodStatus{Phase: corev1.PodRunning},
+		Name: "shop-production-db-0", Namespace: "default",
+		Labels: map[string]string{
+			"app.kubernetes.io/instance": "shop-production",
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning},
 	}
 
 	client := fake.NewSimpleClientset(sc, sts, pvc, pod)
@@ -436,6 +431,7 @@ func TestResizeVolumes_OrphanDeleteLeavesPods(t *testing.T) {
 
 func TestResizeVolumes_NilClient(t *testing.T) {
 	t.Parallel()
+
 	err := resizeVolumes(t.Context(), nil, "default", "shop-production", []persistenceResize{{
 		Component: "db", NewSize: "20Gi", Stateful: true,
 	}})
@@ -445,12 +441,14 @@ func TestResizeVolumes_NilClient(t *testing.T) {
 
 func TestResizeVolumes_EmptyResizes(t *testing.T) {
 	t.Parallel()
+
 	client := fake.NewSimpleClientset()
 	require.NoError(t, resizeVolumes(t.Context(), client, "default", "shop-production", nil))
 }
 
 func TestResizeVolumes_ParseSizeError(t *testing.T) {
 	t.Parallel()
+
 	client := fake.NewSimpleClientset()
 	err := resizeVolumes(t.Context(), client, "default", "shop-production", []persistenceResize{{
 		Component: "db", NewSize: "not-a-quantity", Stateful: false,
@@ -461,6 +459,7 @@ func TestResizeVolumes_ParseSizeError(t *testing.T) {
 
 func TestResizeVolumes_NoPVCsFound(t *testing.T) {
 	t.Parallel()
+
 	client := fake.NewSimpleClientset()
 	err := resizeVolumes(t.Context(), client, "default", "shop-production", []persistenceResize{{
 		Component: "web", NewSize: "2Gi", Stateful: false,
@@ -471,8 +470,9 @@ func TestResizeVolumes_NoPVCsFound(t *testing.T) {
 
 func TestResolveStorageClassForExpansion_NoClassNoHintNoDefault(t *testing.T) {
 	t.Parallel()
+
 	client := fake.NewSimpleClientset()
-	pvc := &corev1.PersistentVolumeClaim{Name: "orphan"}
+	pvc := &corev1.PersistentVolumeClaim{Name: "orphan", Namespace: "default"}
 	_, err := resolveStorageClassForExpansion(t.Context(), client, pvc, "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no storage class")
@@ -481,10 +481,10 @@ func TestResolveStorageClassForExpansion_NoClassNoHintNoDefault(t *testing.T) {
 
 func TestPatchPVCSize_NilRequests(t *testing.T) {
 	t.Parallel()
+
 	qty := resource.MustParse("10Gi")
 	pvc := &corev1.PersistentVolumeClaim{
-		Name:      "test-pvc",
-		Namespace: "default",
+		Name: "test-pvc", Namespace: "default",
 		Spec: corev1.PersistentVolumeClaimSpec{
 			StorageClassName: new("standard"),
 		},
@@ -498,8 +498,7 @@ func TestPatchPVCSize_AlreadyLargerSkips(t *testing.T) {
 	t.Parallel()
 	current := resource.MustParse("20Gi")
 	pvc := &corev1.PersistentVolumeClaim{
-		Name:      "test-pvc",
-		Namespace: "default",
+		Name: "test-pvc", Namespace: "default",
 		Spec: corev1.PersistentVolumeClaimSpec{
 			Resources: corev1.VolumeResourceRequirements{
 				Requests: corev1.ResourceList{corev1.ResourceStorage: current},
@@ -513,6 +512,7 @@ func TestPatchPVCSize_AlreadyLargerSkips(t *testing.T) {
 
 func TestDetectPersistenceResizes_NoChangeSkipped(t *testing.T) {
 	t.Parallel()
+
 	prev := previousResolvedComponents(releaseWithResolved("db", map[string]any{
 		"workloadKind":    "StatefulSet",
 		"persistenceSize": "10Gi",
@@ -531,6 +531,7 @@ func TestDetectPersistenceResizes_NoChangeSkipped(t *testing.T) {
 
 func TestDetectPersistenceResizes_DecreaseSkipped(t *testing.T) {
 	t.Parallel()
+
 	prev := previousResolvedComponents(releaseWithResolved("db", map[string]any{
 		"workloadKind":    "StatefulSet",
 		"persistenceSize": "20Gi",
@@ -549,6 +550,7 @@ func TestDetectPersistenceResizes_DecreaseSkipped(t *testing.T) {
 
 func TestDetectPersistenceResizes_NoPersistenceSkipped(t *testing.T) {
 	t.Parallel()
+
 	prev := previousResolvedComponents(releaseWithResolved("peer", map[string]any{
 		"workloadKind": "StatefulSet",
 	}).Chart.Values)
@@ -563,17 +565,16 @@ func TestDetectPersistenceResizes_NoPersistenceSkipped(t *testing.T) {
 
 func TestOrphanDeleteStatefulSets_MultipleFound(t *testing.T) {
 	t.Parallel()
+
 	sts1 := &appsv1.StatefulSet{
-		Name:      "shop-production-db",
-		Namespace: "default",
+		Name: "shop-production-db", Namespace: "default",
 		Labels: map[string]string{
 			"app.kubernetes.io/instance": "shop-production",
 			spec.LabelComponent:          "db",
 		},
 	}
 	sts2 := &appsv1.StatefulSet{
-		Name:      "shop-production-db-old",
-		Namespace: "default",
+		Name: "shop-production-db-old", Namespace: "default",
 		Labels: map[string]string{
 			"app.kubernetes.io/instance": "shop-production",
 			spec.LabelComponent:          "db",

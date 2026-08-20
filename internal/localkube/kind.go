@@ -33,22 +33,23 @@ import (
 	kindv1alpha4 "sigs.k8s.io/kind/pkg/apis/config/v1alpha4"
 )
 
-// defaultKindNodeImage is the fallback when no Kubernetes version is specified.
+// defaultKindNodeImage is used when Kubernetes version is omitted.
 const defaultKindNodeImage = "kindest/node:v1.35.0"
 
-// kindProvider implements [provider] using sigs.k8s.io/kind.
+// kindProvider is the Kind implementation of [provider].
 type kindProvider struct {
 	p    *cluster.Provider
 	cfg  *config
 	sink *eventSink
-	// spoolDir is the directory used for temporary image-archive files.
-	// Defaults to os.TempDir() when empty.
+	// spoolDir holds temp files for image archives. Empty means os.TempDir.
 	spoolDir string
-	// resolvedRuntime is the concrete engine Kind chose; never RuntimeAuto.
+	// resolvedRuntime is the engine Kind actually uses. Never [RuntimeAuto].
 	resolvedRuntime Runtime
 }
 
-// newKindProvider builds a Kind cluster.Provider wired to the given config.
+var _ provider = (*kindProvider)(nil)
+
+// newKindProvider returns a Kind-backed [provider] using cfg.
 func newKindProvider(cfg *config) (*kindProvider, error) {
 	resolved, runtimeOpt, err := resolveKindRuntime(cfg.runtime)
 	if err != nil {
@@ -62,7 +63,7 @@ func newKindProvider(cfg *config) (*kindProvider, error) {
 	return &kindProvider{p: p, cfg: cfg, sink: sink, spoolDir: cfg.spoolDir, resolvedRuntime: resolved}, nil
 }
 
-// resolveKindRuntime returns the concrete Runtime and Kind ProviderOption for r.
+// resolveKindRuntime picks the container engine Kind will use for r.
 func resolveKindRuntime(r Runtime) (Runtime, cluster.ProviderOption, error) {
 	switch r {
 	case RuntimeAuto:
@@ -82,8 +83,8 @@ func resolveKindRuntime(r Runtime) (Runtime, cluster.ProviderOption, error) {
 	}
 }
 
-// detectRuntimeFromOption probes which engine is available in the same order
-// Kind does (docker → podman → nerdctl), falling back to RuntimeDocker.
+// detectRuntimeFromOption picks docker, then podman, then nerdctl or finch
+// from PATH. Kind's option is opaque. [RuntimeDocker] if none respond.
 func detectRuntimeFromOption(_ cluster.ProviderOption) Runtime {
 	if isCommandAvailable("docker", "info") {
 		return RuntimeDocker
@@ -105,8 +106,8 @@ func isCommandAvailable(cmd, arg string) bool {
 	return c.Run() == nil
 }
 
-// kubernetesVersionToImage converts a human-supplied version string
-// (e.g. "1.31" or "v1.31.2") to a kindest/node image tag.
+// kubernetesVersionToImage turns "1.31" or "v1.31.2" into a kindest/node tag.
+// Empty uses [defaultKindNodeImage].
 func kubernetesVersionToImage(version string) string {
 	if version == "" {
 		return defaultKindNodeImage
@@ -115,9 +116,8 @@ func kubernetesVersionToImage(version string) string {
 	return "kindest/node:v" + v
 }
 
-// protocolToKind maps a [Protocol] to the Kind-internal constant.
-// An empty Protocol defaults to TCP so callers may omit it in a [PortMapping].
-// Any other unrecognized value returns a wrapped [ErrUnsupported] error.
+// protocolToKind converts a [Protocol] to Kind's port-mapping constant.
+// Empty means TCP. Other values return wrapped [ErrUnsupported].
 func protocolToKind(p Protocol) (kindv1alpha4.PortMappingProtocol, error) {
 	switch p {
 	case ProtocolUDP:
@@ -129,8 +129,8 @@ func protocolToKind(p Protocol) (kindv1alpha4.PortMappingProtocol, error) {
 	}
 }
 
-// buildKindConfig constructs a typed v1alpha4 Cluster config from a createConfig.
-// Returns an error when a PortMapping carries an unrecognized Protocol.
+// buildKindConfig builds a Kind cluster spec from cfg.
+// Unknown [Protocol] returns wrapped [ErrUnsupported].
 func buildKindConfig(cfg *createConfig) (*kindv1alpha4.Cluster, error) {
 	node := kindv1alpha4.Node{Role: kindv1alpha4.ControlPlaneRole}
 	for _, pm := range cfg.portMappings {
@@ -156,9 +156,8 @@ func buildKindConfig(cfg *createConfig) (*kindv1alpha4.Cluster, error) {
 	}, nil
 }
 
-// classifyKindErr maps Kind's untyped error strings to local sentinel errors.
-// It returns (sentinel, true) when the error is recognized, or (err, false)
-// when it is not.
+// classifyKindErr maps Kind text to [ErrNotFound] or [ErrAlreadyExists].
+// ok is false when unrecognized; err is unchanged.
 func classifyKindErr(err error) (error, bool) {
 	if err == nil {
 		return nil, false
@@ -178,6 +177,8 @@ func classifyKindErr(err error) (error, bool) {
 
 func (p *kindProvider) backendName() string { return "kind" }
 
+// create starts a Kind cluster with the given name.
+// Canceled ctx returns a wait func so delete does not race Kind's Create.
 func (p *kindProvider) create(ctx context.Context, name string, cfg *createConfig) (func(), error) {
 	image := kubernetesVersionToImage(cfg.base.k8sVersion)
 
@@ -203,14 +204,10 @@ func (p *kindProvider) create(ctx context.Context, name string, cfg *createConfi
 		createOpts = append(createOpts, cluster.CreateWithV1Alpha4Config(kindCfg))
 	}
 
-	// Kind locks <kubeconfigPath>.lock with O_CREATE|O_EXCL during create.
-	// A lock left behind by a killed Kind process would make create fail with
-	// "file exists", so best-effort remove a stale lock first. Only the lock
-	// is touched, never the kubeconfig itself.
+	// Remove a stale .lock; leftover locks make Kind fail with "file exists".
 	os.Remove(cfg.kubeconfigPath + ".lock") //nolint:errcheck
 
-	// Route Kind phase events through the per-call handler for the duration
-	// of this create so callers can observe fine-grained progress.
+	// Send Kind phase events to this call's handler.
 	p.sink.set(cfg.emit)
 	defer p.sink.reset()
 
@@ -229,21 +226,20 @@ func (p *kindProvider) create(ctx context.Context, name string, cfg *createConfi
 		}
 		return func() {}, nil
 	case <-ctx.Done():
-		// The create goroutine is still running; return a drain func so the
-		// caller can synchronize before running cleanup (e.g. delete).
+		// Drain Kind's Create so delete does not race.
 		return func() { <-errCh }, ctx.Err() //nolint:nilnil
 	}
 }
 
-func (p *kindProvider) delete(_ context.Context, name string, dc *deleteConfig) error {
-	// Kind locks <kubeconfigPath>.lock with O_CREATE|O_EXCL during delete.
-	// A lock left behind by a killed Kind process would make delete fail with
-	// "file exists", so best-effort remove a stale lock first. Only the lock
-	// is touched, never the kubeconfig (Kind edits the kubeconfig on delete).
+// delete removes the named Kind cluster.
+func (p *kindProvider) delete(ctx context.Context, name string, dc *deleteConfig) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// Remove a stale .lock; leftover locks make Kind fail with "file exists".
 	os.Remove(dc.kubeconfigPath + ".lock") //nolint:errcheck
 
-	// Route Kind phase events through the per-call handler for the duration
-	// of this delete so callers can observe fine-grained progress.
+	// Send Kind phase events to this call's handler.
 	p.sink.set(dc.emit)
 	defer p.sink.reset()
 
@@ -256,7 +252,11 @@ func (p *kindProvider) delete(_ context.Context, name string, dc *deleteConfig) 
 	return nil
 }
 
-func (p *kindProvider) list(_ context.Context) ([]string, error) {
+// list returns the names of Kind clusters on this machine.
+func (p *kindProvider) list(ctx context.Context) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	names, err := p.p.List()
 	if err != nil {
 		return nil, fmt.Errorf("kind list: %w", err)
@@ -264,7 +264,11 @@ func (p *kindProvider) list(_ context.Context) ([]string, error) {
 	return names, nil
 }
 
-func (p *kindProvider) inspect(_ context.Context, name string) (*backendInfo, error) {
+// inspect returns node count and roles for the named cluster.
+func (p *kindProvider) inspect(ctx context.Context, name string) (*backendInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	nodes, err := p.p.ListNodes(name)
 	if err != nil {
 		if classified, ok := classifyKindErr(err); ok {
@@ -272,15 +276,12 @@ func (p *kindProvider) inspect(_ context.Context, name string) (*backendInfo, er
 		}
 		return nil, fmt.Errorf("kind inspect: %w", err)
 	}
-	// A cluster with no nodes is effectively gone: Kind still lists node
-	// containers (even stopped ones) for a live cluster, so an empty list
-	// means the cluster does not exist. Mirror loadImageArchive here.
+	// Kind lists stopped nodes, so empty means the cluster is gone.
 	if len(nodes) == 0 {
 		return nil, ErrNotFound
 	}
 
-	// Tally nodes by role. A per-node Role() error is non-fatal: the node
-	// still counts toward the total, just not toward a role bucket.
+	// Role() errors skip the role bucket, not the node count.
 	roles := make(map[string]int, 2)
 	for _, n := range nodes {
 		role, roleErr := n.Role()
@@ -297,6 +298,8 @@ func (p *kindProvider) inspect(_ context.Context, name string) (*backendInfo, er
 	}, nil
 }
 
+// status reports running, stopped, or unhealthy.
+// Running means the API server answers and every node is Ready.
 func (p *kindProvider) status(ctx context.Context, name string) (Status, error) {
 	raw, err := p.p.KubeConfig(name, false)
 	if err != nil {
@@ -336,7 +339,11 @@ func (p *kindProvider) status(ctx context.Context, name string) (Status, error) 
 	return StatusRunning, nil
 }
 
-func (p *kindProvider) kubeConfigBytes(_ context.Context, name string) ([]byte, error) {
+// kubeConfigBytes returns kubeconfig YAML for the named cluster.
+func (p *kindProvider) kubeConfigBytes(ctx context.Context, name string) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	raw, err := p.p.KubeConfig(name, false)
 	if err != nil {
 		if classified, ok := classifyKindErr(err); ok {
@@ -347,8 +354,8 @@ func (p *kindProvider) kubeConfigBytes(_ context.Context, name string) ([]byte, 
 	return []byte(raw), nil
 }
 
-// loadImageArchive loads a Docker/OCI tar archive into every node of the
-// named cluster in parallel, with context cancellation support.
+// loadImageArchive copies an image archive onto every node in the cluster.
+// Canceling ctx stops waiting for remaining nodes.
 func (p *kindProvider) loadImageArchive(ctx context.Context, name string, archive io.Reader) error {
 	nodes, err := p.p.ListNodes(name)
 	if err != nil {
@@ -369,7 +376,7 @@ func (p *kindProvider) loadImageArchive(ctx context.Context, name string, archiv
 	tmpName := tmp.Name()
 	defer os.Remove(tmpName) //nolint:errcheck
 
-	// Check cancellation before the potentially long spool copy.
+	// Copying the archive can take a while; honor cancel first.
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		tmp.Close() //nolint:errcheck
 		return ctxErr
@@ -406,8 +413,7 @@ func (p *kindProvider) loadImageArchive(ctx context.Context, name string, archiv
 	return nil
 }
 
-// isNodeReady reports whether a Kubernetes node has the Ready condition
-// set to True.
+// isNodeReady reports whether node is Ready.
 func isNodeReady(node *corev1.Node) bool {
 	for _, c := range node.Status.Conditions {
 		if c.Type == corev1.NodeReady {

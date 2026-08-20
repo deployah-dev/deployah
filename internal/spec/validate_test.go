@@ -394,6 +394,12 @@ func TestValidateComponentReplicas(t *testing.T) {
 			component: Component{},
 		},
 		{
+			name: "nil replicas with autoscaling enabled",
+			component: Component{
+				Autoscaling: &Autoscaling{Enabled: true, MinReplicas: 1, MaxReplicas: 3},
+			},
+		},
+		{
 			name: "replicas without autoscaling",
 			component: Component{
 				Replicas: &replicas1,
@@ -451,7 +457,7 @@ func TestValidateComponentEnvironmentFilter(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `"preview/*"`)
-	assert.Contains(t, err.Error(), `use "preview"`)
+	assert.Contains(t, err.Error(), `a plain name like "preview"`)
 }
 
 // TestValidateComponentHealth verifies ValidateComponentHealth rules.

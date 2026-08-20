@@ -191,10 +191,16 @@ func ValidateComponentName(name string) error {
 	return nil
 }
 
-// ValidateEnvName validates an environment name against the JSON schema pattern
+// ValidateEnvName validates an environment name against the JSON schema
+// pattern. It rejects the "/*" suffix: prefix matching already covers
+// wildcard instances, so a plain name like "review" matches "review/pr-123".
 func ValidateEnvName(name string) error {
 	if name == "" {
 		return fmt.Errorf("environment name cannot be empty")
+	}
+
+	if err := errWildcardEnvSuffix(name); err != nil {
+		return fmt.Errorf("environment name %q: %w", name, err)
 	}
 
 	// Both the manifest and platform schemas require at least 2 characters.
@@ -211,6 +217,18 @@ func ValidateEnvName(name string) error {
 		return fmt.Errorf("environment name '%s' is invalid: must be lowercase alphanumeric characters or dashes (-) separated and cannot start or end with a dash (-)", name)
 	}
 	return nil
+}
+
+// errWildcardEnvSuffix reports that name used the unsupported "/*" suffix.
+// Matching is prefix-based, so a plain name already covers wildcard instances.
+// It returns nil when name does not end in [EnvFileSuffix].
+func errWildcardEnvSuffix(name string) error {
+	base, cut := strings.CutSuffix(name, EnvFileSuffix)
+	if !cut {
+		return nil
+	}
+	return fmt.Errorf("the %q suffix is not supported; a plain name like %q already matches %q",
+		EnvFileSuffix, base, base+"/pr-123")
 }
 
 // ValidateEnvVarName validates an environment variable name against the JSON

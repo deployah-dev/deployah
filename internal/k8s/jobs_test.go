@@ -264,9 +264,8 @@ func TestWaitForJob_SuccessAndFailure(t *testing.T) {
 	t.Run("nil completions treats one success as done", func(t *testing.T) {
 		t.Parallel()
 		job := &batchv1.Job{
-			Name:      "ok",
-			Namespace: "default",
-			Status:    batchv1.JobStatus{Succeeded: 1},
+			Name: "ok", Namespace: "default",
+			Status: batchv1.JobStatus{Succeeded: 1},
 		}
 		cs := fake.NewSimpleClientset(job)
 		require.NoError(t, WaitForJob(t.Context(), cs, "default", "ok"))
@@ -395,12 +394,14 @@ func TestListJobs(t *testing.T) {
 	t.Parallel()
 
 	keep := &batchv1.Job{
-		Name: "other", Namespace: "default",
-		Labels: map[string]string{spec.LabelProject: "other", spec.LabelEnvironment: "dev"},
+		Name:      "other",
+		Namespace: "default",
+		Labels:    map[string]string{spec.LabelProject: "other", spec.LabelEnvironment: "dev"},
 	}
 	match := &batchv1.Job{
-		Name: "shop-job", Namespace: "default",
-		Labels: map[string]string{spec.LabelProject: "shop", spec.LabelEnvironment: "dev"},
+		Name:      "shop-job",
+		Namespace: "default",
+		Labels:    map[string]string{spec.LabelProject: "shop", spec.LabelEnvironment: "dev"},
 	}
 	cs := fake.NewSimpleClientset(keep, match)
 	got, err := ListJobs(t.Context(), cs, "default", "shop", "dev")
@@ -429,12 +430,14 @@ func TestDeleteJobs(t *testing.T) {
 	t.Parallel()
 
 	keep := &batchv1.Job{
-		Name: "other", Namespace: "default",
-		Labels: map[string]string{spec.LabelProject: "other", spec.LabelEnvironment: "dev"},
+		Name:      "other",
+		Namespace: "default",
+		Labels:    map[string]string{spec.LabelProject: "other", spec.LabelEnvironment: "dev"},
 	}
 	drop := &batchv1.Job{
-		Name: "shop-job", Namespace: "default",
-		Labels: map[string]string{spec.LabelProject: "shop", spec.LabelEnvironment: "dev"},
+		Name:      "shop-job",
+		Namespace: "default",
+		Labels:    map[string]string{spec.LabelProject: "shop", spec.LabelEnvironment: "dev"},
 	}
 	cs := fake.NewSimpleClientset(keep, drop)
 	require.NoError(t, DeleteJobs(t.Context(), cs, "default", "shop", "dev"))
@@ -449,12 +452,14 @@ func TestDeleteJobs_IgnoresNotFound(t *testing.T) {
 	t.Parallel()
 
 	gone := &batchv1.Job{
-		Name: "shop-gone", Namespace: "default",
-		Labels: map[string]string{spec.LabelProject: "shop", spec.LabelEnvironment: "dev"},
+		Name:      "shop-gone",
+		Namespace: "default",
+		Labels:    map[string]string{spec.LabelProject: "shop", spec.LabelEnvironment: "dev"},
 	}
 	stay := &batchv1.Job{
-		Name: "shop-stay", Namespace: "default",
-		Labels: map[string]string{spec.LabelProject: "shop", spec.LabelEnvironment: "dev"},
+		Name:      "shop-stay",
+		Namespace: "default",
+		Labels:    map[string]string{spec.LabelProject: "shop", spec.LabelEnvironment: "dev"},
 	}
 	cs := fake.NewSimpleClientset(gone, stay)
 	cs.PrependReactor("delete", "jobs", func(action k8stesting.Action) (bool, runtime.Object, error) {
@@ -479,12 +484,14 @@ func TestDeleteJobs_JoinsDeleteErrors(t *testing.T) {
 	t.Parallel()
 
 	first := &batchv1.Job{
-		Name: "shop-a", Namespace: "default",
-		Labels: map[string]string{spec.LabelProject: "shop", spec.LabelEnvironment: "dev"},
+		Name:      "shop-a",
+		Namespace: "default",
+		Labels:    map[string]string{spec.LabelProject: "shop", spec.LabelEnvironment: "dev"},
 	}
 	second := &batchv1.Job{
-		Name: "shop-b", Namespace: "default",
-		Labels: map[string]string{spec.LabelProject: "shop", spec.LabelEnvironment: "dev"},
+		Name:      "shop-b",
+		Namespace: "default",
+		Labels:    map[string]string{spec.LabelProject: "shop", spec.LabelEnvironment: "dev"},
 	}
 	cs := fake.NewSimpleClientset(first, second)
 	cs.PrependReactor("delete", "jobs", func(action k8stesting.Action) (bool, runtime.Object, error) {
@@ -508,8 +515,9 @@ func TestDeleteJobs_BackgroundPropagation(t *testing.T) {
 	t.Parallel()
 
 	job := &batchv1.Job{
-		Name: "shop-job", Namespace: "default",
-		Labels: map[string]string{spec.LabelProject: "shop", spec.LabelEnvironment: "dev"},
+		Name:      "shop-job",
+		Namespace: "default",
+		Labels:    map[string]string{spec.LabelProject: "shop", spec.LabelEnvironment: "dev"},
 	}
 	cs := fake.NewSimpleClientset(job)
 	var got *metav1.DeletionPropagation

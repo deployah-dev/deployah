@@ -26,6 +26,9 @@ const (
 	// DefaultSpecPath is the default path for the Deployah spec file
 	DefaultSpecPath = "deployah.yaml"
 
+	// schemaDocsBase is the URL prefix for published JSON Schema $id values.
+	schemaDocsBase = "https://deployah.dev/schemas/"
+
 	// DefaultEnvFile is the default environment file name
 	DefaultEnvFile = ".env"
 
@@ -48,6 +51,22 @@ const (
 // SupportedManifestVersions is the apiVersion values this release will load.
 // During alpha this is only [CurrentManifestVersion].
 var SupportedManifestVersions = []string{CurrentManifestVersion}
+
+// ManifestSchemaURL is the JSON Schema $id for the current manifest, used
+// as a `# $schema` modeline so editors can autocomplete omitted fields.
+func ManifestSchemaURL() string {
+	return schemaDocsBase + CurrentManifestVersion + "/manifest.json"
+}
+
+// PlatformSchemaURL is the JSON Schema $id for the current platform file.
+func PlatformSchemaURL() string {
+	return schemaDocsBase + CurrentPlatformVersion + "/platform.json"
+}
+
+// SchemaModeline returns an IntelliJ/Red Hat YAML modeline for schemaURL.
+func SchemaModeline(schemaURL string) string {
+	return "# $schema: " + schemaURL + "\n"
+}
 
 // Environment Variables
 const (
@@ -160,6 +179,22 @@ const (
 	// DefaultWorkerShutdownTimeout is the default shutdownTimeout for
 	// worker components (terminationGracePeriodSeconds).
 	DefaultWorkerShutdownTimeout = "60s"
+
+	// DefaultServicePort is the default container port for service
+	// components when Port is omitted. Workers do not receive this default.
+	DefaultServicePort = 8080
+
+	// DefaultMinReplicas is the default Autoscaling.MinReplicas when the
+	// field is omitted.
+	DefaultMinReplicas = 2
+
+	// DefaultMaxReplicas is the default Autoscaling.MaxReplicas when the
+	// field is omitted.
+	DefaultMaxReplicas = 5
+
+	// DefaultCPUTarget is the default CPU utilization percentage for the
+	// default autoscaling metric when metrics are omitted.
+	DefaultCPUTarget = 75
 
 	// DefaultHookTaskTimeout is the default timeout for preDeploy and
 	// postDeploy tasks when timeout is omitted.

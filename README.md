@@ -430,7 +430,7 @@ These work with every command:
 
 | Command | What it does |
 |---|---|
-| `deployah init` | Create a new spec and platform file by answering a few questions. Also scaffolds `.deployah/manifests/` and `.deployah/crds/` for [custom manifests and CRDs](docs/custom-manifests-and-crds.md). Use `-o` to set the output file, `--force` to overwrite an existing one, or `--dry-run` to preview. Non-interactive: `--project`, `--environments`, `--set key=value`, or `--defaults` to skip every prompt. |
+| `deployah init` | Interactive wizard that creates a spec and platform file, plus `.deployah/manifests/` and `.deployah/crds/` for [custom manifests and CRDs](docs/custom-manifests-and-crds.md). Requires a terminal. Use `--force` to skip the overwrite prompt when a spec already exists (you still confirm Save), `--dry-run` to preview, `--spec`/`-s` for the spec path, and `--platform-file` for the platform path. |
 | `deployah validate` | Check the manifest schema (offline). When a platform file exists, also cross-check `expose.domain` keys and environment names against it. |
 | `deployah validate <environment>` | Also load the platform file and check the resolved configuration for that environment. |
 | `deployah resolve <environment>` | Preview the fully resolved hostname, TLS mode, and context, offline. Use `--output json` for machine-readable output. |

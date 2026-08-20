@@ -456,10 +456,8 @@ func ValidateComponentExpose(component Component) error {
 // name already covers its wildcard instances.
 func ValidateComponentEnvironmentFilter(component Component) error {
 	for _, entry := range component.Environments {
-		if base, cut := strings.CutSuffix(entry, "/*"); cut {
-			return fmt.Errorf(
-				"environments filter entry %q: the \"/*\" suffix is not supported; use %q, which already matches names like %q",
-				entry, base, base+"/pr-123")
+		if err := errWildcardEnvSuffix(entry); err != nil {
+			return fmt.Errorf("environments filter entry %q: %w", entry, err)
 		}
 	}
 	return nil

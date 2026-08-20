@@ -230,12 +230,16 @@ component (names and key fields such as `nodeSelector`).
 
 ## Where the platform file comes from
 
-- `deployah init` scaffolds `deployah.yaml`, plus `deployah.platform.yaml`
-  with every environment you selected: `local` gets a full entry, the others
-  are registered empty. An empty entry has no context yet, so init prints a
-  reminder to set one before deploying somewhere real.
-- `deployah cluster up` creates or updates `deployah.platform.yaml` with a
-  `local` environment pointed at the local cluster.
+- `deployah init` creates `deployah.yaml` and a platform file. If the
+  platform file is missing, it writes one with every environment you
+  selected: `local` gets a full Kind entry, the others are empty. If the
+  file already exists, init inserts only missing environment keys and
+  leaves existing keys unchanged, including an empty `local: {}`. Merge
+  rewrites the file and drops hand-written comments.
+- `deployah cluster up` creates `deployah.platform.yaml` when it is
+  missing, with a `local` environment pointed at the local cluster. If
+  the file already exists, cluster up never mutates it: it prints a
+  snippet to add when `local` is absent, so comments stay intact.
 - Deployah looks for the platform file in this order: `--platform-file`, the
   `DEPLOYAH_PLATFORM_FILE` environment variable, then the same directory as
   the spec file.

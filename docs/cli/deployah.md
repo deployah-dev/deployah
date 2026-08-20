@@ -28,7 +28,7 @@ deployah [flags]
 * [deployah cluster](deployah_cluster.md)  - Manage a local Kubernetes cluster for development
 * [deployah delete](deployah_delete.md)  - Delete a deployed project in an environment
 * [deployah deploy](deployah_deploy.md)  - Deploy a project to a Kubernetes cluster on a given environment
-* [deployah init](deployah_init.md)  - Create a new Deployah spec for a project
+* [deployah init](deployah_init.md)  - Creates deployah.yaml and a platform file so you can deploy.
 * [deployah list](deployah_list.md)  - List deployed projects
 * [deployah logs](deployah_logs.md)  - View logs for a deployed project
 * [deployah plan](deployah_plan.md)  - Preview the changes a deploy would make

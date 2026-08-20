@@ -1,78 +1,96 @@
 package initialize
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// TestParseEnvironmentNames_RejectsWildcardSuffix verifies a trailing "/*"
-// is rejected with a hint: plain names already prefix-match at deploy time.
-func TestParseEnvironmentNames_RejectsWildcardSuffix(t *testing.T) {
+func TestValidateOtherEnvironmentInput(t *testing.T) {
 	t.Parallel()
 
-	_, err := parseEnvironmentNames("review/*", nil)
-	require.Error(t, err)
-	assert.ErrorContains(t, err, `"/*" suffix is not supported`)
+	tests := []struct {
+		name     string
+		input    string
+		useLocal bool
+		wantErr  string
+	}{
+		{name: "empty with local", input: "", useLocal: true},
+		{name: "empty without local", input: "", useLocal: false, wantErr: "at least one environment is required"},
+		{name: "staging with local", input: "staging", useLocal: true},
+		{name: "duplicate of local", input: "local", useLocal: true, wantErr: "already exists"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := validateOtherEnvironmentInput(tt.input, tt.useLocal)
+			if tt.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.ErrorContains(t, err, tt.wantErr)
+		})
+	}
 }
 
-// TestParseEnvironmentNames_MultipleCommaSeparated verifies multiple names
-// with surrounding whitespace are all parsed.
-func TestParseEnvironmentNames_MultipleCommaSeparated(t *testing.T) {
+func TestApplyEnvironmentAnswers(t *testing.T) {
 	t.Parallel()
 
-	names, err := parseEnvironmentNames(" qa , review ,  canary", nil)
-	require.NoError(t, err)
-	assert.Equal(t, []string{"qa", "review", "canary"}, names)
+	tests := []struct {
+		name       string
+		useLocal   bool
+		otherInput string
+		want       []string
+	}{
+		{name: "local only", useLocal: true, otherInput: "", want: []string{"local"}},
+		{name: "local and staging", useLocal: true, otherInput: "staging", want: []string{"local", "staging"}},
+		{name: "staging only", useLocal: false, otherInput: "staging", want: []string{"staging"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			config := &ProjectConfig{}
+			require.NoError(t, applyEnvironmentAnswers(config, tt.useLocal, tt.otherInput))
+			assert.Equal(t, tt.want, config.EnvironmentNames)
+		})
+	}
 }
 
-// TestParseEnvironmentNames_SkipsEmptyEntries verifies stray commas do not
-// produce empty environment names.
-func TestParseEnvironmentNames_SkipsEmptyEntries(t *testing.T) {
+// TestParseEnvironmentNames verifies comma-separated names are trimmed,
+// deduplicated, and validated, including the trailing "/*" hint.
+func TestParseEnvironmentNames(t *testing.T) {
 	t.Parallel()
 
-	names, err := parseEnvironmentNames("qa,,review,", nil)
-	require.NoError(t, err)
-	assert.Equal(t, []string{"qa", "review"}, names)
-}
+	tests := []struct {
+		name     string
+		input    string
+		existing []string
+		want     []string
+		wantErr  string
+	}{
+		{name: "rejects wildcard suffix", input: "review/*", wantErr: `"/*" suffix is not supported`},
+		{name: "multiple comma-separated", input: " qa , review ,  canary", want: []string{"qa", "review", "canary"}},
+		{name: "skips empty entries", input: "qa,,review,", want: []string{"qa", "review"}},
+		{name: "empty input keeps existing", existing: []string{"local"}, want: []string{"local"}},
+		{name: "appends to existing", input: "qa", existing: []string{"local"}, want: []string{"local", "qa"}},
+		{name: "rejects duplicate", input: "local", existing: []string{"local"}, wantErr: "already exists"},
+		{name: "rejects invalid name", input: "Invalid_Name", wantErr: "environment name"},
+	}
 
-// TestParseEnvironmentNames_EmptyInputKeepsExisting verifies an empty
-// input (the "skip" answer) returns the collected names unchanged.
-func TestParseEnvironmentNames_EmptyInputKeepsExisting(t *testing.T) {
-	t.Parallel()
-
-	names, err := parseEnvironmentNames("", []string{"local"})
-	require.NoError(t, err)
-	assert.Equal(t, []string{"local"}, names)
-}
-
-// TestParseEnvironmentNames_AppendsToExisting verifies new names are
-// appended after the names already collected.
-func TestParseEnvironmentNames_AppendsToExisting(t *testing.T) {
-	t.Parallel()
-
-	names, err := parseEnvironmentNames("qa", []string{"local"})
-	require.NoError(t, err)
-	assert.Equal(t, []string{"local", "qa"}, names)
-}
-
-// TestParseEnvironmentNames_RejectsDuplicate verifies a name already
-// collected is rejected.
-func TestParseEnvironmentNames_RejectsDuplicate(t *testing.T) {
-	t.Parallel()
-
-	_, err := parseEnvironmentNames("local", []string{"local"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "already exists")
-}
-
-// TestParseEnvironmentNames_RejectsInvalidName verifies a name that fails
-// schema pattern validation is rejected with a clear error.
-func TestParseEnvironmentNames_RejectsInvalidName(t *testing.T) {
-	t.Parallel()
-
-	_, err := parseEnvironmentNames("Invalid_Name", nil)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid environment name")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := parseEnvironmentNames(tt.input, slices.Clone(tt.existing))
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.ErrorContains(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
 }
