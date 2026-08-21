@@ -40,7 +40,7 @@ git-hooks.lib.${system}.run {
       entry = "${go}/bin/gofmt -l -w";
       files = "\\.go$";
     };
-    # Flake-pinned golangci-lint (Go 1.27 build from upstream PR #6642).
+    # Flake-pinned golangci-lint (v2.13.1; nixpkgs-unstable still ships 2.12.2).
     golangci-lint = {
       enable = true;
       package = golangci-lint;

@@ -2,18 +2,19 @@
 {
   pkgs,
   go,
+  gopls,
   pre-commit-check,
   golangci-lint,
 }:
 
 let
-  # Prefer the flake-pinned golangci-lint over a user GOPATH install.
+  # Prefer flake-pinned Go tools over a user GOPATH install.
   devTools = [
     go
+    gopls
     golangci-lint
   ]
   ++ (with pkgs; [
-    gopls
     gotools
     markdownlint-cli
     delve
@@ -42,9 +43,16 @@ pkgs.mkShell {
     ${pre-commit-check.shellHook}
     export GOROOT="${go}/share/go"
     export GOPATH="''${GOPATH:-$HOME/go}"
-    # Flake Go + golangci-lint first; GOPATH/bin last so local installs do not
-    # shadow the pinned toolchain (Go 1.27-capable golangci-lint).
-    export PATH="${golangci-lint}/bin:${go}/bin:$PATH:$GOPATH/bin"
-    echo "Deployah dev shell — $(go version)"
+    # gotools on PATH leaks GOTOOLDIR to its own bin; go must use GOROOT's tools.
+    unset GOTOOLDIR
+    # Real ELF shims (not bash). vscode-go runs these as `go env` / gopls LSP.
+    mkdir -p .direnv/bin
+    ln -sfn "${go}/bin/go" .direnv/bin/go
+    ln -sfn "${gopls}/bin/gopls" .direnv/bin/gopls
+    ln -sfn "${golangci-lint}/bin/golangci-lint" .direnv/bin/golangci-lint
+    # .direnv/bin first so shell and editor resolve the same binaries.
+    # GOPATH/bin last so local installs do not shadow the pinned toolchain.
+    export PATH="$PWD/.direnv/bin:$PATH:$GOPATH/bin"
+    echo "Deployah dev shell — $(go version)" >&2
   '';
 }

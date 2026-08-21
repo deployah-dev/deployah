@@ -1117,7 +1117,7 @@ func TestApplyDefaultsToMap_EdgeCases(t *testing.T) {
 			path:     "test",
 			check: func(t *testing.T, value reflect.Value) {
 				t.Helper()
-				m, ok := value.Interface().(map[string]map[string]string)
+				m, ok := reflect.TypeAssert[map[string]map[string]string](value)
 				require.True(t, ok)
 				assert.Equal(t, "value", m["outer"]["inner"])
 			},
@@ -1129,7 +1129,7 @@ func TestApplyDefaultsToMap_EdgeCases(t *testing.T) {
 			path:     "test",
 			check: func(t *testing.T, value reflect.Value) {
 				t.Helper()
-				m, ok := value.Interface().(map[string][]string)
+				m, ok := reflect.TypeAssert[map[string][]string](value)
 				require.True(t, ok)
 				assert.Equal(t, []string{"echo", "hi"}, m["cmd"])
 			},
@@ -1185,7 +1185,7 @@ func TestApplyDefaultsToSlice_EdgeCases(t *testing.T) {
 			path:     "test",
 			check: func(t *testing.T, value reflect.Value) {
 				t.Helper()
-				s, ok := value.Interface().([]map[string]string)
+				s, ok := reflect.TypeAssert[[]map[string]string](value)
 				require.True(t, ok)
 				assert.Equal(t, "value", s[0]["key"])
 			},
@@ -1200,7 +1200,7 @@ func TestApplyDefaultsToSlice_EdgeCases(t *testing.T) {
 			path: "envs",
 			check: func(t *testing.T, value reflect.Value) {
 				t.Helper()
-				s, ok := value.Interface().([]Environment)
+				s, ok := reflect.TypeAssert[[]Environment](value)
 				require.True(t, ok)
 				assert.Equal(t, ".env.a", s[0].EnvFile)
 				assert.Equal(t, ".env.b", s[1].EnvFile)
@@ -1213,7 +1213,7 @@ func TestApplyDefaultsToSlice_EdgeCases(t *testing.T) {
 			path:     "test",
 			check: func(t *testing.T, value reflect.Value) {
 				t.Helper()
-				s, ok := value.Interface().([]resource.Quantity)
+				s, ok := reflect.TypeAssert[[]resource.Quantity](value)
 				require.True(t, ok)
 				assert.Equal(t, "100m", s[0].String())
 			},

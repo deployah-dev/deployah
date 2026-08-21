@@ -851,7 +851,7 @@ func isZeroValue(val any) bool {
 	case reflect.Struct:
 		// Quantity.IsZero is semantic; reflect field-walk is not enough.
 		if v.Type() == quantityType {
-			q, ok := v.Interface().(resource.Quantity)
+			q, ok := reflect.TypeAssert[resource.Quantity](v)
 			return ok && q.IsZero()
 		}
 	}

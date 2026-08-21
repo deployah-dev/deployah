@@ -924,7 +924,7 @@ func buildLivenessProbe(exec []string, path, interval, restartAfter string) (map
 		ProbeHandler:  probeHandler(exec, path),
 		PeriodSeconds: int32(intervalSec),
 		// failureThreshold is clamped to math.MaxInt32 above.
-		FailureThreshold: int32(failureThreshold), //nolint:gosec
+		FailureThreshold: int32(failureThreshold),
 		TimeoutSeconds:   int32(spec.DefaultLivenessProbeTimeout),
 	})
 }

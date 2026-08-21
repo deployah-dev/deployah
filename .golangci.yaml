@@ -330,8 +330,8 @@ formatters:
     gofumpt:
       # Module path for determining local imports
       module-path: deployah.dev/deployah
-      # Enable additional formatting rules beyond gofmt
-      extra-rules: true
+      extra:
+        group-params: true
 
     gci:
       # Import section order

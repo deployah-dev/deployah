@@ -39,6 +39,12 @@
             ;
         };
 
+        # nixpkgs gopls is built with default `go` (still 1.26). gopls must be
+        # compiled with at least the toolchain it analyzes.
+        gopls = pkgs.gopls.override {
+          buildGoLatestModule = buildGoModule';
+        };
+
         deployah = import ./nix/deployah.nix {
           buildGoModule = buildGoModule';
           deployahVersion = "dev";
@@ -67,6 +73,7 @@
           default = deployah;
           deployah = deployah;
           golangci-lint = golangci-lint;
+          gopls = gopls;
         };
 
         checks = {
@@ -89,6 +96,7 @@
           inherit
             pkgs
             go
+            gopls
             pre-commit-check
             golangci-lint
             ;

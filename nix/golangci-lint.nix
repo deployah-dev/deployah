@@ -1,11 +1,8 @@
 # golangci-lint built with the project Go toolchain.
 #
-# nixpkgs pins buildGo126Module, so the stock binary rejects go.mod 1.27.
-# Pin a commit from the draft Go 1.27 PR until a release lands:
-#   https://github.com/golangci/golangci-lint/pull/6642
-#   https://github.com/golangci/golangci-lint/issues/6643
-# When that ships, drop this file and use pkgs.golangci-lint (or bump rev/hash
-# here). A force-push of the PR branch will break the src hash; re-pin then.
+# nixpkgs-unstable still pins buildGo126Module (v2.12.2), so the stock binary
+# rejects go.mod 1.27. Pin the Go 1.27 release until unstable catches up, then
+# drop this file and use pkgs.golangci-lint.
 {
   buildGoModule,
   fetchFromGitHub,
@@ -17,16 +14,16 @@
 
 buildGoModule (finalAttrs: {
   pname = "golangci-lint";
-  version = "2.12.2-go1.27-pr6642";
+  version = "2.13.1";
 
   src = fetchFromGitHub {
     owner = "golangci";
     repo = "golangci-lint";
-    rev = "c4815f06852754c8daa088b684d71fd88589b175";
-    hash = "sha256-oxhyDh+vvej2hjVOeLimzukE3PXmR72Zo+4Wv2UDDqo=";
+    tag = "v${finalAttrs.version}";
+    hash = "sha256-8nWHSMAwIILfKMPfxWKMimxWt9N+kUsZEAaoAOPbRBE=";
   };
 
-  vendorHash = "sha256-NNnrRtdH950rEODVPaGkMbVZ1pSl9XDFNkoSKBTrMfQ=";
+  vendorHash = "sha256-yZRqfht5rY2yyoZNtYttE57sB7EYjk71yrKw8dLYzNk=";
 
   subPackages = [ "cmd/golangci-lint" ];
 

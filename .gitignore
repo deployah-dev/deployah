@@ -28,6 +28,11 @@ docs/assets/*.webm
 go.work
 go.work.sum
 
+# Shared VS Code workspace settings. This un-ignores `.vscode` if a
+# user-level gitignore excludes it.
+!.vscode/
+!.vscode/**
+
 # Nix build results
 /result
 

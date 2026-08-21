@@ -1,0 +1,10 @@
+{
+  "go.toolsManagement.checkForUpdates": "off",
+  "go.toolsManagement.autoUpdate": false,
+  "go.alternateTools": {
+    "go": "${workspaceFolder}/.direnv/bin/go",
+    "gopls": "${workspaceFolder}/.direnv/bin/gopls",
+    "golangci-lint-v2": "${workspaceFolder}/.direnv/bin/golangci-lint",
+    "customFormatter": "${workspaceFolder}/.direnv/bin/golangci-lint"
+  }
+}
