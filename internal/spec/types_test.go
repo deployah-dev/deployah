@@ -119,6 +119,17 @@ expose:
 	})
 }
 
+// TestComponent_MarshalOmitsEmptyResources locks the omitzero tag: a
+// preset-only component must not write `resources: {}`.
+func TestComponent_MarshalOmitsEmptyResources(t *testing.T) {
+	t.Parallel()
+
+	out, err := yaml.Marshal(Component{Image: "x", ResourcePreset: ResourcePresetSmall})
+	require.NoError(t, err)
+	assert.Contains(t, string(out), "resourcePreset: small")
+	assert.NotContains(t, string(out), "resources:")
+}
+
 // TestExpose_Marshal verifies the zero value round-trips as `expose: true`.
 func TestExpose_Marshal(t *testing.T) {
 	t.Parallel()

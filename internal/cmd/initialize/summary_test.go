@@ -7,71 +7,101 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"nabat.dev/nabat"
 	"nabat.dev/nabat/nabattest"
 
 	"deployah.dev/deployah/internal/spec"
 )
 
-// nabatContext builds a minimal *nabat.Context for tests that call
-// functions requiring one. Non-TTY: any prompt reachable from the tested
-// function must have a fallback, or must not be reached.
-func nabatContext(t *testing.T) *nabat.Context {
+func testConfig(t *testing.T, name string, envNames []string, components map[string]spec.Component) *ProjectConfig {
 	t.Helper()
-	io, _, _, _ := nabattest.NewIO()
-	app := nabat.MustNew("test", nabat.WithIO(io))
-	return nabattest.Context(t, app)
+	dir := t.TempDir()
+	return &ProjectConfig{
+		Name:             name,
+		EnvironmentNames: envNames,
+		Components:       components,
+		SpecPath:         filepath.Join(dir, "deployah.yaml"),
+		PlatformPath:     filepath.Join(dir, spec.DefaultPlatformPath),
+	}
 }
 
-// TestShowSummaryAndSave_RoleAwareComponentsProduceValidSpec is an
-// end-to-end test for the role-aware component flow.
-func TestShowSummaryAndSave_RoleAwareComponentsProduceValidSpec(t *testing.T) {
-	dir := t.TempDir()
-	outputPath := filepath.Join(dir, "deployah.yaml")
+func readSpecFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path) // #nosec G304 -- path is from t.TempDir()
+	require.NoError(t, err)
+	return string(data)
+}
 
-	// One component per role the wizard offers: service (with a port and
-	// an HTTP health check) and worker.
-	config := &ProjectConfig{
-		Name:             "shop",
-		EnvironmentNames: []string{"local"},
-		Components: map[string]spec.Component{
-			"web": {
-				Role:           spec.ComponentRoleService,
-				Image:          "nginx:1.28.0-alpine",
-				Port:           8080,
-				ResourcePreset: spec.ResourcePresetSmall,
-				Health: &spec.Health{
-					Ready: &spec.HealthReady{Path: "/healthz"},
-					Alive: &spec.HealthAlive{Path: "/healthz"},
-				},
-			},
-			"worker": {
-				Role:           spec.ComponentRoleWorker,
-				Image:          "shop/worker:1.0.0",
-				ResourcePreset: spec.ResourcePresetSmall,
+func captureShowSummary(t *testing.T, config *ProjectConfig) (out, errOut string) {
+	t.Helper()
+	io, _, stdout, stderr := nabattest.NewIO()
+	app := nabat.MustNew("test", nabat.WithIO(io))
+	c := nabattest.Context(t, app)
+	saved, err := showSummaryAndSave(c, config)
+	require.NoError(t, err)
+	require.True(t, saved)
+	return stdout.String(), stderr.String()
+}
+
+// TestShowSummaryAndSave_RoleAwareComponentsProduceValidSpec verifies a
+// service plus worker save a valid sparse spec and a local platform entry.
+func TestShowSummaryAndSave_RoleAwareComponentsProduceValidSpec(t *testing.T) {
+	t.Parallel()
+
+	config := testConfig(t, "shop", []string{"local"}, map[string]spec.Component{
+		"web": {
+			Role:           spec.ComponentRoleService,
+			Image:          "nginx:1.28.0-alpine",
+			Port:           8080,
+			ResourcePreset: spec.ResourcePresetSmall,
+			Health: &spec.Health{
+				Ready: &spec.HealthReady{Path: "/healthz"},
+				Alive: &spec.HealthAlive{Path: "/healthz"},
 			},
 		},
-		OutputPath: outputPath,
-	}
+		"worker": {
+			Role:           spec.ComponentRoleWorker,
+			Image:          "shop/worker:1.0.0",
+			ResourcePreset: spec.ResourcePresetSmall,
+		},
+	})
 
-	c := nabatContext(t)
-	require.NoError(t, showSummaryAndSave(c, config))
+	out, errOut := captureShowSummary(t, config)
+	combined := out + errOut
+	assert.Contains(t, combined, "deployah cluster up")
+	assert.Contains(t, combined, "deployah deploy local")
+	assert.NotContains(t, combined, "cat ")
+	assert.NotContains(t, combined, "deployah validate")
 
-	// Load runs the same schema and cross-field validation as
-	// "deployah validate", catching gaps saving alone would miss.
-	loaded, err := spec.Load(t.Context(), outputPath, "", nil)
+	body := readSpecFile(t, config.SpecPath)
+	assert.Contains(t, body, spec.SchemaModeline(spec.ManifestSchemaURL()))
+	assert.Contains(t, body, "image: nginx:1.28.0-alpine")
+	assert.Contains(t, body, "resourcePreset: small")
+	assert.Contains(t, body, "role: worker")
+	assert.NotContains(t, body, "role: service")
+	assert.NotContains(t, body, "port:")
+	assert.NotContains(t, body, "kind:")
+	assert.NotContains(t, body, "replicas:")
+	assert.NotContains(t, body, "shutdownTimeout:")
+	assert.NotContains(t, body, "cpu:")
+	assert.NotContains(t, body, "memory:")
+
+	loaded, err := spec.Load(t.Context(), config.SpecPath, "", nil)
 	require.NoError(t, err)
 	require.NotNil(t, loaded)
 	assert.Equal(t, "shop", loaded.Project)
 	assert.Empty(t, loaded.Environments,
 		"the spec must not register environments; the platform file owns them")
+	assert.Equal(t, spec.DefaultServicePort, loaded.Components["web"].Port)
 
-	platformPath := filepath.Join(dir, spec.DefaultPlatformPath)
-	platform, loadErr := spec.LoadPlatform(platformPath)
+	platform, loadErr := spec.LoadPlatform(config.PlatformPath)
 	require.NoError(t, loadErr)
 	_, hasLocal := platform.Environments["local"]
 	assert.True(t, hasLocal, "the local environment should have a full platform entry")
+	assert.Contains(t, readSpecFile(t, config.PlatformPath), spec.SchemaModeline(spec.PlatformSchemaURL()))
 
+	dir := filepath.Dir(config.SpecPath)
 	manifestsDir := filepath.Join(dir, spec.DeployahConfigDir, spec.ManifestsDir)
 	crdsDir := filepath.Join(dir, spec.DeployahConfigDir, spec.CRDsDir)
 	require.DirExists(t, manifestsDir)
@@ -80,71 +110,131 @@ func TestShowSummaryAndSave_RoleAwareComponentsProduceValidSpec(t *testing.T) {
 	require.FileExists(t, filepath.Join(crdsDir, "README.md"))
 }
 
-// TestShowSummaryAndSave_ServiceHealthCheckWithoutPortIsValid locks in the
-// port default: a service with a health path and no explicit port saves
-// fine because the schema defaults the port to 8080 at load time.
+// TestShowSummaryAndSave_ServiceHealthCheckWithoutPortIsValid verifies a
+// service with a health path and no explicit port omits port in YAML, and
+// spec.Load still fills the default service port.
 func TestShowSummaryAndSave_ServiceHealthCheckWithoutPortIsValid(t *testing.T) {
-	dir := t.TempDir()
-	outputPath := filepath.Join(dir, "deployah.yaml")
+	t.Parallel()
 
-	config := &ProjectConfig{
-		Name:             "shop",
-		EnvironmentNames: []string{"local"},
-		Components: map[string]spec.Component{
-			"web": {
-				Role:           spec.ComponentRoleService,
-				Image:          "nginx:1.28.0-alpine",
-				ResourcePreset: spec.ResourcePresetSmall,
-				Health: &spec.Health{
-					Ready: &spec.HealthReady{Path: "/healthz"},
-				},
+	config := testConfig(t, "shop", []string{"local"}, map[string]spec.Component{
+		"web": {
+			Role:           spec.ComponentRoleService,
+			Image:          "nginx:1.28.0-alpine",
+			ResourcePreset: spec.ResourcePresetSmall,
+			Health: &spec.Health{
+				Ready: &spec.HealthReady{Path: "/healthz"},
 			},
 		},
-		OutputPath: outputPath,
-	}
+	})
 
-	c := nabatContext(t)
-	require.NoError(t, showSummaryAndSave(c, config))
-
-	loaded, err := spec.Load(t.Context(), outputPath, "", nil)
+	c := nonInteractiveContext(t)
+	saved, err := showSummaryAndSave(c, config)
 	require.NoError(t, err)
-	assert.Equal(t, 8080, loaded.Components["web"].Port)
+	require.True(t, saved)
+
+	body := readSpecFile(t, config.SpecPath)
+	assert.NotContains(t, body, "port:")
+
+	loaded, err := spec.Load(t.Context(), config.SpecPath, "", nil)
+	require.NoError(t, err)
+	assert.Equal(t, spec.DefaultServicePort, loaded.Components["web"].Port)
 }
 
-// TestShowSummaryAndSave_NonLocalOnlyRegistersEmptyEntry verifies that a
-// non-local environment is still registered in the platform file (as an
-// empty entry the user fills in later): the platform file owns which
-// environments exist.
+// TestShowSummaryAndSave_NonLocalOnlyRegistersEmptyEntry verifies a
+// non-local environment is still registered in the platform file as an
+// empty entry the user fills in later.
 func TestShowSummaryAndSave_NonLocalOnlyRegistersEmptyEntry(t *testing.T) {
-	dir := t.TempDir()
-	outputPath := filepath.Join(dir, "deployah.yaml")
+	t.Parallel()
 
-	config := &ProjectConfig{
-		Name:             "shop",
-		EnvironmentNames: []string{"production"},
-		Components: map[string]spec.Component{
-			"web": {
-				Role:           spec.ComponentRoleService,
-				Image:          "nginx:1.28.0-alpine",
-				Port:           8080,
-				ResourcePreset: spec.ResourcePresetSmall,
-			},
+	config := testConfig(t, "shop", []string{"production"}, map[string]spec.Component{
+		"web": {
+			Role:           spec.ComponentRoleService,
+			Image:          "nginx:1.28.0-alpine",
+			Port:           8080,
+			ResourcePreset: spec.ResourcePresetSmall,
 		},
-		OutputPath: outputPath,
-	}
+	})
 
-	c := nabatContext(t)
-	require.NoError(t, showSummaryAndSave(c, config))
+	out, errOut := captureShowSummary(t, config)
+	combined := out + errOut
+	assert.Contains(t, combined, "Fill in context and domains")
+	assert.Contains(t, combined, "deployah deploy production")
+	assert.NotContains(t, combined, "deployah cluster up")
 
-	platformPath := filepath.Join(dir, spec.DefaultPlatformPath)
-	platform, loadErr := spec.LoadPlatform(platformPath)
+	platform, loadErr := spec.LoadPlatform(config.PlatformPath)
 	require.NoError(t, loadErr)
 	production, hasProduction := platform.Environments["production"]
 	require.True(t, hasProduction, "production must be registered in the platform file")
 	assert.Empty(t, production.Context)
 }
 
-// TestScaffoldExtrasDirs_Idempotent reports already-exist when dirs are present.
+// TestShowSummaryAndSave_MergeListsOnlyAddedNames verifies the merge success
+// line names only environments that were inserted, not ones already present.
+func TestShowSummaryAndSave_MergeListsOnlyAddedNames(t *testing.T) {
+	t.Parallel()
+
+	config := testConfig(t, "shop", []string{"staging", "production"}, map[string]spec.Component{
+		"web": {
+			Role:           spec.ComponentRoleService,
+			Image:          "nginx:1.28.0-alpine",
+			ResourcePreset: spec.ResourcePresetSmall,
+		},
+	})
+	require.NoError(t, os.WriteFile(config.PlatformPath, []byte("apiVersion: platform/v1-alpha.3\nenvironments:\n  staging:\n    context: existing\n"), 0o600))
+
+	_, errOut := captureShowSummary(t, config)
+	assert.Contains(t, errOut, "Added missing environments to "+config.PlatformPath+": production")
+	assert.NotContains(t, errOut, "Added missing environments to "+config.PlatformPath+": production and staging")
+
+	platform, loadErr := spec.LoadPlatform(config.PlatformPath)
+	require.NoError(t, loadErr)
+	assert.Equal(t, "existing", platform.Environments["staging"].Context)
+	assert.Empty(t, platform.Environments["production"].Context)
+}
+
+// TestShowSummaryAndSave_PlatformWriteError verifies a platform write failure
+// after the spec is saved returns an error instead of reporting success.
+func TestShowSummaryAndSave_PlatformWriteError(t *testing.T) {
+	t.Parallel()
+
+	config := testConfig(t, "shop", []string{"local"}, map[string]spec.Component{
+		"web": {
+			Role:           spec.ComponentRoleService,
+			Image:          "nginx:1.28.0-alpine",
+			ResourcePreset: spec.ResourcePresetSmall,
+		},
+	})
+	require.NoError(t, os.Mkdir(config.PlatformPath, 0o750))
+
+	c := nonInteractiveContext(t)
+	saved, err := showSummaryAndSave(c, config)
+	require.Error(t, err)
+	assert.False(t, saved)
+	assert.ErrorContains(t, err, "saved spec but failed to update platform file")
+	require.FileExists(t, config.SpecPath)
+}
+
+// TestShowSummaryAndSave_ExposeWithoutDomainsWarns verifies exposing a
+// component in a non-local env with no domains prints a warning.
+func TestShowSummaryAndSave_ExposeWithoutDomainsWarns(t *testing.T) {
+	t.Parallel()
+
+	config := testConfig(t, "shop", []string{"production"}, map[string]spec.Component{
+		"web": {
+			Role:           spec.ComponentRoleService,
+			Image:          "nginx:1.28.0-alpine",
+			ResourcePreset: spec.ResourcePresetSmall,
+			Expose:         &spec.Expose{},
+		},
+	})
+
+	_, errOut := captureShowSummary(t, config)
+	assert.Contains(t, errOut, "production")
+	assert.Contains(t, errOut, "no domains yet")
+}
+
+// TestScaffoldExtrasDirs_Idempotent verifies a second scaffold leaves
+// existing extras dirs in place.
 func TestScaffoldExtrasDirs_Idempotent(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -157,10 +247,20 @@ func TestScaffoldExtrasDirs_Idempotent(t *testing.T) {
 	assert.False(t, created)
 }
 
-// TestShowSummaryAndSave_ExtrasAlreadyExist prints the Info branch for extras.
+// TestShowSummaryAndSave_ExtrasAlreadyExist verifies save notes extras dirs
+// that were already on disk.
 func TestShowSummaryAndSave_ExtrasAlreadyExist(t *testing.T) {
-	dir := t.TempDir()
-	outputPath := filepath.Join(dir, "deployah.yaml")
+	t.Parallel()
+
+	config := testConfig(t, "shop", []string{"local"}, map[string]spec.Component{
+		"web": {
+			Role:           spec.ComponentRoleService,
+			Image:          "nginx:1.28.0-alpine",
+			Port:           8080,
+			ResourcePreset: spec.ResourcePresetSmall,
+		},
+	})
+	dir := filepath.Dir(config.SpecPath)
 	manifestsDir := filepath.Join(dir, spec.DeployahConfigDir, spec.ManifestsDir)
 	crdsDir := filepath.Join(dir, spec.DeployahConfigDir, spec.CRDsDir)
 	require.NoError(t, os.MkdirAll(manifestsDir, 0o750))
@@ -168,23 +268,363 @@ func TestShowSummaryAndSave_ExtrasAlreadyExist(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(manifestsDir, "README.md"), []byte("x"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(crdsDir, "README.md"), []byte("x"), 0o600))
 
+	_, errOut := captureShowSummary(t, config)
+	assert.Contains(t, errOut, ".deployah/manifests/ and .deployah/crds/ already exist")
+}
+
+// TestShowSummaryAndSave_DryRunWritesNothing verifies --dry-run previews
+// without writing the spec or platform file.
+func TestShowSummaryAndSave_DryRunWritesNothing(t *testing.T) {
+	t.Parallel()
+
+	config := testConfig(t, "shop", []string{"local"}, map[string]spec.Component{
+		"web": {
+			Role:           spec.ComponentRoleService,
+			Image:          "nginx:1.28.0-alpine",
+			ResourcePreset: spec.ResourcePresetSmall,
+		},
+	})
+	config.DryRun = true
+
+	c := nonInteractiveContext(t)
+	saved, err := showSummaryAndSave(c, config)
+	require.NoError(t, err)
+	require.True(t, saved)
+	_, err = os.Stat(config.SpecPath)
+	assert.True(t, os.IsNotExist(err))
+	_, err = os.Stat(config.PlatformPath)
+	assert.True(t, os.IsNotExist(err))
+}
+
+func TestSparseSpec_Table(t *testing.T) {
+	t.Parallel()
+
+	cpu := resource.MustParse("500m")
+	memory := resource.MustParse("512Mi")
+
+	tests := []struct {
+		name     string
+		comp     spec.Component
+		contains []string
+		omits    []string
+	}{
+		{
+			name: "service local expose small omits schema defaults",
+			comp: spec.Component{
+				Role:           spec.ComponentRoleService,
+				Image:          "nginx:latest",
+				Port:           8080,
+				ResourcePreset: spec.ResourcePresetSmall,
+				Expose:         &spec.Expose{},
+			},
+			contains: []string{
+				spec.SchemaModeline(spec.ManifestSchemaURL()),
+				"image: nginx:latest",
+				"resourcePreset: small",
+				"expose: true",
+			},
+			omits: []string{"role:", "port:", "kind:", "replicas:", "shutdownTimeout:", "cpu:", "memory:", "resources:"},
+		},
+		{
+			name: "worker writes role and omits port and expose",
+			comp: spec.Component{
+				Role:           spec.ComponentRoleWorker,
+				Image:          "shop/worker:1",
+				ResourcePreset: spec.ResourcePresetSmall,
+			},
+			contains: []string{"role: worker", "image: shop/worker:1"},
+			omits:    []string{"port:", "expose:", "resources:"},
+		},
+		{
+			name: "custom resources writes resources not preset",
+			comp: spec.Component{
+				Role:  spec.ComponentRoleService,
+				Image: "nginx:latest",
+				Resources: spec.Resources{
+					CPU:    &cpu,
+					Memory: &memory,
+				},
+			},
+			contains: []string{"cpu:", "memory:"},
+			omits:    []string{"resourcePreset:"},
+		},
+		{
+			name: "non-default port is written",
+			comp: spec.Component{
+				Role:           spec.ComponentRoleService,
+				Image:          "nginx:latest",
+				Port:           3000,
+				ResourcePreset: spec.ResourcePresetSmall,
+			},
+			contains: []string{"port: 3000"},
+			omits:    []string{"role:", "resources:"},
+		},
+		{
+			name: "autoscaling without replicas stays valid after fill",
+			comp: spec.Component{
+				Role:  spec.ComponentRoleService,
+				Image: "nginx:latest",
+				Autoscaling: &spec.Autoscaling{
+					Enabled:     true,
+					MinReplicas: spec.DefaultMinReplicas,
+					MaxReplicas: spec.DefaultMaxReplicas,
+					Metrics: []spec.Metric{
+						{Type: spec.MetricTypeCPU, Target: spec.DefaultCPUTarget},
+					},
+				},
+			},
+			contains: []string{"autoscaling:", "enabled: true"},
+			omits:    []string{"replicas:"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			config := &ProjectConfig{
+				Name:             "shop",
+				EnvironmentNames: []string{"local"},
+				Components:       map[string]spec.Component{"web": tt.comp},
+			}
+			sparse := sparseSpec(config)
+			body, err := marshalSpecYAML(&sparse)
+			require.NoError(t, err)
+			got := string(body)
+			for _, want := range tt.contains {
+				assert.Contains(t, got, want)
+			}
+			for _, omit := range tt.omits {
+				assert.NotContains(t, got, omit)
+			}
+
+			clone, err := cloneSpec(&sparse)
+			require.NoError(t, err)
+			require.NoError(t, spec.FillSpecWithDefaults(clone, clone.APIVersion))
+			require.NoError(t, spec.ValidateSpecComponents(clone))
+		})
+	}
+}
+
+func TestSparseSpec_RoundTripLoadFillsPort(t *testing.T) {
+	t.Parallel()
+
+	config := testConfig(t, "shop", []string{"local"}, map[string]spec.Component{
+		"web": {
+			Role:           spec.ComponentRoleService,
+			Image:          "nginx:latest",
+			Port:           8080,
+			ResourcePreset: spec.ResourcePresetSmall,
+		},
+	})
+	sparse := sparseSpec(config)
+	require.NoError(t, writeSpecFile(&sparse, config.SpecPath))
+
+	loaded, err := spec.Load(t.Context(), config.SpecPath, "", nil)
+	require.NoError(t, err)
+	require.NoError(t, spec.ValidateSpecComponents(loaded))
+	assert.Equal(t, spec.DefaultServicePort, loaded.Components["web"].Port)
+	assert.Equal(t, spec.ComponentRoleService, loaded.Components["web"].Role)
+}
+
+func TestJoinWithAnd(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		items []string
+		want  string
+	}{
+		{name: "empty", want: ""},
+		{name: "one", items: []string{"local"}, want: "local"},
+		{name: "two", items: []string{"local", "staging"}, want: "local and staging"},
+		{name: "three", items: []string{"a", "b", "c"}, want: "a, b, and c"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, joinWithAnd(tt.items))
+		})
+	}
+}
+
+func TestVerbHave(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, "has", verbHave(1))
+	assert.Equal(t, "have", verbHave(2))
+}
+
+func TestPlatformPath(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	specPath := filepath.Join(dir, "deployah.yaml")
+	assert.Equal(t, "custom.yaml", platformPath(&ProjectConfig{
+		SpecPath:     specPath,
+		PlatformPath: "custom.yaml",
+	}))
+	assert.Equal(t, filepath.Join(dir, spec.DefaultPlatformPath), platformPath(&ProjectConfig{
+		SpecPath: specPath,
+	}))
+}
+
+func TestLocalDomain(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		env  spec.PlatformEnvironment
+		want string
+	}{
+		{name: "empty", want: ""},
+		{
+			name: "blank bases are skipped",
+			env: spec.PlatformEnvironment{Domains: map[string]spec.PlatformDomain{
+				"empty":  {},
+				"public": {BaseDomain: "example.com"},
+			}},
+			want: "example.com",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, localDomain(tt.env))
+		})
+	}
+}
+
+func TestPrintPlatformSummary(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		envNames []string
+		platform *spec.PlatformConfig
+		want     []string
+		notWant  []string
+	}{
+		{
+			name:     "nil platform prints path only",
+			envNames: []string{"staging"},
+			want:     []string{"Platform:", "Environments: staging"},
+			notWant:  []string{"local:"},
+		},
+		{
+			name:     "empty local entry skips the local line",
+			envNames: []string{"local"},
+			platform: &spec.PlatformConfig{Environments: map[string]spec.PlatformEnvironment{
+				"local": {},
+			}},
+			want:    []string{"Environments: local"},
+			notWant: []string{"local:"},
+		},
+		{
+			name:     "local with context and domain",
+			envNames: []string{"local"},
+			platform: &spec.PlatformConfig{Environments: map[string]spec.PlatformEnvironment{
+				"local": {
+					Context: "kind-deployah",
+					Domains: map[string]spec.PlatformDomain{
+						"public": {BaseDomain: "127.0.0.1.nip.io"},
+					},
+				},
+			}},
+			want: []string{"local: context kind-deployah, domain 127.0.0.1.nip.io"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			io, _, stdout, _ := nabattest.NewIO()
+			app := nabat.MustNew("test", nabat.WithIO(io))
+			printPlatformSummary(nabattest.Context(t, app), "deployah.platform.yaml", tt.envNames, tt.platform)
+			got := stdout.String()
+			for _, want := range tt.want {
+				assert.Contains(t, got, want)
+			}
+			for _, notWant := range tt.notWant {
+				assert.NotContains(t, got, notWant)
+			}
+		})
+	}
+}
+
+func TestPrintNextSteps_NoEnvironments(t *testing.T) {
+	t.Parallel()
+	io, _, stdout, _ := nabattest.NewIO()
+	app := nabat.MustNew("test", nabat.WithIO(io))
+	printNextSteps(nabattest.Context(t, app), &ProjectConfig{SpecPath: "deployah.yaml"})
+	got := stdout.String()
+	assert.Contains(t, got, "Fill in context and domains")
+	assert.NotContains(t, got, "deployah deploy ")
+}
+
+func TestWarnExposeWithoutDomains_NoExpose(t *testing.T) {
+	t.Parallel()
+	io, _, _, stderr := nabattest.NewIO()
+	app := nabat.MustNew("test", nabat.WithIO(io))
+	warnExposeWithoutDomains(nabattest.Context(t, app), &ProjectConfig{
+		EnvironmentNames: []string{"production"},
+		Components:       map[string]spec.Component{"web": {Image: "nginx:latest"}},
+	}, nil)
+	assert.NotContains(t, stderr.String(), "no domains yet")
+}
+
+func TestWarnExposeWithoutDomains_LocalOnly(t *testing.T) {
+	t.Parallel()
+	io, _, _, stderr := nabattest.NewIO()
+	app := nabat.MustNew("test", nabat.WithIO(io))
+	warnExposeWithoutDomains(nabattest.Context(t, app), &ProjectConfig{
+		EnvironmentNames: []string{"local"},
+		Components: map[string]spec.Component{
+			"web": {Image: "nginx:latest", Expose: &spec.Expose{}},
+		},
+	}, nil)
+	assert.NotContains(t, stderr.String(), "no domains yet")
+}
+
+func TestWriteSpecFile_EmptyPathUsesDefault(t *testing.T) {
+	t.Chdir(t.TempDir())
+	sparse := sparseSpec(&ProjectConfig{
+		Name: "shop",
+		Components: map[string]spec.Component{
+			"web": {Image: "nginx:latest", ResourcePreset: spec.ResourcePresetSmall},
+		},
+	})
+	require.NoError(t, writeSpecFile(&sparse, ""))
+	require.FileExists(t, spec.DefaultSpecPath)
+}
+
+func TestBuildValidatedSpec_InvalidComponent(t *testing.T) {
+	t.Parallel()
+	_, err := buildValidatedSpec(&ProjectConfig{
+		Name: "shop",
+		Components: map[string]spec.Component{
+			"web": {},
+		},
+	})
+	require.Error(t, err)
+}
+
+func TestShowSummaryAndSave_EmptyPlatformPath(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
 	config := &ProjectConfig{
 		Name:             "shop",
 		EnvironmentNames: []string{"local"},
 		Components: map[string]spec.Component{
-			"web": {
-				Role:           spec.ComponentRoleService,
-				Image:          "nginx:1.28.0-alpine",
-				Port:           8080,
-				ResourcePreset: spec.ResourcePresetSmall,
-			},
+			"web": {Image: "nginx:latest", ResourcePreset: spec.ResourcePresetSmall},
 		},
-		OutputPath: outputPath,
+		SpecPath: filepath.Join(dir, "deployah.yaml"),
 	}
+	saved, err := showSummaryAndSave(nonInteractiveContext(t), config)
+	require.NoError(t, err)
+	require.True(t, saved)
+	require.FileExists(t, filepath.Join(dir, spec.DefaultPlatformPath))
+}
 
-	io, _, _, errOut := nabattest.NewIO()
-	app := nabat.MustNew("test", nabat.WithIO(io))
-	c := nabattest.Context(t, app)
-	require.NoError(t, showSummaryAndSave(c, config))
-	assert.Contains(t, errOut.String(), ".deployah/manifests/ and .deployah/crds/ already exist")
+func TestScaffoldExtrasDirs_MkdirError(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	notDir := filepath.Join(dir, "not-a-dir")
+	require.NoError(t, os.WriteFile(notDir, []byte("x"), 0o600))
+	_, err := scaffoldExtrasDirs(notDir)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "create")
 }

@@ -3,6 +3,7 @@ package initialize
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"nabat.dev/nabat"
@@ -10,81 +11,59 @@ import (
 	"deployah.dev/deployah/internal/spec"
 )
 
-// resolveEnvironments implements the flag > prompt > default resolution
-// order for the project's environments.
-func resolveEnvironments(c *nabat.Context, config *ProjectConfig, flagEnvironments []string, useDefaults bool) error {
-	if len(flagEnvironments) > 0 {
-		// --environments values are validated immediately and used as-is,
-		// skipping the prompt entirely.
-		names := make([]string, 0, len(flagEnvironments))
-		for _, raw := range flagEnvironments {
-			name := strings.TrimSpace(raw)
-			if err := validateEnvironmentNameUnique(name, names); err != nil {
-				return fmt.Errorf("--environments: %w", err)
-			}
-			names = append(names, name)
-		}
-		config.EnvironmentNames = names
-		return nil
-	}
-
-	if useDefaults {
-		// --defaults, or no TTY to prompt on.
-		config.EnvironmentNames = []string{DefaultEnvironmentName}
-		return nil
-	}
-
-	return collectEnvironments(c, config)
-}
-
-// collectEnvironments asks whether to set up the local environment, then
-// collects any other environment names from one comma-separated input.
-// When the local environment is declined, the input requires at least one
-// name; the rule is enforced inline so no warning outlives the step.
+// collectEnvironments collects the environments for the project.
 func collectEnvironments(c *nabat.Context, config *ProjectConfig) error {
 	useLocal, err := c.Confirm(
-		StepEnvironments+" — Set up a local environment?",
+		promptLocalKind,
 		nabat.WithAffirmative("Yes"),
 		nabat.WithNegative("No"),
-		nabat.WithInitial(true),
+		nabat.WithPrefill(true),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to collect local environment choice: %w", err)
 	}
 
-	names := []string{}
-	prompt := "Other environments — comma-separated names, leave empty to skip. "
-	if useLocal {
-		names = append(names, DefaultEnvironmentName)
-	} else {
-		prompt = "Environments — comma-separated names, at least one is required. "
-	}
-
 	otherInput, err := c.Input(
-		prompt+"A name like 'review' also matches 'review/pr-123' at deploy time via prefix matching.",
+		promptOtherEnvs,
 		nabat.WithHint("staging, production"),
 		nabat.WithDefault(""),
-		// Inline so a bad answer re-prompts instead of aborting the wizard.
 		nabat.WithValidate(func(input string) error {
-			parsed, parseErr := parseEnvironmentNames(input, names)
-			if parseErr != nil {
-				return parseErr
-			}
-			if len(parsed) == 0 {
-				return errors.New("at least one environment is required")
-			}
-			return nil
+			return validateOtherEnvironmentInput(input, useLocal)
 		}),
 	)
 	if err != nil {
-		return fmt.Errorf("failed to collect environment names: %w", err)
+		return fmt.Errorf("failed to collect other environments: %w", err)
 	}
 
-	names, err = parseEnvironmentNames(otherInput, names)
+	return applyEnvironmentAnswers(config, useLocal, otherInput)
+}
+
+// validateOtherEnvironmentInput validates the input for other environments.
+func validateOtherEnvironmentInput(input string, useLocal bool) error {
+	var base []string
+	if useLocal {
+		base = []string{DefaultEnvironmentName}
+	}
+	parsed, err := parseEnvironmentNames(input, base)
 	if err != nil {
 		return err
 	}
+	if len(parsed) == 0 {
+		return errors.New("at least one environment is required")
+	}
+	return nil
+}
 
+// applyEnvironmentAnswers applies the environment answers to the project config.
+func applyEnvironmentAnswers(config *ProjectConfig, useLocal bool, otherInput string) error {
+	var names []string
+	if useLocal {
+		names = []string{DefaultEnvironmentName}
+	}
+	names, err := parseEnvironmentNames(otherInput, names)
+	if err != nil {
+		return err
+	}
 	config.EnvironmentNames = names
 	return nil
 }
@@ -97,12 +76,11 @@ func parseEnvironmentNames(input string, names []string) ([]string, error) {
 		if name == "" {
 			continue
 		}
-		if base, cut := strings.CutSuffix(name, "/*"); cut {
-			return nil, fmt.Errorf("invalid environment name %q: the \"/*\" suffix is not supported; a plain name like %q already matches %q at deploy time",
-				name, base, base+"/pr-123")
+		if err := spec.ValidateEnvName(name); err != nil {
+			return nil, err
 		}
-		if err := validateEnvironmentNameUnique(name, names); err != nil {
-			return nil, fmt.Errorf("invalid environment name %q: %w", name, err)
+		if slices.Contains(names, name) {
+			return nil, fmt.Errorf("environment '%s' already exists", name)
 		}
 		names = append(names, name)
 	}
@@ -110,13 +88,12 @@ func parseEnvironmentNames(input string, names []string) ([]string, error) {
 	return names, nil
 }
 
+// collectEnvironmentVariables collects the environment variables for the project.
 func collectEnvironmentVariables(c *nabat.Context) (map[string]string, error) {
 	variables := make(map[string]string)
-	continueAdding := true
 
-	for continueAdding {
+	for {
 		var varName, varValue string
-
 		err := c.Form(
 			nabat.WithFormGroup(
 				nabat.WithGroupTitle("Environment Variable"),
@@ -130,21 +107,25 @@ func collectEnvironmentVariables(c *nabat.Context) (map[string]string, error) {
 					nabat.WithHint("production"),
 				),
 			),
-			nabat.WithFormGroup(
-				nabat.WithFormField(&continueAdding, "Add another variable?", "",
-					nabat.WithAffirmative("Yes"),
-					nabat.WithNegative("No, I'm done"),
-				),
-			),
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to collect variable details: %w", err)
 		}
-
 		if varName != "" {
 			variables[varName] = varValue
 		}
-	}
 
-	return variables, nil
+		addAnother, confirmErr := c.Confirm(
+			"Add another variable?",
+			nabat.WithAffirmative("Yes"),
+			nabat.WithNegative("No, I'm done"),
+			nabat.WithDefault(false),
+		)
+		if confirmErr != nil {
+			return nil, fmt.Errorf("failed to confirm another variable: %w", confirmErr)
+		}
+		if !addAnother {
+			return variables, nil
+		}
+	}
 }

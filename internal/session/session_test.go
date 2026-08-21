@@ -484,7 +484,7 @@ func TestTimeoutAccessor(t *testing.T) {
 }
 
 // TestSpecPathAccessor verifies SpecPath returns the configured spec path,
-// including the empty default.
+// or [spec.DefaultSpecPath] when unset.
 func TestSpecPathAccessor(t *testing.T) {
 	t.Parallel()
 
@@ -493,7 +493,7 @@ func TestSpecPathAccessor(t *testing.T) {
 		opts []Option
 		want string
 	}{
-		{name: "empty when unset", want: ""},
+		{name: "default filename when unset", want: spec.DefaultSpecPath},
 		{name: "returns configured path", opts: []Option{WithSpecPath("/tmp/deployah.yaml")}, want: "/tmp/deployah.yaml"},
 	}
 
@@ -502,6 +502,25 @@ func TestSpecPathAccessor(t *testing.T) {
 			t.Parallel()
 
 			assert.Equal(t, tt.want, New(tt.opts...).SpecPath())
+		})
+	}
+}
+
+func TestPlatformPathAccessor(t *testing.T) {
+	tests := []struct {
+		name string
+		opts []Option
+		want string
+	}{
+		{name: "default filename when unset", want: spec.DefaultPlatformPath},
+		{name: "explicit platform file", opts: []Option{WithPlatformFile("/tmp/custom.platform.yaml")}, want: "/tmp/custom.platform.yaml"},
+		{name: "same directory as spec", opts: []Option{WithSpecPath(filepath.Join("app", "deployah.yaml"))}, want: filepath.Join("app", spec.DefaultPlatformPath)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(spec.PlatformEnvVar, "")
+			assert.Equal(t, tt.want, New(tt.opts...).PlatformPath())
 		})
 	}
 }
@@ -553,8 +572,8 @@ environments:
 	assert.Nil(t, sess.platform, "Close should clear the memoized platform config")
 }
 
-// TestSpec verifies Spec's guard clause and its happy-path loading of a
-// real manifest from disk.
+// TestSpec verifies Spec loads a real manifest from disk and wraps load
+// errors when the file is missing.
 func TestSpec(t *testing.T) {
 	t.Parallel()
 
@@ -565,12 +584,6 @@ func TestSpec(t *testing.T) {
 		errContains string
 		check       func(t *testing.T, m *spec.Spec)
 	}{
-		{
-			name:        "errors when spec path is unset",
-			setup:       func(t *testing.T) *Session { t.Helper(); return New() },
-			wantErr:     true,
-			errContains: "spec path must be set",
-		},
 		{
 			name: "loads a valid manifest from disk",
 			setup: func(t *testing.T) *Session {

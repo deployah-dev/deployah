@@ -803,7 +803,7 @@ func TestIntegration(t *testing.T) {
 		// Verify that defaults from schema are applied
 		assert.Equal(t, ComponentRoleService, webComponent.Role)
 		assert.Equal(t, ComponentKindStateless, webComponent.Kind)
-		assert.Equal(t, 8080, webComponent.Port)
+		assert.Equal(t, DefaultServicePort, webComponent.Port)
 	})
 
 	t.Run("verify autoscaling defaults", func(t *testing.T) {
@@ -827,11 +827,13 @@ func TestIntegration(t *testing.T) {
 
 		apiComponent := manifest.Components["api"]
 		assert.NotNil(t, apiComponent.Autoscaling)
-		assert.Equal(t, 2, apiComponent.Autoscaling.MinReplicas)
-		assert.Equal(t, 5, apiComponent.Autoscaling.MaxReplicas)
+		assert.Equal(t, DefaultMinReplicas, apiComponent.Autoscaling.MinReplicas)
+		assert.Equal(t, DefaultMaxReplicas, apiComponent.Autoscaling.MaxReplicas)
 		assert.Len(t, apiComponent.Autoscaling.Metrics, 1)
 		assert.Equal(t, MetricTypeCPU, apiComponent.Autoscaling.Metrics[0].Type)
-		assert.Equal(t, 75, apiComponent.Autoscaling.Metrics[0].Target)
+		assert.Equal(t, DefaultCPUTarget, apiComponent.Autoscaling.Metrics[0].Target)
+		assert.Nil(t, apiComponent.Replicas,
+			"omitted replicas must stay nil when autoscaling is enabled")
 	})
 
 	t.Run("verify environment defaults", func(t *testing.T) {
@@ -925,7 +927,7 @@ func TestApplyRoleDependentDefaults_EmptyRole(t *testing.T) {
 	applyRoleDependentDefaults(c)
 	assert.Equal(t, ComponentRoleService, c.Role)
 	assert.Equal(t, DefaultServiceShutdownTimeout, c.ShutdownTimeout)
-	assert.Equal(t, 8080, c.Port)
+	assert.Equal(t, DefaultServicePort, c.Port)
 }
 
 // TestFillSpecWithDefaults_RoleDependentDefaults covers shutdownTimeout,
@@ -947,7 +949,7 @@ func TestFillSpecWithDefaults_RoleDependentDefaults(t *testing.T) {
 		api := m.Components["api"]
 		assert.Equal(t, ComponentRoleService, api.Role)
 		assert.Equal(t, DefaultServiceShutdownTimeout, api.ShutdownTimeout)
-		assert.Equal(t, 8080, api.Port)
+		assert.Equal(t, DefaultServicePort, api.Port)
 	})
 
 	t.Run("worker gets longer shutdown and no default port", func(t *testing.T) {
@@ -985,6 +987,81 @@ func TestFillSpecWithDefaults_RoleDependentDefaults(t *testing.T) {
 		assert.Equal(t, DefaultMetricsPath, api.Metrics.Path)
 		assert.Equal(t, 8080, api.Metrics.Port)
 	})
+}
+
+// TestFillSpecWithDefaults_ReplicasVsAutoscaling keeps omitted replicas
+// implicit (nil) when autoscaling is enabled, and leaves an explicit
+// replicas value so [ValidateComponentReplicas] can reject the collision.
+func TestFillSpecWithDefaults_ReplicasVsAutoscaling(t *testing.T) {
+	t.Parallel()
+
+	replicas1 := 1
+	replicas3 := 3
+	tests := []struct {
+		name        string
+		component   Component
+		wantNil     bool
+		wantVal     int
+		validateErr string
+	}{
+		{
+			name: "omitted replicas with autoscaling stays implicit",
+			component: Component{
+				Image:       "api:latest",
+				Autoscaling: &Autoscaling{Enabled: true},
+			},
+			wantNil: true,
+		},
+		{
+			name: "explicit replicas with autoscaling is kept",
+			component: Component{
+				Image:       "api:latest",
+				Replicas:    &replicas1,
+				Autoscaling: &Autoscaling{Enabled: true},
+			},
+			wantVal:     1,
+			validateErr: "mutually exclusive",
+		},
+		{
+			name:      "omitted replicas without autoscaling gets schema default",
+			component: Component{Image: "api:latest"},
+			wantVal:   1,
+		},
+		{
+			name: "explicit replicas without autoscaling is kept",
+			component: Component{
+				Image:    "api:latest",
+				Replicas: &replicas3,
+			},
+			wantVal: 3,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			m := &Spec{
+				APIVersion: CurrentManifestVersion,
+				Project:    "shop",
+				Components: map[string]Component{"api": tt.component},
+			}
+			require.NoError(t, FillSpecWithDefaults(m, CurrentManifestVersion))
+			got := m.Components["api"]
+			if tt.wantNil {
+				assert.Nil(t, got.Replicas)
+			} else {
+				require.NotNil(t, got.Replicas)
+				assert.Equal(t, tt.wantVal, *got.Replicas)
+			}
+			err := ValidateComponentReplicas(got)
+			if tt.validateErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.validateErr)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
 }
 
 // TestFillSpecWithDefaults_GuardClauses verifies the nil-spec and

@@ -58,10 +58,6 @@ func runValidate(c *nabat.Context) error {
 // do not cause false format-assertion failures, while literal typos still fail.
 func runManifestOnly(c *nabat.Context, rt *session.Session) error {
 	specPath := rt.SpecPath()
-	if specPath == "" {
-		specPath = spec.DefaultSpecPath
-	}
-
 	data, err := os.ReadFile(specPath) // #nosec G304
 	if err != nil {
 		return fmt.Errorf("failed to read manifest: %w", err)

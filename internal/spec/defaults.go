@@ -369,9 +369,10 @@ func applyResourcePreset(preset *ResourcePreset, resources *Resources) {
 }
 
 // FillSpecWithDefaults fills spec with defaults from the JSON schemas for
-// version, in this order: apply spec schema defaults to components, resolve
-// resource presets to concrete values, merge spec and environment defaults,
-// then apply the merged defaults to environments with placeholder
+// version, in this order: apply spec schema defaults to components, drop the
+// replicas schema default when it was omitted and autoscaling is enabled,
+// resolve resource presets to concrete values, merge spec and environment
+// defaults, then apply the merged defaults to environments with placeholder
 // substitution. spec is updated in place. It returns an error if schema
 // loading, default extraction, or application fails.
 func FillSpecWithDefaults(spec *Spec, version string) error {
@@ -399,10 +400,14 @@ func FillSpecWithDefaults(spec *Spec, version string) error {
 	}
 
 	for componentName, component := range spec.Components {
+		// Replicas is a pointer so omission stays distinct from an explicit
+		// value. Snapshot that before the schema default (1) is applied.
+		explicitReplicas := component.Replicas != nil
 		if err = applyDefaultsRecursively(&component, specDefaults, "components."+componentName, version); err != nil {
 			return fmt.Errorf("failed to apply defaults to component %s: %w", componentName, err)
 		}
 		applyRoleDependentDefaults(&component)
+		dropSchemaReplicasDefault(&component, explicitReplicas)
 		spec.Components[componentName] = component
 	}
 
@@ -856,7 +861,8 @@ func isZeroValue(val any) bool {
 // applyRoleDependentDefaults fills fields whose defaults depend on role
 // (and therefore cannot come from the JSON schema alone):
 //   - shutdownTimeout: 30s service, 60s worker
-//   - port: 8080 for services only (workers must not get a default port)
+//   - port: [DefaultServicePort] for services only (workers must not
+//     get a default port)
 //   - metrics.path: /metrics when metrics enabled and path empty
 //   - metrics.port: component port for services when metrics enabled and port 0
 func applyRoleDependentDefaults(c *Component) {
@@ -871,7 +877,7 @@ func applyRoleDependentDefaults(c *Component) {
 		}
 	}
 	if c.Role.IsService() && c.Port == 0 {
-		c.Port = 8080
+		c.Port = DefaultServicePort
 	}
 	if c.Metrics.IsEnabled() {
 		if c.Metrics.Path == "" {
@@ -880,6 +886,18 @@ func applyRoleDependentDefaults(c *Component) {
 		if c.Role.IsService() && c.Metrics.Port == 0 {
 			c.Metrics.Port = c.Port
 		}
+	}
+}
+
+// dropSchemaReplicasDefault undoes the JSON schema replicas default when the
+// field was omitted and autoscaling is enabled. Nil means HPA owns the count.
+// An explicit value is left so [ValidateComponentReplicas] can reject it.
+func dropSchemaReplicasDefault(c *Component, explicit bool) {
+	if explicit {
+		return
+	}
+	if c.Autoscaling != nil && c.Autoscaling.Enabled {
+		c.Replicas = nil
 	}
 }
 

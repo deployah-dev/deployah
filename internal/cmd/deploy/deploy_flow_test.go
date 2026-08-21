@@ -40,6 +40,7 @@ import (
 // k8sClient (or errors if k8sClient is nil) and whose Helm client is stub.
 func newClusterWithStub(t *testing.T, stub *stubHelmClient, k8sClient kubernetes.Interface) *session.Cluster {
 	t.Helper()
+
 	sess := session.New(
 		session.WithHelmFactory(func(*session.Session) (session.HelmClient, error) {
 			return stub, nil
@@ -140,6 +141,7 @@ func TestConfirmApply(t *testing.T) {
 // applyDeploy aborts with a clear error and never calls InstallApp.
 func TestApplyDeploy_RenderMismatch_AbortsBeforeApply(t *testing.T) {
 	t.Parallel()
+
 	stub := &stubHelmClient{
 		renderResults: []*render.RenderResult{
 			testRenderResult(deployFlowManifestV1), // the apply-time re-render
@@ -172,8 +174,7 @@ func TestSkipDeploy_NoChanges_ShowsReadinessSummary(t *testing.T) {
 	t.Parallel()
 	k8sClient := fake.NewSimpleClientset(
 		&corev1.Pod{
-			Name:      "web-1",
-			Namespace: "default",
+			Name: "web-1", Namespace: "default",
 			Labels: map[string]string{
 				"app.kubernetes.io/instance":  "web-production",
 				"app.kubernetes.io/component": "web",
@@ -281,6 +282,7 @@ func TestCRDApplySuffix(t *testing.T) {
 // TestFilterCoveredAPIs drops requirements satisfied by pending CRDs.
 func TestFilterCoveredAPIs(t *testing.T) {
 	t.Parallel()
+
 	reqs := []k8s.APIRequirement{
 		{GroupVersions: []string{"cert-manager.io/v1"}, Reason: "tls"},
 		{GroupVersions: []string{"autoscaling/v2", "autoscaling/v2beta2"}, Reason: "hpa"},
@@ -297,10 +299,10 @@ func TestFilterCoveredAPIs(t *testing.T) {
 // list (real CRD apply needs a live apiextensions API).
 func TestApplyCRDsOnly_ReportsSuccessAndReadiness(t *testing.T) {
 	t.Parallel()
+
 	k8sClient := fake.NewSimpleClientset(
 		&corev1.Pod{
-			Name:      "web-1",
-			Namespace: "default",
+			Name: "web-1", Namespace: "default",
 			Labels: map[string]string{
 				"app.kubernetes.io/instance":  "web-production",
 				"app.kubernetes.io/component": "web",
@@ -334,6 +336,7 @@ func TestApplyCRDsOnly_ReportsSuccessAndReadiness(t *testing.T) {
 
 func sampleBundleCRD(t *testing.T) *extras.Bundle {
 	t.Helper()
+
 	obj := &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "apiextensions.k8s.io/v1",
 		"kind":       "CustomResourceDefinition",
@@ -357,6 +360,7 @@ func sampleBundleCRD(t *testing.T) *extras.Bundle {
 // TestApplyBundleCRDs_RESTConfigError surfaces kubeconfig failures before apply.
 func TestApplyBundleCRDs_RESTConfigError(t *testing.T) {
 	t.Parallel()
+
 	stub := &stubHelmClient{}
 	sess := session.New(
 		session.WithKubeconfig(filepath.Join(t.TempDir(), "missing-kubeconfig")),
@@ -377,6 +381,7 @@ func TestApplyBundleCRDs_RESTConfigError(t *testing.T) {
 // TestApplyDeploy_CallsInstallAfterEmptyCRDs applies Helm when CRD list is empty.
 func TestApplyDeploy_CallsInstallAfterEmptyCRDs(t *testing.T) {
 	t.Parallel()
+
 	manifest := deployFlowManifestV1
 	stub := &stubHelmClient{
 		renderResults: []*render.RenderResult{testRenderResult(manifest)},
@@ -403,6 +408,7 @@ func TestApplyDeploy_CallsInstallAfterEmptyCRDs(t *testing.T) {
 // across deployah delete is covered by the e2e CRD lifecycle test.
 func TestApplyDeploy_PropagatesInstallErrorAfterCRDStep(t *testing.T) {
 	t.Parallel()
+
 	manifest := deployFlowManifestV1
 	stub := &stubHelmClient{
 		renderResults: []*render.RenderResult{testRenderResult(manifest)},
@@ -428,6 +434,7 @@ func TestApplyDeploy_PropagatesInstallErrorAfterCRDStep(t *testing.T) {
 // TestApplyDeploy_PropagatesCRDApplyError skips InstallApp when CRDs fail.
 func TestApplyDeploy_PropagatesCRDApplyError(t *testing.T) {
 	t.Parallel()
+
 	manifest := deployFlowManifestV1
 	stub := &stubHelmClient{
 		renderResults: []*render.RenderResult{testRenderResult(manifest)},

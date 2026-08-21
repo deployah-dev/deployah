@@ -1,10 +1,10 @@
 ## deployah init
 
-Create a new Deployah spec for a project
+Creates deployah.yaml and a platform file so you can deploy.
 
 ### Synopsis
 
-Create a new Deployah spec for a project
+Creates deployah.yaml and a platform file so you can deploy. Init is interactive and must run from a terminal.
 
 ```text
 deployah init [flags]
@@ -13,13 +13,8 @@ deployah init [flags]
 ### Options
 
 ```text
-      --defaults               Skip every prompt and use built-in defaults
-      --dry-run                Preview the generated spec without saving it
-      --environments strings   Comma-separated environment names, e.g. local,production (skips the environments prompt) (env: DEPLOYAH_ENVIRONMENTS)
-      --force                  Overwrite the output file if it already exists
-  -o, --output string          The output file path. (default "deployah.yaml")
-      --project string         Project name (skips the project name prompt) (env: DEPLOYAH_PROJECT)
-      --set strings            Set a value on the generated spec using a Helm-style dotted path, e.g. components.web.image=nginx:1.25 or components.web.port=8080 (repeatable). Values are coerced to int/number/bool only where the manifest schema declares that field's type; everything else stays a string.
+      --dry-run   Preview the generated spec without saving it
+      --force     Skip the overwrite prompt if the spec already exists
 ```
 
 ### Options inherited from parent commands

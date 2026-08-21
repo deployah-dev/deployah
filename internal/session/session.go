@@ -211,19 +211,16 @@ func (s *Session) resolvePlatformPath() string {
 	return spec.DefaultPlatformPath
 }
 
-// Spec loads the spec for the configured path and environment. Each call loads
+// Spec loads the spec for [Session.SpecPath] and environment. Each call loads
 // from disk because the result depends on the environment argument (envsubst
 // selects different env files per environment). The platform config, when
 // present, supplies the environment registry.
 func (s *Session) Spec(ctx context.Context, environment string) (*spec.Spec, error) {
-	if s.specPath == "" {
-		return nil, fmt.Errorf("spec path must be set")
-	}
 	platform, err := s.Platform()
 	if err != nil {
 		return nil, fmt.Errorf("failed to load platform file: %w", err)
 	}
-	m, err := spec.Load(ctx, s.specPath, environment, platform)
+	m, err := spec.Load(ctx, s.SpecPath(), environment, platform)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load spec: %w", err)
 	}
@@ -262,15 +259,30 @@ func (s *Session) Target(ctx context.Context, env string) (*Cluster, error) {
 	return cluster, nil
 }
 
-// SpecPath returns the configured spec file path.
-func (s *Session) SpecPath() string { return s.specPath }
+// SpecPath returns the spec file path. When unset, it returns
+// [spec.DefaultSpecPath].
+func (s *Session) SpecPath() string {
+	if s.specPath == "" {
+		return spec.DefaultSpecPath
+	}
+	return s.specPath
+}
+
+// PlatformPath returns the platform file path using the same lookup as
+// [Session.Platform]: an explicit --platform-file, then
+// DEPLOYAH_PLATFORM_FILE, then deployah.platform.yaml next to the spec.
+func (s *Session) PlatformPath() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.resolvePlatformPath()
+}
 
 // ParseManifest reads and partially validates the spec (apiVersion +
 // environments only, no envsubst, no defaults). It is intended for commands
 // that need the raw manifest structure without environment-specific processing
 // (e.g. validate manifest-only mode, resolve offline mode).
 func (s *Session) ParseManifest() (*spec.Spec, error) {
-	rawSpec, _, err := spec.ParseManifest(s.specPath)
+	rawSpec, _, err := spec.ParseManifest(s.SpecPath())
 	if err != nil {
 		return nil, err
 	}

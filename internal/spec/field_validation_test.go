@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestValidateProjectName verifies ValidateProjectName rules.
@@ -120,15 +121,21 @@ func TestValidateEnvName(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name      string
-		input     string
-		expectErr bool
+		name         string
+		input        string
+		expectErr    bool
+		wantContains string
 	}{
 		{name: "valid simple name", input: "production"},
 		{name: "valid with dashes", input: "pre-prod"},
 		{name: "empty is invalid", input: "", expectErr: true},
 		{name: "uppercase is invalid", input: "Production", expectErr: true},
-		{name: "wildcard suffix is invalid for a top-level key", input: "review/*", expectErr: true},
+		{
+			name:         "wildcard suffix is invalid for a top-level key",
+			input:        "review/*",
+			expectErr:    true,
+			wantContains: `"/*" suffix is not supported`,
+		},
 		{name: "slash is invalid", input: "review/pr-123", expectErr: true},
 	}
 
@@ -137,10 +144,13 @@ func TestValidateEnvName(t *testing.T) {
 			t.Parallel()
 			err := ValidateEnvName(tt.input)
 			if tt.expectErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
+				require.Error(t, err)
+				if tt.wantContains != "" {
+					assert.Contains(t, err.Error(), tt.wantContains)
+				}
+				return
 			}
+			require.NoError(t, err)
 		})
 	}
 }

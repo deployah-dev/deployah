@@ -1,109 +1,80 @@
 package initialize
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
 	"nabat.dev/nabat"
 
+	"deployah.dev/deployah/internal/session"
 	"deployah.dev/deployah/internal/spec"
 )
 
 const (
-	// DefaultOutputFile is the default spec path written by init.
-	DefaultOutputFile = "deployah.yaml"
-	// DefaultCPUThreshold is the default HPA CPU target percentage.
-	DefaultCPUThreshold = 75
-	// DefaultMinReplicas is the default minimum replica count for HPA.
-	DefaultMinReplicas = 2
-	// DefaultMaxReplicas is the default maximum replica count for HPA.
-	DefaultMaxReplicas = 5
-)
-
-const (
-	// DefaultEnvironmentName is used when init runs without prompting.
+	// DefaultEnvironmentName is the Kind environment offered in the wizard.
 	DefaultEnvironmentName = "local"
-	// DefaultComponentName is the single component created when init runs
-	// without prompting.
-	DefaultComponentName = "app"
-	// DefaultComponentImage is an unresolvable placeholder (no registry, no
-	// tag), so a forgotten replacement fails fast at the first deploy
-	// instead of shipping a real-looking image that isn't theirs.
-	DefaultComponentImage = "REPLACE_ME"
 )
 
+// Locked user-facing copy. Tests assert these strings so a later edit fails.
 const (
-	// StepProjectName is the prompt title for the project name step.
-	StepProjectName = "Step 1/3: Project Name"
-	// StepEnvironments is the prompt title for the environments step.
-	StepEnvironments = "Step 2/3: Environments"
-	// StepComponents is the prompt title for the components step.
-	StepComponents = "Step 3/3: Components"
+	promptLocalKind   = "Set up a local Kind cluster (deployah cluster up)?"
+	promptOtherEnvs   = "Other environments (comma-separated). Empty is fine if you chose local."
+	descComponentName = "e.g. web or api"
+	promptImageFmt    = "Container image for %s (registry/name:tag), e.g. nginx:latest"
+	promptAdvancedFmt = "Configure advanced options for %s? (kind, health, env vars, scaling). You can edit YAML later."
+	promptExposeFmt   = "Give %s a public URL (%s.%s.nip.io) with HTTPS?"
 )
+
+// errNotInteractive is returned when init is run without a TTY.
+var errNotInteractive = errors.New("deployah init is interactive: run it from a terminal")
 
 // Options holds command-line flags for init.
 type Options struct {
-	Output       string   `nabat:"output"`
-	DryRun       bool     `nabat:"dry-run"`
-	Force        bool     `nabat:"force"`
-	Project      string   `nabat:"project"`
-	Environments []string `nabat:"environments"`
-	Set          []string `nabat:"set"`
-	Defaults     bool     `nabat:"defaults"`
+	DryRun bool `nabat:"dry-run"`
+	Force  bool `nabat:"force"`
 }
 
-// ProjectConfig holds the collected configuration data
+// ProjectConfig holds the collected configuration data.
 type ProjectConfig struct {
 	Name string
 	// EnvironmentNames are registered in the platform file, not in the
 	// generated spec: the spec's environments map is overrides-only.
 	EnvironmentNames []string
 	Components       map[string]spec.Component
-	OutputPath       string
+	SpecPath         string
+	PlatformPath     string
 	DryRun           bool
-	// Sets holds --set overrides (Helm-style dotted paths, e.g.
-	// "components.web.image=nginx:1.25"), applied on top of Name and
-	// Components right before validation.
-	Sets []string
 }
 
 // Register adds the init command to app.
 func Register(app *nabat.App) {
 	app.MustCommand("init",
-		nabat.WithDescription("Create a new Deployah spec for a project"),
-		nabat.WithLongDescription("Create a new Deployah spec for a project"),
-		nabat.WithAliases("initialize"),
-		nabat.WithFlag("output", DefaultOutputFile, nabat.WithShort('o'), nabat.WithUsage("The output file path.")),
+		nabat.WithDescription("Creates deployah.yaml and a platform file so you can deploy."),
+		nabat.WithLongDescription("Creates deployah.yaml and a platform file so you can deploy. Init is interactive and must run from a terminal."),
 		nabat.WithFlag("dry-run", false, nabat.WithUsage("Preview the generated spec without saving it")),
-		nabat.WithFlag("force", false, nabat.WithUsage("Overwrite the output file if it already exists")),
-		nabat.WithFlag("project", "", nabat.WithUsage("Project name (skips the project name prompt)"), nabat.WithEnv("project")),
-		nabat.WithFlag("environments", []string{}, nabat.WithUsage("Comma-separated environment names, e.g. local,production (skips the environments prompt)"), nabat.WithEnv("environments")),
-		nabat.WithFlag("set", []string{}, nabat.WithUsage("Set a value on the generated spec using a Helm-style dotted path, e.g. components.web.image=nginx:1.25 or components.web.port=8080 (repeatable). Values are coerced to int/number/bool only where the manifest schema declares that field's type; everything else stays a string.")),
-		nabat.WithFlag("defaults", false, nabat.WithUsage("Skip every prompt and use built-in defaults")),
+		nabat.WithFlag("force", false, nabat.WithUsage("Skip the overwrite prompt if the spec already exists")),
 		nabat.WithExample(`
 # Initialize a new project
 deployah init
 
-# Initialize a new project and save the spec to a file
-deployah init --output deployah.yaml
-
 # Preview the generated spec without saving it
 deployah init --dry-run
 
-# Overwrite an existing spec without a confirmation prompt
-deployah init --force
-
-# Skip every prompt and use built-in defaults
-deployah init --defaults --force
-
-# Non-interactive: set project, environments, and a component field directly
-deployah init --defaults --force --project shop --environments local,production \
-  --set components.app.image=nginx:1.25`),
+# Skip the overwrite prompt when a spec already exists
+deployah init --force`),
 		nabat.WithRun(runInit),
 	)
 }
 
+// runInit is the entry point for the init command.
 func runInit(c *nabat.Context) error {
+	// TODO(nabat): replace with nabat.WithInteractive when
+	// https://github.com/nabat-dev/nabat/issues/4 ships.
+	if !c.IsInteractive() {
+		return errNotInteractive
+	}
+
 	opts := &Options{}
 	if err := c.Bind(opts); err != nil {
 		return fmt.Errorf("binding options failed: %w", err)
@@ -111,78 +82,99 @@ func runInit(c *nabat.Context) error {
 
 	c.Logger().Debug("starting project initialization")
 
-	proceed, err := checkOverwrite(c, opts)
-	if err != nil {
-		return err
+	sess := session.FromContext(c)
+	specPath, platformPath := sess.SpecPath(), sess.PlatformPath()
+
+	proceed, overwriteErr := checkOverwrite(c, specPath, opts.DryRun || opts.Force)
+	if overwriteErr != nil {
+		return overwriteErr
 	}
 	if !proceed {
 		return nil
 	}
 
-	// Without a TTY, prompts have no way to ask a human and nabat errors on
-	// any field without a fallback. Falling back to the same defaults
-	// --defaults uses makes `deployah init < /dev/null` behave like
-	// `deployah init --defaults` instead of failing on the first prompt.
-	useDefaults := opts.Defaults || !c.IsInteractive()
-
 	config := &ProjectConfig{
-		OutputPath: opts.Output,
-		Components: make(map[string]spec.Component),
-		DryRun:     opts.DryRun,
-		Sets:       opts.Set,
+		SpecPath:     specPath,
+		PlatformPath: platformPath,
+		Components:   make(map[string]spec.Component),
+		DryRun:       opts.DryRun,
 	}
 
-	if err = resolveProjectName(c, config, opts.Project, useDefaults); err != nil {
-		return fmt.Errorf("failed to resolve project name: %w", err)
+	if err := collectProjectName(c, config); err != nil {
+		return err
 	}
 
-	if err = resolveEnvironments(c, config, opts.Environments, useDefaults); err != nil {
-		return fmt.Errorf("failed to resolve environments: %w", err)
+	if err := collectEnvironments(c, config); err != nil {
+		return err
 	}
 
-	if err = resolveComponents(c, config, useDefaults); err != nil {
-		return fmt.Errorf("failed to resolve components: %w", err)
+	if err := collectComponents(c, config); err != nil {
+		return err
 	}
 
-	if err = showSummaryAndSave(c, config); err != nil {
-		return fmt.Errorf("failed to save configuration: %w", err)
+	saved, err := showSummaryAndSave(c, config)
+	if err != nil {
+		return err
 	}
+	if !saved {
+		return nil
+	}
+	printInitCompleted(c, config)
+	return nil
+}
 
+// collectProjectName prompts the user for a project name.
+func collectProjectName(c *nabat.Context, config *ProjectConfig) error {
+	name, err := c.Input(
+		"Project name",
+		nabat.WithHint("my-awesome-project"),
+		nabat.WithValidate(spec.ValidateProjectName),
+		nabat.WithInlineString(),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to collect project name: %w", err)
+	}
+	config.Name = name
+	return nil
+}
+
+// printInitCompleted prints a success message when the init command completes.
+func printInitCompleted(c *nabat.Context, config *ProjectConfig) {
 	if config.DryRun {
 		c.Success("Project initialization completed (dry-run mode)",
 			"project", config.Name,
 			"environments", len(config.EnvironmentNames),
 			"components", len(config.Components))
-	} else {
-		c.Success("Project initialization completed",
-			"project", config.Name,
-			"environments", len(config.EnvironmentNames),
-			"components", len(config.Components),
-			"output", config.OutputPath)
+		return
 	}
-
-	return nil
+	c.Success("Project initialization completed",
+		"project", config.Name,
+		"environments", len(config.EnvironmentNames),
+		"components", len(config.Components),
+		"spec", config.SpecPath)
 }
 
 // checkOverwrite guards against silently clobbering an existing spec file.
-// It reports whether the caller should proceed with initialization.
-func checkOverwrite(c *nabat.Context, opts *Options) (proceed bool, err error) {
-	if _, statErr := os.Stat(opts.Output); statErr != nil {
-		return true, nil
+func checkOverwrite(c *nabat.Context, specPath string, skipPrompt bool) (bool, error) {
+	if _, statErr := os.Stat(specPath); statErr != nil {
+		if errors.Is(statErr, os.ErrNotExist) {
+			return true, nil
+		}
+		return false, fmt.Errorf("stat %s: %w", specPath, statErr)
 	}
 
 	overwrite, confirmErr := c.Confirm(
-		fmt.Sprintf("%s already exists. Overwrite it?", opts.Output),
+		fmt.Sprintf("%s already exists. Overwrite it?", specPath),
 		nabat.WithAffirmative("Yes, overwrite"),
 		nabat.WithNegative("No, cancel"),
-		nabat.WithYes(opts.Force),
+		nabat.WithYes(skipPrompt),
 		nabat.WithBypassHint("--force"),
 	)
 	if confirmErr != nil {
 		return false, confirmErr
 	}
 	if !overwrite {
-		c.Info("Cancelled: " + opts.Output + " was not modified.")
+		c.Info("Cancelled: " + specPath + " was not modified.")
 		return false, nil
 	}
 	return true, nil

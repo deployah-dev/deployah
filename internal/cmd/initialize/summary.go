@@ -7,74 +7,89 @@ import (
 	"slices"
 	"strings"
 
-	"helm.sh/helm/v4/pkg/strvals"
+	"github.com/google/renameio/v2"
 	"nabat.dev/nabat"
 	"sigs.k8s.io/yaml"
 
+	"deployah.dev/deployah/internal/localkube"
 	"deployah.dev/deployah/internal/spec"
 )
 
-func showSummaryAndSave(c *nabat.Context, config *ProjectConfig) error {
+// showSummaryAndSave previews the spec and writes files unless the user
+// declines Save. saved is false when Save is declined so the caller can
+// skip the "initialization completed" line.
+func showSummaryAndSave(c *nabat.Context, config *ProjectConfig) (saved bool, err error) {
 	specData, err := buildValidatedSpec(config)
 	if err != nil {
-		return fmt.Errorf("configuration validation failed: %w", err)
+		return false, fmt.Errorf("configuration validation failed: %w", err)
 	}
 
-	specYAML, err := yaml.Marshal(specData)
+	specYAML, err := marshalSpecYAML(specData)
 	if err != nil {
-		return fmt.Errorf("failed to marshal spec for preview: %w", err)
+		return false, fmt.Errorf("failed to marshal spec for preview: %w", err)
 	}
 
 	if err = c.Highlight(string(specYAML), "yaml"); err != nil {
-		return fmt.Errorf("failed to render spec preview: %w", err)
+		return false, fmt.Errorf("failed to render spec preview: %w", err)
 	}
 
 	if config.DryRun {
 		c.Info("dry-run mode; no files written")
 		c.Println("Run again without --dry-run to save the configuration.")
-		return nil
+		return true, nil
 	}
 
-	// WithPrefill(true) seeds the TTY on Yes and lets non-interactive / CI
-	// mode save without prompting.
+	// WithPrefill(true) seeds the TTY on Yes. --force does not skip Save.
 	save, err := c.Confirm(
-		fmt.Sprintf("Save to %s?", config.OutputPath),
+		fmt.Sprintf("Save to %s?", config.SpecPath),
 		nabat.WithAffirmative("Yes"),
 		nabat.WithNegative("No"),
 		nabat.WithPrefill(true),
 	)
 	if err != nil {
-		return fmt.Errorf("failed to confirm save: %w", err)
+		return false, fmt.Errorf("failed to confirm save: %w", err)
 	}
 	if !save {
 		c.Info("aborted; no files written")
-		return nil
+		return false, nil
 	}
 
-	if err = spec.Save(specData, config.OutputPath); err != nil {
-		return fmt.Errorf("failed to save spec to %s: %w", config.OutputPath, err)
+	if err = writeSpecFile(specData, config.SpecPath); err != nil {
+		return false, fmt.Errorf("failed to save spec to %s: %w", config.SpecPath, err)
 	}
-	c.Success("Created " + config.OutputPath + " (" + spec.CurrentManifestVersion + ")")
+	c.Success("Created " + config.SpecPath + " (" + spec.CurrentManifestVersion + ")")
 
-	// The platform file owns which environments exist, so every selected
-	// name is registered there; an existing file is never overwritten.
-	platformPath := filepath.Join(filepath.Dir(config.OutputPath), spec.DefaultPlatformPath)
+	platformFile := platformPath(config)
 	envNames := slices.Sorted(slices.Values(config.EnvironmentNames))
 
-	created, platformErr := spec.ScaffoldPlatformFile(platformPath, "127.0.0.1", envNames)
+	created, added, platformErr := spec.EnsurePlatformEnvironments(platformFile, localkube.DefaultIngressIP, envNames)
+	if platformErr != nil {
+		return false, fmt.Errorf("saved spec but failed to update platform file: %w", platformErr)
+	}
 	switch {
-	case platformErr != nil:
-		// Non-fatal: print warning and continue.
-		c.Warn(fmt.Sprintf("failed to write platform file: %v", platformErr))
 	case created:
 		c.Success(fmt.Sprintf("Created %s (%s) with %s",
-			platformPath, spec.CurrentPlatformVersion, joinWithAnd(envNames)))
+			platformFile, spec.CurrentPlatformVersion, joinWithAnd(envNames)))
+	case len(added) > 0:
+		c.Success(fmt.Sprintf("Added missing environments to %s: %s",
+			platformFile, joinWithAnd(added)))
 	default:
-		c.Info(platformPath + " already exists; no changes made.")
+		c.Info(platformFile + " already has the selected environments; no changes made.")
 	}
-	printPlatformEnvironmentGuidance(c, platformPath, envNames)
 
-	createdExtras, scaffoldErr := scaffoldExtrasDirs(filepath.Dir(config.OutputPath))
+	var platform *spec.PlatformConfig
+	if _, statErr := os.Stat(platformFile); statErr == nil {
+		loaded, loadErr := spec.LoadPlatform(platformFile)
+		if loadErr != nil {
+			c.Warn(fmt.Sprintf("failed to read %s: %v", platformFile, loadErr))
+		} else {
+			platform = loaded
+			printPlatformSummary(c, platformFile, envNames, platform)
+		}
+	}
+	warnExposeWithoutDomains(c, config, platform)
+
+	createdExtras, scaffoldErr := scaffoldExtrasDirs(filepath.Dir(config.SpecPath))
 	switch {
 	case scaffoldErr != nil:
 		c.Warn(fmt.Sprintf("failed to create .deployah extras directories: %v", scaffoldErr))
@@ -84,12 +99,106 @@ func showSummaryAndSave(c *nabat.Context, config *ProjectConfig) error {
 		c.Info(".deployah/manifests/ and .deployah/crds/ already exist; no changes made.")
 	}
 
-	c.Println("Next steps:")
-	c.Println("  1. Review: cat " + config.OutputPath)
-	c.Println("  2. Validate: deployah validate")
-	c.Println("  3. Deploy: deployah deploy")
+	printNextSteps(c, config)
+	return true, nil
+}
 
-	return nil
+func platformPath(config *ProjectConfig) string {
+	if config.PlatformPath != "" {
+		return config.PlatformPath
+	}
+	return filepath.Join(filepath.Dir(config.SpecPath), spec.DefaultPlatformPath)
+}
+
+func printPlatformSummary(c *nabat.Context, path string, envNames []string, platform *spec.PlatformConfig) {
+	c.Println("Platform: " + path)
+	c.Println("Environments: " + strings.Join(envNames, ", "))
+	if platform == nil {
+		return
+	}
+	local, ok := platform.Environments[DefaultEnvironmentName]
+	if !ok {
+		return
+	}
+	domain := localDomain(local)
+	if local.Context == "" && domain == "" {
+		return
+	}
+	parts := make([]string, 0, 2)
+	if local.Context != "" {
+		parts = append(parts, "context "+local.Context)
+	}
+	if domain != "" {
+		parts = append(parts, "domain "+domain)
+	}
+	c.Println(DefaultEnvironmentName + ": " + strings.Join(parts, ", "))
+}
+
+func localDomain(env spec.PlatformEnvironment) string {
+	for _, domain := range env.Domains {
+		if domain.BaseDomain != "" {
+			return domain.BaseDomain
+		}
+	}
+	return ""
+}
+
+func warnExposeWithoutDomains(c *nabat.Context, config *ProjectConfig, platform *spec.PlatformConfig) {
+	hasExpose := false
+	for _, component := range config.Components {
+		if component.Expose != nil {
+			hasExpose = true
+			break
+		}
+	}
+	if !hasExpose {
+		return
+	}
+	var missing []string
+	for _, name := range config.EnvironmentNames {
+		if name == DefaultEnvironmentName {
+			continue
+		}
+		if platform == nil {
+			missing = append(missing, name)
+			continue
+		}
+		pe, ok := platform.Environments[name]
+		if !ok || len(pe.Domains) == 0 {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) == 0 {
+		return
+	}
+	c.Warn(fmt.Sprintf(
+		"%s %s no domains yet; exposed components will not get a public URL there until you add domains in the platform file.",
+		joinWithAnd(missing), verbHave(len(missing)),
+	))
+}
+
+func verbHave(n int) string {
+	if n == 1 {
+		return "has"
+	}
+	return "have"
+}
+
+func printNextSteps(c *nabat.Context, config *ProjectConfig) {
+	c.Println("Next steps:")
+	if slices.Contains(config.EnvironmentNames, DefaultEnvironmentName) {
+		c.Println("  1. deployah cluster up")
+		c.Println("  2. deployah deploy local")
+		return
+	}
+	env := ""
+	if len(config.EnvironmentNames) > 0 {
+		env = config.EnvironmentNames[0]
+	}
+	c.Println("  1. Fill in context and domains in " + platformPath(config))
+	if env != "" {
+		c.Println("  2. deployah deploy " + env)
+	}
 }
 
 const (
@@ -149,53 +258,6 @@ func scaffoldExtrasDirs(specDir string) (created bool, err error) {
 	return created, nil
 }
 
-// printPlatformEnvironmentGuidance reports env names with no entry in the
-// platform file and registered entries with no context, so the user knows
-// what to fill in before deploying.
-func printPlatformEnvironmentGuidance(c *nabat.Context, platformPath string, envNames []string) {
-	var platform *spec.PlatformConfig
-	if _, statErr := os.Stat(platformPath); statErr == nil {
-		loaded, loadErr := spec.LoadPlatform(platformPath)
-		if loadErr != nil {
-			c.Warn(fmt.Sprintf("failed to read %s to check environment coverage: %v", platformPath, loadErr))
-			return
-		}
-		platform = loaded
-	}
-
-	if missing := spec.MissingPlatformEnvironments(platform, envNames); len(missing) > 0 {
-		verb := "has"
-		if len(missing) > 1 {
-			verb = "have"
-		}
-		c.Println(fmt.Sprintf(
-			"%s %s no platform entry yet.\nAdd them to %s with a context before deploying there.\nSee: https://deployah.dev/docs/platform-file",
-			joinWithAnd(missing), verb, platformPath,
-		))
-	}
-
-	if platform == nil {
-		return
-	}
-	var noContext []string
-	for _, name := range envNames {
-		if pe, ok := platform.Environments[name]; ok && pe.Context == "" {
-			noContext = append(noContext, name)
-		}
-	}
-	if len(noContext) == 0 {
-		return
-	}
-	verb := "has"
-	if len(noContext) > 1 {
-		verb = "have"
-	}
-	c.Println(fmt.Sprintf(
-		"%s %s no context yet: deploys there follow your current kubeconfig context.\nSet a context in %s before deploying somewhere real.\nSee: https://deployah.dev/docs/platform-file",
-		joinWithAnd(noContext), verb, platformPath,
-	))
-}
-
 // joinWithAnd joins items with commas and a trailing "and", e.g.
 // ["a"] -> "a", ["a", "b"] -> "a and b", ["a", "b", "c"] -> "a, b, and c".
 func joinWithAnd(items []string) string {
@@ -211,89 +273,98 @@ func joinWithAnd(items []string) string {
 	}
 }
 
-// expandExposeShorthand rewrites boolean expose values in the raw spec
-// object: true becomes an empty object (so --set can address nested fields)
-// and false removes the block.
-func expandExposeShorthand(specObj map[string]any) {
-	comps, ok := specObj["components"].(map[string]any)
-	if !ok {
-		return
+// sparseSpec builds the spec that preview and disk receive: answers only,
+// with schema defaults stripped so omitempty drops them.
+func sparseSpec(config *ProjectConfig) spec.Spec {
+	components := make(map[string]spec.Component, len(config.Components))
+	for name, component := range config.Components {
+		omitSchemaDefaults(&component)
+		components[name] = component
 	}
-	for _, v := range comps {
-		comp, isMap := v.(map[string]any)
-		if !isMap {
-			continue
-		}
-		switch comp["expose"] {
-		case true:
-			comp["expose"] = map[string]any{}
-		case false:
-			delete(comp, "expose")
-		}
+	return spec.Spec{
+		APIVersion: spec.CurrentManifestVersion,
+		Project:    config.Name,
+		Components: components,
 	}
 }
 
-// buildValidatedSpec assembles a [spec.Spec] from config, merges any --set
-// overrides, and validates the result the same way deployah validate would.
+func omitSchemaDefaults(component *spec.Component) {
+	if component.Role == spec.ComponentRoleService {
+		component.Role = ""
+	}
+	if component.Port == spec.DefaultServicePort {
+		component.Port = 0
+	}
+}
+
+func cloneSpec(in *spec.Spec) (*spec.Spec, error) {
+	data, err := yaml.Marshal(in)
+	if err != nil {
+		return nil, fmt.Errorf("failed to clone spec: %w", err)
+	}
+	var out spec.Spec
+	if err = yaml.Unmarshal(data, &out); err != nil {
+		return nil, fmt.Errorf("failed to clone spec: %w", err)
+	}
+	return &out, nil
+}
+
+func marshalSpecYAML(specData *spec.Spec) ([]byte, error) {
+	data, err := yaml.Marshal(specData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal spec to YAML: %w", err)
+	}
+	return append([]byte(spec.SchemaModeline(spec.ManifestSchemaURL())), data...), nil
+}
+
+func writeSpecFile(specData *spec.Spec, path string) error {
+	if path == "" {
+		path = spec.DefaultSpecPath
+	}
+	data, err := marshalSpecYAML(specData)
+	if err != nil {
+		return err
+	}
+	dir := filepath.Dir(path)
+	if dir != "." && dir != "" {
+		if err = os.MkdirAll(dir, 0o750); err != nil {
+			return fmt.Errorf("failed to create directory %s: %w", dir, err)
+		}
+	}
+	if err = renameio.WriteFile(path, data, 0o600); err != nil {
+		return fmt.Errorf("failed to write spec to %s: %w", path, err)
+	}
+	return nil
+}
+
+// buildValidatedSpec assembles a sparse [spec.Spec] from config, then fills
+// and validates a clone. Preview and disk get the sparse value.
 func buildValidatedSpec(config *ProjectConfig) (*spec.Spec, error) {
-	// Environments are deliberately absent: the platform file registers them.
-	specData := spec.Spec{
-		APIVersion: spec.CurrentManifestVersion,
-		Project:    config.Name,
-		Components: config.Components,
+	sparse := sparseSpec(config)
+	clone, err := cloneSpec(&sparse)
+	if err != nil {
+		return nil, err
+	}
+	if err = spec.FillSpecWithDefaults(clone, clone.APIVersion); err != nil {
+		return nil, fmt.Errorf("failed to apply defaults to spec: %w", err)
 	}
 
-	specBytes, err := yaml.Marshal(&specData)
+	specBytes, err := yaml.Marshal(clone)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert spec to YAML: %w", err)
 	}
-
 	var specObj map[string]any
 	if err = yaml.Unmarshal(specBytes, &specObj); err != nil {
 		return nil, fmt.Errorf("failed to parse spec YAML: %w", err)
 	}
-
-	// Helm-style dotted paths, e.g. "components.web.image=nginx:1.25",
-	// merged in before validation below so a wrong path fails with the
-	// same schema error deployah validate would give. The expose shorthand
-	// is expanded around each set: strvals cannot descend into a bool.
-	expandExposeShorthand(specObj)
-	for _, kv := range config.Sets {
-		if err = strvals.ParseIntoString(kv, specObj); err != nil {
-			return nil, fmt.Errorf("--set %q: %w", kv, err)
-		}
-		if err = spec.CoerceSetValue(kv, specObj, specData.APIVersion); err != nil {
-			return nil, fmt.Errorf("--set %q: %w", kv, err)
-		}
-		expandExposeShorthand(specObj)
-	}
-
-	if err = spec.ValidateSpec(specObj, specData.APIVersion); err != nil {
+	if err = spec.ValidateSpec(specObj, clone.APIVersion); err != nil {
 		return nil, fmt.Errorf("spec validation failed: %w", err)
 	}
-
-	mergedBytes, err := yaml.Marshal(specObj)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert merged spec to YAML: %w", err)
-	}
-	if err = yaml.Unmarshal(mergedBytes, &specData); err != nil {
-		return nil, fmt.Errorf("failed to parse merged spec YAML: %w", err)
-	}
-
-	// Schema validation only checks shape; run the cross-field checks (e.g.
-	// health checks requiring a port) so init catches the same mistakes
-	// deployah validate would, instead of writing a file that fails later
-	// at apply time.
-	if err = spec.ValidateSpecComponents(&specData); err != nil {
+	if err = spec.ValidateSpecComponents(clone); err != nil {
 		return nil, fmt.Errorf("component validation failed: %w", err)
 	}
-	if err = spec.ValidateSpecTasks(&specData); err != nil {
+	if err = spec.ValidateSpecTasks(clone); err != nil {
 		return nil, fmt.Errorf("task validation failed: %w", err)
 	}
-
-	if err = spec.FillSpecWithDefaults(&specData, specData.APIVersion); err != nil {
-		return nil, fmt.Errorf("failed to apply defaults to spec: %w", err)
-	}
-
-	return &specData, nil
+	return &sparse, nil
 }

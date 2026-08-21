@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -219,7 +220,8 @@ func IsSupportedPlatformVersion(apiVersion string) bool {
 // the given environment names. "local" gets a full entry (kind-deployah
 // context, nip.io domain, self-signed TLS); every other name gets an empty
 // entry with no context, meaning deploys to it follow the kubeconfig
-// current-context until one is set.
+// current-context until one is set. New files include a `# $schema` modeline.
+// An existing file is left untouched so hand-written comments survive.
 func ScaffoldPlatformFile(path, ingressIP string, envNames []string) (created bool, err error) {
 	if path == "" {
 		path = DefaultPlatformPath
@@ -228,6 +230,8 @@ func ScaffoldPlatformFile(path, ingressIP string, envNames []string) (created bo
 	// Never overwrite an existing file; the caller prints a hint instead.
 	if _, statErr := os.Stat(path); statErr == nil {
 		return false, nil
+	} else if !os.IsNotExist(statErr) {
+		return false, fmt.Errorf("stat platform file %s: %w", path, statErr)
 	}
 
 	// The platform schema requires at least one environment entry
@@ -236,6 +240,71 @@ func ScaffoldPlatformFile(path, ingressIP string, envNames []string) (created bo
 		return false, nil
 	}
 
+	if writeErr := writePlatformFile(path, newPlatformEnvironments(ingressIP, envNames)); writeErr != nil {
+		return false, writeErr
+	}
+	return true, nil
+}
+
+// EnsurePlatformEnvironments creates path or adds missing environment keys.
+//
+// A new file gets a `# $schema` modeline, a full [LocalPlatformEnvironment]
+// for "local", and empty entries for every other name. An existing file is
+// loaded, missing keys are inserted (local as Kind, others empty), and the
+// file is rewritten. Existing keys are never overwritten, including an empty
+// `local: {}`. Merge re-marshals YAML and drops hand-written comments; that
+// is acceptable for init. Cluster up still prints a snippet instead of
+// merging, so comments in an existing file stay intact there.
+//
+// created is true when the file did not exist and was written. added is the
+// names inserted into an existing file, in envNames order. Both are empty
+// when every requested name was already present.
+func EnsurePlatformEnvironments(path, ingressIP string, envNames []string) (created bool, added []string, err error) {
+	if path == "" {
+		path = DefaultPlatformPath
+	}
+	if len(envNames) == 0 {
+		return false, nil, nil
+	}
+
+	if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
+		if writeErr := writePlatformFile(path, newPlatformEnvironments(ingressIP, envNames)); writeErr != nil {
+			return false, nil, writeErr
+		}
+		return true, nil, nil
+	} else if statErr != nil {
+		return false, nil, fmt.Errorf("stat platform file %s: %w", path, statErr)
+	}
+
+	platform, loadErr := LoadPlatform(path)
+	if loadErr != nil {
+		return false, nil, fmt.Errorf("load platform file %s: %w", path, loadErr)
+	}
+	if platform.Environments == nil {
+		platform.Environments = make(map[string]PlatformEnvironment)
+	}
+
+	for _, name := range envNames {
+		if _, ok := platform.Environments[name]; ok {
+			continue
+		}
+		added = append(added, name)
+		if name == "local" {
+			platform.Environments[name] = LocalPlatformEnvironment(ingressIP)
+			continue
+		}
+		platform.Environments[name] = PlatformEnvironment{}
+	}
+	if len(added) == 0 {
+		return false, nil, nil
+	}
+	if writeErr := writePlatformFile(path, platform); writeErr != nil {
+		return false, nil, writeErr
+	}
+	return false, added, nil
+}
+
+func newPlatformEnvironments(ingressIP string, envNames []string) *PlatformConfig {
 	envs := make(map[string]PlatformEnvironment, len(envNames))
 	for _, name := range envNames {
 		if name == "local" {
@@ -244,21 +313,29 @@ func ScaffoldPlatformFile(path, ingressIP string, envNames []string) (created bo
 		}
 		envs[name] = PlatformEnvironment{}
 	}
-
-	platform := PlatformConfig{
+	return &PlatformConfig{
 		APIVersion:   CurrentPlatformVersion,
 		Environments: envs,
 	}
+}
 
-	data, marshalErr := yaml.Marshal(&platform)
+func writePlatformFile(path string, platform *PlatformConfig) error {
+	data, marshalErr := yaml.Marshal(platform)
 	if marshalErr != nil {
-		return false, fmt.Errorf("failed to marshal platform config: %w", marshalErr)
+		return fmt.Errorf("failed to marshal platform config: %w", marshalErr)
 	}
+	data = append([]byte(SchemaModeline(PlatformSchemaURL())), data...)
 
-	if writeErr := renameio.WriteFile(path, data, 0o600); writeErr != nil {
-		return false, fmt.Errorf("failed to write platform file %s: %w", path, writeErr)
+	dir := filepath.Dir(path)
+	if dir != "." && dir != "" {
+		if mkdirErr := os.MkdirAll(dir, 0o750); mkdirErr != nil {
+			return fmt.Errorf("create directory %s: %w", dir, mkdirErr)
+		}
 	}
-	return true, nil
+	if writeErr := renameio.WriteFile(path, data, 0o600); writeErr != nil {
+		return fmt.Errorf("failed to write platform file %s: %w", path, writeErr)
+	}
+	return nil
 }
 
 // MissingPlatformEnvironments returns the subset of envNames that have no

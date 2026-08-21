@@ -73,7 +73,7 @@ type Task struct {
 	// when set.
 	Profiles []string `json:"profiles,omitempty" yaml:"profiles,omitempty"`
 	// Resources sets explicit CPU, memory, and storage requests.
-	Resources Resources `json:"resources" yaml:"resources,omitempty"`
+	Resources Resources `json:"resources,omitzero" yaml:"resources,omitempty"`
 	// ResourcePreset selects a named resource profile when Resources is
 	// empty.
 	ResourcePreset ResourcePreset `json:"resourcePreset,omitempty" yaml:"resourcePreset,omitempty"`
