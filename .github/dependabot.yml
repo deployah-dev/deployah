@@ -12,6 +12,9 @@ updates:
       codeql:
         patterns:
           - "github/codeql-action*"
+      osv-scanner-action:
+        patterns:
+          - "google/osv-scanner-action*"
 
   - package-ecosystem: gomod
     directory: /
