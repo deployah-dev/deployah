@@ -11,16 +11,13 @@
 </p>
 <!-- markdownlint-enable MD033 -->
 
-**No chart to maintain. Zero cluster-side setup. One binary.**
+Deployah is a CLI that deploys apps to Kubernetes. You write a short **spec**.
+Deployah turns it into a running Helm **release**. That flow is
+**Spec-to-Release**: like Source-to-Image (S2I), but for the deploy step. S2I
+builds your image. Deployah runs your release.
 
-Deployah is a CLI that deploys apps to Kubernetes. It sits in the gap between
-tools that still ask you to write Helm and tools that need a heavy in-cluster
-platform. It uses Helm under the hood, embeds the Helm and Kubernetes clients
-in one binary, and installs nothing in your cluster.
-
-You write a short **spec**. Deployah turns it into a running **release** on
-Kubernetes. We call this **Spec-to-Release**. It is like Source-to-Image (S2I),
-but for the deploy step: S2I builds your image, and Deployah runs your release.
+The binary embeds the Helm and Kubernetes clients. It installs nothing in your
+cluster. You do not maintain a chart.
 
 ## Who this is for
 
@@ -51,9 +48,8 @@ cluster itself.
   third-party chart)
 - You need an operator-managed database or other specialized controllers
 
-This is **not** "Kubernetes for people who do not know Kubernetes." It is
-Spec-to-Release: a short app spec plus a platform map, instead of each team
-owning a chart.
+You operate Kubernetes yourself. Spec-to-Release replaces a per-app chart with
+a short app spec and a platform map.
 
 For how Deployah compares to DevSpace, Werf, Score, Epinio, and Kubero, see
 [docs/comparison.md](docs/comparison.md).
@@ -86,8 +82,6 @@ For how Deployah compares to DevSpace, Werf, Score, Epinio, and Kubero, see
 
 ## Current limitations
 
-Know these before you invest time:
-
 - **`env` is not applied to Deployments yet.** The `env` field on a component
   passes schema validation but does not reach the running container. Task
   `env` is inlined onto Jobs. See
@@ -115,7 +109,7 @@ Know these before you invest time:
   - [Guides](#guides)
   - [Commands](#commands)
   - [Schema reference](#schema-reference)
-- **Take part**
+- **Contribute**
   - [Community](#community)
   - [Development](#development)
   - [License](#license)
@@ -150,8 +144,7 @@ go install deployah.dev/deployah@latest
 
 Deployah is a single binary. You do **not** need the `helm`, `kubectl`, or `kind`
 command-line tools. Deployah includes Helm, the Kubernetes client, and Kind as
-libraries, so it talks to your cluster by itself. That removes a whole class of
-"works on my machine" problems caused by missing or mismatched CLI tools.
+libraries, so it talks to your cluster by itself.
 
 - **Deploy to a cluster you already have:** you only need access to it (a
   kubeconfig). No container runtime is required.
@@ -161,9 +154,8 @@ libraries, so it talks to your cluster by itself. That removes a whole class of
 
 ## Quick start
 
-This walks you through one full deploy on your own machine. It takes about five
-minutes. For the local cluster you need Docker or Podman running (see
-[Requirements](#requirements)).
+A full local deploy takes about five minutes. For the local cluster you need
+Docker or Podman running (see [Requirements](#requirements)).
 
 You do not need an existing Kubernetes cluster. Deployah can make a local one
 for you.
@@ -276,12 +268,12 @@ flowchart LR
 ```
 
 1. **Read the spec.** Deployah reads your `deployah.yaml` and checks it against a
-   JSON Schema, so mistakes are caught early with clear messages.
+   JSON Schema.
 2. **Resolve config.** Deployah picks the environment you asked for, substitutes
    your variables, merges the platform file and any profiles, and fills in
    defaults.
 3. **Deploy.** Deployah builds Helm values from your spec and installs a Helm
-   release on your cluster. You never write a Helm chart yourself.
+   release on your cluster. You do not write a Helm chart.
 
 The spec is a smaller surface than the Kubernetes API on purpose, so step 2 adds
 fields you did not write. You can read the result before anything is applied:
@@ -324,8 +316,6 @@ outside that set goes in as plain Kubernetes YAML under `.deployah/`; see
 
 ## Concepts
 
-A few words you will see often.
-
 - **Project.** One app, with a name. The name prefixes the Kubernetes resources
   Deployah creates. It is the `project` field in your spec.
 - **Component.** One deployable part of your project, such as a web service or a
@@ -335,10 +325,10 @@ A few words you will see often.
   - `worker`: a long-running background task, not exposed.
 - **Task.** Run-to-completion work (`preDeploy`, `postDeploy`, or `manual`).
   See [Tasks](docs/tasks.md).
-- **Kind.** The component's `kind` field: `stateless` (the default, easy to
-  scale) or `stateful` (StatefulSet with stable identity; optional per-pod
-  volumes). This field has nothing to do with Kind, the tool that runs the
-  optional local cluster. See
+- **Kind.** The component's `kind` field: `stateless` (the default) or
+  `stateful` (StatefulSet with stable identity; optional per-pod volumes). This
+  field has nothing to do with Kind, the tool that runs the optional local
+  cluster. See
   [Stateful workloads](docs/workloads.md#stateful-workloads) and
   [Storage classes](docs/platform.md#storage-classes).
 - **Workload matrix.** `role` and `kind` combine independently. Run-to-completion
@@ -371,9 +361,9 @@ A few words you will see often.
   | `environments` at the top of `deployah.yaml` | environment **overrides** | Optional per-environment substitution variables and env file |
   | `environments` inside a component | environment **filter** | Restricts that component to the listed environments |
 
-- **Resource preset.** A quick way to set CPU and memory without knowing
-  Kubernetes units. Use `resourcePreset: small` instead of writing exact values.
-  This is not the same as a [profile](docs/platform.md#profiles).
+- **Resource preset.** Set CPU and memory without Kubernetes units. Use
+  `resourcePreset: small` instead of writing exact values. This is not the same
+  as a [profile](docs/platform.md#profiles).
 - **Profile.** A named deployment policy owned by the platform team (node
   placement, security context, domain and resource ceilings, monitor labels,
   and more). Components select one or more with `profiles: [...]`. See
@@ -388,7 +378,7 @@ A few words you will see often.
 
 ## Guides
 
-The README covers the shape of the tool. The details live in `docs/`:
+Field-level detail lives in `docs/`:
 
 | Guide | What is in it |
 |---|---|
@@ -400,7 +390,7 @@ The README covers the shape of the tool. The details live in `docs/`:
 | [Networking](docs/networking.md) | Reaching your app, and how the local cluster resolves hostnames. |
 | [Custom manifests and CRDs](docs/custom-manifests-and-crds.md) | Ship plain Kubernetes YAML alongside the release. |
 | [Troubleshooting](docs/troubleshooting.md) | What to do when a deploy or a hostname does not work. |
-| [Deployah vs. similar tools](docs/comparison.md) | Honest comparison with DevSpace, Werf, Score, Epinio, and Kubero. |
+| [Deployah vs. similar tools](docs/comparison.md) | Comparison with DevSpace, Werf, Score, Epinio, and Kubero. |
 | [CLI reference](docs/cli/deployah.md) | Generated documentation for every command and flag. |
 
 ## Commands
@@ -486,7 +476,7 @@ to contribute code and docs. Report security issues privately using
 
 The Nix flake is the main dev and CI interface. With
 [direnv](https://direnv.net/) (the `.envrc` uses `use flake`), the tools load
-automatically when you enter the repo.
+when you enter the repo.
 
 ```sh
 nix develop
