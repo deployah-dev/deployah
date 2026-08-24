@@ -26,10 +26,10 @@ require (
 	golang.org/x/term v0.45.0
 	gopherly.dev/currus v0.8.1
 	helm.sh/helm/v4 v4.2.3
-	k8s.io/api v0.36.3
+	k8s.io/api v0.36.4
 	k8s.io/apiextensions-apiserver v0.36.3
-	k8s.io/apimachinery v0.36.3
-	k8s.io/client-go v0.36.3
+	k8s.io/apimachinery v0.36.4
+	k8s.io/client-go v0.36.4
 	mvdan.cc/sh/v3 v3.13.1
 	nabat.dev v0.8.0
 	sigs.k8s.io/e2e-framework v0.7.0
@@ -229,7 +229,7 @@ require (
 	k8s.io/klog/v2 v2.140.0 // indirect
 	k8s.io/kube-openapi v0.0.0-20260721132016-d427ff9ee9ad // indirect
 	k8s.io/kubectl v0.36.3 // indirect
-	k8s.io/streaming v0.36.3 // indirect
+	k8s.io/streaming v0.36.4 // indirect
 	k8s.io/utils v0.0.0-20260707023825-cf1189d6abe3 // indirect
 	oras.land/oras-go/v2 v2.6.2 // indirect
 	sigs.k8s.io/controller-runtime v0.24.1 // indirect
