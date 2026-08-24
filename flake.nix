@@ -21,29 +21,14 @@
       system:
       let
         pkgs = import nixpkgs { inherit system; };
-        # nixpkgs' default `go` may lag; pin the toolchain Nabat requires.
+        # nixpkgs' default `go` is still 1.26; pin 1.27 for the module.
         go = pkgs.go_1_27;
 
         buildGoModule' = pkgs.buildGoModule.override { inherit go; };
 
         deployahVendorHash = "sha256-CT9xvdQvEU6shdz12Yu30R/uvbV36oA6Nok0LZ9f2mE=";
 
-        golangci-lint = import ./nix/golangci-lint.nix {
-          buildGoModule = buildGoModule';
-          inherit (pkgs)
-            fetchFromGitHub
-            installShellFiles
-            lib
-            stdenv
-            buildPackages
-            ;
-        };
-
-        # nixpkgs gopls is built with default `go` (still 1.26). gopls must be
-        # compiled with at least the toolchain it analyzes.
-        gopls = pkgs.gopls.override {
-          buildGoLatestModule = buildGoModule';
-        };
+        inherit (pkgs) golangci-lint gopls;
 
         deployah = import ./nix/deployah.nix {
           buildGoModule = buildGoModule';

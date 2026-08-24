@@ -314,8 +314,8 @@ func isBrokenPipe(err error) bool {
 	if errors.Is(err, syscall.EPIPE) {
 		return true
 	}
-	var errno syscall.Errno
-	return errors.As(err, &errno) && errno == syscall.EPIPE
+	errno, ok := errors.AsType[syscall.Errno](err)
+	return ok && errno == syscall.EPIPE
 }
 
 // execTest executes a test command to check if something exists

@@ -33,14 +33,11 @@ in
 git-hooks.lib.${system}.run {
   inherit src;
   hooks = {
-    # Use the pinned Go toolchain's gofmt; git-hooks' default wrapper
-    # still ships Go 1.26 and rejects go.mod 1.27.
+    # git-hooks' default gofmt package is pkgs.go (still 1.26).
     gofmt = {
       enable = true;
-      entry = "${go}/bin/gofmt -l -w";
-      files = "\\.go$";
+      package = go;
     };
-    # Flake-pinned golangci-lint (v2.13.1; nixpkgs-unstable still ships 2.12.2).
     golangci-lint = {
       enable = true;
       package = golangci-lint;

@@ -277,9 +277,7 @@ linters:
 
     staticcheck:
       # Enable all checks (SA*, S*, ST*, QF*).
-      # SA4023: false positives on nabat Context.Form (can return nil) with the
-      # Go 1.27 staticcheck snapshot; re-enable when upstream settles.
-      checks: ["all", "-SA4023"]
+      checks: ["all"]
 
     nolintlint:
       # Fail unused //nolint and require naming the suppressed linter (no bare //nolint).
