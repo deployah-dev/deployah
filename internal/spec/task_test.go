@@ -493,6 +493,7 @@ func TestTask_HelmHookEvents(t *testing.T) {
 		{name: "preDeploy", on: TaskOnPreDeploy, want: "pre-install,pre-upgrade"},
 		{name: "postDeploy", on: TaskOnPostDeploy, want: "post-install,post-upgrade"},
 		{name: "manual", on: TaskOnManual, want: ""},
+		{name: "schedule", on: TaskOnSchedule, want: ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -542,11 +543,114 @@ func TestValidateSpecTasks(t *testing.T) {
 			wantErr: "on is required",
 		},
 		{
-			name: "on schedule points at issue 35",
+			name: "valid scheduled task",
 			spec: shopSpec(map[string]Task{
-				"nightly": {From: "api", On: TaskOn("schedule"), Command: []string{"true"}},
+				"cleanup": {
+					From:     "api",
+					On:       TaskOnSchedule,
+					Schedule: "0 3 * * *",
+					Command:  []string{"cleanup"},
+				},
 			}),
-			wantErr: "issues/35",
+		},
+		{
+			name: "valid scheduled task with all fields",
+			spec: shopSpec(map[string]Task{
+				"cleanup": {
+					From:              "api",
+					On:                TaskOnSchedule,
+					Schedule:          "0 3 * * *",
+					TimeZone:          "Etc/UTC",
+					ConcurrencyPolicy: "Allow",
+					Suspend:           new(true),
+					Timeout:           "30m",
+					Command:           []string{"cleanup"},
+				},
+			}),
+		},
+		{
+			name: "scheduled missing schedule",
+			spec: shopSpec(map[string]Task{
+				"cleanup": {From: "api", On: TaskOnSchedule, Command: []string{"true"}},
+			}),
+			wantErr: "schedule is required",
+		},
+		{
+			name: "scheduled invalid cron",
+			spec: shopSpec(map[string]Task{
+				"cleanup": {From: "api", On: TaskOnSchedule, Schedule: "0 0", Command: []string{"true"}},
+			}),
+			wantErr: "expected exactly 5 fields",
+		},
+		{
+			name: "scheduled CRON_TZ rejected",
+			spec: shopSpec(map[string]Task{
+				"cleanup": {From: "api", On: TaskOnSchedule, Schedule: "CRON_TZ=UTC 0 3 * * *", Command: []string{"true"}},
+			}),
+			wantErr: "timeZone field",
+		},
+		{
+			name: "scheduled TZ equals zero does not panic",
+			spec: shopSpec(map[string]Task{
+				"cleanup": {From: "api", On: TaskOnSchedule, Schedule: "TZ=0", Command: []string{"true"}},
+			}),
+			wantErr: "timeZone field",
+		},
+		{
+			name: "after on scheduled is rejected",
+			spec: shopSpec(map[string]Task{
+				"cleanup": {From: "api", On: TaskOnSchedule, Schedule: "0 3 * * *", After: []string{"migrate"}, Command: []string{"true"}},
+			}),
+			wantErr: "after is not allowed on scheduled tasks",
+		},
+		{
+			name: "invalid concurrencyPolicy",
+			spec: shopSpec(map[string]Task{
+				"cleanup": {From: "api", On: TaskOnSchedule, Schedule: "0 3 * * *", ConcurrencyPolicy: "forbid", Command: []string{"true"}},
+			}),
+			wantErr: "concurrencyPolicy",
+		},
+		{
+			name: "invalid timeZone",
+			spec: shopSpec(map[string]Task{
+				"cleanup": {From: "api", On: TaskOnSchedule, Schedule: "0 3 * * *", TimeZone: "Not/AZone", Command: []string{"true"}},
+			}),
+			wantErr: "timeZone",
+		},
+		{
+			name: "Local timeZone rejected",
+			spec: shopSpec(map[string]Task{
+				"cleanup": {From: "api", On: TaskOnSchedule, Schedule: "0 3 * * *", TimeZone: "Local", Command: []string{"true"}},
+			}),
+			wantErr: "timeZone",
+		},
+		{
+			name: "schedule on hook is rejected",
+			spec: shopSpec(map[string]Task{
+				"migrate": {From: "api", On: TaskOnPreDeploy, Schedule: "0 3 * * *", Command: []string{"true"}},
+			}),
+			wantErr: "schedule is only valid when on is schedule",
+		},
+		{
+			name: "timeZone on hook is rejected",
+			spec: shopSpec(map[string]Task{
+				"migrate": {From: "api", On: TaskOnPreDeploy, TimeZone: "Etc/UTC", Command: []string{"true"}},
+			}),
+			wantErr: "timeZone is only valid when on is schedule",
+		},
+		{
+			name: "concurrencyPolicy on hook is rejected",
+			spec: shopSpec(map[string]Task{
+				"migrate": {From: "api", On: TaskOnPreDeploy, ConcurrencyPolicy: "Forbid", Command: []string{"true"}},
+			}),
+			wantErr: "concurrencyPolicy is only valid when on is schedule",
+		},
+		{
+			name: "suspend on hook is rejected",
+			spec: shopSpec(map[string]Task{
+				"migrate": {From: "api", On: TaskOnPreDeploy, Suspend: new(true), Command: []string{"true"}},
+			}),
+			wantErr: "suspend is only valid when on is schedule",
 		},
 		{
 			name: "on invalid value",
@@ -761,6 +865,19 @@ func TestValidateSpecTasks(t *testing.T) {
 			wantErr: "is invalid",
 		},
 		{
+			name: "task name at max length",
+			spec: shopSpec(map[string]Task{
+				"abcdefghijklmnopqrstuvwxyz1234": {From: "api", On: TaskOnManual, Command: []string{"true"}},
+			}),
+		},
+		{
+			name: "task name too long",
+			spec: shopSpec(map[string]Task{
+				"task-name-that-is-too-long-here": {From: "api", On: TaskOnManual, Command: []string{"true"}},
+			}),
+			wantErr: "at most 30 characters",
+		},
+		{
 			name: "after contains an empty name",
 			spec: shopSpec(map[string]Task{
 				"seed": {From: "api", On: TaskOnPreDeploy, After: []string{"  "}, Command: []string{"true"}},
@@ -853,6 +970,52 @@ func TestValidateSpecTasks_Nil(t *testing.T) {
 	assert.Contains(t, err.Error(), "spec cannot be nil")
 }
 
+func Test_validateCronSchedule(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		schedule string
+		wantErr  string
+	}{
+		{name: "five field every minute", schedule: "* * * * *"},
+		{name: "five field daily", schedule: "0 3 * * *"},
+		{name: "vixie step minutes", schedule: "*/5 * * * *"},
+		{name: "vixie range step hours", schedule: "0 0-23/2 * * *"},
+		{name: "macro hourly", schedule: "@hourly"},
+		{name: "macro daily", schedule: "@daily"},
+		{name: "macro midnight", schedule: "@midnight"},
+		{name: "macro weekly", schedule: "@weekly"},
+		{name: "macro monthly", schedule: "@monthly"},
+		{name: "macro yearly", schedule: "@yearly"},
+		{name: "macro annually", schedule: "@annually"},
+		{name: "every duration", schedule: "@every 1h"},
+		{name: "question mark day of month", schedule: "0 0 ? * *"},
+		{name: "question mark day of week", schedule: "0 0 * * ?"},
+		{name: "named weekday", schedule: "0 0 * * sun"},
+		{name: "named weekday saturday", schedule: "0 0 * * sat"},
+		{name: "empty", schedule: "", wantErr: "schedule is required"},
+		{name: "CRON_TZ prefix", schedule: "CRON_TZ=UTC 0 3 * * *", wantErr: "timeZone field"},
+		{name: "TZ prefix", schedule: "TZ=UTC 0 3 * * *", wantErr: "timeZone field"},
+		{name: "TZ equals zero does not panic", schedule: "TZ=0", wantErr: "timeZone field"},
+		{name: "too few fields", schedule: "0 0", wantErr: "expected exactly 5 fields"},
+		{name: "not a cron expression", schedule: "every night", wantErr: "expected exactly 5 fields"},
+		{name: "reboot descriptor", schedule: "@reboot", wantErr: "unrecognized descriptor"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := validateCronSchedule(tt.schedule)
+			if tt.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
+}
+
 func TestCheckHookTaskTimeouts(t *testing.T) {
 	t.Parallel()
 
@@ -925,6 +1088,17 @@ func TestCheckTaskTimeout(t *testing.T) {
 			wantErr: DefaultHookTaskTimeout,
 		},
 		{
+			name:  "scheduled empty timeout skipped",
+			task:  Task{On: TaskOnSchedule},
+			limit: 10 * time.Minute,
+		},
+		{
+			name:    "scheduled explicit timeout over session",
+			task:    Task{On: TaskOnSchedule, Timeout: "1h"},
+			limit:   10 * time.Minute,
+			wantErr: "use --detach or raise --timeout",
+		},
+		{
 			name:    "non-positive limit",
 			task:    Task{On: TaskOnManual, Timeout: "1m"},
 			limit:   0,
@@ -982,4 +1156,23 @@ func TestValidateAPIVersion_SupportedVersions(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported spec schema version")
 	assert.Contains(t, err.Error(), "v1-alpha.4")
+}
+
+func TestFillSpecWithDefaults_ScheduledTask(t *testing.T) {
+	t.Parallel()
+
+	m := shopSpec(map[string]Task{
+		"cleanup": {
+			From:     "api",
+			On:       TaskOnSchedule,
+			Schedule: "0 3 * * *",
+			Command:  []string{"cleanup"},
+		},
+	})
+	require.NoError(t, FillSpecWithDefaults(m, CurrentManifestVersion))
+	task := m.Tasks["cleanup"]
+	assert.Equal(t, DefaultConcurrencyPolicy, task.ConcurrencyPolicy)
+	assert.Equal(t, DefaultScheduleTimeZone, task.TimeZone)
+	assert.Empty(t, task.Timeout)
+	assert.Equal(t, DefaultBackoffLimit, *task.BackoffLimit)
 }

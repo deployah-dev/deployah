@@ -1,0 +1,24 @@
+# $schema: ../../internal/spec/schema/v1-alpha.5/manifest.json
+apiVersion: v1-alpha.5
+project: task-schedule-full
+components:
+  api:
+    image: nginx:latest
+    port: 8080
+    environments: [dev]
+    resourcePreset: small
+    env:
+      DATABASE_URL: postgres://db
+tasks:
+  cleanup:
+    from: api
+    "on": schedule
+    schedule: "0 3 * * *"
+    timeZone: Etc/UTC
+    concurrencyPolicy: Allow
+    timeout: 30m
+    suspend: true
+    fanout: 2
+    command: ["cleanup"]
+environments:
+  dev: {}

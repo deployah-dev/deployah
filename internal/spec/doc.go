@@ -28,7 +28,7 @@
 //   - [ValidateSpec]: validate spec data against a schema version
 //   - [ValidateEnvironments]: validate environment definitions
 //   - [ValidateSpecComponents]: check component resources and autoscaling
-//   - [ValidateSpecTasks]: check task names, from, on, after, and fanout
+//   - [ValidateSpecTasks]: check task names, from, on, after, schedule, and fanout
 //
 // # Tasks
 //

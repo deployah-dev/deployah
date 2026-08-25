@@ -46,12 +46,12 @@ tasks:
     command: ["curl", "-f", "http://api/health"]
 ```
 
-`on` is one value: `preDeploy`, `postDeploy`, or `manual`. To run the same
+`on` is one value: `preDeploy`, `postDeploy`, `manual`, or `schedule`. To run the same
 command before and after deploy, define two tasks that share `from`.
 
 `after` orders tasks **inside the same `on`**. The named task must also run in
 every environment the dependent runs in. Cross-phase `after` is an error.
-`after` is not allowed on `manual` tasks.
+`after` is not allowed on `manual` or `schedule` tasks.
 
 ## Run a task yourself
 
@@ -75,11 +75,61 @@ tasks:
 Wait is the default. `--detach` returns after the Job is created. Concurrent
 runs are allowed; each run gets a unique Job name.
 
+## Scheduled tasks
+
+Set `"on": schedule` so Deployah creates a Kubernetes CronJob in the release.
+`deployah deploy` applies the CronJob and does not start a Job on that deploy.
+Quote `"on"` in YAML 1.1.
+
+```yaml
+tasks:
+  cleanup:
+    from: api
+    "on": schedule
+    schedule: "0 3 * * *"
+    command: ["cleanup"]
+```
+
+Fields:
+
+- `schedule`: a 5-field cron expression, a Vixie step such as `*/5`, a
+  named weekday (`sun`-`sat`), `?` (same as `*`), or a descriptor
+  (`@hourly`, `@daily`, `@midnight`, `@weekly`, `@monthly`, `@yearly`,
+  `@annually`, `@every 1h`). Do not put `TZ=` or `CRON_TZ=` in the string;
+  use `timeZone`.
+- `timeZone`: IANA name. Defaults to `Etc/UTC`. Values other than `Etc/UTC`
+  need Kubernetes 1.27 or later; older API servers drop the field with no
+  error.
+- `concurrencyPolicy`: `Allow`, `Forbid`, or `Replace`. Defaults to
+  `Forbid`.
+- `timeout`: how long one run may take. When omitted, the CronJob uses a 1h
+  cluster deadline. `deployah run` does not apply that default; the CLI Job
+  has no cluster deadline unless you set `timeout`.
+- `suspend`: when `true`, the CronJob creates no Jobs until you set it back
+  to `false`.
+
+`deployah run cleanup dev` still creates a one-shot Job. That Job and the
+CronJob can overlap. Fanout is an Indexed Job inside the CronJob template.
+
+`Forbid` with no starting deadline defers the next tick instead of dropping
+it: one catch-up run starts when the active run finishes. If a task overruns
+its interval, lengthen the interval or split the work.
+
+Setting `suspend` back to `false` schedules the missed run at once, not on
+the next tick.
+
+`@every` is a delay from CronJob creation time, so a redeploy shifts the
+schedule. Use a cron expression for a fixed wall-clock time.
+
+`ttlSecondsAfterFinished` deletes finished Jobs before
+`successfulJobsHistoryLimit` can keep them, so `kubectl get jobs` can be
+empty. Leave TTL unset if you want the history limits to apply.
+
 ## Fanout
 
 Fanout runs several indexed copies of a task. Use a number as a shortcut
 (count, one at a time) or an object. It works on `preDeploy`, `postDeploy`,
-and `manual`.
+`manual`, and `schedule`.
 
 ```yaml
 tasks:

@@ -82,6 +82,12 @@ const (
 	// MaxComponentNameLength is the maximum allowed length for component names
 	MaxComponentNameLength = 63
 
+	// MaxTaskNameLength is the maximum allowed length for task names.
+	// The CronJob helper keeps the task suffix intact inside the 52-character
+	// Kubernetes CronJob name limit, so the schema and Go validation cap
+	// names at 30.
+	MaxTaskNameLength = 30
+
 	// MaxProjectNameLength is the maximum allowed length for project names
 	MaxProjectNameLength = 63
 
@@ -199,6 +205,27 @@ const (
 	// DefaultHookTaskTimeout is the default timeout for preDeploy and
 	// postDeploy tasks when timeout is omitted.
 	DefaultHookTaskTimeout = "5m"
+
+	// DefaultScheduledTaskTimeout is the CronJob activeDeadlineSeconds
+	// used when a scheduled task omits timeout. It is not applied to
+	// [Task.Timeout] or to deployah run Jobs.
+	DefaultScheduledTaskTimeout = "1h"
+
+	// DefaultConcurrencyPolicy is the CronJob concurrencyPolicy when
+	// omitted on a scheduled task.
+	DefaultConcurrencyPolicy = "Forbid"
+
+	// DefaultScheduleTimeZone is the CronJob timeZone when omitted on a
+	// scheduled task.
+	DefaultScheduleTimeZone = "Etc/UTC"
+
+	// DefaultSuccessfulJobsHistory is successfulJobsHistoryLimit on a
+	// scheduled-task CronJob.
+	DefaultSuccessfulJobsHistory = 3
+
+	// DefaultFailedJobsHistory is failedJobsHistoryLimit on a
+	// scheduled-task CronJob.
+	DefaultFailedJobsHistory = 3
 
 	// DefaultDeployTimeout is the default CLI --timeout. Hook task
 	// timeouts must be strictly less than the session --timeout at

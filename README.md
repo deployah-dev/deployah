@@ -323,8 +323,8 @@ outside that set goes in as plain Kubernetes YAML under `.deployah/`; see
 - **Role.** What a component is for:
   - `service`: it serves traffic and can be exposed (the default).
   - `worker`: a long-running background task, not exposed.
-- **Task.** Run-to-completion work (`preDeploy`, `postDeploy`, or `manual`).
-  See [Tasks](docs/tasks.md).
+- **Task.** Run-to-completion work (`preDeploy`, `postDeploy`, `schedule`, or
+  `manual`). See [Tasks](docs/tasks.md).
 - **Kind.** The component's `kind` field: `stateless` (the default) or
   `stateful` (StatefulSet with stable identity; optional per-pod volumes). This
   field has nothing to do with Kind, the tool that runs the optional local
@@ -385,7 +385,7 @@ Field-level detail lives in `docs/`:
 | [Spec reference](docs/spec-reference.md) | Every `deployah.yaml` field, value rules, resource presets, and full examples. |
 | [Platform file](docs/platform.md) | Contexts, domains, TLS modes, storage classes, and profiles. |
 | [Workloads](docs/workloads.md) | Stateful components and volumes, workers, health checks, metrics. |
-| [Tasks](docs/tasks.md) | Migrations, smoke checks, `deployah run`, and fanout. |
+| [Tasks](docs/tasks.md) | Migrations, smoke checks, scheduled CronJobs, `deployah run`, and fanout. |
 | [Configuration](docs/configuration.md) | Environment selection, variables, `.env` files, precedence rules. |
 | [Networking](docs/networking.md) | Reaching your app, and how the local cluster resolves hostnames. |
 | [Custom manifests and CRDs](docs/custom-manifests-and-crds.md) | Ship plain Kubernetes YAML alongside the release. |

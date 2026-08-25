@@ -1,0 +1,17 @@
+# $schema: ../../internal/spec/schema/v1-alpha.5/manifest.json
+apiVersion: v1-alpha.5
+project: task-schedule-basic
+components:
+  api:
+    image: nginx:latest
+    port: 8080
+    environments: [dev]
+    resourcePreset: small
+tasks:
+  cleanup:
+    from: api
+    "on": schedule
+    schedule: "0 3 * * *"
+    command: ["cleanup"]
+environments:
+  dev: {}

@@ -1,0 +1,16 @@
+# $schema: ../../internal/spec/schema/v1-alpha.5/manifest.json
+apiVersion: v1-alpha.5
+project: error-task-schedule-crontz
+components:
+  api:
+    image: nginx:latest
+    port: 8080
+    environments: [dev]
+tasks:
+  cleanup:
+    from: api
+    "on": schedule
+    schedule: "CRON_TZ=UTC 0 3 * * *"
+    command: ["true"]
+environments:
+  dev: {}

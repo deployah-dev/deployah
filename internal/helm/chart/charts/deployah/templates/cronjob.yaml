@@ -1,47 +1,86 @@
 {{- define "deployah.cronjob" -}}
 {{- if .Values.cronjob.enabled -}}
+{{- if and .Values.cronjob.timeZone (ne .Values.cronjob.timeZone "Etc/UTC") }}
+{{- if not (semverCompare ">=1.27-0" .Capabilities.KubeVersion.Version) }}
+{{- fail (printf "task %q sets timeZone %q, which requires Kubernetes 1.27 or later (cluster reports %s): CronJob.spec.timeZone is silently dropped by older API servers" .Chart.Name .Values.cronjob.timeZone .Capabilities.KubeVersion.Version) }}
+{{- end }}
+{{- end }}
 ---
-apiVersion: {{ include "common.capabilities.cronjob.apiVersion" . }}
+apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: {{ include "common.names.fullname" . }}
+  name: {{ include "deployah.cronjob.name" . }}
   namespace: {{ include "common.names.namespace" . | quote }}
-  labels: {{- include "common.labels.standard" ( dict "customLabels" .Values.commonLabels "context" $ ) | nindent 4 }}
-  {{- if .Values.commonAnnotations }}
-  annotations: {{- include "common.tplvalues.render" ( dict "value" .Values.commonAnnotations "context" $ ) | nindent 4 }}
+  {{- $labels := include "common.tplvalues.merge" (dict "values" (list .Values.labels .Values.commonLabels) "context" .) | fromYaml }}
+  labels: {{- include "common.labels.standard" ( dict "customLabels" $labels "context" $ ) | nindent 4 }}
+  {{- $annotations := include "common.tplvalues.merge" (dict "values" (list .Values.annotations .Values.commonAnnotations) "context" .) | fromYaml }}
+  {{- if $annotations }}
+  annotations:
+    {{- include "common.tplvalues.render" ( dict "value" $annotations "context" $ ) | nindent 4 }}
   {{- end }}
 spec:
-  concurrencyPolicy: {{ .Values.cronjob.concurrencyPolicy | quote }}
   schedule: {{ .Values.cronjob.schedule | quote }}
+  timeZone: {{ .Values.cronjob.timeZone | quote }}
+  concurrencyPolicy: {{ .Values.cronjob.concurrencyPolicy | quote }}
+  suspend: {{ .Values.cronjob.suspend }}
   successfulJobsHistoryLimit: {{ .Values.cronjob.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.cronjob.failedJobsHistoryLimit }}
   jobTemplate:
     spec:
+      completionMode: Indexed
+      completions: {{ .Values.cronjob.completions }}
+      parallelism: {{ .Values.cronjob.parallelism }}
+      backoffLimit: {{ .Values.cronjob.backoffLimit }}
+      {{- with .Values.cronjob.activeDeadlineSeconds }}
+      activeDeadlineSeconds: {{ . }}
+      {{- end }}
+      {{- if hasKey .Values.cronjob "ttlSecondsAfterFinished" }}
+      ttlSecondsAfterFinished: {{ .Values.cronjob.ttlSecondsAfterFinished }}
+      {{- end }}
       template:
         metadata:
-          labels: {{- include "common.labels.standard" ( dict "customLabels" .Values.commonLabels "context" $ ) | nindent 12 }}
-          {{- if .Values.cronjob.podAnnotations }}
-          annotations: {{- include "common.tplvalues.render" ( dict "value" .Values.cronjob.podAnnotations "context" $) | nindent 12 }}
+          {{- $podLabels := include "common.tplvalues.merge" (dict "values" (list .Values.podLabels .Values.commonLabels) "context" .) | fromYaml }}
+          labels: {{- include "common.labels.standard" ( dict "customLabels" $podLabels "context" $ ) | nindent 12 }}
+          {{- if .Values.podAnnotations }}
+          annotations: {{- toYaml .Values.podAnnotations | nindent 12 }}
           {{- end }}
         spec:
-          {{- include "common.images.pullSecrets" (dict "images" (list .Values.image) "global" .Values.global) | indent 10 }}
-          {{- if and .Values.cronjob.nodeSelector .Values.nodeSelector }}
-          nodeSelector: {{- default (toYaml .Values.nodeSelector) (toYaml .Values.cronjob.nodeSelector) | nindent 12  }}
-          {{- end }}
-          {{- if and .Values.cronjob.tolerations .Values.tolerations }}
-          tolerations: {{- default (toYaml .Values.tolerations) (toYaml .Values.cronjob.tolerations) | nindent 12 }}
-          {{- end }}
           restartPolicy: OnFailure
+          automountServiceAccountToken: false
+          {{- include "common.images.renderPullSecrets" (dict "images" (list .Values.image) "context" $) | nindent 10 }}
+          {{- if .Values.nodeSelector }}
+          nodeSelector: {{- toYaml .Values.nodeSelector | nindent 12 }}
+          {{- end }}
+          {{- if .Values.tolerations }}
+          tolerations: {{- toYaml .Values.tolerations | nindent 12 }}
+          {{- end }}
           {{- if .Values.podSecurityContext.enabled }}
           securityContext: {{- omit .Values.podSecurityContext "enabled" | toYaml | nindent 12 }}
           {{- end }}
-          {{- if .Values.cronjob.initContainers }}
-          initContainers: {{- include "common.tplvalues.render" (dict "value" .Values.cronjob.initContainers "context" $) | nindent 12 }}
-          {{- end }}
-          {{- if .Values.cronjob.containers }}
-          containers: {{- include "common.tplvalues.render" (dict "value" .Values.cronjob.containers "context" $) | nindent 12 }}
-          {{- end }}
-          {{- if .Values.cronjob.volumes }}
-          volumes:  {{- include "common.tplvalues.render" (dict "value" .Values.cronjob.volumes "context" $) | nindent 12 }}
-          {{- end }}
+          containers:
+            - name: {{ .Chart.Name }}
+              {{- if .Values.containerSecurityContext.enabled }}
+              securityContext: {{- omit .Values.containerSecurityContext "enabled" | toYaml | nindent 16 }}
+              {{- end }}
+              image: {{ include "common.images.image" (dict "imageRoot" .Values.image "global" .Values.global) }}
+              imagePullPolicy: {{ default (eq .Values.image.tag "latest" | ternary "Always" "IfNotPresent") .Values.image.pullPolicy }}
+              {{- if .Values.command }}
+              command: {{- toYaml .Values.command | nindent 16 }}
+              {{- end }}
+              {{- if .Values.args }}
+              args: {{- toYaml .Values.args | nindent 16 }}
+              {{- end }}
+              {{- if .Values.envVars }}
+              env:
+                {{- $env := .Values.envVars }}
+                {{- range $key := keys $env | sortAlpha }}
+                {{- $val := index $env $key }}
+                - name: {{ $key | quote }}
+                  value: {{ $val | quote }}
+                {{- end }}
+              {{- end }}
+              {{- if .Values.resources }}
+              resources: {{- toYaml .Values.resources | nindent 16 }}
+              {{- end }}
 {{- end }}
 {{- end }}

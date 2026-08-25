@@ -9,7 +9,7 @@ components:
 tasks:
   nightly:
     from: api
-    "on": schedule
+    "on": whenever
     command: ["true"]
 environments:
   dev: {}

@@ -15,7 +15,11 @@
 // Command deployah is the Deployah CLI entry point.
 package main
 
-import "deployah.dev/deployah/internal/cmd"
+import (
+	"deployah.dev/deployah/internal/cmd"
+
+	_ "time/tzdata" // embedded IANA database; time prefers system data when present
+)
 
 //go:generate go run ./internal/tools/gendocs
 

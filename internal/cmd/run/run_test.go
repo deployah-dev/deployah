@@ -53,6 +53,12 @@ func testManifest() *spec.Spec {
 				Command:      []string{"backfill"},
 				Environments: []string{"prod"},
 			},
+			"cleanup": {
+				From:     "api",
+				On:       spec.TaskOnSchedule,
+				Schedule: "0 3 * * *",
+				Command:  []string{"cleanup"},
+			},
 		},
 	}
 }
@@ -69,6 +75,15 @@ func TestResolveRunTask(t *testing.T) {
 		assert.Equal(t, "ghcr.io/acme/shop:1.2.3", rt.Task.Image)
 		assert.Equal(t, "postgres://db", rt.Task.Env["DATABASE_URL"])
 		assert.Equal(t, []string{"migrate", "up"}, rt.Task.Command)
+	})
+
+	t.Run("scheduled task is runnable", func(t *testing.T) {
+		t.Parallel()
+		rt, err := resolveRunTask(m, nil, "dev", "cleanup")
+		require.NoError(t, err)
+		assert.Equal(t, spec.TaskOnSchedule, rt.Task.On)
+		assert.Equal(t, "0 3 * * *", rt.Task.Schedule)
+		assert.Empty(t, rt.Task.Timeout)
 	})
 
 	t.Run("unknown task", func(t *testing.T) {

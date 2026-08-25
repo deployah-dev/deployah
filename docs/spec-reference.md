@@ -122,15 +122,19 @@ single value, not a list. See [Tasks](tasks.md) for how-to examples.
 | `from` | none | Component to inherit env, environments, profiles, and resources from. Also copies envFile and configFile paths. |
 | `image` | from `from` | Replaces the parent image when set. `from` and/or `image` is required. |
 | `command` / `args` | none | `command` is required when using the parent image. |
-| `"on"` | none (required) | `preDeploy`, `postDeploy`, or `manual`. |
-| `after` | none | Task names in the **same** `on` that must finish first. The dependency must be active in every environment the dependent is. Not allowed on `manual`. |
+| `"on"` | none (required) | `preDeploy`, `postDeploy`, `manual`, or `schedule`. |
+| `after` | none | Task names in the **same** `on` that must finish first. The dependency must be active in every environment the dependent is. Not allowed on `manual` or `schedule`. |
+| `schedule` | none | Cron expression or descriptor (`@daily`, `@every 1h`). Required when `"on"` is `schedule`. Do not use `TZ=` or `CRON_TZ=`; use `timeZone`. |
+| `timeZone` | `Etc/UTC` | IANA time zone. Values other than `Etc/UTC` need Kubernetes 1.27 or later. |
+| `concurrencyPolicy` | `Forbid` | `Allow`, `Forbid`, or `Replace`. Only valid when `"on"` is `schedule`. |
+| `suspend` | `false` | Pause the CronJob. Only valid when `"on"` is `schedule`. |
 | `env` | inherited | Overlay on the parent map. Inlined onto the Job. |
 | `envFile` / `configFile` | inherited | Inherited as fields; not mounted in this release. |
 | `environments` | inherited | Replaces the parent filter when set. |
 | `profiles` | inherited | Replaces the parent list when set. Applied to the Job pod (node selector, tolerations, security context). |
 | `resourcePreset` / `resources` | inherited | Same rules as components. |
 | `fanout` | count 1, parallelism 1 | Integer (`fanout: 4`) or `{count, parallelism}`. Applies to every `on`. `parallelism` must be `<= count` and at most 100000 (Kubernetes Indexed Job limit). |
-| `timeout` | `5m` for hooks | Duration such as `5m`. Hook timeout must be less than the session `--timeout` at deploy or run time (default `10m`). Raise `--timeout` for a longer hook. No default for `manual`. |
+| `timeout` | `5m` for hooks | Duration such as `5m`. Hook timeout must be less than the session `--timeout` at deploy or run time (default `10m`). Raise `--timeout` for a longer hook. Omitted `schedule` tasks get 1h `activeDeadlineSeconds` on the CronJob only. `deployah run` does not apply that default. An explicit `timeout:` applies to both. |
 | `backoffLimit` | `3` | Retries before the run is marked failed. |
 | `ttlSecondsAfterFinished` | none (CLI runs: 7 days) | Seconds to keep a finished run. |
 
@@ -187,7 +191,7 @@ A few fields have specific formats:
 - **Names** (`project`, component names, environment names): lowercase
   letters, digits, and dashes (`-`), and cannot start or end with a dash.
   `project` must be at least 3 characters; component and environment names
-  must be at least 2.
+  must be at least 2. Task names are 2 to 30 characters.
 
 ## Resource presets
 

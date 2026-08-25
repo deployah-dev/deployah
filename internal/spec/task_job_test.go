@@ -77,6 +77,20 @@ func TestNewTaskJobSpec(t *testing.T) {
 				Image:                   "busybox:1.36",
 			},
 		},
+		{
+			name: "scheduled empty timeout has no deadline",
+			task: Task{
+				Image:    "busybox:1.36",
+				On:       TaskOnSchedule,
+				Schedule: "0 3 * * *",
+			},
+			want: TaskJobSpec{
+				Completions:  1,
+				Parallelism:  1,
+				BackoffLimit: int32(DefaultBackoffLimit),
+				Image:        "busybox:1.36",
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

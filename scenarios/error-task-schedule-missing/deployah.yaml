@@ -1,0 +1,15 @@
+# $schema: ../../internal/spec/schema/v1-alpha.5/manifest.json
+apiVersion: v1-alpha.5
+project: error-task-schedule-missing
+components:
+  api:
+    image: nginx:latest
+    port: 8080
+    environments: [dev]
+tasks:
+  cleanup:
+    from: api
+    "on": schedule
+    command: ["true"]
+environments:
+  dev: {}

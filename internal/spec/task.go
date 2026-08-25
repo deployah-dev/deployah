@@ -32,11 +32,19 @@ const (
 	TaskOnPostDeploy TaskOn = "postDeploy"
 	// TaskOnManual runs the task only via the CLI.
 	TaskOnManual TaskOn = "manual"
+	// TaskOnSchedule runs the task on a cron schedule as a Kubernetes
+	// CronJob.
+	TaskOnSchedule TaskOn = "schedule"
 )
 
 // IsHook reports whether o is a deploy hook (preDeploy or postDeploy).
 func (o TaskOn) IsHook() bool {
 	return o == TaskOnPreDeploy || o == TaskOnPostDeploy
+}
+
+// IsScheduled reports whether o is a CronJob schedule trigger.
+func (o TaskOn) IsScheduled() bool {
+	return o == TaskOnSchedule
 }
 
 // Task is run-to-completion work in a spec.
@@ -56,7 +64,7 @@ type Task struct {
 	// On selects when the task runs. Required.
 	On TaskOn `json:"on" yaml:"on"`
 	// After lists task names that must finish first in the same On phase.
-	// Not allowed when On is manual.
+	// Not allowed when On is manual or schedule.
 	After []string `json:"after,omitempty" yaml:"after,omitempty"`
 	// Env overlays inherited environment variables.
 	Env map[string]string `json:"env,omitempty" yaml:"env,omitempty"`
@@ -81,6 +89,20 @@ type Task struct {
 	Fanout Fanout `json:"fanout,omitzero" yaml:"fanout,omitempty"`
 	// Timeout is how long a single run may take (for example "5m").
 	Timeout string `json:"timeout,omitempty" yaml:"timeout,omitempty"`
+	// Schedule is a 5-field cron expression or a robfig descriptor such as
+	// @daily or @every 1h. Required when On is [TaskOnSchedule].
+	Schedule string `json:"schedule,omitempty" yaml:"schedule,omitempty"`
+	// TimeZone is an IANA time zone for Schedule. Empty means
+	// [DefaultScheduleTimeZone] after defaults. Only valid when On is
+	// [TaskOnSchedule].
+	TimeZone string `json:"timeZone,omitempty" yaml:"timeZone,omitempty"`
+	// ConcurrencyPolicy is Allow, Forbid, or Replace. Empty means
+	// [DefaultConcurrencyPolicy] after defaults. Only valid when On is
+	// [TaskOnSchedule].
+	ConcurrencyPolicy string `json:"concurrencyPolicy,omitempty" yaml:"concurrencyPolicy,omitempty"`
+	// Suspend, when true, pauses the CronJob. Nil means false. Only valid
+	// when On is [TaskOnSchedule].
+	Suspend *bool `json:"suspend,omitempty" yaml:"suspend,omitempty"`
 	// BackoffLimit is how many retries are allowed before the run fails.
 	// Nil means [DefaultBackoffLimit].
 	BackoffLimit *int `json:"backoffLimit,omitempty" yaml:"backoffLimit,omitempty"`
@@ -215,7 +237,7 @@ func (t Task) MergeFrom(parent *Component) Task {
 }
 
 // HelmHookEvents returns the Helm hook event list for t.On, or empty for
-// manual tasks.
+// manual and scheduled tasks.
 func (t Task) HelmHookEvents() string {
 	switch t.On {
 	case TaskOnPreDeploy:
@@ -316,6 +338,3 @@ func (m *Spec) componentRef(name string) *Component {
 	cp := parent
 	return &cp
 }
-
-// scheduleOnToken is rejected with a pointer at issue #35.
-const scheduleOnToken = "schedule"

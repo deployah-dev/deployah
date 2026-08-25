@@ -1,0 +1,17 @@
+apiVersion: v1-alpha.5
+project: taskcron
+components:
+  api:
+    image: nginx:latest
+    port: 80
+    environments: [dev]
+    resourcePreset: nano
+tasks:
+  cleanup:
+    from: api
+    image: busybox:1.36
+    "on": schedule
+    schedule: "@every 1h"
+    command: ["echo", "cleanup-ok"]
+environments:
+  dev: {}

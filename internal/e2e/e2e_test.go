@@ -407,6 +407,63 @@ func (s *E2ESuite) TestDeleteCleansCLIJobs() {
 	assert.Empty(t, jobs.Items)
 }
 
+func (s *E2ESuite) TestTaskSchedule() {
+	t := s.T()
+	src := filepath.Join(s.testdataDir, "task-schedule")
+	dir := t.TempDir()
+	copyTree(t, src, dir)
+	t.Chdir(dir)
+	t.Cleanup(func() {
+		if err := runErr(t, "delete", "taskcron", "dev",
+			"--yes", "--wait", "--allow-missing-platform",
+			"--context", "kind-deployah"); err != nil {
+			t.Logf("cleanup delete failed (non-fatal): %v", err)
+		}
+	})
+
+	run(t, "deploy", "dev", "--context", "kind-deployah", "--yes")
+
+	res := s.client.Resources("default")
+	var cronjobs batchv1.CronJobList
+	require.NoError(t, res.List(t.Context(), &cronjobs,
+		resources.WithLabelSelector("deployah.dev/project=taskcron,deployah.dev/component=cleanup")))
+	require.Len(t, cronjobs.Items, 1)
+	cj := cronjobs.Items[0]
+	assert.Empty(t, cj.Annotations["helm.sh/hook"])
+	assert.Equal(t, "@every 1h", cj.Spec.Schedule)
+	require.NotNil(t, cj.Spec.TimeZone)
+	assert.Equal(t, "Etc/UTC", *cj.Spec.TimeZone)
+	assert.Equal(t, batchv1.ForbidConcurrent, cj.Spec.ConcurrencyPolicy)
+	require.NotNil(t, cj.Spec.SuccessfulJobsHistoryLimit)
+	assert.Equal(t, int32(3), *cj.Spec.SuccessfulJobsHistoryLimit)
+	require.NotNil(t, cj.Spec.FailedJobsHistoryLimit)
+	assert.Equal(t, int32(3), *cj.Spec.FailedJobsHistoryLimit)
+	assert.Equal(t, corev1.RestartPolicyOnFailure, cj.Spec.JobTemplate.Spec.Template.Spec.RestartPolicy)
+	assert.Nil(t, cj.Spec.StartingDeadlineSeconds)
+	require.NotNil(t, cj.Spec.JobTemplate.Spec.CompletionMode)
+	assert.Equal(t, batchv1.IndexedCompletion, *cj.Spec.JobTemplate.Spec.CompletionMode)
+	require.Len(t, cj.Spec.JobTemplate.Spec.Template.Spec.Containers, 1)
+	assert.Equal(t, []string{"echo", "cleanup-ok"}, cj.Spec.JobTemplate.Spec.Template.Spec.Containers[0].Command)
+	require.NotNil(t, cj.Spec.JobTemplate.Spec.ActiveDeadlineSeconds)
+	assert.Equal(t, int64(3600), *cj.Spec.JobTemplate.Spec.ActiveDeadlineSeconds)
+
+	run(t, "run", "cleanup", "dev", "--context", "kind-deployah", "--yes")
+	var jobs batchv1.JobList
+	require.NoError(t, res.List(t.Context(), &jobs,
+		resources.WithLabelSelector("deployah.dev/project=taskcron,deployah.dev/component=cleanup")))
+	require.NotEmpty(t, jobs.Items)
+	var cliJob *batchv1.Job
+	for i := range jobs.Items {
+		job := &jobs.Items[i]
+		if job.Labels["deployah.dev/managed-by"] == "deployah" {
+			cliJob = job
+			break
+		}
+	}
+	require.NotNil(t, cliJob, "deployah run must create a standalone Job")
+	assert.Nil(t, cliJob.Spec.ActiveDeadlineSeconds)
+}
+
 // prepareTaskdemo copies the task-migrate-smoke scenario into a temp dir,
 // makes it the working directory, and registers a best-effort delete.
 func (s *E2ESuite) prepareTaskdemo(t *testing.T) {

@@ -72,7 +72,7 @@ type ChartData struct {
 	// created for this environment.
 	ComponentNames []string
 	// TaskNames are the sorted names of the task sub-charts created for this
-	// environment. Only hook tasks get one.
+	// environment. Hook and scheduled tasks each get one.
 	TaskNames []string
 }
 
@@ -135,10 +135,15 @@ func PrepareChart(ctx context.Context, manifest *spec.Spec, desiredEnvironment s
 	// Resolve the sub-chart names once, before creating anything on disk, so
 	// Chart.yaml and the sub-chart directories below cannot disagree.
 	componentNames := activeComponentNames(manifest, desiredEnvironment)
-	taskNames, err := hookTaskNames(manifest, desiredEnvironment, resolved)
+	hookNames, err := hookTaskNames(manifest, desiredEnvironment, resolved)
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve task sub-chart names: %w", err)
 	}
+	scheduledNames, err := scheduledTaskNames(manifest, desiredEnvironment, resolved)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve scheduled task sub-chart names: %w", err)
+	}
+	taskNames := mergeTaskNames(hookNames, scheduledNames)
 
 	tmpDir, err := os.MkdirTemp("", "deployah-chart-*")
 	if err != nil {
@@ -219,7 +224,7 @@ func PrepareChart(ctx context.Context, manifest *spec.Spec, desiredEnvironment s
 	if err = createComponentSubCharts(tmpDir, componentNames); err != nil {
 		return "", fmt.Errorf("failed to create component sub-charts: %w", err)
 	}
-	if err = createTaskSubCharts(tmpDir, taskNames); err != nil {
+	if err = createTaskSubCharts(tmpDir, hookNames, scheduledNames); err != nil {
 		return "", fmt.Errorf("failed to create task sub-charts: %w", err)
 	}
 
