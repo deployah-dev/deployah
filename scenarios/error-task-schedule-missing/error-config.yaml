@@ -1,0 +1,2 @@
+expectedErrors:
+  - "schedule is required"

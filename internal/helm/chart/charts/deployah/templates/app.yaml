@@ -29,6 +29,5 @@
 
 {{ include "deployah.serviceaccount" . }}
 {{ include "deployah.servicemonitor" . }}
-{{ include "deployah.cronjob" . }}
 {{ include "deployah.podmonitor" . }}
 {{- end }}

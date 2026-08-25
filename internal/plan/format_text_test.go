@@ -349,6 +349,7 @@ func TestRenderText_TasksSection(t *testing.T) {
 		{Name: "migrate", On: TaskOnPreDeploy, Timeout: "5m", HookWeight: 0},
 		{Name: "seed", On: TaskOnPreDeploy, Timeout: "5m", HookWeight: 1},
 		{Name: "smoke", On: TaskOnPostDeploy, Timeout: "5m", HookWeight: 0},
+		{Name: "cleanup", On: TaskOnSchedule},
 		{Name: "backfill", On: TaskOnManual, Manual: true},
 	}
 	tests := []struct {
@@ -374,6 +375,8 @@ func TestRenderText_TasksSection(t *testing.T) {
 				"migrate (timeout 5m) weight 0",
 				"seed (timeout 5m) weight 1",
 				"postDeploy",
+				"schedule (CronJob)",
+				"cleanup",
 				"manual (CLI only)",
 				"backfill",
 				"database must already be reachable",
@@ -394,7 +397,7 @@ func TestRenderText_TasksSection(t *testing.T) {
 				Tasks: []PlannedTask{{Name: "smoke", On: TaskOnPostDeploy, Timeout: "5m"}},
 			},
 			contains: []string{"Tasks:", "postDeploy", "smoke (timeout 5m) weight 0"},
-			omits:    []string{"preDeploy", "manual"},
+			omits:    []string{"preDeploy", "manual", "schedule"},
 		},
 		{
 			name: "task without timeout",

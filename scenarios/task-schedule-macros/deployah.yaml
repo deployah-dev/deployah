@@ -1,0 +1,27 @@
+# $schema: ../../internal/spec/schema/v1-alpha.5/manifest.json
+apiVersion: v1-alpha.5
+project: task-schedule-macros
+components:
+  api:
+    image: nginx:latest
+    port: 8080
+    environments: [dev]
+    resourcePreset: small
+tasks:
+  daily:
+    from: api
+    "on": schedule
+    schedule: "@daily"
+    command: ["true"]
+  hourly:
+    from: api
+    "on": schedule
+    schedule: "@hourly"
+    command: ["true"]
+  every:
+    from: api
+    "on": schedule
+    schedule: "@every 1h"
+    command: ["true"]
+environments:
+  dev: {}

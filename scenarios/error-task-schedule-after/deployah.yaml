@@ -1,0 +1,17 @@
+# $schema: ../../internal/spec/schema/v1-alpha.5/manifest.json
+apiVersion: v1-alpha.5
+project: error-task-schedule-after
+components:
+  api:
+    image: nginx:latest
+    port: 8080
+    environments: [dev]
+tasks:
+  cleanup:
+    from: api
+    "on": schedule
+    schedule: "0 3 * * *"
+    after: [migrate]
+    command: ["true"]
+environments:
+  dev: {}

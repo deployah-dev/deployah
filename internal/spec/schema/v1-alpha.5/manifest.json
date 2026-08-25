@@ -61,7 +61,7 @@
         "type": "string",
         "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
         "minLength": 2,
-        "maxLength": 63
+        "maxLength": 30
       },
       "additionalProperties": {
         "$ref": "#/$defs/Task"
@@ -866,7 +866,7 @@
     "Task": {
       "type": "object",
       "title": "Task",
-      "description": "Run-to-completion work triggered on deploy or via the CLI.",
+      "description": "Run-to-completion work triggered on deploy, on a schedule, or via the CLI.",
       "additionalProperties": false,
       "required": [
         "on"
@@ -918,17 +918,18 @@
         "on": {
           "type": "string",
           "title": "Trigger",
-          "description": "When the task runs. preDeploy and postDeploy run on every install and upgrade. manual runs only via the CLI.",
+          "description": "When the task runs. preDeploy and postDeploy run on every install and upgrade. schedule creates a CronJob. manual runs only via the CLI.",
           "enum": [
             "preDeploy",
             "postDeploy",
-            "manual"
+            "manual",
+            "schedule"
           ]
         },
         "after": {
           "type": "array",
           "title": "After",
-          "description": "Task names that must finish first in the same on phase. Not allowed on manual tasks.",
+          "description": "Task names that must finish first in the same on phase. Not allowed on manual or schedule tasks.",
           "items": {
             "type": "string",
             "minLength": 1
@@ -991,7 +992,7 @@
         },
         "fanout": {
           "title": "Fanout",
-          "description": "How many indexed copies to run. Integer shorthand (count, parallelism 1) or an object. Applies to preDeploy, postDeploy, and manual.",
+          "description": "How many indexed copies to run. Integer shorthand (count, parallelism 1) or an object. Applies to preDeploy, postDeploy, manual, and schedule.",
           "oneOf": [
             {
               "type": "integer",
@@ -1005,8 +1006,35 @@
         "timeout": {
           "type": "string",
           "title": "Timeout",
-          "description": "How long a single run may take. Defaults to 5m for preDeploy and postDeploy. Hook timeout must be less than the CLI --timeout used at deploy or run time (default 10m).",
+          "description": "How long a single run may take. Defaults to 5m for preDeploy and postDeploy. Omitted schedule tasks get 1h on the CronJob only; deployah run does not apply that default. Hook timeout must be less than the CLI --timeout used at deploy or run time (default 10m).",
           "pattern": "^[1-9][0-9]*(s|m|h)$"
+        },
+        "schedule": {
+          "type": "string",
+          "title": "Schedule",
+          "description": "Cron expression or robfig descriptor (@hourly, @daily, @every 1h). Required when on is schedule. TZ and CRON_TZ prefixes are not allowed; use timeZone.",
+          "minLength": 1
+        },
+        "timeZone": {
+          "type": "string",
+          "title": "Time Zone",
+          "description": "IANA time zone for the schedule. Defaults to Etc/UTC. Requires Kubernetes 1.27 or newer when set to a value other than Etc/UTC.",
+          "minLength": 1
+        },
+        "concurrencyPolicy": {
+          "type": "string",
+          "title": "Concurrency Policy",
+          "description": "What to do when a run is still active at the next tick. Defaults to Forbid.",
+          "enum": [
+            "Allow",
+            "Forbid",
+            "Replace"
+          ]
+        },
+        "suspend": {
+          "type": "boolean",
+          "title": "Suspend",
+          "description": "When true, the CronJob does not create Jobs until set back to false."
         },
         "backoffLimit": {
           "type": "integer",

@@ -4,7 +4,7 @@ Run a spec task as a one-off Job
 
 ### Synopsis
 
-Create a Kubernetes Job for a task from the spec. Works for preDeploy, postDeploy, and manual tasks. Runs only the named task; tasks listed in its after field are not run. Waits for completion unless --detach is set.
+Create a Kubernetes Job for a task from the spec. Works for preDeploy, postDeploy, manual, and schedule tasks. Runs only the named task; tasks listed in its after field are not run. Waits for completion unless --detach is set.
 
 ```text
 deployah run <task> <environment> [flags]

@@ -392,6 +392,7 @@ func writeTasks(w io.Writer, p *Plan, opts TextOptions) error {
 	}{
 		{TaskOnPreDeploy, TaskOnPreDeploy},
 		{TaskOnPostDeploy, TaskOnPostDeploy},
+		{"schedule (CronJob)", TaskOnSchedule},
 		{"manual (CLI only)", TaskOnManual},
 	}
 	for _, g := range groups {
@@ -401,7 +402,7 @@ func writeTasks(w io.Writer, p *Plan, opts TextOptions) error {
 				items = append(items, task)
 			}
 		}
-		if g.on != TaskOnManual {
+		if g.on == TaskOnPreDeploy || g.on == TaskOnPostDeploy {
 			slices.SortFunc(items, func(a, b PlannedTask) int {
 				if a.HookWeight != b.HookWeight {
 					return a.HookWeight - b.HookWeight
@@ -420,7 +421,7 @@ func writeTasks(w io.Writer, p *Plan, opts TextOptions) error {
 			if task.Timeout != "" {
 				line += " (timeout " + task.Timeout + ")"
 			}
-			if !task.Manual {
+			if task.On == TaskOnPreDeploy || task.On == TaskOnPostDeploy {
 				line += fmt.Sprintf(" weight %d", task.HookWeight)
 			}
 			if _, err := fmt.Fprintln(w, line); err != nil {

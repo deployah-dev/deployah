@@ -43,7 +43,7 @@ type Options struct {
 func Register(app *nabat.App) {
 	app.MustCommand("run",
 		nabat.WithDescription("Run a spec task as a one-off Job"),
-		nabat.WithLongDescription("Create a Kubernetes Job for a task from the spec. Works for preDeploy, postDeploy, and manual tasks. Runs only the named task; tasks listed in its after field are not run. Waits for completion unless --detach is set."),
+		nabat.WithLongDescription("Create a Kubernetes Job for a task from the spec. Works for preDeploy, postDeploy, manual, and schedule tasks. Runs only the named task; tasks listed in its after field are not run. Waits for completion unless --detach is set."),
 		nabat.WithArg("task", "", nabat.WithRequired(), nabat.WithUsage("Task name to run"), nabat.WithPrompt("Task", "", nabat.WithHint("e.g. migrate, backfill"))),
 		nabat.WithArg("environment", "", nabat.WithRequired(), nabat.WithUsage("Environment to run in"), nabat.WithPrompt("Environment", "", nabat.WithHint("e.g. prod, staging"))),
 		nabat.WithFlag("detach", false, nabat.WithUsage("Return after creating the Job without waiting for completion")),

@@ -915,6 +915,14 @@ func applyTaskDefaults(t *Task) {
 	if t.On.IsHook() && t.Timeout == "" {
 		t.Timeout = DefaultHookTaskTimeout
 	}
+	if t.On.IsScheduled() {
+		if t.ConcurrencyPolicy == "" {
+			t.ConcurrencyPolicy = DefaultConcurrencyPolicy
+		}
+		if t.TimeZone == "" {
+			t.TimeZone = DefaultScheduleTimeZone
+		}
+	}
 }
 
 // CreateSpecWithDefaults creates a minimal [Spec] for projectName and fills

@@ -128,6 +128,8 @@ func plannedTaskOn(on spec.TaskOn) string {
 		return TaskOnPostDeploy
 	case spec.TaskOnManual:
 		return TaskOnManual
+	case spec.TaskOnSchedule:
+		return TaskOnSchedule
 	default:
 		return string(on)
 	}

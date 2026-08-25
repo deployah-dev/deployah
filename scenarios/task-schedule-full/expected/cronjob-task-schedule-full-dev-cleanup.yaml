@@ -1,0 +1,58 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+    annotations:
+        deployah.dev/project: task-schedule-full
+        deployah.dev/source: spec
+    labels:
+        app.kubernetes.io/instance: task-schedule-full-dev
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: cleanup
+        deployah.dev/component: cleanup
+        deployah.dev/environment: dev
+        deployah.dev/project: task-schedule-full
+        helm.sh/chart: cleanup-0.1.0
+    name: task-schedule-full-dev-cleanup
+    namespace: default
+spec:
+    concurrencyPolicy: Allow
+    failedJobsHistoryLimit: 3
+    jobTemplate:
+        spec:
+            activeDeadlineSeconds: 1800
+            backoffLimit: 3
+            completionMode: Indexed
+            completions: 2
+            parallelism: 1
+            template:
+                metadata:
+                    labels:
+                        app.kubernetes.io/instance: task-schedule-full-dev
+                        app.kubernetes.io/managed-by: Helm
+                        app.kubernetes.io/name: cleanup
+                        deployah.dev/component: cleanup
+                        deployah.dev/environment: dev
+                        deployah.dev/project: task-schedule-full
+                        helm.sh/chart: cleanup-0.1.0
+                spec:
+                    automountServiceAccountToken: false
+                    containers:
+                        - command:
+                            - cleanup
+                          env:
+                            - name: DATABASE_URL
+                              value: postgres://db
+                          image: docker.io/library/nginx:latest
+                          imagePullPolicy: Always
+                          name: cleanup
+                          resources:
+                            limits: {}
+                            requests:
+                                cpu: 500m
+                                ephemeral-storage: 50Mi
+                                memory: 512Mi
+                    restartPolicy: OnFailure
+    schedule: 0 3 * * *
+    successfulJobsHistoryLimit: 3
+    suspend: true
+    timeZone: Etc/UTC

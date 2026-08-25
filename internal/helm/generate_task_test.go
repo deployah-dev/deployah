@@ -66,6 +66,12 @@ func taskSpec() *spec.Spec {
 				Command: []string{"backfill"},
 				Fanout:  spec.Fanout{Count: 4, Parallelism: 2},
 			},
+			"cleanup": {
+				From:     "api",
+				On:       spec.TaskOnSchedule,
+				Command:  []string{"cleanup"},
+				Schedule: "0 3 * * *",
+			},
 		},
 	}
 }
@@ -108,6 +114,16 @@ func TestMapSpecToChartValues_HookTasks(t *testing.T) {
 
 	_, hasManual := vals["backfill"]
 	assert.False(t, hasManual, "manual tasks must be absent from chart values")
+
+	cleanup := mustNestedMap(t, vals, "cleanup")
+	cronjob := mustNestedMap(t, cleanup, "cronjob")
+	assert.Equal(t, true, cronjob["enabled"])
+	assert.Equal(t, "0 3 * * *", cronjob["schedule"])
+	assert.Equal(t, spec.DefaultScheduleTimeZone, cronjob["timeZone"])
+	assert.Equal(t, spec.DefaultConcurrencyPolicy, cronjob["concurrencyPolicy"])
+	assert.Equal(t, 3600, cronjob["activeDeadlineSeconds"])
+	_, hasJob := cleanup["job"]
+	assert.False(t, hasJob, "scheduled tasks must not render a hook Job")
 
 	deployah := mustNestedMap(t, vals, "deployah")
 	resolved := mustNestedMap(t, deployah, "resolved")
@@ -180,9 +196,12 @@ func TestPrepareChart_ChartYAMLImportsOnlySubCharts(t *testing.T) {
 	}
 	// Components first, then tasks, each sorted: the order is part of what
 	// keeps a regenerated chart byte-identical.
-	assert.Equal(t, []string{"api", "migrate", "smoke"}, parents,
+	assert.Equal(t, []string{"api", "cleanup", "migrate", "smoke"}, parents,
 		"manual task backfill and prod-only component worker must not be imported")
 	assert.DirExists(t, filepath.Join(chartDir, "charts", "migrate"))
+	assert.DirExists(t, filepath.Join(chartDir, "charts", "cleanup"))
+	assert.FileExists(t, filepath.Join(chartDir, "charts", "cleanup", "templates", "cronjob.yaml"))
+	assert.NoFileExists(t, filepath.Join(chartDir, "charts", "cleanup", "templates", "job.yaml"))
 	assert.NoDirExists(t, filepath.Join(chartDir, "charts", "backfill"))
 	assert.NoDirExists(t, filepath.Join(chartDir, "charts", "worker"))
 }

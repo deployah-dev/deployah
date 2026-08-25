@@ -161,7 +161,7 @@ type Plan struct {
 	DriftIncomplete []string
 
 	// Tasks lists spec tasks active in this environment, grouped by the
-	// renderer into preDeploy, postDeploy, and manual.
+	// renderer into preDeploy, postDeploy, schedule, and manual.
 	Tasks []PlannedTask
 }
 
@@ -172,6 +172,8 @@ const (
 	TaskOnPostDeploy = "postDeploy"
 	// TaskOnManual is a task that runs only via the CLI.
 	TaskOnManual = "manual"
+	// TaskOnSchedule is a task that runs as a Kubernetes CronJob.
+	TaskOnSchedule = "schedule"
 )
 
 // PlannedTask is one spec task shown in the plan Tasks section.

@@ -1,0 +1,55 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+    annotations:
+        deployah.dev/project: task-schedule-macros
+        deployah.dev/source: spec
+    labels:
+        app.kubernetes.io/instance: task-schedule-macros-dev
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: every
+        deployah.dev/component: every
+        deployah.dev/environment: dev
+        deployah.dev/project: task-schedule-macros
+        helm.sh/chart: every-0.1.0
+    name: task-schedule-macros-dev-every
+    namespace: default
+spec:
+    concurrencyPolicy: Forbid
+    failedJobsHistoryLimit: 3
+    jobTemplate:
+        spec:
+            activeDeadlineSeconds: 3600
+            backoffLimit: 3
+            completionMode: Indexed
+            completions: 1
+            parallelism: 1
+            template:
+                metadata:
+                    labels:
+                        app.kubernetes.io/instance: task-schedule-macros-dev
+                        app.kubernetes.io/managed-by: Helm
+                        app.kubernetes.io/name: every
+                        deployah.dev/component: every
+                        deployah.dev/environment: dev
+                        deployah.dev/project: task-schedule-macros
+                        helm.sh/chart: every-0.1.0
+                spec:
+                    automountServiceAccountToken: false
+                    containers:
+                        - command:
+                            - "true"
+                          image: docker.io/library/nginx:latest
+                          imagePullPolicy: Always
+                          name: every
+                          resources:
+                            limits: {}
+                            requests:
+                                cpu: 500m
+                                ephemeral-storage: 50Mi
+                                memory: 512Mi
+                    restartPolicy: OnFailure
+    schedule: '@every 1h'
+    successfulJobsHistoryLimit: 3
+    suspend: false
+    timeZone: Etc/UTC

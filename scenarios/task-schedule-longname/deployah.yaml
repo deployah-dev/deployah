@@ -1,0 +1,17 @@
+# $schema: ../../internal/spec/schema/v1-alpha.5/manifest.json
+apiVersion: v1-alpha.5
+project: longnameproj
+components:
+  api:
+    image: nginx:latest
+    port: 8080
+    environments: [review-feature-add-new-checkout-flow]
+    resourcePreset: small
+tasks:
+  cleanup:
+    from: api
+    "on": schedule
+    schedule: "0 3 * * *"
+    command: ["cleanup"]
+environments:
+  review-feature-add-new-checkout-flow: {}
