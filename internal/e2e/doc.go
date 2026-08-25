@@ -12,10 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package e2e holds Deployah's end-to-end suite, which drives the CLI
-// in-process against a live Kind cluster.
+// Package e2e drives the Deployah CLI in-process against a live Kind cluster.
 //
-// The tests are gated behind the "e2e" build tag and need a container engine;
-// run them with `nix run .#test-e2e`. This file intentionally carries no build
-// tag so `go list ./...` and golangci-lint can resolve the package without it.
+// TestE2EFixtures runs every scenarios/*/e2e.yaml. TestCRDLifecycle mutates
+// CRD files between CLI calls. The suite uses the "e2e" build tag and needs
+// a container engine (`nix run .#test-e2e`).
+// This file has no build tag so `go list ./...` and golangci-lint can
+// resolve the package without the tag.
 package e2e

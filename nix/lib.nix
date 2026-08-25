@@ -34,6 +34,7 @@ rec {
       testPackages ? "./...",
       timeout ? "10m",
       race ? true,
+      extraArgs ? "",
     }:
     mkApp {
       inherit name description;
@@ -57,7 +58,7 @@ rec {
         exec gotestsum --junitfile=${junitFile} -- \
           -tags=${tags} ${pkgs.lib.optionalString race "-race"} \
           -shuffle=on -covermode=atomic \
-          -coverpkg=./... -coverprofile=${coverProfile} -timeout ${timeout} "''${testpkgs[@]}"
+          -coverpkg=./... -coverprofile=${coverProfile} -timeout ${timeout} ${extraArgs} "''${testpkgs[@]}"
       '';
     };
 }

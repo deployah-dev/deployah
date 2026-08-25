@@ -15,7 +15,8 @@
 // Package testing provides integration test helpers for Deployah scenarios.
 //
 // Scenario directories under scenarios/ hold sample specs, environment
-// files, and expected Kubernetes output. [DiscoverScenarios] finds them
-// automatically; [IntegrationTestSuite] loads a spec, generates a chart,
-// renders templates, and compares results to golden files.
+// files, expected Kubernetes output, and optional e2e.yaml Kind fixtures.
+// [DiscoverScenarios] finds them; [IntegrationTestSuite] loads a spec,
+// generates a chart, renders templates, and compares results to golden
+// files. [LoadE2EFixture] decodes e2e.yaml.
 package testing

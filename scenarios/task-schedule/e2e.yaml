@@ -1,0 +1,47 @@
+# $schema: ../../internal/testing/e2e.schema.json
+env: dev
+steps:
+  - deploy: {}
+    resources:
+      - match:
+          apiVersion: batch/v1
+          kind: CronJob
+          metadata:
+            name: taskcron-dev-cleanup
+            labels:
+              deployah.dev/project: taskcron
+              deployah.dev/component: cleanup
+            annotations:
+              helm.sh/hook: null
+          spec:
+            schedule: "@every 1h"
+            timeZone: Etc/UTC
+            concurrencyPolicy: Forbid
+            successfulJobsHistoryLimit: 3
+            failedJobsHistoryLimit: 3
+            startingDeadlineSeconds: null
+            jobTemplate:
+              spec:
+                completionMode: Indexed
+                activeDeadlineSeconds: 3600
+                template:
+                  spec:
+                    restartPolicy: OnFailure
+                    containers:
+                      - name: cleanup
+                        command: ["echo", "cleanup-ok"]
+  - run:
+      task: cleanup
+    resources:
+      - match:
+          apiVersion: batch/v1
+          kind: Job
+          metadata:
+            labels:
+              deployah.dev/project: taskcron
+              deployah.dev/component: cleanup
+              deployah.dev/managed-by: deployah
+          spec:
+            activeDeadlineSeconds: null
+          status:
+            succeeded: 1

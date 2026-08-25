@@ -99,14 +99,16 @@ func NewApp(opts ...nabat.Option) *nabat.App {
 
 		rtOpts := []session.Option{
 			session.WithNamespace(opts.Namespace),
-			session.WithKubeconfig(opts.Kubeconfig),
 			session.WithKubeContext(opts.Context),
-			session.WithSpecPath(opts.Spec),
+			session.WithSpecPath(c.Abs(opts.Spec)),
 			session.WithDebug(opts.Debug),
 			session.WithTimeout(opts.Timeout),
 		}
+		if opts.Kubeconfig != "" {
+			rtOpts = append(rtOpts, session.WithKubeconfig(c.Abs(opts.Kubeconfig)))
+		}
 		if opts.PlatformFile != "" {
-			rtOpts = append(rtOpts, session.WithPlatformFile(opts.PlatformFile))
+			rtOpts = append(rtOpts, session.WithPlatformFile(c.Abs(opts.PlatformFile)))
 		}
 		if localKubeconfig != "" {
 			rtOpts = append(rtOpts, session.WithExtraKubeconfigPaths(localKubeconfig))

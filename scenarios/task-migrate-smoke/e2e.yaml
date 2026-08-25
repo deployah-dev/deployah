@@ -1,0 +1,61 @@
+# $schema: ../../internal/testing/e2e.schema.json
+env: dev
+steps:
+  - deploy: {}
+    resources:
+      - match:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: taskdemo-dev-api
+            labels:
+              deployah.dev/project: taskdemo
+              deployah.dev/environment: dev
+              deployah.dev/component: api
+          spec:
+            replicas: 1
+            template:
+              spec:
+                containers:
+                  - name: api
+                    image: docker.io/library/nginx:latest
+          status:
+            readyReplicas: 1
+      - match:
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: taskdemo-dev-api
+          spec:
+            ports:
+              - name: http
+                port: 80
+                targetPort: http
+  - run:
+      task: backfill
+  - run:
+      task: backfill
+    resources:
+      - minCount: 2
+        match:
+          apiVersion: batch/v1
+          kind: Job
+          metadata:
+            labels:
+              deployah.dev/project: taskdemo
+              deployah.dev/component: backfill
+          status:
+            succeeded: 1
+  - logs:
+      component: backfill
+      contains: backfill-ok
+  - delete: {}
+    resources:
+      - minCount: 0
+        match:
+          apiVersion: batch/v1
+          kind: Job
+          metadata:
+            labels:
+              deployah.dev/project: taskdemo
+              deployah.dev/environment: dev

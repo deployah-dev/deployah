@@ -56,7 +56,7 @@ spec:
                     timeoutSeconds: 3
                   name: web
                   ports:
-                    - containerPort: 8080
+                    - containerPort: 80
                       name: http
                       protocol: TCP
                   readinessProbe:

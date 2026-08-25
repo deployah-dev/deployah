@@ -708,8 +708,8 @@ k8s.io/utils v0.0.0-20260707023825-cf1189d6abe3 h1:jVkFFVfXdXP74B/zbO3hM3hpSFD0x
 k8s.io/utils v0.0.0-20260707023825-cf1189d6abe3/go.mod h1:M2s5JB1lIYP3jzZdorPLHXIPJzt9vv2muW5a6L9DtNM=
 mvdan.cc/sh/v3 v3.13.1 h1:DP3TfgZhDkT7lerUdnp6PTGKyxxzz6T+cOlY/xEvfWk=
 mvdan.cc/sh/v3 v3.13.1/go.mod h1:lXJ8SexMvEVcHCoDvAGLZgFJ9Wsm2sulmoNEXGhYZD0=
-nabat.dev v0.8.0 h1:8tilU5GFZQHC0R7SzTtFO0a5xi9CMuQEG7ZMuYpUCrg=
-nabat.dev v0.8.0/go.mod h1:S44WwDY/h4hQgAPrtEmazmFuQUO8eKISu1CR0Ea/nJE=
+nabat.dev v0.9.0 h1:uWkVsLJXct8Bnm+wAfiEY5yqKDP3BxMEIohJRIcgD8k=
+nabat.dev v0.9.0/go.mod h1:S44WwDY/h4hQgAPrtEmazmFuQUO8eKISu1CR0Ea/nJE=
 oras.land/oras-go/v2 v2.6.2 h1:N04RXngAp1LJKTG6ifz3xHPipasEkWr+hFmInja5YKo=
 oras.land/oras-go/v2 v2.6.2/go.mod h1:PlTtg4JTDJkDe8yVHpM2wz7/YDc00GVas+i4jAW2TZ4=
 pgregory.net/rapid v1.2.0 h1:keKAYRcjm+e1F0oAuU5F5+YPAWcyxNNRK2wud503Gnk=

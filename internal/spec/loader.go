@@ -134,14 +134,24 @@ func ResolveEnvironment(environments map[string]Environment, platform *PlatformC
 }
 
 // resolveEnvFile determines which env file to use for the given environment,
-// following Deployah's resolution order. Returns the path, whether it was
-// explicitly set, and an error if explicitly set but missing.
-func resolveEnvFile(env *Environment, envName string) (string, bool, error) {
-	if env.EnvFile != "" {
-		if fileExists(env.EnvFile) {
-			return env.EnvFile, true, nil
+// following Deployah's resolution order. Candidates are resolved against
+// specDir (the directory containing the spec), not the process working
+// directory. Returns the path, whether it was explicitly set, and an error
+// if explicitly set but missing.
+func resolveEnvFile(env *Environment, envName, specDir string) (string, bool, error) {
+	join := func(rel string) string {
+		if filepath.IsAbs(rel) {
+			return rel
 		}
-		return "", true, fmt.Errorf("explicit envFile %q does not exist", env.EnvFile)
+		return filepath.Join(specDir, rel)
+	}
+
+	if env.EnvFile != "" {
+		path := join(env.EnvFile)
+		if fileExists(path) {
+			return path, true, nil
+		}
+		return "", true, fmt.Errorf("explicit envFile %q does not exist (resolved %q)", env.EnvFile, path)
 	}
 
 	sanitizedName := sanitizeEnvName(envName)
@@ -152,7 +162,8 @@ func resolveEnvFile(env *Environment, envName string) (string, bool, error) {
 		".env",
 		filepath.Join(".deployah", ".env"),
 	}
-	for _, path := range candidates {
+	for _, rel := range candidates {
+		path := join(rel)
 		if fileExists(path) {
 			return path, false, nil
 		}
@@ -255,7 +266,7 @@ func Load(ctx context.Context, path, desiredEnv string, platform *PlatformConfig
 
 	slog.InfoContext(ctx, "selected environment", "environment", envName)
 
-	envFilePath, explicitlySet, err := resolveEnvFile(env, envName)
+	envFilePath, explicitlySet, err := resolveEnvFile(env, envName, filepath.Dir(path))
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve environment file: %w", err)
 	}
