@@ -37,6 +37,8 @@ import (
 	"sigs.k8s.io/e2e-framework/klient/wait"
 
 	inttest "deployah.dev/deployah/internal/testing"
+	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	netutil "k8s.io/apimachinery/pkg/util/net"
@@ -376,17 +378,29 @@ func (s *E2ESuite) createNamespace(t *testing.T, name string) {
 
 func (s *E2ESuite) deleteNamespace(t *testing.T, name string) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), namespaceWaitTimeout)
-	defer cancel()
 	res, err := s.newResources(name)
 	require.NoError(t, err)
-	if pvcErr := s.deletePVCs(ctx, t, res); pvcErr != nil {
+
+	// Each phase gets its own deadline. A shared ctx that deletePVCs
+	// exhausted used to make namespace Delete fail with rate limiter Wait.
+	workCtx, workCancel := context.WithTimeout(context.Background(), namespaceWaitTimeout)
+	defer workCancel()
+	if workErr := s.deleteWorkloads(workCtx, t, res); workErr != nil {
+		t.Logf("delete workloads in %s: %v", name, workErr)
+	}
+
+	pvcCtx, pvcCancel := context.WithTimeout(context.Background(), namespaceWaitTimeout)
+	defer pvcCancel()
+	if pvcErr := s.deletePVCs(pvcCtx, t, res); pvcErr != nil {
 		t.Errorf("delete pvcs in %s: %v", name, pvcErr)
 	}
+
 	ns := &corev1.Namespace{Name: name}
 	clusterRes, clusterErr := s.newResources("")
 	require.NoError(t, clusterErr)
-	if delErr := clusterRes.Delete(ctx, ns); delErr != nil && !apierrors.IsNotFound(delErr) {
+	nsCtx, nsCancel := context.WithTimeout(context.Background(), namespaceWaitTimeout)
+	defer nsCancel()
+	if delErr := clusterRes.Delete(nsCtx, ns); delErr != nil && !apierrors.IsNotFound(delErr) {
 		t.Errorf("delete namespace %s: %v", name, delErr)
 		return
 	}
@@ -400,10 +414,64 @@ func (s *E2ESuite) deleteNamespace(t *testing.T, name string) {
 		}
 		return false, nil
 	}, wait.WithTimeout(namespaceWaitTimeout), wait.WithInterval(resourcePollInterval),
-		wait.WithContext(ctx), wait.WithImmediate())
+		wait.WithContext(nsCtx), wait.WithImmediate())
 	if waitErr != nil {
 		t.Errorf("wait for namespace %s deletion: %v", name, waitErr)
 	}
+}
+
+func (s *E2ESuite) deleteWorkloads(ctx context.Context, t *testing.T, res *resources.Resources) error {
+	t.Helper()
+	var cronjobs batchv1.CronJobList
+	if listErr := res.List(ctx, &cronjobs); listErr != nil && !apierrors.IsNotFound(listErr) {
+		return fmt.Errorf("list cronjobs: %w", listErr)
+	}
+	for i := range cronjobs.Items {
+		if delErr := res.Delete(ctx, &cronjobs.Items[i]); delErr != nil && !apierrors.IsNotFound(delErr) {
+			t.Logf("delete cronjob %s: %v", cronjobs.Items[i].Name, delErr)
+		}
+	}
+	var jobs batchv1.JobList
+	if listErr := res.List(ctx, &jobs); listErr != nil && !apierrors.IsNotFound(listErr) {
+		return fmt.Errorf("list jobs: %w", listErr)
+	}
+	for i := range jobs.Items {
+		if delErr := res.Delete(ctx, &jobs.Items[i]); delErr != nil && !apierrors.IsNotFound(delErr) {
+			t.Logf("delete job %s: %v", jobs.Items[i].Name, delErr)
+		}
+	}
+	var sts appsv1.StatefulSetList
+	if listErr := res.List(ctx, &sts); listErr != nil && !apierrors.IsNotFound(listErr) {
+		return fmt.Errorf("list statefulsets: %w", listErr)
+	}
+	for i := range sts.Items {
+		if delErr := res.Delete(ctx, &sts.Items[i]); delErr != nil && !apierrors.IsNotFound(delErr) {
+			t.Logf("delete statefulset %s: %v", sts.Items[i].Name, delErr)
+		}
+	}
+	var deploys appsv1.DeploymentList
+	if listErr := res.List(ctx, &deploys); listErr != nil && !apierrors.IsNotFound(listErr) {
+		return fmt.Errorf("list deployments: %w", listErr)
+	}
+	for i := range deploys.Items {
+		if delErr := res.Delete(ctx, &deploys.Items[i]); delErr != nil && !apierrors.IsNotFound(delErr) {
+			t.Logf("delete deployment %s: %v", deploys.Items[i].Name, delErr)
+		}
+	}
+	return wait.For(func(pollCtx context.Context) (bool, error) {
+		var pods corev1.PodList
+		if listErr := res.List(pollCtx, &pods); listErr != nil {
+			if apierrors.IsNotFound(listErr) {
+				return true, nil
+			}
+			if isRetryableAPIError(listErr) {
+				return false, nil
+			}
+			return false, listErr
+		}
+		return len(pods.Items) == 0, nil
+	}, wait.WithTimeout(namespaceWaitTimeout), wait.WithInterval(resourcePollInterval),
+		wait.WithContext(ctx), wait.WithImmediate())
 }
 
 func (s *E2ESuite) deletePVCs(ctx context.Context, t *testing.T, res *resources.Resources) error {

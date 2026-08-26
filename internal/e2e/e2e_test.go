@@ -220,6 +220,15 @@ func (s *E2ESuite) runE2ECase(t *testing.T, c e2eCase) {
 			t.Logf("preserving namespace %s (-e2e.preserve)", ns)
 			return
 		}
+		// Helm uninstall drops pods so PVC protection finalizers can
+		// clear. t.Context() is canceled before Cleanup.
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), namespaceWaitTimeout)
+		defer cancel()
+		if _, _, delErr := runInErrContext(t, cleanupCtx, c.Dir, "delete", c.Project, c.Fixture.Env,
+			"--yes", "--wait", "--allow-missing-platform",
+			"--context", kindContext, "--namespace", ns); delErr != nil {
+			t.Logf("cleanup deployah delete failed (non-fatal): %v", delErr)
+		}
 		s.deleteNamespace(t, ns)
 	})
 	s.assertE2EFixture(t, c.Dir, c.Project, ns, c.Fixture)
