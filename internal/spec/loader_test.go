@@ -229,6 +229,8 @@ func TestSanitizeEnvName(t *testing.T) {
 // TestResolveEnvFileWithSanitization verifies env file resolution for names
 // containing wildcards and path separators.
 func TestResolveEnvFileWithSanitization(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name             string
 		envName          string
@@ -283,23 +285,27 @@ func TestResolveEnvFileWithSanitization(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Chdir(t.TempDir())
+			t.Parallel()
+			specDir := t.TempDir()
 
 			for _, file := range tt.setupFiles {
-				dir := filepath.Dir(file)
-				if dir != "." && dir != "" {
-					mkdirErr := os.MkdirAll(dir, 0o750)
-					require.NoError(t, mkdirErr)
-				}
-				writeErr := os.WriteFile(file, []byte("TEST_VAR=test"), 0o600)
+				full := filepath.Join(specDir, file)
+				dir := filepath.Dir(full)
+				mkdirErr := os.MkdirAll(dir, 0o750)
+				require.NoError(t, mkdirErr)
+				writeErr := os.WriteFile(full, []byte("TEST_VAR=test"), 0o600)
 				require.NoError(t, writeErr)
 			}
 
 			env := &Environment{}
 
-			path, explicit, resolveErr := resolveEnvFile(env, tt.envName)
+			path, explicit, resolveErr := resolveEnvFile(env, tt.envName, specDir)
 			require.NoError(t, resolveErr)
-			assert.Equal(t, tt.expectedPath, path)
+			want := tt.expectedPath
+			if want != "" {
+				want = filepath.Join(specDir, tt.expectedPath)
+			}
+			assert.Equal(t, want, path)
 			assert.Equal(t, tt.expectedExplicit, explicit)
 		})
 	}
@@ -308,20 +314,63 @@ func TestResolveEnvFileWithSanitization(t *testing.T) {
 // TestResolveEnvFileExplicitWithWildcard verifies explicit env files work
 // when the environment name contains wildcards.
 func TestResolveEnvFileExplicitWithWildcard(t *testing.T) {
-	t.Chdir(t.TempDir())
+	t.Parallel()
+
+	specDir := t.TempDir()
 
 	explicitFile := "custom.env"
-	err := os.WriteFile(explicitFile, []byte("EXPLICIT_VAR=explicit"), 0o600)
+	err := os.WriteFile(filepath.Join(specDir, explicitFile), []byte("EXPLICIT_VAR=explicit"), 0o600)
 	require.NoError(t, err)
 
 	env := &Environment{
 		EnvFile: explicitFile,
 	}
 
-	path, explicit, err := resolveEnvFile(env, "review/*")
+	path, explicit, err := resolveEnvFile(env, "review/*", specDir)
 	require.NoError(t, err)
-	assert.Equal(t, explicitFile, path)
+	assert.Equal(t, filepath.Join(specDir, explicitFile), path)
 	assert.True(t, explicit)
+}
+
+// TestResolveEnvFile_MissingExplicitIncludesResolvedPath reports the
+// spec-relative envFile and the path resolved against specDir.
+func TestResolveEnvFile_MissingExplicitIncludesResolvedPath(t *testing.T) {
+	t.Parallel()
+
+	specDir := t.TempDir()
+	env := &Environment{EnvFile: "missing.env"}
+	path, explicit, err := resolveEnvFile(env, "dev", specDir)
+	require.Error(t, err)
+	assert.True(t, explicit)
+	assert.Empty(t, path)
+	assert.ErrorContains(t, err, `explicit envFile "missing.env" does not exist`)
+	assert.ErrorContains(t, err, filepath.Join(specDir, "missing.env"))
+}
+
+// TestLoad_EnvFileRelativeToSpecDir loads a spec whose .env.dev lives next
+// to the spec file, while the process cwd is elsewhere (no [os.Chdir]).
+func TestLoad_EnvFileRelativeToSpecDir(t *testing.T) {
+	t.Parallel()
+
+	specDir := t.TempDir()
+	specYAML := `apiVersion: v1-alpha.5
+project: withdir
+components:
+  web:
+    image: ${IMAGE}
+    port: 80
+    environments: [dev]
+environments:
+  dev:
+    envFile: .env.dev
+`
+	require.NoError(t, os.WriteFile(filepath.Join(specDir, "deployah.yaml"), []byte(specYAML), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(specDir, ".env.dev"), []byte("DPY_VAR_IMAGE=nginx:1.27\n"), 0o600))
+
+	got, err := Load(t.Context(), filepath.Join(specDir, "deployah.yaml"), "dev", nil)
+	require.NoError(t, err)
+	require.Contains(t, got.Components, "web")
+	assert.Equal(t, "nginx:1.27", got.Components["web"].Image)
 }
 
 // TestSave_WritesParseableYAML verifies Save writes a spec that round-trips

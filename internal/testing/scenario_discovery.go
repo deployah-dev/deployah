@@ -91,6 +91,16 @@ func DiscoverScenarios(scenariosDir string) ([]TestScenario, error) {
 			base.PlatformFile = "deployah.platform.yaml"
 		}
 
+		e2ePath := filepath.Join(path, E2EFixtureFile)
+		if e2eInfo, statErr := os.Stat(e2ePath); statErr == nil && e2eInfo.Mode().IsRegular() {
+			abs, absErr := filepath.Abs(e2ePath)
+			if absErr != nil {
+				return absErr
+			}
+			base.HasE2EFixture = true
+			base.E2EFixturePath = abs
+		}
+
 		// A scenario with per-environment goldens (expected-<env>/
 		// directories) is discovered as one TestScenario per environment,
 		// instead of a single scenario with a plain "expected" directory.

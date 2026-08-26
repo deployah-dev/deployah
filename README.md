@@ -507,14 +507,22 @@ Coverage profiles are written to `coverage-unit.out` and
 
 ### Running e2e tests locally
 
-Requires Docker. Creates and destroys a Kind cluster named `deployah`.
+You need Docker. The suite creates a Kind cluster named `deployah` and
+deletes it afterwards.
 
 ```sh
 DEPLOYAH_E2E_FORCE=1 nix run .#test-e2e
 ```
 
-Skips automatically when no container engine is found (unless `CI=true`).
-Set `DEPLOYAH_E2E_DUMP=1` with `-v` to print live objects when adding a scenario.
+Without Docker the suite skips. With `CI=true` it fails.
+Put `e2e.yaml` in `scenarios/<name>/` to run that spec on Kind. Generate a
+skeleton with:
+
+```sh
+go test ./internal/e2e/ -tags e2e -run TestE2EFixtures/<name> -e2e.scaffold
+```
+
+`-e2e.preserve` keeps the namespace after a failure.
 
 ### Build and run
 
@@ -528,11 +536,10 @@ nix run .#publish-demo # sync docs/assets/ to R2 (needs R2_* env vars)
 ### CI
 
 GitHub Actions runs flake validation, lint/fmt/tidy checks, `nix run .#test-unit`,
-`nix run .#test-integration`, and `nix run .#test-e2e` on every pull request and
-push to `main`.
-Scenario fixtures under `scenarios/` and e2e fixtures under
-`internal/e2e/testdata/` (including `deployah.yaml`, `deployah.platform.yaml`,
-and `.deployah/`) are tracked so tests can run on a clean checkout.
+`nix run .#test-integration`, and `nix run .#test-e2e` on pull requests and
+pushes to `main`.
+Commit `deployah.yaml`, `expected/`, `e2e.yaml`, and `.deployah/` under
+`scenarios/`. CI reads those files from a clean checkout.
 
 ```sh
 nix flake check   # runs the pre-commit hooks (lint, markdownlint, links, tidy, nixfmt)

@@ -20,54 +20,64 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
-	"time"
+	"unicode"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"go.yaml.in/yaml/v3"
+	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/discovery/cached/memory"
+	"k8s.io/client-go/restmapper"
 	"k8s.io/client-go/tools/clientcmd"
 	"nabat.dev/nabat"
 	"nabat.dev/nabat/nabattest"
 	"sigs.k8s.io/e2e-framework/klient"
-	"sigs.k8s.io/e2e-framework/klient/k8s"
 	"sigs.k8s.io/e2e-framework/klient/k8s/resources"
-	"sigs.k8s.io/e2e-framework/klient/wait"
-	"sigs.k8s.io/e2e-framework/klient/wait/conditions"
 
 	"deployah.dev/deployah/internal/cmd"
 	"deployah.dev/deployah/internal/localkube"
 
-	appsv1 "k8s.io/api/apps/v1"
-	batchv1 "k8s.io/api/batch/v1"
-	corev1 "k8s.io/api/core/v1"
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-	apiextensionsclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	inttest "deployah.dev/deployah/internal/testing"
+)
+
+const (
+	kindContext = "kind-deployah"
+	clusterName = "deployah"
+	maxDNSLabel = 63
+)
+
+var (
+	flagScaffold = flag.Bool("e2e.scaffold", false, "generate e2e.yaml skeleton from live cluster state")
+	flagPreserve = flag.Bool("e2e.preserve", false, "preserve namespace on test failure for debugging")
 )
 
 // E2ESuite drives Deployah against a live Kind cluster created by
 // `deployah cluster up`.
 type E2ESuite struct {
 	suite.Suite
-	kcPath      string
-	client      klient.Client
-	scenarios   []scenario
-	testdataDir string // absolute; resolved before SetupSuite chdirs to a temp dir
-	created     bool   // true once the suite attempts cluster up (teardown if partial)
+	kcPath       string
+	client       klient.Client
+	mapper       *restmapper.DeferredDiscoveryRESTMapper
+	mapperMu     sync.Mutex
+	scenariosDir string
+	created      bool // TearDownSuite runs cluster down when true
 }
 
-type scenario struct {
-	Name    string
-	Dir     string // absolute
-	Project string // from deployah.yaml, needed by the delete cleanup
+type e2eCase struct {
+	Name     string
+	Dir      string
+	Project  string
+	Fixture  inttest.E2EFixture
+	Parallel bool
 }
 
 // clusterStatusView mirrors the JSON tags on the unexported status view in
@@ -80,79 +90,23 @@ type clusterStatusView struct {
 	CloudProviderRunning bool   `json:"cloudProviderRunning"`
 }
 
-type expectations struct {
-	Env          string                `yaml:"env"`
-	Namespace    string                `yaml:"namespace"`
-	Deployments  []expectedDeployment  `yaml:"deployments"`
-	StatefulSets []expectedStatefulSet `yaml:"statefulSets"`
-	Services     []expectedService     `yaml:"services"`
-	PVCs         []expectedPVC         `yaml:"pvcs"`
-	Pods         expectedPods          `yaml:"pods"`
-	Jobs         []expectedJob         `yaml:"jobs"`
-}
-
-type expectedDeployment struct {
-	Name     string            `yaml:"name"`
-	Replicas int32             `yaml:"replicas"`
-	Image    string            `yaml:"image"`
-	PortName string            `yaml:"portName"`
-	Labels   map[string]string `yaml:"labels"`
-}
-
-type expectedStatefulSet struct {
-	Name     string            `yaml:"name"`
-	Replicas int32             `yaml:"replicas"`
-	Image    string            `yaml:"image"`
-	PortName string            `yaml:"portName"`
-	Labels   map[string]string `yaml:"labels"`
-}
-
-type expectedService struct {
-	Name           string            `yaml:"name"`
-	Port           int32             `yaml:"port"`
-	TargetPortName string            `yaml:"targetPortName"`
-	Selector       map[string]string `yaml:"selector"`
-	// ClusterIP, when set to "None", asserts a headless Service.
-	ClusterIP string `yaml:"clusterIP"`
-}
-
-type expectedPVC struct {
-	NamePrefix string `yaml:"namePrefix"`
-	MinCount   int    `yaml:"minCount"`
-	Phase      string `yaml:"phase"`
-	Storage    string `yaml:"storage"`
-}
-
-type expectedJob struct {
-	Name      string `yaml:"name"`
-	Succeeded int32  `yaml:"succeeded"`
-}
-
-type expectedPods struct {
-	LabelSelector string `yaml:"labelSelector"`
-	MinCount      int    `yaml:"minCount"`
-	Phase         string `yaml:"phase"`
-}
-
 // TestE2E runs the Kind-based end-to-end suite.
 func TestE2E(t *testing.T) {
 	suite.Run(t, new(E2ESuite))
 }
 
-// SetupSuite discovers fixtures, creates the Kind cluster, and checks status.
+// SetupSuite creates the Kind cluster, preloads allowlisted images, and
+// builds a discovery RESTMapper.
 func (s *E2ESuite) SetupSuite() {
 	t := s.T()
 	requireEngine(t)
 
-	// go test starts in the package directory. Resolve fixtures now, because
-	// the chdir below moves the whole suite out of it.
-	testdataDir, err := filepath.Abs("testdata")
+	scenariosDir, err := filepath.Abs(inttest.TestScenariosDir)
 	s.Require().NoError(err)
-	s.testdataDir = testdataDir
-	s.scenarios = discoverScenarios(t, testdataDir)
+	s.scenariosDir = scenariosDir
 
-	// cluster up scaffolds deployah.platform.yaml into the cwd, so run from a
-	// temp dir to keep the repo clean. t.Chdir restores cwd when the suite ends.
+	// Run from a temp dir; cluster up writes deployah.platform.yaml into cwd.
+	// t.Chdir restores cwd when the suite ends.
 	t.Chdir(t.TempDir())
 
 	requireNoCollision(t)
@@ -164,16 +118,17 @@ func (s *E2ESuite) SetupSuite() {
 	raw := run(t, "cluster", "status", "--output", "json")
 	var status clusterStatusView
 	s.Require().NoError(json.Unmarshal([]byte(raw), &status))
-	s.Require().Equal("deployah", status.Name)
+	s.Require().Equal(clusterName, status.Name)
 	s.Require().Equal("running", status.Status)
-	s.Require().Equal("kind-deployah", status.Context)
+	s.Require().Equal(kindContext, status.Context)
 	s.Require().True(status.CloudProviderRunning)
 
-	// status already carries the kubeconfig path, so no second CLI call.
 	s.kcPath = status.Kubeconfig
 	s.Require().FileExists(s.kcPath)
 
-	s.client = newKlient(t, s.kcPath, "kind-deployah")
+	s.client = newKlient(t, s.kcPath, kindContext)
+	s.preloadImages(t)
+	s.mapper = newRESTMapper(t, s.client)
 }
 
 // TearDownSuite destroys the Kind cluster only when this suite created it.
@@ -186,466 +141,119 @@ func (s *E2ESuite) TearDownSuite() {
 	}
 }
 
-// TestStatefulScale deploys a stateful component at replicas 1, then upgrades
-// to replicas 2 and asserts a second PVC is created.
-func (s *E2ESuite) TestStatefulScale() {
+// TestE2EFixtures runs every scenarios/*/e2e.yaml. Parallel fixtures run
+// first (bounded by go test -parallel); sequential fixtures run after,
+// alphabetically by directory name.
+func (s *E2ESuite) TestE2EFixtures() {
 	t := s.T()
-	src := filepath.Join(s.testdataDir, "stateful-scale")
-	require.DirExists(t, src)
+	cases := s.loadE2ECases(t)
+	require.NotEmpty(t, cases, "no e2e.yaml fixtures under %s", s.scenariosDir)
 
-	// Work in a temp copy so swapping deployah.yaml never dirties testdata/.
-	dir := t.TempDir()
-	for _, name := range []string{"deployah.yaml", "deployah-replicas-2.yaml"} {
-		data, readErr := os.ReadFile(filepath.Join(src, name)) // #nosec G304 -- fixture under testdata
-		require.NoError(t, readErr)
-		// #nosec G703 -- dir is t.TempDir() and name comes from the literal above
-		require.NoError(t, os.WriteFile(filepath.Join(dir, name), data, 0o600))
-	}
-
-	t.Chdir(dir)
-	t.Cleanup(func() {
-		if delErr := runErr(t, "delete", "stateful-scale", "dev",
-			"--yes", "--wait", "--allow-missing-platform",
-			"--context", "kind-deployah"); delErr != nil {
-			t.Logf("cleanup delete failed (non-fatal): %v", delErr)
-		}
-	})
-
-	run(t, "deploy", "dev", "--context", "kind-deployah", "--yes")
-
-	res := s.client.Resources("default")
-	ctx := t.Context()
-	stsName := "stateful-scale-dev-cache"
-
-	require.NoError(t, wait.For(
-		conditions.New(res).ResourceMatch(&appsv1.StatefulSet{
-			Name: stsName, Namespace: "default",
-		}, func(obj k8s.Object) bool {
-			live, ok := obj.(*appsv1.StatefulSet)
-			return ok && live.Status.ReadyReplicas >= 1
-		}),
-		wait.WithTimeout(5*time.Minute),
-		wait.WithInterval(2*time.Second),
-	))
-
-	replicas2, readErr := os.ReadFile("deployah-replicas-2.yaml") // #nosec G304 -- temp fixture copy
-	require.NoError(t, readErr)
-	// #nosec G703 -- constant name, written into the temp working dir
-	require.NoError(t, os.WriteFile("deployah.yaml", replicas2, 0o600))
-
-	run(t, "deploy", "dev", "--context", "kind-deployah", "--yes")
-	require.NoError(t, wait.For(
-		conditions.New(res).ResourceMatch(&appsv1.StatefulSet{
-			Name: stsName, Namespace: "default",
-		}, func(obj k8s.Object) bool {
-			live, ok := obj.(*appsv1.StatefulSet)
-			return ok && live.Spec.Replicas != nil &&
-				*live.Spec.Replicas == 2 && live.Status.ReadyReplicas >= 2
-		}),
-		wait.WithTimeout(5*time.Minute),
-		wait.WithInterval(2*time.Second),
-	))
-
-	var pvcs corev1.PersistentVolumeClaimList
-	require.NoError(t, res.List(ctx, &pvcs))
-	matched := 0
-	for _, pvc := range pvcs.Items {
-		if strings.HasPrefix(pvc.Name, "data-stateful-scale-dev-cache-") {
-			matched++
-			assert.Equal(t, corev1.ClaimBound, pvc.Status.Phase, pvc.Name)
+	var parallel, sequential []e2eCase
+	for _, c := range cases {
+		if c.Parallel {
+			parallel = append(parallel, c)
+		} else {
+			sequential = append(sequential, c)
 		}
 	}
-	assert.GreaterOrEqual(t, matched, 2, "expected per-pod PVCs after scale-up")
-}
-
-const crdLifecycleName = "clusterwidgets.example.com"
-
-// TestCRDLifecycle covers CRD apply outside the Helm release: Established
-// before install, idle-Helm re-apply, create vs create-replace, and survival
-// across deployah delete.
-func (s *E2ESuite) TestCRDLifecycle() {
-	t := s.T()
-	src := filepath.Join(s.testdataDir, "crd-lifecycle")
-	require.DirExists(t, src)
-
-	dir := t.TempDir()
-	copyTree(t, src, dir)
-	t.Chdir(dir)
-
-	ext := newApiextensionsClient(t, s.kcPath, "kind-deployah")
-	t.Cleanup(func() {
-		// t.Context() is canceled just before Cleanup runs (Go 1.24+), so
-		// teardown API calls need an independent context.
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		defer cancel()
-		// Best-effort: remove the fixture CRD so later suite runs stay clean.
-		if delCRDErr := ext.ApiextensionsV1().CustomResourceDefinitions().Delete(
-			cleanupCtx, crdLifecycleName, metav1.DeleteOptions{}); delCRDErr != nil {
-			t.Logf("cleanup CRD delete failed (non-fatal): %v", delCRDErr)
-		}
-		if delErr := runErr(t, "delete", "crd-lifecycle", "dev",
-			"--yes", "--wait", "--allow-missing-platform",
-			"--context", "kind-deployah"); delErr != nil {
-			t.Logf("cleanup delete failed (non-fatal): %v", delErr)
-		}
+	slices.SortFunc(sequential, func(a, b e2eCase) int {
+		return strings.Compare(a.Name, b.Name)
 	})
 
-	// First deploy installs the CRD and the release.
-	run(t, "deploy", "dev", "--context", "kind-deployah", "--yes", "--crds", "create")
-	crd := waitCRDEstablished(t, ext, crdLifecycleName)
-	assert.Equal(t, "crd-lifecycle", crd.Labels["e2e-marker"])
-
-	// Idle Helm plan must still visit CRDs (already present). Success messages
-	// go to stderr via nabat, so assert via a dedicated IO capture.
-	_, stderr := runCapture(t, "deploy", "dev", "--context", "kind-deployah", "--yes", "--crds", "create")
-	assert.Contains(t, stderr, "already present")
-	waitCRDEstablished(t, ext, crdLifecycleName)
-
-	// --crds create leaves an existing CRD alone when the file changes.
-	patched := strings.Replace(
-		readFixtureFile(t, filepath.Join(dir, ".deployah", "crds", "clusterwidget.yaml")),
-		`e2e-marker: "crd-lifecycle"`,
-		`e2e-marker: "create-skipped"`,
-		1,
-	)
-	require.NoError(t, os.WriteFile(
-		filepath.Join(dir, ".deployah", "crds", "clusterwidget.yaml"),
-		[]byte(patched), 0o600))
-	run(t, "deploy", "dev", "--context", "kind-deployah", "--yes", "--crds", "create")
-	crd = getCRD(t, ext, crdLifecycleName)
-	assert.Equal(t, "crd-lifecycle", crd.Labels["e2e-marker"],
-		"--crds create must not replace an existing CRD")
-
-	// --crds create-replace server-side-applies over the existing CRD.
-	run(t, "deploy", "dev", "--context", "kind-deployah", "--yes", "--crds", "create-replace")
-	require.NoError(t, wait.For(func(ctx context.Context) (bool, error) {
-		live, getErr := ext.ApiextensionsV1().CustomResourceDefinitions().Get(
-			ctx, crdLifecycleName, metav1.GetOptions{})
-		if getErr != nil {
-			return false, getErr
-		}
-		return live.Labels["e2e-marker"] == "create-skipped", nil
-	}, wait.WithTimeout(2*time.Minute), wait.WithInterval(time.Second)))
-
-	// CRDs are never pruned on uninstall.
-	run(t, "delete", "crd-lifecycle", "dev",
-		"--yes", "--wait", "--allow-missing-platform",
-		"--context", "kind-deployah")
-	_, err := ext.ApiextensionsV1().CustomResourceDefinitions().Get(
-		t.Context(), crdLifecycleName, metav1.GetOptions{})
-	require.NoError(t, err, "CRD must survive deployah delete")
-}
-
-// TestDeployScenarios deploys each discovered fixture and asserts expect.yaml.
-func (s *E2ESuite) TestDeployScenarios() {
-	for _, sc := range s.scenarios {
-		s.Run(sc.Name, func() {
-			t := s.T()
-
-			// Load before the chdir; sc.Dir is absolute so order is safe either
-			// way, but reading first keeps the dependency obvious.
-			exp := loadExpectations(t, sc.Dir)
-			t.Chdir(sc.Dir) // deploy reads deployah.yaml from the cwd
-
-			// Registered before deploy: a partial apply still gets torn down.
-			t.Cleanup(func() {
-				if err := runErr(t, "delete", sc.Project, exp.Env,
-					"--yes", "--wait", "--allow-missing-platform",
-					"--context", "kind-deployah"); err != nil {
-					t.Logf("cleanup delete failed (non-fatal): %v", err)
-				}
+	t.Run("parallel", func(t *testing.T) {
+		for _, c := range parallel {
+			t.Run(c.Name, func(t *testing.T) {
+				t.Parallel()
+				s.runE2ECase(t, c)
 			})
+		}
+	})
+	t.Run("sequential", func(t *testing.T) {
+		for _, c := range sequential {
+			t.Run(c.Name, func(t *testing.T) {
+				s.runE2ECase(t, c)
+			})
+		}
+	})
+}
 
-			run(t, "deploy", exp.Env, "--context", "kind-deployah", "--yes")
-			s.assertExpectations(t, exp)
+func (s *E2ESuite) loadE2ECases(t *testing.T) []e2eCase {
+	t.Helper()
+	scenarios, err := inttest.DiscoverScenarios(s.scenariosDir)
+	require.NoError(t, err)
+
+	seen := map[string]struct{}{}
+	var cases []e2eCase
+	for _, sc := range scenarios {
+		if !sc.HasE2EFixture {
+			continue
+		}
+		if _, ok := seen[sc.ScenarioDir]; ok {
+			continue
+		}
+		seen[sc.ScenarioDir] = struct{}{}
+
+		dir := filepath.Join(s.scenariosDir, sc.ScenarioDir)
+		fx, loadErr := inttest.LoadE2EFixture(sc.E2EFixturePath, dir)
+		require.NoErrorf(t, loadErr, "load %s", sc.E2EFixturePath)
+		project, projErr := projectName(dir)
+		require.NoError(t, projErr)
+
+		cases = append(cases, e2eCase{
+			Name:     sc.ScenarioDir,
+			Dir:      dir,
+			Project:  project,
+			Fixture:  fx,
+			Parallel: fx.RunParallel(),
 		})
 	}
+	return cases
 }
 
-func (s *E2ESuite) TestTaskRun() {
-	t := s.T()
-	s.prepareTaskdemo(t)
-
-	run(t, "deploy", "dev", "--context", "kind-deployah", "--yes")
-	run(t, "run", "backfill", "dev", "--context", "kind-deployah", "--yes")
-	run(t, "run", "backfill", "dev", "--context", "kind-deployah", "--yes")
-
-	res := s.client.Resources("default")
-	var jobs batchv1.JobList
-	require.NoError(t, res.List(t.Context(), &jobs,
-		resources.WithLabelSelector("deployah.dev/project=taskdemo,deployah.dev/component=backfill")))
-	assert.GreaterOrEqual(t, len(jobs.Items), 2, "two runs get unique Job names")
-	for _, job := range jobs.Items {
-		assert.GreaterOrEqual(t, job.Status.Succeeded, int32(1), "job %s", job.Name)
-	}
-}
-
-func (s *E2ESuite) TestTaskLogs() {
-	t := s.T()
-	s.prepareTaskdemo(t)
-
-	run(t, "deploy", "dev", "--context", "kind-deployah", "--yes")
-	run(t, "run", "backfill", "dev", "--context", "kind-deployah", "--yes")
-	out := run(t, "logs", "taskdemo", "--component=backfill", "--environment=dev",
-		"--no-follow", "--context", "kind-deployah")
-	assert.Contains(t, out, "backfill-ok")
-}
-
-func (s *E2ESuite) TestDeleteCleansCLIJobs() {
-	t := s.T()
-	s.prepareTaskdemo(t)
-
-	run(t, "deploy", "dev", "--context", "kind-deployah", "--yes")
-	run(t, "run", "backfill", "dev", "--context", "kind-deployah", "--yes")
-	run(t, "delete", "taskdemo", "dev", "--yes", "--wait", "--allow-missing-platform",
-		"--context", "kind-deployah")
-
-	res := s.client.Resources("default")
-	var jobs batchv1.JobList
-	require.NoError(t, res.List(t.Context(), &jobs,
-		resources.WithLabelSelector("deployah.dev/project=taskdemo,deployah.dev/environment=dev")))
-	assert.Empty(t, jobs.Items)
-}
-
-func (s *E2ESuite) TestTaskSchedule() {
-	t := s.T()
-	src := filepath.Join(s.testdataDir, "task-schedule")
-	dir := t.TempDir()
-	copyTree(t, src, dir)
-	t.Chdir(dir)
-	t.Cleanup(func() {
-		if err := runErr(t, "delete", "taskcron", "dev",
-			"--yes", "--wait", "--allow-missing-platform",
-			"--context", "kind-deployah"); err != nil {
-			t.Logf("cleanup delete failed (non-fatal): %v", err)
-		}
-	})
-
-	run(t, "deploy", "dev", "--context", "kind-deployah", "--yes")
-
-	res := s.client.Resources("default")
-	var cronjobs batchv1.CronJobList
-	require.NoError(t, res.List(t.Context(), &cronjobs,
-		resources.WithLabelSelector("deployah.dev/project=taskcron,deployah.dev/component=cleanup")))
-	require.Len(t, cronjobs.Items, 1)
-	cj := cronjobs.Items[0]
-	assert.Empty(t, cj.Annotations["helm.sh/hook"])
-	assert.Equal(t, "@every 1h", cj.Spec.Schedule)
-	require.NotNil(t, cj.Spec.TimeZone)
-	assert.Equal(t, "Etc/UTC", *cj.Spec.TimeZone)
-	assert.Equal(t, batchv1.ForbidConcurrent, cj.Spec.ConcurrencyPolicy)
-	require.NotNil(t, cj.Spec.SuccessfulJobsHistoryLimit)
-	assert.Equal(t, int32(3), *cj.Spec.SuccessfulJobsHistoryLimit)
-	require.NotNil(t, cj.Spec.FailedJobsHistoryLimit)
-	assert.Equal(t, int32(3), *cj.Spec.FailedJobsHistoryLimit)
-	assert.Equal(t, corev1.RestartPolicyOnFailure, cj.Spec.JobTemplate.Spec.Template.Spec.RestartPolicy)
-	assert.Nil(t, cj.Spec.StartingDeadlineSeconds)
-	require.NotNil(t, cj.Spec.JobTemplate.Spec.CompletionMode)
-	assert.Equal(t, batchv1.IndexedCompletion, *cj.Spec.JobTemplate.Spec.CompletionMode)
-	require.Len(t, cj.Spec.JobTemplate.Spec.Template.Spec.Containers, 1)
-	assert.Equal(t, []string{"echo", "cleanup-ok"}, cj.Spec.JobTemplate.Spec.Template.Spec.Containers[0].Command)
-	require.NotNil(t, cj.Spec.JobTemplate.Spec.ActiveDeadlineSeconds)
-	assert.Equal(t, int64(3600), *cj.Spec.JobTemplate.Spec.ActiveDeadlineSeconds)
-
-	run(t, "run", "cleanup", "dev", "--context", "kind-deployah", "--yes")
-	var jobs batchv1.JobList
-	require.NoError(t, res.List(t.Context(), &jobs,
-		resources.WithLabelSelector("deployah.dev/project=taskcron,deployah.dev/component=cleanup")))
-	require.NotEmpty(t, jobs.Items)
-	var cliJob *batchv1.Job
-	for i := range jobs.Items {
-		job := &jobs.Items[i]
-		if job.Labels["deployah.dev/managed-by"] == "deployah" {
-			cliJob = job
-			break
-		}
-	}
-	require.NotNil(t, cliJob, "deployah run must create a standalone Job")
-	assert.Nil(t, cliJob.Spec.ActiveDeadlineSeconds)
-}
-
-// prepareTaskdemo copies the task-migrate-smoke scenario into a temp dir,
-// makes it the working directory, and registers a best-effort delete.
-func (s *E2ESuite) prepareTaskdemo(t *testing.T) {
+func (s *E2ESuite) runE2ECase(t *testing.T, c e2eCase) {
 	t.Helper()
-	src := filepath.Join(s.testdataDir, "task-migrate-smoke")
-	dir := t.TempDir()
-	copyTree(t, src, dir)
-	t.Chdir(dir)
+	ns := fixtureNamespace(c.Name)
+	s.createNamespace(t, ns)
 	t.Cleanup(func() {
-		if err := runErr(t, "delete", "taskdemo", "dev",
-			"--yes", "--wait", "--allow-missing-platform",
-			"--context", "kind-deployah"); err != nil {
-			t.Logf("cleanup delete failed (non-fatal): %v", err)
+		if t.Failed() && *flagPreserve {
+			t.Logf("preserving namespace %s (-e2e.preserve)", ns)
+			return
 		}
+		// Helm uninstall drops pods so PVC protection finalizers can
+		// clear. t.Context() is canceled before Cleanup.
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), namespaceWaitTimeout)
+		defer cancel()
+		if _, _, delErr := runInErrContext(t, cleanupCtx, c.Dir, "delete", c.Project, c.Fixture.Env,
+			"--yes", "--wait", "--allow-missing-platform",
+			"--context", kindContext, "--namespace", ns); delErr != nil {
+			t.Logf("cleanup deployah delete failed (non-fatal): %v", delErr)
+		}
+		s.deleteNamespace(t, ns)
 	})
+	s.assertE2EFixture(t, c.Dir, c.Project, ns, c.Fixture)
 }
 
-func (s *E2ESuite) assertExpectations(tb testing.TB, exp expectations) {
+func (s *E2ESuite) preloadImages(t *testing.T) {
+	t.Helper()
+	m, err := localkube.New()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		if closeErr := m.Close(); closeErr != nil {
+			t.Logf("close localkube manager: %v", closeErr)
+		}
+	})
+	for _, img := range inttest.AllowedE2EImages {
+		t.Logf("preloading image %s", img)
+		require.NoErrorf(t, m.LoadImage(t.Context(), clusterName, img), "load %s", img)
+	}
+}
+
+func newRESTMapper(tb testing.TB, c klient.Client) *restmapper.DeferredDiscoveryRESTMapper {
 	tb.Helper()
-	res := s.client.Resources(exp.Namespace)
-	ctx := tb.Context()
-
-	for _, dep := range exp.Deployments {
-		target := &appsv1.Deployment{
-			Name: dep.Name, Namespace: exp.Namespace,
-		}
-
-		// Spelled out rather than using the DeploymentAvailable shorthand, so
-		// the condition under test is unambiguous in the source.
-		err := wait.For(
-			conditions.New(res).DeploymentConditionMatch(
-				target, appsv1.DeploymentAvailable, corev1.ConditionTrue),
-			wait.WithTimeout(5*time.Minute),
-			wait.WithInterval(2*time.Second),
-		)
-		require.NoErrorf(tb, err, "deployment %s/%s never became Available",
-			exp.Namespace, dep.Name)
-
-		var live appsv1.Deployment
-		require.NoError(tb, res.Get(ctx, dep.Name, exp.Namespace, &live))
-		dumpActual(tb, &live)
-
-		for key, val := range dep.Labels { // subset match
-			assert.Equalf(tb, val, live.Labels[key],
-				"deployment %s label %s", dep.Name, key)
-		}
-
-		containers := live.Spec.Template.Spec.Containers
-		require.NotEmptyf(tb, containers, "deployment %s has no containers", dep.Name)
-		assert.Equalf(tb, dep.Image, containers[0].Image,
-			"deployment %s image", dep.Name)
-
-		if dep.PortName != "" {
-			require.NotEmptyf(tb, containers[0].Ports,
-				"deployment %s has no ports", dep.Name)
-			assert.Equalf(tb, dep.PortName, containers[0].Ports[0].Name,
-				"deployment %s port name", dep.Name)
-		}
-		if dep.Replicas > 0 {
-			require.NotNil(tb, live.Spec.Replicas)
-			assert.Equalf(tb, dep.Replicas, *live.Spec.Replicas,
-				"deployment %s replicas", dep.Name)
-		}
-	}
-
-	for _, sts := range exp.StatefulSets {
-		target := &appsv1.StatefulSet{
-			Name: sts.Name, Namespace: exp.Namespace,
-		}
-		err := wait.For(
-			conditions.New(res).ResourceMatch(target, func(obj k8s.Object) bool {
-				live, ok := obj.(*appsv1.StatefulSet)
-				if !ok || live.Spec.Replicas == nil {
-					return false
-				}
-				return live.Status.ReadyReplicas >= *live.Spec.Replicas &&
-					live.Status.ReadyReplicas > 0
-			}),
-			wait.WithTimeout(5*time.Minute),
-			wait.WithInterval(2*time.Second),
-		)
-		require.NoErrorf(tb, err, "statefulset %s/%s never became ready",
-			exp.Namespace, sts.Name)
-
-		var live appsv1.StatefulSet
-		require.NoError(tb, res.Get(ctx, sts.Name, exp.Namespace, &live))
-		dumpActual(tb, &live)
-
-		for key, val := range sts.Labels {
-			assert.Equalf(tb, val, live.Labels[key],
-				"statefulset %s label %s", sts.Name, key)
-		}
-		containers := live.Spec.Template.Spec.Containers
-		require.NotEmptyf(tb, containers, "statefulset %s has no containers", sts.Name)
-		assert.Equalf(tb, sts.Image, containers[0].Image,
-			"statefulset %s image", sts.Name)
-		if sts.PortName != "" {
-			require.NotEmptyf(tb, containers[0].Ports,
-				"statefulset %s has no ports", sts.Name)
-			assert.Equalf(tb, sts.PortName, containers[0].Ports[0].Name,
-				"statefulset %s port name", sts.Name)
-		}
-		if sts.Replicas > 0 {
-			require.NotNil(tb, live.Spec.Replicas)
-			assert.Equalf(tb, sts.Replicas, *live.Spec.Replicas,
-				"statefulset %s replicas", sts.Name)
-		}
-	}
-
-	for _, svc := range exp.Services {
-		var live corev1.Service
-		require.NoError(tb, res.Get(ctx, svc.Name, exp.Namespace, &live))
-		dumpActual(tb, &live)
-
-		require.NotEmptyf(tb, live.Spec.Ports, "service %s has no ports", svc.Name)
-		assert.Equalf(tb, svc.Port, live.Spec.Ports[0].Port, "service %s port", svc.Name)
-
-		// TargetPort is an intstr; a named port lives in StrVal, not IntVal.
-		if svc.TargetPortName != "" {
-			assert.Equalf(tb, svc.TargetPortName, live.Spec.Ports[0].TargetPort.StrVal,
-				"service %s targetPort name", svc.Name)
-		}
-		if svc.ClusterIP == "None" {
-			assert.Equalf(tb, corev1.ClusterIPNone, live.Spec.ClusterIP,
-				"service %s should be headless", svc.Name)
-		}
-		for key, val := range svc.Selector {
-			assert.Equalf(tb, val, live.Spec.Selector[key],
-				"service %s selector %s", svc.Name, key)
-		}
-	}
-
-	for _, wantPVC := range exp.PVCs {
-		var pvcs corev1.PersistentVolumeClaimList
-		require.NoError(tb, res.List(ctx, &pvcs))
-		matched := 0
-		for _, pvc := range pvcs.Items {
-			if !strings.HasPrefix(pvc.Name, wantPVC.NamePrefix) {
-				continue
-			}
-			matched++
-			if wantPVC.Phase != "" {
-				assert.Equalf(tb, wantPVC.Phase, string(pvc.Status.Phase),
-					"pvc %s phase", pvc.Name)
-			}
-			if wantPVC.Storage != "" {
-				req := pvc.Spec.Resources.Requests[corev1.ResourceStorage]
-				assert.Equalf(tb, wantPVC.Storage, req.String(),
-					"pvc %s storage", pvc.Name)
-			}
-		}
-		assert.GreaterOrEqualf(tb, matched, wantPVC.MinCount,
-			"pvcs with prefix %s", wantPVC.NamePrefix)
-	}
-
-	if exp.Pods.LabelSelector != "" {
-		var pods corev1.PodList
-		require.NoError(tb, res.List(ctx, &pods,
-			resources.WithLabelSelector(exp.Pods.LabelSelector)))
-		assert.GreaterOrEqualf(tb, len(pods.Items), exp.Pods.MinCount,
-			"pods matching %s", exp.Pods.LabelSelector)
-		for _, pod := range pods.Items {
-			assert.Equalf(tb, exp.Pods.Phase, string(pod.Status.Phase),
-				"pod %s phase", pod.Name)
-		}
-	}
-
-	for _, wantJob := range exp.Jobs {
-		target := &batchv1.Job{
-			Name: wantJob.Name, Namespace: exp.Namespace,
-		}
-		err := wait.For(
-			conditions.New(res).ResourceMatch(target, func(obj k8s.Object) bool {
-				live, ok := obj.(*batchv1.Job)
-				return ok && live.Status.Succeeded >= wantJob.Succeeded
-			}),
-			wait.WithTimeout(5*time.Minute),
-			wait.WithInterval(2*time.Second),
-		)
-		require.NoErrorf(tb, err, "job %s/%s never reached succeeded>=%d",
-			exp.Namespace, wantJob.Name, wantJob.Succeeded)
-	}
+	disco, err := discovery.NewDiscoveryClientForConfig(c.RESTConfig())
+	require.NoError(tb, err)
+	return restmapper.NewDeferredDiscoveryRESTMapper(memory.NewMemCacheClient(disco))
 }
 
 func newKlient(tb testing.TB, kubeconfigPath, contextName string) klient.Client {
@@ -664,56 +272,48 @@ func newKlient(tb testing.TB, kubeconfigPath, contextName string) klient.Client 
 	return c
 }
 
-func discoverScenarios(tb testing.TB, testdataDir string) []scenario {
-	tb.Helper()
-	entries, err := os.ReadDir(testdataDir)
-	require.NoErrorf(tb, err, "read %s", testdataDir)
-
-	var found []scenario
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		dir := filepath.Join(testdataDir, entry.Name()) // absolute
-		specPath := filepath.Join(dir, "deployah.yaml")
-		if !regularFileExists(specPath) ||
-			!regularFileExists(filepath.Join(dir, "expect.yaml")) {
-			continue
-		}
-
-		raw, readErr := os.ReadFile(specPath) // #nosec G304 -- path under testdata/
-		require.NoError(tb, readErr)
-		var spec struct {
-			Project string `yaml:"project"`
-		}
-		require.NoError(tb, yaml.Unmarshal(raw, &spec))
-		require.NotEmptyf(tb, spec.Project, "%s has no project field", specPath)
-
-		found = append(found, scenario{
-			Name: entry.Name(), Dir: dir, Project: spec.Project,
-		})
+// newResources returns a dedicated Resources client. klient.Client.Resources
+// mutates a shared namespace field, which is not safe under t.Parallel.
+func (s *E2ESuite) newResources(ns string) (*resources.Resources, error) {
+	res, err := resources.New(s.client.RESTConfig())
+	if err != nil {
+		return nil, err
 	}
-	require.NotEmptyf(tb, found, "no scenarios found in %s", testdataDir)
-	return found
+	return res.WithNamespace(ns), nil
 }
 
-func regularFileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.Mode().IsRegular()
+func projectName(dir string) (string, error) {
+	raw, err := os.ReadFile(filepath.Join(dir, "deployah.yaml")) // #nosec G304 -- scenario spec
+	if err != nil {
+		return "", fmt.Errorf("read deployah.yaml: %w", err)
+	}
+	var spec struct {
+		Project string `yaml:"project"`
+	}
+	if err = yaml.Unmarshal(raw, &spec); err != nil {
+		return "", fmt.Errorf("parse deployah.yaml: %w", err)
+	}
+	if spec.Project == "" {
+		return "", fmt.Errorf("%s/deployah.yaml has no project field", dir)
+	}
+	return spec.Project, nil
 }
 
-func loadExpectations(tb testing.TB, dir string) expectations {
-	tb.Helper()
-	raw, err := os.ReadFile(filepath.Join(dir, "expect.yaml")) // #nosec G304 -- path under testdata/
-	require.NoError(tb, err)
-
-	var exp expectations
-	require.NoError(tb, yaml.Unmarshal(raw, &exp))
-	require.NotEmptyf(tb, exp.Env, "%s/expect.yaml has no env field", dir)
-	if exp.Namespace == "" {
-		exp.Namespace = "default"
+func fixtureNamespace(name string) string {
+	var b strings.Builder
+	b.WriteString("e2e-")
+	for _, r := range strings.ToLower(name) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '-' {
+			b.WriteRune(r)
+			continue
+		}
+		b.WriteRune('-')
 	}
-	return exp
+	ns := strings.Trim(b.String(), "-")
+	if len(ns) > maxDNSLabel {
+		ns = strings.Trim(ns[:maxDNSLabel], "-")
+	}
+	return ns
 }
 
 func run(tb testing.TB, args ...string) string {
@@ -722,7 +322,7 @@ func run(tb testing.TB, args ...string) string {
 	return stdout
 }
 
-// runCapture runs deployah and returns stdout and stderr on success.
+// runCapture runs deployah in the process cwd and returns stdout and stderr.
 func runCapture(tb testing.TB, args ...string) (stdout, stderr string) {
 	tb.Helper()
 	appIO, _, out, errOut := nabattest.NewIO()
@@ -733,101 +333,39 @@ func runCapture(tb testing.TB, args ...string) (stdout, stderr string) {
 	return out.String(), errOut.String()
 }
 
-func copyTree(tb testing.TB, src, dst string) {
+func runIn(tb testing.TB, dir string, args ...string) (stdout, stderr string) {
 	tb.Helper()
-	err := filepath.WalkDir(src, func(path string, d os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		rel, relErr := filepath.Rel(src, path)
-		if relErr != nil {
-			return relErr
-		}
-		target := filepath.Join(dst, rel)
-		if d.IsDir() {
-			return os.MkdirAll(target, 0o750)
-		}
-		// G122 flags the Walk-callback path as symlink-TOCTOU prone; src is
-		// testdata/ and dst is a t.TempDir(), both test-controlled.
-		in, openErr := os.Open(path) // #nosec G304 G122 -- path under testdata/
-		if openErr != nil {
-			return openErr
-		}
-		defer in.Close()                                                                 //nolint:errcheck // read-only copy helper
-		out, createErr := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600) // #nosec G304 -- temp fixture copy
-		if createErr != nil {
-			return createErr
-		}
-		_, copyErr := io.Copy(out, in)
-		closeErr := out.Close()
-		if copyErr != nil {
-			return copyErr
-		}
-		return closeErr
-	})
-	require.NoError(tb, err)
+	stdout, stderr, err := runInErr(tb, dir, args...)
+	require.NoErrorf(tb, err, "deployah %s\nstderr:\n%s",
+		strings.Join(args, " "), stderr)
+	return stdout, stderr
 }
 
-func readFixtureFile(tb testing.TB, path string) string {
+func runInErr(tb testing.TB, dir string, args ...string) (stdout, stderr string, err error) {
 	tb.Helper()
-	raw, err := os.ReadFile(path) // #nosec G304 -- path under test-controlled temp dir
-	require.NoError(tb, err)
-	return string(raw)
+	return runInErrContext(tb, tb.Context(), dir, args...)
 }
 
-func newApiextensionsClient(tb testing.TB, kubeconfigPath, contextName string) apiextensionsclient.Interface {
+func runInErrContext(tb testing.TB, ctx context.Context, dir string, args ...string) (stdout, stderr string, err error) {
 	tb.Helper()
-	rules := clientcmd.NewDefaultClientConfigLoadingRules()
-	rules.ExplicitPath = kubeconfigPath
-	overrides := &clientcmd.ConfigOverrides{CurrentContext: contextName}
-	restCfg, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
-		rules, overrides).ClientConfig()
-	require.NoError(tb, err)
-	cs, err := apiextensionsclient.NewForConfig(restCfg)
-	require.NoError(tb, err)
-	return cs
-}
-
-func getCRD(tb testing.TB, ext apiextensionsclient.Interface, name string) *apiextensionsv1.CustomResourceDefinition {
-	tb.Helper()
-	crd, err := ext.ApiextensionsV1().CustomResourceDefinitions().Get(
-		tb.Context(), name, metav1.GetOptions{})
-	require.NoError(tb, err)
-	return crd
-}
-
-func waitCRDEstablished(tb testing.TB, ext apiextensionsclient.Interface, name string) *apiextensionsv1.CustomResourceDefinition {
-	tb.Helper()
-	var latest *apiextensionsv1.CustomResourceDefinition
-	require.NoError(tb, wait.For(func(ctx context.Context) (bool, error) {
-		crd, err := ext.ApiextensionsV1().CustomResourceDefinitions().Get(
-			ctx, name, metav1.GetOptions{})
-		if err != nil {
-			return false, err
-		}
-		latest = crd
-		for _, cond := range crd.Status.Conditions {
-			if cond.Type == apiextensionsv1.Established &&
-				cond.Status == apiextensionsv1.ConditionTrue {
-				return true, nil
-			}
-		}
-		return false, nil
-	}, wait.WithTimeout(2*time.Minute), wait.WithInterval(time.Second)))
-	require.NotNil(tb, latest)
-	return latest
+	appIO, _, out, errOut := nabattest.NewIO()
+	app := cmd.NewApp(nabat.WithIO(appIO))
+	opts := []nabattest.RunOption{nabattest.WithContext(ctx)}
+	if dir != "" {
+		opts = append(opts, nabattest.WithDir(dir))
+	}
+	err = nabattest.RunParallel(tb, app, args, opts...)
+	return out.String(), errOut.String(), err
 }
 
 func runErr(tb testing.TB, args ...string) error {
 	tb.Helper()
-	appIO, _, _, errOut := nabattest.NewIO()
-	app := cmd.NewApp(nabat.WithIO(appIO))
-	err := nabattest.Run(tb, app, args)
+	_, stderr, err := runInErr(tb, "", args...)
 	if err == nil {
 		return nil
 	}
-	if stderr := strings.TrimSpace(errOut.String()); stderr != "" {
-		return fmt.Errorf("%w\nstderr:\n%s", err, stderr)
+	if trimmed := strings.TrimSpace(stderr); trimmed != "" {
+		return fmt.Errorf("%w\nstderr:\n%s", err, trimmed)
 	}
 	return err
 }
@@ -846,11 +384,15 @@ func requireNoCollision(tb testing.TB) {
 	tb.Helper()
 	m, err := localkube.New()
 	require.NoError(tb, err)
-	defer m.Close() //nolint:errcheck // best-effort cleanup of provider resources
+	tb.Cleanup(func() {
+		if closeErr := m.Close(); closeErr != nil {
+			tb.Logf("close localkube manager: %v", closeErr)
+		}
+	})
 
-	_, getErr := m.Get(tb.Context(), "deployah")
+	_, getErr := m.Get(tb.Context(), clusterName)
 	if errors.Is(getErr, localkube.ErrNotFound) {
-		return // no existing cluster, nothing to do
+		return
 	}
 	require.NoError(tb, getErr)
 
@@ -860,19 +402,4 @@ func requireNoCollision(tb testing.TB) {
 	}
 	tb.Log("DEPLOYAH_E2E_FORCE=1: destroying the existing cluster")
 	require.NoError(tb, runErr(tb, "cluster", "down", "--force"))
-}
-
-// dumpActual logs a live object as YAML when DEPLOYAH_E2E_DUMP=1, so a new
-// scenario's expect.yaml can be curated from what deployah actually renders.
-func dumpActual(tb testing.TB, obj any) {
-	tb.Helper()
-	if os.Getenv("DEPLOYAH_E2E_DUMP") != "1" {
-		return
-	}
-	out, err := yaml.Marshal(obj)
-	if err != nil {
-		tb.Logf("dump failed: %v", err)
-		return
-	}
-	tb.Logf("ACTUAL:\n%s", out)
 }

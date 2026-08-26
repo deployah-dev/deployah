@@ -26,7 +26,8 @@
     coverProfile = "coverage-e2e.out";
     junitFile = "junit-e2e.xml";
     testPackages = "./internal/e2e";
-    timeout = "15m";
+    timeout = "30m";
+    extraArgs = "-parallel=4";
     race = false; # the work is a live cluster, not concurrent Go
   };
 }

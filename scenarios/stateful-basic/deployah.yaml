@@ -4,12 +4,12 @@ project: stateful-basic
 components:
   db:
     kind: stateful
-    image: postgres:16
-    port: 5432
+    image: redis:7-alpine
+    port: 6379
     resourcePreset: small
     environments: [dev]
     persistence:
       size: 20Gi
-      mountPath: /var/lib/postgresql/data
+      mountPath: /data
 environments:
   dev: {}

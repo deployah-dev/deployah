@@ -1,3 +1,4 @@
+# $schema: ../../internal/spec/schema/v1-alpha.5/manifest.json
 apiVersion: v1-alpha.5
 project: stateful-scale
 components:

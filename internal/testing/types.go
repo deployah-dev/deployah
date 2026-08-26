@@ -93,6 +93,10 @@ type TestScenario struct {
 	ExpectError bool
 	// ExpectedErrors requires specific substrings in the load/resolve error message.
 	ExpectedErrors []string
+	// HasE2EFixture is true when the scenario directory contains e2e.yaml.
+	HasE2EFixture bool
+	// E2EFixturePath is the absolute path to e2e.yaml when HasE2EFixture is true.
+	E2EFixturePath string
 }
 
 // IntegrationTestSuite runs scenario-based chart and manifest tests.

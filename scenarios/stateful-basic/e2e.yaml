@@ -1,0 +1,59 @@
+# $schema: ../../internal/testing/e2e.schema.json
+env: dev
+resources:
+  - match:
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: stateful-basic-dev-db
+        labels:
+          deployah.dev/project: stateful-basic
+          deployah.dev/environment: dev
+          deployah.dev/component: db
+      spec:
+        replicas: 1
+        template:
+          spec:
+            containers:
+              - name: db
+                image: docker.io/library/redis:7-alpine
+                ports:
+                  - name: http
+                    containerPort: 6379
+      status:
+        readyReplicas: 1
+  - match:
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: stateful-basic-dev-db
+      spec:
+        ports:
+          - name: http
+            port: 80
+            targetPort: http
+        selector:
+          app.kubernetes.io/instance: stateful-basic-dev
+          app.kubernetes.io/name: db
+  - match:
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: stateful-basic-dev-db-headless
+      spec:
+        clusterIP: None
+        selector:
+          app.kubernetes.io/instance: stateful-basic-dev
+          app.kubernetes.io/name: db
+  - match:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        labels:
+          deployah.dev/component: db
+      spec:
+        resources:
+          requests:
+            storage: 20Gi
+      status:
+        phase: Bound

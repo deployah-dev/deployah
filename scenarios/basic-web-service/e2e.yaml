@@ -1,0 +1,46 @@
+# $schema: ../../internal/testing/e2e.schema.json
+env: dev
+resources:
+  - match:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: basic-web-service-dev
+        labels:
+          deployah.dev/project: basic-web-service
+          deployah.dev/environment: dev
+          deployah.dev/component: web
+      spec:
+        replicas: 1
+        template:
+          spec:
+            containers:
+              - name: web
+                image: docker.io/library/nginx:latest
+                ports:
+                  - name: http
+                    containerPort: 80
+      status:
+        readyReplicas: 1
+  - match:
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: basic-web-service-dev
+      spec:
+        ports:
+          - name: http
+            port: 80
+            targetPort: http
+        selector:
+          app.kubernetes.io/instance: basic-web-service-dev
+          app.kubernetes.io/name: web
+  - match:
+      apiVersion: v1
+      kind: Pod
+      metadata:
+        labels:
+          deployah.dev/project: basic-web-service
+          deployah.dev/environment: dev
+      status:
+        phase: Running

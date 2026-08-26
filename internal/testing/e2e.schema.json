@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://deployah.dev/schemas/e2e.schema.json",
+  "title": "Deployah e2e fixture",
+  "description": "Kind cluster assertions for a scenarios/*/e2e.yaml file. Exactly one of resources (simple deploy-then-assert) or steps (explicit CLI sequence) must be set.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["env"],
+  "oneOf": [
+    {
+      "required": ["resources"],
+      "not": { "required": ["steps"] }
+    },
+    {
+      "required": ["steps"],
+      "not": { "required": ["resources"] }
+    }
+  ],
+  "properties": {
+    "env": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Positional environment argument passed to deploy/run/delete."
+    },
+    "parallel": {
+      "type": "boolean",
+      "description": "When false, the fixture runs sequentially after parallel fixtures. Default true."
+    },
+    "timeout": {
+      "type": "string",
+      "description": "Default per-step wait (Go duration, e.g. 3m). Default 3m."
+    },
+    "resources": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/resourceAssertion" }
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/step" }
+    }
+  },
+  "$defs": {
+    "resourceAssertion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["match"],
+      "properties": {
+        "match": {
+          "type": "object",
+          "description": "Partial Kubernetes object compared as a subset of the live object.",
+          "required": ["apiVersion", "kind"],
+          "properties": {
+            "apiVersion": { "type": "string", "minLength": 1 },
+            "kind": { "type": "string", "minLength": 1 }
+          }
+        },
+        "minCount": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Minimum matching resources when selecting by labels. Default 1. 0 asserts absence. Must be 0 or 1 when match.metadata.name is set."
+        }
+      }
+    },
+    "step": {
+      "type": "object",
+      "additionalProperties": false,
+      "oneOf": [
+        { "required": ["deploy"], "not": { "anyOf": [{ "required": ["run"] }, { "required": ["logs"] }, { "required": ["delete"] }] } },
+        { "required": ["run"], "not": { "anyOf": [{ "required": ["deploy"] }, { "required": ["logs"] }, { "required": ["delete"] }] } },
+        { "required": ["logs"], "not": { "anyOf": [{ "required": ["deploy"] }, { "required": ["run"] }, { "required": ["delete"] }] } },
+        { "required": ["delete"], "not": { "anyOf": [{ "required": ["deploy"] }, { "required": ["run"] }, { "required": ["logs"] }] } }
+      ],
+      "properties": {
+        "deploy": { "$ref": "#/$defs/deployOp" },
+        "run": { "$ref": "#/$defs/runOp" },
+        "logs": { "$ref": "#/$defs/logsOp" },
+        "delete": { "$ref": "#/$defs/deleteOp" },
+        "timeout": { "type": "string" },
+        "stderrContains": { "type": "string" },
+        "stdoutContains": { "type": "string" },
+        "resources": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/resourceAssertion" }
+        }
+      }
+    },
+    "deployOp": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "spec": { "type": "string" },
+        "args": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "runOp": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["task"],
+      "properties": {
+        "task": { "type": "string", "minLength": 1 }
+      }
+    },
+    "logsOp": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["component", "contains"],
+      "properties": {
+        "component": { "type": "string", "minLength": 1 },
+        "contains": { "type": "string", "minLength": 1 }
+      }
+    },
+    "deleteOp": {
+      "type": "object",
+      "additionalProperties": false
+    }
+  }
+}

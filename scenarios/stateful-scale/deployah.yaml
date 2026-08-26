@@ -1,10 +1,12 @@
+# $schema: ../../internal/spec/schema/v1-alpha.5/manifest.json
 apiVersion: v1-alpha.5
-project: stateful-basic
+project: stateful-scale
 components:
   cache:
     kind: stateful
     image: redis:7-alpine
     port: 6379
+    replicas: 1
     resourcePreset: nano
     environments: [dev]
     persistence:
