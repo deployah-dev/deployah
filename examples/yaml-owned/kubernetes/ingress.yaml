@@ -1,0 +1,31 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web
+  labels:
+    app.kubernetes.io/name: web
+    app.kubernetes.io/instance: web
+    app.kubernetes.io/version: "1.26"
+    deployah.dev/project: web
+    deployah.dev/component: web
+    deployah.dev/environment: production
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    deployah.dev/source: spec
+    deployah.dev/project: web
+spec:
+  tls:
+    - hosts:
+        - web.example.com
+      secretName: web.example.com-tls
+  rules:
+    - host: web.example.com
+      http:
+        paths:
+          - path: /
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: web
+                port:
+                  name: http

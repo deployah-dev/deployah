@@ -1,6 +1,6 @@
 # Nginx example
 
-Deploys the public `nginx:latest` image to a local Deployah cluster with HTTPS
+Deploys the public `nginx:1.26` image to a local Deployah cluster with HTTPS
 via `expose: true`.
 
 ## Run it

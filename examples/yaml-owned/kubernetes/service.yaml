@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  labels:
+    app.kubernetes.io/name: web
+    app.kubernetes.io/instance: web
+    app.kubernetes.io/version: "1.26"
+    deployah.dev/project: web
+    deployah.dev/component: web
+    deployah.dev/environment: production
+  annotations:
+    deployah.dev/source: spec
+    deployah.dev/project: web
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: web
+    app.kubernetes.io/instance: web
+  ports:
+    - name: http
+      port: 80
+      protocol: TCP
+      targetPort: http

@@ -1,0 +1,17 @@
+{{- if .Values.service.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "web.name" . }}
+  labels:
+    {{- include "web.labels" . | nindent 4 }}
+  {{- with (include "web.annotations" .) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "web.selectorLabels" . | nindent 4 }}
+  ports: {{- toYaml .Values.service.ports | nindent 4 }}
+{{- end }}

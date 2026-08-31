@@ -1,0 +1,10 @@
+apiVersion: platform/v1-alpha.3
+environments:
+  production:
+    context: prod-eks
+    domains:
+      public:
+        baseDomain: example.com
+        tls:
+          mode: certManager
+          issuer: letsencrypt-prod

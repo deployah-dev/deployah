@@ -1,0 +1,12 @@
+apiVersion: v2
+name: web
+description: Nginx with public HTTPS
+type: application
+version: 0.1.0
+appVersion: "1.26"
+kubeVersion: ">=1.28.0-0"
+home: https://example.com
+sources:
+  - https://github.com/nginxinc/docker-nginx
+maintainers:
+  - name: platform

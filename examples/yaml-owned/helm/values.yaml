@@ -1,0 +1,184 @@
+## @section Common parameters
+
+## @param commonLabels Labels added to all resources (project, component, environment)
+##
+commonLabels:
+  deployah.dev/project: web
+  deployah.dev/component: web
+  deployah.dev/environment: production
+
+## @param commonAnnotations Annotations added to all resources
+##
+commonAnnotations:
+  deployah.dev/source: spec
+  deployah.dev/project: web
+
+## @section Image
+
+## ref: https://kubernetes.io/docs/concepts/containers/images
+## @param image.registry Image registry
+## @param image.repository Image repository
+## @param image.tag Image tag
+## @param image.digest Image digest. Overrides tag when set
+## @param image.pullPolicy Image pull policy. Defaults to IfNotPresent unless tag is latest
+##
+image:
+  registry: ""
+  repository: nginx
+  tag: "1.26"
+  digest: ""
+  pullPolicy: IfNotPresent
+
+## @param replicaCount Number of replicas. Schema default is 1 when the spec omits replicas
+## Deployah only writes replicaCount when the spec sets replicas
+##
+replicaCount: 1
+
+## @param revisionHistoryLimit ReplicaSets kept for rollback
+##
+revisionHistoryLimit: 10
+
+## Container ports
+## ref: https://kubernetes.io/docs/concepts/services-networking/connect-applications-service
+##
+ports:
+  - name: http
+    containerPort: 80
+    protocol: TCP
+
+## @section Probes
+
+## ref: https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/
+## @param startupProbe.enabled Enable startupProbe
+## @param startupProbe.periodSeconds Seconds between startup probes
+## @param startupProbe.timeoutSeconds Startup probe timeout
+## @param startupProbe.failureThreshold Failures before the container is killed
+##
+startupProbe:
+  enabled: true
+  tcpSocket:
+    port: http
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 36
+
+## @param readinessProbe.enabled Enable readinessProbe
+## @param readinessProbe.periodSeconds Seconds between readiness probes
+## @param readinessProbe.timeoutSeconds Readiness probe timeout
+## @param readinessProbe.failureThreshold Failures before the pod is taken out of service
+##
+readinessProbe:
+  enabled: true
+  tcpSocket:
+    port: http
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+## @param livenessProbe.enabled Enable livenessProbe
+## @param livenessProbe.periodSeconds Seconds between liveness probes
+## @param livenessProbe.timeoutSeconds Liveness probe timeout
+## @param livenessProbe.failureThreshold Failures before the container is restarted
+##
+livenessProbe:
+  enabled: true
+  tcpSocket:
+    port: http
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 6
+
+## @param podRestartPolicy Restart policy for all containers in the pod
+##
+podRestartPolicy: Always
+
+## @section Security context
+
+## Templates omit these blocks unless enabled is true. Deployah does not enable them for this spec.
+## @param podSecurityContext.enabled Enable the pod securityContext
+##
+podSecurityContext:
+  enabled: false
+
+## @param containerSecurityContext.enabled Enable the container securityContext
+##
+containerSecurityContext:
+  enabled: false
+
+## @section Resources
+
+## Requests only. Deployah writes the small preset and does not set limits.
+## ref: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+## @param resources.requests.cpu CPU request
+## @param resources.requests.memory Memory request
+## @param resources.requests.ephemeral-storage Ephemeral storage request
+##
+## limits stay unset so the kubelet does not evict on burst
+##
+resources:
+  requests:
+    cpu: 500m
+    memory: 512Mi
+    ephemeral-storage: 50Mi
+
+## @param podAntiAffinityPreset soft or hard. Ignored when affinity is set
+##
+podAntiAffinityPreset: soft
+
+## @param updateStrategy.type Deployment strategy. RollingUpdate is the chart default
+## ref: https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#strategy
+##
+updateStrategy:
+  type: RollingUpdate
+
+## @param terminationGracePeriodSeconds Seconds to wait after SIGTERM
+##
+terminationGracePeriodSeconds: 30
+
+## @section Service
+
+## @param service.enabled Create a ClusterIP Service
+## @param service.type Service type
+## @param service.ports Service ports
+##
+service:
+  enabled: true
+  type: ClusterIP
+  ports:
+    - name: http
+      protocol: TCP
+      port: 80
+      targetPort: http
+
+## @section Ingress
+
+## TLS is a cert-manager annotation on the Ingress, not a Certificate CR.
+## @param ingress.enabled Create an Ingress
+## @param ingress.path Path for the default host
+## @param ingress.pathType Ingress path type
+## @param ingress.hostname Public hostname
+## @param ingress.tls Enable TLS for ingress.hostname
+## @param ingress.ingressClassName IngressClass name. Empty uses the cluster default
+## @param ingress.annotations Extra Ingress annotations. cert-manager creates the TLS secret
+##
+ingress:
+  enabled: true
+  path: /
+  pathType: ImplementationSpecific
+  hostname: web.example.com
+  tls: true
+  ingressClassName: ""
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+
+## @section Service account
+
+## Pods use the namespace default ServiceAccount. create stays false.
+## @param serviceAccount.create Create a ServiceAccount
+## @param serviceAccount.name Name to use when create is true
+## @param serviceAccount.automountServiceAccountToken Automount the API token
+##
+serviceAccount:
+  create: false
+  name: ""
+  automountServiceAccountToken: true
