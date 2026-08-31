@@ -34,7 +34,7 @@ require (
 	mvdan.cc/sh/v3 v3.13.1
 	nabat.dev v0.9.0
 	sigs.k8s.io/e2e-framework v0.7.0
-	sigs.k8s.io/kind v0.32.0
+	sigs.k8s.io/kind v0.33.0
 	sigs.k8s.io/yaml v1.6.0
 )
 
