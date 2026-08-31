@@ -5,7 +5,7 @@ FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:4c9fe60190a2a3350ddc51d
 ENV GO111MODULE=on
 ENV CGO_ENABLED=0
 COPY --from=xx / /
-RUN apk add --update --no-cache build-base coreutils git
+RUN apk add --update --upgrade --no-cache build-base coreutils git
 WORKDIR /src
 
 FROM base AS build
@@ -39,7 +39,7 @@ FROM scratch AS artifact
 COPY --from=releaser /out /
 
 FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
-RUN apk add --update --no-cache ca-certificates tzdata
+RUN apk add --update --upgrade --no-cache ca-certificates tzdata
 COPY --from=binary /deployah /usr/bin/deployah
 ENTRYPOINT ["deployah"]
 CMD ["--help"]
