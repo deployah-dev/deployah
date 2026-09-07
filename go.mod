@@ -9,10 +9,10 @@ require (
 	github.com/distribution/reference v0.6.0
 	github.com/dustin/go-humanize v1.0.1
 	github.com/fatih/color v1.19.0
-	github.com/fluxcd/pkg/envsubst v1.7.0
+	github.com/fluxcd/pkg/envsubst v1.8.0
 	github.com/go-viper/mapstructure/v2 v2.5.0
 	github.com/gonvenience/ytbx v1.5.0
-	github.com/google/go-containerregistry v0.22.0
+	github.com/google/go-containerregistry v0.22.1
 	github.com/google/renameio/v2 v2.0.2
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
 	github.com/homeport/dyff v1.12.0
@@ -31,7 +31,7 @@ require (
 	k8s.io/apiextensions-apiserver v0.37.0
 	k8s.io/apimachinery v0.37.0
 	k8s.io/client-go v0.37.0
-	mvdan.cc/sh/v3 v3.14.0
+	mvdan.cc/sh/v3 v3.14.1
 	nabat.dev v0.9.0
 	sigs.k8s.io/e2e-framework v0.7.0
 	sigs.k8s.io/kind v0.33.0

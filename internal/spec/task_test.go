@@ -32,7 +32,7 @@ func shopSpec(tasks map[string]Task) *Spec {
 			"api": {
 				Role:  ComponentRoleService,
 				Image: "ghcr.io/acme/shop:1.2.3",
-				Env:   map[string]string{"DATABASE_URL": "postgres://db", "LOG": "info"},
+				Env:   StringMap{"DATABASE_URL": "postgres://db", "LOG": "info"},
 			},
 		},
 		Tasks: tasks,
@@ -149,7 +149,7 @@ func TestTask_MergeFrom(t *testing.T) {
 
 	parent := Component{
 		Image:          "ghcr.io/acme/shop:1.2.3",
-		Env:            map[string]string{"DATABASE_URL": "postgres://db", "LOG": "info"},
+		Env:            StringMap{"DATABASE_URL": "postgres://db", "LOG": "info"},
 		EnvFile:        ".env",
 		ConfigFile:     "config.yaml",
 		Environments:   []string{"prod"},
@@ -160,24 +160,20 @@ func TestTask_MergeFrom(t *testing.T) {
 		Port:           8080,
 	}
 
-	t.Run("copies inheritable fields and overlays env", func(t *testing.T) {
+	t.Run("copies inheritable fields without env or envFile", func(t *testing.T) {
 		t.Parallel()
 		task := Task{
 			From:    "api",
 			On:      TaskOnPreDeploy,
 			Command: []string{"migrate", "up"},
-			Env:     map[string]string{"LOG": "debug", "EXTRA": "1"},
+			Env:     StringMap{"LOG": "debug", "EXTRA": "1"},
 		}
 		got := task.MergeFrom(&parent)
 		assert.Equal(t, parent.Image, got.Image)
 		assert.Equal(t, []string{"migrate", "up"}, got.Command)
 		assert.Nil(t, got.Args)
-		assert.Equal(t, map[string]string{
-			"DATABASE_URL": "postgres://db",
-			"LOG":          "debug",
-			"EXTRA":        "1",
-		}, got.Env)
-		assert.Equal(t, parent.EnvFile, got.EnvFile)
+		assert.Equal(t, map[string]string{"LOG": "debug", "EXTRA": "1"}, map[string]string(got.Env))
+		assert.Empty(t, got.EnvFile)
 		assert.Equal(t, parent.ConfigFile, got.ConfigFile)
 		assert.Equal(t, parent.Environments, got.Environments)
 		assert.Equal(t, parent.Profiles, got.Profiles)
@@ -197,33 +193,23 @@ func TestTask_MergeFrom(t *testing.T) {
 		assert.Equal(t, task, task.MergeFrom(nil))
 	})
 
-	t.Run("merged env does not alias the task or the parent", func(t *testing.T) {
+	t.Run("task env is not merged from the parent", func(t *testing.T) {
 		t.Parallel()
-		taskEnv := map[string]string{"EXTRA": "1"}
-		parentEnv := map[string]string{"LOG": "info"}
+		taskEnv := StringMap{"EXTRA": "1"}
+		parentEnv := StringMap{"LOG": "info"}
 		got := Task{From: "api", On: TaskOnManual, Env: taskEnv}.MergeFrom(&Component{
 			Image: "ghcr.io/acme/shop:1.2.3",
 			Env:   parentEnv,
 		})
-		got.Env["EXTRA"] = "mutated"
-		assert.Equal(t, map[string]string{"EXTRA": "1"}, taskEnv)
-		assert.Equal(t, map[string]string{"LOG": "info"}, parentEnv)
-	})
-
-	t.Run("task env is copied when the parent has none", func(t *testing.T) {
-		t.Parallel()
-		taskEnv := map[string]string{"EXTRA": "1"}
-		got := Task{From: "api", On: TaskOnManual, Env: taskEnv}.MergeFrom(&Component{
-			Image: "ghcr.io/acme/shop:1.2.3",
-		})
-		got.Env["EXTRA"] = "mutated"
-		assert.Equal(t, map[string]string{"EXTRA": "1"}, taskEnv)
+		assert.Equal(t, map[string]string{"EXTRA": "1"}, map[string]string(got.Env))
+		assert.NotContains(t, got.Env, "LOG")
 	})
 
 	t.Run("no env stays nil", func(t *testing.T) {
 		t.Parallel()
 		got := Task{From: "api", On: TaskOnManual}.MergeFrom(&Component{
 			Image: "ghcr.io/acme/shop:1.2.3",
+			Env:   StringMap{"LOG": "info"},
 		})
 		assert.Nil(t, got.Env)
 	})
@@ -296,7 +282,7 @@ func TestSpec_MergedTask(t *testing.T) {
 	got, ok := m.MergedTask("migrate")
 	require.True(t, ok)
 	assert.Equal(t, "ghcr.io/acme/shop:1.2.3", got.Image)
-	assert.Equal(t, "postgres://db", got.Env["DATABASE_URL"])
+	assert.Empty(t, got.Env)
 
 	_, ok = m.MergedTask("missing")
 	assert.False(t, ok)

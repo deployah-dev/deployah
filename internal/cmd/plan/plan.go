@@ -143,16 +143,12 @@ func runPlan(c *nabat.Context) error {
 	}
 
 	envIdentity := spec.NormalizeEnv(opts.Environment)
-	var resolvedSpec *spec.ResolvedSpec
-	if platform != nil {
-		var report *spec.ResolutionReport
-		resolvedSpec, report, err = spec.Resolve(manifest, platform, envIdentity, substReport)
-		if err != nil {
-			if report != nil && report.ErrorCode != "" {
-				return fmt.Errorf("resolution failed (%s): %w", report.ErrorCode, err)
-			}
-			return fmt.Errorf("resolution failed: %w", err)
+	resolvedSpec, report, err := spec.Resolve(manifest, platform, envIdentity, substReport)
+	if err != nil {
+		if report != nil && report.ErrorCode != "" {
+			return fmt.Errorf("resolution failed (%s): %w", report.ErrorCode, err)
 		}
+		return fmt.Errorf("resolution failed: %w", err)
 	}
 
 	if opts.Offline {

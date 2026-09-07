@@ -436,15 +436,13 @@ exports:
     ## Example:
     ## envVars:
     ##   FOO: "foo"
-    ##   BAZ:
-    ##     valueFrom:
-    ##       configMapRef: ...
+    ##   MESSAGE: "{{ .Release.Name }}"
     ##
     envVars: null
 
-    ## @param envVarsConfigMap ConfigMap with environment variables
+    ## @param envFileValues FileValues written to the {fullname}-env ConfigMap
     ##
-    envVarsConfigMap: ""
+    envFileValues: null
 
     ## @param envVarsSecret Secret with environment variables
     ##
@@ -466,32 +464,6 @@ exports:
       targetCPU: 80
       targetMemory: 80
       metrics: []
-
-    ## Configure the ConfigMap resource that allows you to store non-confidential data in key-value pairs.
-    ## ref: https://kubernetes.io/docs/concepts/configuration/configmap/
-    ##
-    configMap:
-      mounted: false
-      mountPath: "/app/config"
-      subPath: ""
-      ## @param configMap.data store data in key-value pairs
-      ##
-      ## e.g:
-      ## data:
-      ##   config.yaml:
-      ##     mode: production
-      ##   FOO: bar
-      ##   DEBUG: true
-      ##
-      data: {}
-
-      ## @param secret.annotations Additional custom annotations for the ConfigMap
-      ##
-      annotations: {}
-
-      ## @param secret.labels Additional custom labels for the ConfigMap
-      ##
-      labels: {}
 
     ## Configure the Secret resource that allows you to store a small amount of sensitive data such as a password, a token, or a key.
     ## ref: https://kubernetes.io/docs/concepts/configuration/secret

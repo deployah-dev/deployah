@@ -360,13 +360,7 @@ func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string, resolved *spe
 			},
 		}
 
-		// TODO: Implement handling for component envFile
-		//   Exclude Deployah-specific environment variables (those prefixed with DPY_VAR_) and provide the remaining variables to the component
-
-		// TODO: Implement component configFile -- deep-merge config.yaml <
-		// config.<env>.yaml < config.<component>.yaml < config.<component>.<env>.yaml.
-
-		// TODO: Add support for component env, The user can specify the environment variables for the component e.g. NODE_ENV=roduction
+		// TODO(#114): deliver configFile as its own mounted artifact.
 
 		image := ""
 		tag := ""
@@ -510,7 +504,6 @@ func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string, resolved *spe
 
 		componentValues["image"] = imageValues
 
-		//
 		if len(component.Command) > 0 {
 			componentValues["command"] = component.Command
 		}
@@ -558,6 +551,7 @@ func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string, resolved *spe
 
 		if resolved != nil {
 			if rc, ok := resolved.Components[componentName]; ok {
+				applyRuntimeChartValues(componentValues, rc.Runtime)
 				if rc.MergedProfile != nil {
 					if err := applyMergedProfile(componentValues, rc.MergedProfile); err != nil {
 						return nil, fmt.Errorf("component %s: apply profile values: %w", componentName, err)
@@ -1087,5 +1081,14 @@ func normalizeJSONNumbers(v any) {
 				normalizeJSONNumbers(child)
 			}
 		}
+	}
+}
+
+func applyRuntimeChartValues(values map[string]any, rt spec.ResolvedRuntimeEnvironment) {
+	if len(rt.ExplicitValues) > 0 {
+		values["envVars"] = maps.Clone(rt.ExplicitValues)
+	}
+	if len(rt.FileValues) > 0 {
+		values["envFileValues"] = maps.Clone(rt.FileValues)
 	}
 }

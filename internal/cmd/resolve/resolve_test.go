@@ -17,7 +17,7 @@ func TestBuildEnvironmentOverview(t *testing.T) {
 
 	rawSpec := &spec.Spec{
 		Environments: map[string]spec.Environment{
-			"production": {Variables: map[string]string{"TAG": "v1"}},
+			"production": {Variables: spec.StringMap{"TAG": "v1"}},
 			"qa":         {EnvFile: ".env.qa"},
 		},
 	}

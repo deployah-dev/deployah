@@ -15,7 +15,6 @@ package spec
 
 import (
 	"fmt"
-	"maps"
 	"math"
 	"slices"
 )
@@ -33,7 +32,6 @@ type TaskJobSpec struct {
 	Image                   string
 	Command                 []string
 	Args                    []string
-	Env                     map[string]string
 	Resources               Resources
 }
 
@@ -79,7 +77,6 @@ func NewTaskJobSpec(task Task, count, parallelism int) (TaskJobSpec, error) {
 		Image:        task.Image,
 		Command:      slices.Clone(task.Command),
 		Args:         slices.Clone(task.Args),
-		Env:          maps.Clone(task.Env),
 		Resources: Resources{
 			CPU:              cloneQuantity(task.Resources.CPU),
 			Memory:           cloneQuantity(task.Resources.Memory),

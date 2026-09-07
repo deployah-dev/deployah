@@ -15,6 +15,8 @@ package run
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -39,7 +41,7 @@ func testManifest() *spec.Spec {
 		APIVersion: spec.CurrentManifestVersion,
 		Project:    "shop",
 		Components: map[string]spec.Component{
-			"api": {Image: "ghcr.io/acme/shop:1.2.3", Env: map[string]string{"DATABASE_URL": "postgres://db"}},
+			"api": {Image: "ghcr.io/acme/shop:1.2.3", Env: spec.StringMap{"DATABASE_URL": "postgres://db"}},
 		},
 		Tasks: map[string]spec.Task{
 			"migrate": {
@@ -73,7 +75,7 @@ func TestResolveRunTask(t *testing.T) {
 		rt, err := resolveRunTask(m, nil, "dev", "migrate")
 		require.NoError(t, err)
 		assert.Equal(t, "ghcr.io/acme/shop:1.2.3", rt.Task.Image)
-		assert.Equal(t, "postgres://db", rt.Task.Env["DATABASE_URL"])
+		assert.Equal(t, "postgres://db", rt.Runtime.ExplicitValues["DATABASE_URL"])
 		assert.Equal(t, []string{"migrate", "up"}, rt.Task.Command)
 	})
 
@@ -84,20 +86,6 @@ func TestResolveRunTask(t *testing.T) {
 		assert.Equal(t, spec.TaskOnSchedule, rt.Task.On)
 		assert.Equal(t, "0 3 * * *", rt.Task.Schedule)
 		assert.Empty(t, rt.Task.Timeout)
-	})
-
-	t.Run("unknown task", func(t *testing.T) {
-		t.Parallel()
-		_, err := resolveRunTask(m, nil, "dev", "missing")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "unknown task")
-	})
-
-	t.Run("skipped in this environment", func(t *testing.T) {
-		t.Parallel()
-		_, err := resolveRunTask(m, nil, "dev", "backfill")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "skipped")
 	})
 
 	t.Run("empty inherited profiles do not require a platform file", func(t *testing.T) {
@@ -111,15 +99,19 @@ func TestResolveRunTask(t *testing.T) {
 		assert.Equal(t, "ghcr.io/acme/shop:1.2.3", rt.Task.Image)
 	})
 
-	t.Run("inherited profiles require a platform file", func(t *testing.T) {
+	t.Run("expose without platform still resolves runtime", func(t *testing.T) {
 		t.Parallel()
+		dir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, ".env.dev"), []byte("REGION=eu\n"), 0o600))
 		local := testManifest()
+		local.SpecDir = dir
 		api := local.Components["api"]
-		api.Profiles = []string{"batch"}
+		api.Expose = &spec.Expose{Domain: "public"}
 		local.Components["api"] = api
-		_, err := resolveRunTask(local, nil, "dev", "migrate")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "no platform file")
+		rt, err := resolveRunTask(local, nil, "dev", "migrate")
+		require.NoError(t, err)
+		assert.Equal(t, "postgres://db", rt.Runtime.ExplicitValues["DATABASE_URL"])
+		assert.Equal(t, "eu", rt.Runtime.FileValues["REGION"])
 	})
 
 	t.Run("platform resolve merges and skips by environment", func(t *testing.T) {
@@ -137,12 +129,40 @@ func TestResolveRunTask(t *testing.T) {
 
 		_, err = resolveRunTask(m, platform, "dev", "backfill")
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "skipped")
+		assert.ErrorContains(t, err, "skipped")
 
 		_, err = resolveRunTask(m, platform, "dev", "missing")
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "unknown task")
+		assert.ErrorContains(t, err, "unknown task")
 	})
+}
+
+func TestResolveRunTask_Error(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		task     string
+		profiles []string
+		want     string
+	}{
+		{name: "unknown task", task: "missing", want: "unknown task"},
+		{name: "skipped in this environment", task: "backfill", want: "skipped"},
+		{name: "inherited profiles require a platform file", task: "migrate", profiles: []string{"batch"}, want: "no platform file"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			m := testManifest()
+			api := m.Components["api"]
+			api.Profiles = tt.profiles
+			m.Components["api"] = api
+			_, err := resolveRunTask(m, nil, "dev", tt.task)
+			require.Error(t, err)
+			assert.ErrorContains(t, err, tt.want)
+		})
+	}
 }
 
 func TestRunTask_FlagValidation(t *testing.T) {
@@ -177,7 +197,7 @@ func TestRunTask_FlagValidation(t *testing.T) {
 			Register(app)
 			err := nabattest.Run(t, app, tt.args)
 			require.Error(t, err)
-			assert.Contains(t, err.Error(), tt.want)
+			assert.ErrorContains(t, err, tt.want)
 		})
 	}
 }
@@ -198,7 +218,7 @@ func TestExecuteRun_DetachAndWait(t *testing.T) {
 		cs := fake.NewSimpleClientset()
 		job := mustBuildJob(t, opts, "shop-dev-backfill-detach")
 		c := nabatContext(t)
-		require.NoError(t, executeRun(c, cs, time.Minute, job, true))
+		require.NoError(t, executeRun(c, cs, time.Minute, job, nil, true))
 		got, err := cs.BatchV1().Jobs("default").Get(t.Context(), "shop-dev-backfill-detach", metav1.GetOptions{})
 		require.NoError(t, err)
 		assert.Equal(t, "shop-dev-backfill-detach", got.Name)
@@ -212,7 +232,7 @@ func TestExecuteRun_DetachAndWait(t *testing.T) {
 		})
 		job := mustBuildJob(t, opts, "shop-dev-backfill-wait")
 		c := nabatContext(t)
-		require.NoError(t, executeRun(c, cs, time.Minute, job, false))
+		require.NoError(t, executeRun(c, cs, time.Minute, job, nil, false))
 	})
 
 	t.Run("wait fails when the job fails", func(t *testing.T) {
@@ -227,9 +247,9 @@ func TestExecuteRun_DetachAndWait(t *testing.T) {
 		})
 		job := mustBuildJob(t, opts, "shop-dev-backfill-fail")
 		c := nabatContext(t)
-		err := executeRun(c, cs, time.Minute, job, false)
+		err := executeRun(c, cs, time.Minute, job, nil, false)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "backoff limit exceeded")
+		assert.ErrorContains(t, err, "backoff limit exceeded")
 	})
 
 	t.Run("create error", func(t *testing.T) {
@@ -240,9 +260,9 @@ func TestExecuteRun_DetachAndWait(t *testing.T) {
 		})
 		job := mustBuildJob(t, opts, "shop-dev-backfill-create")
 		c := nabatContext(t)
-		err := executeRun(c, cs, time.Minute, job, true)
+		err := executeRun(c, cs, time.Minute, job, nil, true)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "quota exceeded")
+		assert.ErrorContains(t, err, "quota exceeded")
 	})
 }
 

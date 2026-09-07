@@ -29,8 +29,9 @@ deployed.
 error: variable ${IMAGE} not found
 ```
 
-Define the variable in the environment's `variables`, or in your env file or
-shell with the `DPY_VAR_` prefix.
+Define the variable in the environment's `variables`, or in your shell with
+the `DPY_VAR_` prefix. Keys in dotenv files do not fill `${...}` placeholders.
+They only become container env.
 
 **Hook task failed and was kept.**
 

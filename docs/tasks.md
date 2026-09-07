@@ -25,13 +25,21 @@ tasks:
     command: ["migrate", "up"]
 ```
 
-`from` copies env, environments, profiles, and resources. It also copies
-envFile and configFile paths, but those files are not mounted on the Job
-yet (same as components). It does not copy command, args, or service fields
-such as port. Profiles apply to the Job: node selector, tolerations, and
-security context. Task `env` overlays the parent map. Runtime secrets for
-tasks go in `env:` (inherited or overlay). `${...}` substitution works the
-same as elsewhere in the spec.
+`from` copies image, environments, profiles, resources, and `configFile`.
+It does not copy `envFile` or merge YAML `env:` onto the raw task. The
+runtime resolver copies the parent component's already-resolved entity
+file values and ExplicitValues, then overlays this task's `env:`. An
+explicit task `envFile` replaces the entity file layer only; environment
+dotenv files still merge. File values become a ConfigMap plus `envFrom`.
+YAML `env:` becomes container `env:`. `configFile` is still not mounted
+(tracked in #114).
+It does not copy command, args, or service fields such as port. Profiles
+apply to the Job: node selector, tolerations, and security context.
+`${...}` substitution still uses `variables` and process `DPY_VAR_*`,
+not dotenv files.
+
+`envFile` is ConfigMap data, not a secret store. Do not put passwords
+there and expect special handling.
 
 `command` is required when the task uses the parent image. If you set `image`
 on the task, command is optional.
@@ -72,8 +80,9 @@ tasks:
     command: ["backfill"]
 ```
 
-Wait is the default. `--detach` returns after the Job is created. Concurrent
-runs are allowed; each run gets a unique Job name.
+Wait is the default. `--detach` returns after the Job owns its temporary
+runtime ConfigMap. Concurrent runs are allowed; each run gets a unique Job
+and a unique ConfigMap. The Helm `{fullname}-env` ConfigMap is not reused.
 
 ## Scheduled tasks
 

@@ -837,7 +837,7 @@ func collectComponentEnvironmentVariables(c *nabat.Context, component *spec.Comp
 		if envErr != nil {
 			return fmt.Errorf("failed to collect component environment variables: %w", envErr)
 		}
-		component.Env = envVars
+		component.Env = spec.StringMap(envVars)
 	}
 
 	return nil

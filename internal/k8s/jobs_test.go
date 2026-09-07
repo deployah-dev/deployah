@@ -16,6 +16,7 @@ package k8s
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -25,6 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/fake"
 
 	"deployah.dev/deployah/internal/spec"
@@ -47,8 +49,10 @@ func TestBuildTaskJob_IndexedAndLabels(t *testing.T) {
 		Task: spec.Task{
 			Image:   "busybox:1.36",
 			Command: []string{"backfill"},
-			Env:     map[string]string{"MODE": "full"},
 			Fanout:  spec.Fanout{Count: 4, Parallelism: 2},
+		},
+		Runtime: spec.ResolvedRuntimeEnvironment{
+			ExplicitValues: map[string]string{"MODE": "full"},
 		},
 	})
 	require.NoError(t, err)
@@ -86,7 +90,9 @@ func TestBuildTaskJob_EnvSorted(t *testing.T) {
 		Task: spec.Task{
 			Image:   "busybox:1.36",
 			Command: []string{"true"},
-			Env:     map[string]string{"LOG": "debug", "DATABASE_URL": "postgres://db", "A": "1"},
+		},
+		Runtime: spec.ResolvedRuntimeEnvironment{
+			ExplicitValues: map[string]string{"LOG": "debug", "DATABASE_URL": "postgres://db", "A": "1"},
 		},
 	})
 	require.NoError(t, err)
@@ -123,12 +129,101 @@ func TestBuildTaskJob_FlagOverrides(t *testing.T) {
 func TestJobGenerateName_Truncates(t *testing.T) {
 	t.Parallel()
 
-	got := jobGenerateName("shop-dev", "backfill")
-	assert.Equal(t, "shop-dev-backfill-", got)
+	release := strings.Repeat("p", spec.MaxProjectNameLength) + "-" + spec.NormalizeEnv(strings.Repeat("e", 80)).K8sSafe
+	task := strings.Repeat("t", spec.MaxTaskNameLength)
+	shared := strings.Repeat("n", 80)
 
-	long := jobGenerateName(strings.Repeat("a", 40), strings.Repeat("b", 40))
-	assert.Equal(t, jobGenerateNameMax, len(long))
-	assert.Equal(t, (strings.Repeat("a", 40) + "-" + strings.Repeat("b", 40) + "-")[:jobGenerateNameMax], long)
+	tests := []struct {
+		name    string
+		release string
+		task    string
+		want    string
+	}{
+		{
+			name:    "short exact name",
+			release: "shop-dev",
+			task:    "backfill",
+			want:    "shop-dev-backfill-",
+		},
+		{
+			name:    "long hashed name",
+			release: release,
+			task:    task,
+			want:    strings.Repeat("p", 21) + "-9289-" + task + "-",
+		},
+		{
+			name:    "long prefix cleanup",
+			release: shared,
+			task:    "cleanup",
+			want:    strings.Repeat("n", 44) + "-42fe-cleanup-",
+		},
+		{
+			name:    "long prefix compact",
+			release: shared,
+			task:    "compact",
+			want:    strings.Repeat("n", 44) + "-5e02-compact-",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := generateNamePrefix(tt.release, tt.task)
+			assertGenerateNamePrefix(t, got)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestRunConfigMapGenerateName_FitsAfterKubernetesSuffix(t *testing.T) {
+	t.Parallel()
+
+	release := strings.Repeat("p", spec.MaxProjectNameLength) + "-" + spec.NormalizeEnv(strings.Repeat("e", 80)).K8sSafe
+	task := strings.Repeat("t", spec.MaxTaskNameLength)
+	shared := strings.Repeat("n", 80)
+
+	tests := []struct {
+		name      string
+		jobPrefix string
+		want      string
+	}{
+		{
+			name:      "short exact name",
+			jobPrefix: "shop-dev-migrate-",
+			want:      "shop-dev-migrate-run-",
+		},
+		{
+			name:      "long hashed name",
+			jobPrefix: generateNamePrefix(release, task),
+			want:      strings.Repeat("p", 21) + "-9289-" + strings.Repeat("t", 21) + "-0b8e-run-",
+		},
+		{
+			name:      "long prefix cleanup",
+			jobPrefix: shared + "-cleanup-",
+			want:      strings.Repeat("n", 48) + "-7f2f-run-",
+		},
+		{
+			name:      "long prefix compact",
+			jobPrefix: shared + "-compact-",
+			want:      strings.Repeat("n", 48) + "-1f2f-run-",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := runConfigMapGenerateName(tt.jobPrefix)
+			assertGenerateNamePrefix(t, got)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func assertGenerateNamePrefix(t *testing.T, prefix string) {
+	t.Helper()
+	assert.LessOrEqual(t, len(prefix), generateNamePrefixMax)
+	assert.LessOrEqual(t, len(prefix)+generateNameSuffixLen, dns1123NameMax)
+	assert.True(t, strings.HasSuffix(prefix, "-"), prefix)
 }
 
 func TestBuildTaskJob_EphemeralStorageArgsAndTTL(t *testing.T) {
@@ -585,4 +680,144 @@ func TestBuildTaskJob_AppliesProfile(t *testing.T) {
 	require.NotNil(t, job.Spec.Template.Spec.Containers[0].SecurityContext)
 	require.NotNil(t, job.Spec.Template.Spec.Containers[0].SecurityContext.ReadOnlyRootFilesystem)
 	assert.True(t, *job.Spec.Template.Spec.Containers[0].SecurityContext.ReadOnlyRootFilesystem)
+}
+
+func TestCreateRunJob_TemporaryConfigMapAndOwnerRef(t *testing.T) {
+	t.Parallel()
+
+	fileValues := map[string]string{"REGION": "eu", "LOG_LEVEL": "info"}
+	cs := fake.NewSimpleClientset()
+	assignGenerateName(cs)
+
+	first, err := CreateRunJob(t.Context(), cs, runJob(t), fileValues)
+	require.NoError(t, err)
+	second, err := CreateRunJob(t.Context(), cs, runJob(t), fileValues)
+	require.NoError(t, err)
+	assert.NotEqual(t, first.Name, second.Name)
+
+	cms, err := cs.CoreV1().ConfigMaps("default").List(t.Context(), metav1.ListOptions{})
+	require.NoError(t, err)
+	require.Len(t, cms.Items, 2)
+	names := []string{cms.Items[0].Name, cms.Items[1].Name}
+	assert.NotEqual(t, names[0], names[1])
+	for i := range cms.Items {
+		cm := cms.Items[i]
+		assert.True(t, strings.HasPrefix(cm.GenerateName, "shop-dev-migrate-run-"), cm.GenerateName)
+		assert.NotContains(t, cm.Name, "-env")
+		assert.Equal(t, fileValues, cm.Data)
+		require.Len(t, cm.OwnerReferences, 1)
+		assert.Equal(t, "batch/v1", cm.OwnerReferences[0].APIVersion)
+		assert.Equal(t, "Job", cm.OwnerReferences[0].Kind)
+		assert.Nil(t, cm.OwnerReferences[0].BlockOwnerDeletion)
+	}
+
+	for _, job := range []*batchv1.Job{first, second} {
+		require.Len(t, job.Spec.Template.Spec.Containers[0].EnvFrom, 1)
+		cmName := job.Spec.Template.Spec.Containers[0].EnvFrom[0].ConfigMapRef.Name
+		cm, getErr := cs.CoreV1().ConfigMaps("default").Get(t.Context(), cmName, metav1.GetOptions{})
+		require.NoError(t, getErr)
+		require.Len(t, cm.OwnerReferences, 1)
+		assert.Equal(t, job.Name, cm.OwnerReferences[0].Name)
+		assert.Equal(t, job.UID, cm.OwnerReferences[0].UID)
+	}
+}
+
+func TestCreateRunJob_RollbackDeletesJobThenConfigMap(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		verb     string
+		resource string
+		fail     error
+		wantErr  string
+	}{
+		{
+			name:     "job create failure deletes configmap",
+			verb:     "create",
+			resource: "jobs",
+			fail:     errors.New("job denied"),
+			wantErr:  "job denied",
+		},
+		{
+			name:     "ownerref failure deletes job then configmap",
+			verb:     "update",
+			resource: "configmaps",
+			fail:     errors.New("owner denied"),
+			wantErr:  "set configmap owner",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cs := fake.NewSimpleClientset()
+			assignGenerateName(cs)
+			cs.PrependReactor(tt.verb, tt.resource, func(action k8stesting.Action) (bool, runtime.Object, error) {
+				return true, nil, tt.fail
+			})
+			_, err := CreateRunJob(t.Context(), cs, runJob(t), map[string]string{"REGION": "eu"})
+			require.Error(t, err)
+			assert.ErrorContains(t, err, tt.wantErr)
+			jobs, jobErr := cs.BatchV1().Jobs("default").List(t.Context(), metav1.ListOptions{})
+			require.NoError(t, jobErr)
+			assert.Empty(t, jobs.Items)
+			cms, cmErr := cs.CoreV1().ConfigMaps("default").List(t.Context(), metav1.ListOptions{})
+			require.NoError(t, cmErr)
+			assert.Empty(t, cms.Items)
+		})
+	}
+}
+
+func runJob(t *testing.T) *batchv1.Job {
+	t.Helper()
+	job, err := BuildTaskJob(TaskJobOptions{
+		Project:     "shop",
+		Environment: "dev",
+		Namespace:   "default",
+		TaskName:    "migrate",
+		Task: spec.Task{
+			Image:   "busybox:1.36",
+			Command: []string{"true"},
+		},
+	})
+	require.NoError(t, err)
+	return job
+}
+
+func assignGenerateName(cs *fake.Clientset) {
+	n := 0
+	next := func(meta *metav1.ObjectMeta) {
+		if meta.Name == "" && meta.GenerateName != "" {
+			n++
+			meta.Name = fmt.Sprintf("%s%02d", meta.GenerateName, n)
+		}
+		if meta.UID == "" {
+			meta.UID = types.UID(meta.Name + "-uid")
+		}
+	}
+	cs.PrependReactor("create", "configmaps", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		create, ok := action.(k8stesting.CreateAction)
+		if !ok {
+			return false, nil, nil
+		}
+		cm, ok := create.GetObject().(*corev1.ConfigMap)
+		if !ok {
+			return false, nil, nil
+		}
+		next(&cm.ObjectMeta)
+		return false, nil, nil
+	})
+	cs.PrependReactor("create", "jobs", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		create, ok := action.(k8stesting.CreateAction)
+		if !ok {
+			return false, nil, nil
+		}
+		job, ok := create.GetObject().(*batchv1.Job)
+		if !ok {
+			return false, nil, nil
+		}
+		next(&job.ObjectMeta)
+		return false, nil, nil
+	})
 }

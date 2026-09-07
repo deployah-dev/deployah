@@ -15,10 +15,12 @@ package k8s
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 	"time"
 
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -33,7 +35,18 @@ import (
 )
 
 const (
-	jobGenerateNameMax = 57
+	// dns1123NameMax is the Kubernetes DNS-1123 label length limit.
+	dns1123NameMax = 63
+	// generateNameSuffixLen is the number of random characters Kubernetes
+	// appends to GenerateName (k8s.io/apiserver/pkg/storage/names).
+	generateNameSuffixLen = 5
+	// generateNamePrefixMax is the longest GenerateName prefix that stays
+	// within DNS-1123 after Kubernetes appends generateNameSuffixLen
+	// characters (63 - 5 = 58).
+	generateNamePrefixMax = dns1123NameMax - generateNameSuffixLen
+	// dns1123HashReserved is the extra characters inserted when a name is
+	// hashed: "-xxxx-" around a 4-hex-character digest.
+	dns1123HashReserved = 6
 	// jobNotFoundLimit is how many consecutive Get NotFound results to
 	// retry before treating the Job as gone. Covers brief apiserver lag
 	// after Create without spinning until ctx times out if the Job was
@@ -48,6 +61,7 @@ type TaskJobOptions struct {
 	Namespace   string
 	TaskName    string
 	Task        spec.Task
+	Runtime     spec.ResolvedRuntimeEnvironment
 	Count       int
 	Parallelism int
 	Profile     *spec.PlatformProfile
@@ -71,9 +85,10 @@ func BuildTaskJob(opts TaskJobOptions) (*batchv1.Job, error) {
 		ttl = *fields.TTLSecondsAfterFinished
 	}
 
-	envVars := make([]corev1.EnvVar, 0, len(fields.Env))
-	for _, k := range slices.Sorted(maps.Keys(fields.Env)) {
-		envVars = append(envVars, corev1.EnvVar{Name: k, Value: fields.Env[k]})
+	explicit := maps.Clone(opts.Runtime.ExplicitValues)
+	envVars := make([]corev1.EnvVar, 0, len(explicit))
+	for _, k := range slices.Sorted(maps.Keys(explicit)) {
+		envVars = append(envVars, corev1.EnvVar{Name: k, Value: explicit[k]})
 	}
 
 	container := corev1.Container{
@@ -106,7 +121,7 @@ func BuildTaskJob(opts TaskJobOptions) (*batchv1.Job, error) {
 	applyProfileToPod(&podSpec, podLabels, &podAnnotations, opts.Profile)
 
 	job := &batchv1.Job{
-		GenerateName: jobGenerateName(release, opts.TaskName),
+		GenerateName: generateNamePrefix(release, opts.TaskName),
 		Namespace:    opts.Namespace,
 		Labels: map[string]string{
 			spec.LabelProject:     opts.Project,
@@ -161,12 +176,140 @@ func applyProfileToPod(pod *corev1.PodSpec, labels map[string]string, annotation
 	}
 }
 
-func jobGenerateName(release, task string) string {
-	prefix := release + "-" + task + "-"
-	if len(prefix) > jobGenerateNameMax {
-		prefix = prefix[:jobGenerateNameMax]
+func runConfigMapGenerateName(jobPrefix string) string {
+	base := strings.TrimSuffix(jobPrefix, "-")
+	if base == "" {
+		base = "deployah"
 	}
-	return prefix
+	return generateNamePrefix(base, "run")
+}
+
+// generateNamePrefix returns a GenerateName prefix of at most
+// [generateNamePrefixMax] characters that ends with "-". It uses the same
+// hash-or-trim rule as the Helm deployah.dns1123Name helper, leaving room
+// for Kubernetes to append [generateNameSuffixLen] random characters.
+func generateNamePrefix(base, keep string) string {
+	return dns1123PrefixedName(base, keep, generateNamePrefixMax-1) + "-"
+}
+
+// dns1123PrefixedName returns base-keep when that fits in limit, otherwise
+// {truncatedBase}-{4hex}-{keep}. The hash is the first four hex characters
+// of sha256(base-keep) so two long names that share a prefix cannot collide.
+// This matches deployah.dns1123Name in the Helm chart helpers.
+func dns1123PrefixedName(base, keep string, limit int) string {
+	full := base + "-" + keep
+	if len(full) <= limit {
+		return full
+	}
+	budget := max(1, limit-(len(keep)+dns1123HashReserved))
+	prefix := base
+	if len(prefix) > budget {
+		prefix = prefix[:budget]
+	}
+	prefix = strings.TrimSuffix(prefix, "-")
+	sum := sha256.Sum256([]byte(full))
+	return prefix + "-" + fmt.Sprintf("%04x", sum[:2]) + "-" + keep
+}
+
+// applyJobEnvFrom sets the job container envFrom to configMapName.
+func applyJobEnvFrom(job *batchv1.Job, configMapName string) {
+	if job == nil || configMapName == "" || len(job.Spec.Template.Spec.Containers) == 0 {
+		return
+	}
+	job.Spec.Template.Spec.Containers[0].EnvFrom = []corev1.EnvFromSource{{
+		ConfigMapRef: &corev1.ConfigMapEnvSource{
+			Name: configMapName,
+		},
+	}}
+}
+
+func runEnvConfigMap(job *batchv1.Job, fileValues map[string]string) *corev1.ConfigMap {
+	data := make(map[string]string, len(fileValues))
+	for _, k := range slices.Sorted(maps.Keys(fileValues)) {
+		data[k] = fileValues[k]
+	}
+	prefix := job.GenerateName
+	if prefix == "" && job.Name != "" {
+		prefix = job.Name + "-"
+	}
+	return &corev1.ConfigMap{
+		GenerateName: runConfigMapGenerateName(prefix),
+		Namespace:    job.Namespace,
+		Labels:       maps.Clone(job.Labels),
+		Annotations:  maps.Clone(job.Annotations),
+		Data:         data,
+	}
+}
+
+// CreateRunJob creates a CLI run Job. When fileValues is non-empty it
+// creates a GenerateName ConfigMap first, points the Job envFrom at the
+// returned name, then sets a Job ownerReference on the ConfigMap.
+// Detach is safe only after this function returns.
+func CreateRunJob(ctx context.Context, cs kubernetes.Interface, job *batchv1.Job, fileValues map[string]string) (*batchv1.Job, error) {
+	if len(fileValues) == 0 {
+		return CreateTaskJob(ctx, cs, job)
+	}
+
+	cm, err := cs.CoreV1().ConfigMaps(job.Namespace).Create(ctx, runEnvConfigMap(job, fileValues), metav1.CreateOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("create run configmap: %w", err)
+	}
+	applyJobEnvFrom(job, cm.Name)
+
+	created, err := CreateTaskJob(ctx, cs, job)
+	if err != nil {
+		if delErr := deleteConfigMap(ctx, cs, cm); delErr != nil {
+			return nil, fmt.Errorf("%w; also failed to delete configmap %s: %w", err, cm.Name, delErr)
+		}
+		return nil, err
+	}
+
+	if ownErr := setConfigMapJobOwner(ctx, cs, cm, created); ownErr != nil {
+		jobDel := deleteJob(ctx, cs, created)
+		cmDel := deleteConfigMap(ctx, cs, cm)
+		switch {
+		case jobDel != nil && cmDel != nil:
+			return nil, fmt.Errorf("%w; also failed to delete job %s: %w; also failed to delete configmap %s: %w", ownErr, created.Name, jobDel, cm.Name, cmDel)
+		case jobDel != nil:
+			return nil, fmt.Errorf("%w; also failed to delete job %s: %w; leftover job %s", ownErr, created.Name, jobDel, created.Name)
+		case cmDel != nil:
+			return nil, fmt.Errorf("%w; also failed to delete configmap %s: %w; leftover configmap %s", ownErr, cm.Name, cmDel, cm.Name)
+		default:
+			return nil, ownErr
+		}
+	}
+	return created, nil
+}
+
+func setConfigMapJobOwner(ctx context.Context, cs kubernetes.Interface, cm *corev1.ConfigMap, job *batchv1.Job) error {
+	cm.OwnerReferences = []metav1.OwnerReference{{
+		APIVersion: "batch/v1",
+		Kind:       "Job",
+		Name:       job.Name,
+		UID:        job.UID,
+	}}
+	_, err := cs.CoreV1().ConfigMaps(cm.Namespace).Update(ctx, cm, metav1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf("set configmap owner: %w", err)
+	}
+	return nil
+}
+
+func deleteConfigMap(ctx context.Context, cs kubernetes.Interface, cm *corev1.ConfigMap) error {
+	if err := cs.CoreV1().ConfigMaps(cm.Namespace).Delete(ctx, cm.Name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		return err
+	}
+	return nil
+}
+
+func deleteJob(ctx context.Context, cs kubernetes.Interface, job *batchv1.Job) error {
+	propagation := metav1.DeletePropagationBackground
+	if err := cs.BatchV1().Jobs(job.Namespace).Delete(ctx, job.Name, metav1.DeleteOptions{
+		PropagationPolicy: &propagation,
+	}); err != nil && !apierrors.IsNotFound(err) {
+		return err
+	}
+	return nil
 }
 
 func resourceList(res spec.Resources) corev1.ResourceList {

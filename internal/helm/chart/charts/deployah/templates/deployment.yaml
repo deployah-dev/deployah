@@ -31,8 +31,8 @@ spec:
       {{- if .Values.podAnnotations }}
       {{- include "common.tplvalues.render" (dict "value" .Values.podAnnotations "context" $) | nindent 8 }}
       {{- end }}
-        {{- if .Values.configMap.data }}
-        checksum/configMap: {{ include "deployah.configmap" . | sha256sum }}
+        {{- if .Values.envFileValues }}
+        checksum/env: {{ include "deployah.envconfigmap" . | sha256sum }}
         {{- end }}
         {{- if or .Values.secret.data .Values.secret.stringData }}
         checksum/secret: {{ include "deployah.secret" . | sha256sum }}
@@ -59,13 +59,13 @@ spec:
           args: {{- include "common.tplvalues.render" (dict "value" .Values.args "context" $) | nindent 12 }}
           {{- end }}
           {{- if .Values.envVars }}
-          env: {{- include "deployah.toEnvArray" (dict "envVars" .Values.envVars "context" $) | indent 12 }}
+          env: {{- include "deployah.toEnvArray" (dict "envVars" .Values.envVars) | indent 12 }}
           {{- end }}
-          {{- if or .Values.envVarsConfigMap .Values.envVarsSecret }}
+          {{- if or .Values.envFileValues .Values.envVarsSecret }}
           envFrom:
-            {{- if .Values.envVarsConfigMap }}
+            {{- if .Values.envFileValues }}
             - configMapRef:
-                name: {{ include "common.tplvalues.render" (dict "value" .Values.envVarsConfigMap "context" $) }}
+                name: {{ include "deployah.envconfigmap.name" . }}
             {{- end }}
             {{- if .Values.envVarsSecret }}
             - secretRef:
@@ -90,15 +90,8 @@ spec:
           {{- if .Values.resources }}
           resources: {{- toYaml .Values.resources | nindent 12 }}
           {{- end }}
-          {{- if or .Values.configMap.mounted .Values.extraVolumeMounts .Values.persistence.enabled }}
+          {{- if or .Values.extraVolumeMounts .Values.persistence.enabled }}
           volumeMounts:
-            {{- if .Values.configMap.mounted }}
-            - name: {{ include "common.names.fullname" . }}
-              mountPath: {{ .Values.configMap.mountPath }}
-              {{- if .Values.configMap.subPath }}
-              subPath: {{ .Values.configMap.subPath }}
-              {{- end }}
-            {{- end }}
             {{- if .Values.persistence.enabled }}
             - name: data
               mountPath: {{ .Values.persistence.mountPath }}
@@ -113,13 +106,8 @@ spec:
         {{- if .Values.sidecars }}
         {{- include "common.tplvalues.render" (dict "value" .Values.sidecars "context" $) | nindent 8 }}
         {{- end }}
-      {{- if or .Values.configMap.mounted .Values.extraVolumes .Values.persistence.enabled }}
+      {{- if or .Values.extraVolumes .Values.persistence.enabled }}
       volumes:
-        {{- if .Values.configMap.mounted }}
-        - name: {{ include "common.names.fullname" . }}
-          configMap:
-            name: {{ include "common.names.fullname" . }}
-        {{- end }}
         {{- if .Values.persistence.enabled }}
         - name: data
           persistentVolumeClaim:

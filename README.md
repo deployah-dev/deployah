@@ -82,10 +82,6 @@ For how Deployah compares to DevSpace, Werf, Score, Epinio, and Kubero, see
 
 ## Current limitations
 
-- **`env` is not applied to Deployments yet.** The `env` field on a component
-  passes schema validation but does not reach the running container. Task
-  `env` is inlined onto Jobs. See
-  [Two kinds of variables](docs/configuration.md#two-kinds-of-variables).
 - **Deployah does not build images.** Give it an image that already exists in a
   registry your cluster can pull from.
 - **Stateful with persistence needs Kubernetes 1.32 or newer.** Deployah checks
@@ -284,8 +280,9 @@ deployah plan <environment> --offline --raw --yaml
 
 `--offline` renders without touching a cluster, `--raw` prints raw Kubernetes
 field paths instead of the compact Deployah vocabulary, and `--yaml` shows
-changed fields as YAML blocks. For the resolved hostname, TLS mode, and context,
-use `deployah resolve <environment>` (also offline, `--output json` for CI).
+changed fields as YAML blocks. For the resolved hostname, TLS mode, context,
+and runtime environment, use `deployah resolve <environment>` (also offline,
+`--output json` for machine-readable output).
 
 For how Deployah compares to similar tools (DevSpace, Werf, Score, Epinio,
 Kubero), see [docs/comparison.md](docs/comparison.md).
@@ -294,7 +291,7 @@ Kubero), see [docs/comparison.md](docs/comparison.md).
 
 These are the defaults step 2 fills in. Most are overridable.
 `deployah plan --raw` shows the rendered resources; `deployah resolve` shows
-hostname and TLS.
+hostname, TLS, and resolved runtime environment.
 
 | Decision | Default | Set it with |
 |---|---|---|
@@ -423,7 +420,7 @@ These work with every command:
 | `deployah init` | Interactive wizard that creates a spec and platform file, plus `.deployah/manifests/` and `.deployah/crds/` for [custom manifests and CRDs](docs/custom-manifests-and-crds.md). Requires a terminal. Use `--force` to skip the overwrite prompt when a spec already exists (you still confirm Save), `--dry-run` to preview, `--spec`/`-s` for the spec path, and `--platform-file` for the platform path. |
 | `deployah validate` | Check the manifest schema (offline). When a platform file exists, also cross-check `expose.domain` keys and environment names against it. |
 | `deployah validate <environment>` | Also load the platform file and check the resolved configuration for that environment. |
-| `deployah resolve <environment>` | Preview the fully resolved hostname, TLS mode, and context, offline. Use `--output json` for machine-readable output. |
+| `deployah resolve <environment>` | Preview the fully resolved hostname, TLS mode, context, and runtime environment, offline. Prints FileValues and ExplicitValues; do not treat the output as secret-safe CI output. Use `--output json` for machine-readable output. |
 | `deployah resolve --environments` | List every environment from both files: where it is registered, its context (or the kubeconfig fallback), domains, and overrides. |
 | `deployah plan <environment>` | Preview what a deploy would change, without applying anything. Extra manifests from `.deployah/manifests/` appear in the diff; pending CRDs are reported but not applied. Use `--offline` to render with no cluster access, `--raw` for raw Kubernetes field paths instead of the compact Deployah vocabulary, `--yaml` to show changed fields as YAML blocks, `--drift` to also compare against live cluster state, `--detailed-exitcode` to exit 2 when changes are pending, or `--output json` for CI. |
 | `deployah deploy <environment>` | Deploy your project. Shows the plan and asks for confirmation before applying; use `-y`/`--yes` to skip the prompt, `--reapply` to upgrade even with no changes, `--crds` for [CRD install policy](docs/custom-manifests-and-crds.md#crd-policy) (`create` or `create-replace`), `--explain` to print the resolution report first, `--force-hostname-change` to bypass the hostname guard, or `--resize-volumes` to grow [persistence](docs/workloads.md#growing-volumes) sizes. |

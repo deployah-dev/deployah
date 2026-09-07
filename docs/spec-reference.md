@@ -93,7 +93,7 @@ Component:
 | `kind` | `stateless` | `stateless` or `stateful`. |
 | `port` | `8080` (services) | App listen port (1 to 65535). Not allowed on workers. |
 | `command` / `args` | none | Override the image ENTRYPOINT and CMD. |
-| `env` | none | Environment variables (uppercase keys). |
+| `env` | none | Container `env:` (POSIX keys). Overlays inherited ExplicitValues when the entity uses `from:`. |
 | `resourcePreset` | none | `nano`, `micro`, `small`, `medium`, `large`, `xlarge`, `2xlarge`. |
 | `resources` | none | `cpu`, `memory`, `ephemeralStorage` (Kubernetes units). |
 | `expose` | none | Services only. `true` for all defaults, or an object with `domain`, `subdomain`, and `apex`. See [Platform file](platform.md). |
@@ -107,10 +107,9 @@ Component:
 | `profiles` | none | List of platform profile names. Merged left to right. See [Profiles](platform.md#profiles). |
 
 > [!IMPORTANT]
-> Component `env`, `envFile`, and `configFile` are not applied to Deployments
-> yet. Task `env` **is** inlined onto the Job. Changing `role` between
-> `service` and `worker` on an existing release is rejected; delete the
-> release and redeploy.
+> `configFile` is not mounted yet (tracked in #114). Changing `role` between `service` and
+> `worker` on an existing release is rejected; delete the release and
+> redeploy.
 
 ## Tasks
 
@@ -119,7 +118,7 @@ single value, not a list. See [Tasks](tasks.md) for how-to examples.
 
 | Field | Default | Notes |
 |---|---|---|
-| `from` | none | Component to inherit env, environments, profiles, and resources from. Also copies envFile and configFile paths. |
+| `from` | none | Component to inherit image, environments, profiles, resources, and `configFile`. Runtime env inherits already-resolved FileValues and ExplicitValues, not `envFile` paths. |
 | `image` | from `from` | Replaces the parent image when set. `from` and/or `image` is required. |
 | `command` / `args` | none | `command` is required when using the parent image. |
 | `"on"` | none (required) | `preDeploy`, `postDeploy`, `manual`, or `schedule`. |
@@ -128,8 +127,9 @@ single value, not a list. See [Tasks](tasks.md) for how-to examples.
 | `timeZone` | `Etc/UTC` | IANA time zone. Values other than `Etc/UTC` need Kubernetes 1.27 or later. |
 | `concurrencyPolicy` | `Forbid` | `Allow`, `Forbid`, or `Replace`. Only valid when `"on"` is `schedule`. |
 | `suspend` | `false` | Pause the CronJob. Only valid when `"on"` is `schedule`. |
-| `env` | inherited | Overlay on the parent map. Inlined onto the Job. |
-| `envFile` / `configFile` | inherited | Inherited as fields; not mounted in this release. |
+| `env` | inherited resolved map | Overlay on the parent's ExplicitValues. Becomes container `env:`. |
+| `envFile` | not inherited | Explicit path replaces the entity dotenv layer. Environment dotenv files still merge. Keys become ConfigMap data, not secrets. |
+| `configFile` | inherited | Inherited as a field; not mounted in this release. |
 | `environments` | inherited | Replaces the parent filter when set. |
 | `profiles` | inherited | Replaces the parent list when set. Applied to the Job pod (node selector, tolerations, security context). |
 | `resourcePreset` / `resources` | inherited | Same rules as components. |
@@ -147,7 +147,8 @@ Environment:
 
 | Field | Notes |
 |---|---|
-| `envFile` / `configFile` | Files to load for this environment (see below). |
+| `envFile` | Explicit dotenv path for container FileValues (ConfigMap data, not substitution). |
+| `configFile` | Path recorded on the environment; not mounted in this release. |
 | `variables` | Values for `${...}` placeholders in your spec. |
 
 There is no `context` field on an environment: it comes from the matching
@@ -166,9 +167,8 @@ A few fields have specific formats:
 - **`resources.cpu`**: millicores like `500m`, or whole cores like `1` or `2`.
 - **`resources.memory`** and **`resources.ephemeralStorage`**: a number with a
   unit, like `256Mi` or `1Gi`.
-- **`env`**: keys are uppercase letters, digits, and underscores, and start with
-  a letter or underscore (for example `LOG_LEVEL`). Values are a string, number,
-  or boolean.
+- **`env`**: POSIX keys (`^[A-Za-z_][A-Za-z0-9_]*$`, for example `LOG_LEVEL` or
+  `node_env`). Values are a string, number, or boolean.
 - **`expose`**: `true`, `false`, or an object. `true` means all defaults.
 - **`expose.domain`**: a key that must exist in the target environment's
   `domains` map in the platform file. Omit it to use the environment's only

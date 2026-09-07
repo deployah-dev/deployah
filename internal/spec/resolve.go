@@ -139,6 +139,11 @@ func Resolve(
 		return nil, report, err
 	}
 
+	if err := attachRuntimeEnvironments(appSpec, env, resolved, report); err != nil {
+		recordResolutionError(report, err)
+		return nil, report, err
+	}
+
 	return resolved, report, nil
 }
 
@@ -165,7 +170,7 @@ func resolveComponent(
 	}
 
 	// Profiles require a platform file when the component sets them.
-	if comp.Profiles != nil && platform == nil {
+	if len(comp.Profiles) > 0 && platform == nil {
 		return rc, result, &ResolutionError{
 			Code: ErrCodePlatformNotFound,
 			Message: fmt.Sprintf(
@@ -625,9 +630,9 @@ func joinStrings(ss []string) string {
 	return strings.Join(quoted, ", ")
 }
 
-// ResolveForDisplay is like [Resolve] but never returns a hard error for
-// missing platform file. Instead it marks the report with PLATFORM_NOT_FOUND
-// and returns partial results. Used by the resolve command in offline mode.
+// ResolveForDisplay is like [Resolve] but never returns a hard error for a
+// missing platform file. It records a warning and returns partial results so
+// the resolve command can inspect runtime environment offline.
 func ResolveForDisplay(
 	appSpec *Spec,
 	platform *PlatformConfig,
@@ -635,21 +640,73 @@ func ResolveForDisplay(
 	substReport SubstitutionReport,
 ) (*ResolvedSpec, *ResolutionReport, error) {
 	if platform == nil {
-		// Partial result: no platform, emit PLATFORM_NOT_FOUND.
+		warn := fmt.Sprintf("platform file not found; run with --platform-file or create %s", DefaultPlatformPath)
 		report := &ResolutionReport{
-			Env:          env,
-			ErrorCode:    ErrCodePlatformNotFound,
-			ErrorMessage: fmt.Sprintf("platform file not found; run with --platform-file or create %s", DefaultPlatformPath),
+			Env:      env,
+			Warnings: []string{warn},
 		}
 		resolved := &ResolvedSpec{
 			Spec:       appSpec,
 			Env:        env,
 			Components: make(map[string]ResolvedComponent),
 			Tasks:      make(map[string]ResolvedTask),
+			Warnings:   []string{warn},
+		}
+		populateActiveEntities(appSpec, env, resolved, report)
+		if err := attachRuntimeEnvironments(appSpec, env, resolved, report); err != nil {
+			recordResolutionError(report, err)
+			return nil, report, err
 		}
 		return resolved, report, nil
 	}
 	return Resolve(appSpec, platform, env, substReport)
+}
+
+func recordResolutionError(report *ResolutionReport, err error) {
+	if report == nil || err == nil {
+		return
+	}
+	report.ErrorMessage = err.Error()
+	if re, ok := errors.AsType[*ResolutionError](err); ok {
+		report.ErrorCode = re.Code
+	}
+}
+
+func populateActiveEntities(appSpec *Spec, env EnvIdentity, resolved *ResolvedSpec, report *ResolutionReport) {
+	if appSpec == nil || resolved == nil {
+		return
+	}
+	for _, name := range slices.Sorted(maps.Keys(appSpec.Components)) {
+		comp := appSpec.Components[name]
+		if len(comp.Environments) > 0 {
+			if _, ok := matchEnvKey(env.Original, comp.Environments); !ok {
+				continue
+			}
+		}
+		resolved.Components[name] = ResolvedComponent{}
+	}
+	weights, weightErr := AssignHookWeights(appSpec.Tasks)
+	if weightErr != nil {
+		// HookWeight stays 0 below. That is an unresolved fallback, not a
+		// computed independent-hook weight. Display must not treat it as
+		// resolved.
+		msg := fmt.Sprintf("task hook ordering could not be resolved: %v", weightErr)
+		if report != nil {
+			report.Warnings = append(report.Warnings, msg)
+		}
+		resolved.Warnings = append(resolved.Warnings, msg)
+	}
+	for _, name := range appSpec.TaskNames() {
+		task, ok := appSpec.MergedTask(name)
+		if !ok || !task.activeInEnvironment(env.Original) {
+			continue
+		}
+		rt := ResolvedTask{Task: task}
+		if weightErr == nil {
+			rt.HookWeight = weights[name]
+		}
+		resolved.Tasks[name] = rt
+	}
 }
 
 // PlatformEnvContext returns the Kubernetes context for the given environment

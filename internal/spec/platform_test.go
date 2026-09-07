@@ -1542,14 +1542,17 @@ func TestResolveForDisplay(t *testing.T) {
 		check       func(t *testing.T, appSpec *spec.Spec, resolved *spec.ResolvedSpec, report *spec.ResolutionReport)
 	}{
 		{
-			name:        "missing platform returns partial report",
-			platform:    nil,
-			wantErrCode: spec.ErrCodePlatformNotFound,
-			check: func(t *testing.T, appSpec *spec.Spec, resolved *spec.ResolvedSpec, _ *spec.ResolutionReport) {
+			name:     "missing platform returns partial report",
+			platform: nil,
+			check: func(t *testing.T, appSpec *spec.Spec, resolved *spec.ResolvedSpec, report *spec.ResolutionReport) {
 				t.Helper()
-				assert.Empty(t, resolved.Components)
+				require.Contains(t, resolved.Components, "api")
+				assert.NotNil(t, resolved.Components["api"].Runtime.FileValues)
 				assert.NotNil(t, resolved.Tasks, "partial result must carry the same maps as Resolve")
 				assert.Equal(t, appSpec, resolved.Spec)
+				require.NotEmpty(t, report.Warnings)
+				assert.Contains(t, report.Warnings[0], "platform file not found")
+				assert.Empty(t, report.ErrorCode)
 			},
 		},
 		{

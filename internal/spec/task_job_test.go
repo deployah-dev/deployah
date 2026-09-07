@@ -36,7 +36,7 @@ func TestNewTaskJobSpec(t *testing.T) {
 			task: Task{
 				Image:   "busybox:1.36",
 				Command: []string{"migrate", "up"},
-				Env:     map[string]string{"LOG": "debug"},
+				Env:     StringMap{"LOG": "debug"},
 				Timeout: "5m",
 				Fanout:  Fanout{Count: 4, Parallelism: 2},
 			},
@@ -47,7 +47,6 @@ func TestNewTaskJobSpec(t *testing.T) {
 				ActiveDeadlineSeconds: new(int64(300)),
 				Image:                 "busybox:1.36",
 				Command:               []string{"migrate", "up"},
-				Env:                   map[string]string{"LOG": "debug"},
 			},
 		},
 		{

@@ -130,16 +130,12 @@ func runDeploy(c *nabat.Context) error {
 	// Resolve using the substituted manifest (so expanded subdomains pass DNS
 	// validation) with the raw prescan report (so dynamic fields are skipped).
 	envIdentity := spec.NormalizeEnv(opts.Environment)
-	var resolvedSpec *spec.ResolvedSpec
-	if platform != nil {
-		var report *spec.ResolutionReport
-		resolvedSpec, report, err = spec.Resolve(manifest, platform, envIdentity, substReport)
-		if err != nil {
-			if report != nil && report.ErrorCode != "" {
-				return fmt.Errorf("resolution failed (%s): %w", report.ErrorCode, err)
-			}
-			return fmt.Errorf("resolution failed: %w", err)
+	resolvedSpec, report, err := spec.Resolve(manifest, platform, envIdentity, substReport)
+	if err != nil {
+		if report != nil && report.ErrorCode != "" {
+			return fmt.Errorf("resolution failed (%s): %w", report.ErrorCode, err)
 		}
+		return fmt.Errorf("resolution failed: %w", err)
 	}
 
 	if opts.Explain && resolvedSpec != nil {

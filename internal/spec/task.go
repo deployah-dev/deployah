@@ -49,9 +49,10 @@ func (o TaskOn) IsScheduled() bool {
 
 // Task is run-to-completion work in a spec.
 type Task struct {
-	// From names a component whose env, envFile, configFile, environments,
-	// profiles, and resources are copied. Command, args, and service-only
-	// fields are not copied.
+	// From names a component whose configFile, environments, profiles,
+	// and resources are copied. Runtime env inheritance uses already-
+	// resolved EntityValues and ExplicitValues, not these fields.
+	// Command, args, and service-only fields are not copied.
 	From string `json:"from,omitempty" yaml:"from,omitempty"`
 	// Image is the container image. When empty, the image from From is
 	// used. When set, it replaces the parent image.
@@ -66,13 +67,14 @@ type Task struct {
 	// After lists task names that must finish first in the same On phase.
 	// Not allowed when On is manual or schedule.
 	After []string `json:"after,omitempty" yaml:"after,omitempty"`
-	// Env overlays inherited environment variables.
-	Env map[string]string `json:"env,omitempty" yaml:"env,omitempty"`
-	// EnvFile is a task-specific dotenv path. Replaces the inherited path
-	// when set.
+	// Env overlays inherited ExplicitValues for the container.
+	// YAML strings, numbers, and booleans are stored as strings.
+	Env StringMap `json:"env,omitempty" yaml:"env,omitempty"`
+	// EnvFile is a task-specific dotenv path. When set it replaces the
+	// entity file layer only; environment dotenv files still merge.
 	EnvFile string `json:"envFile,omitempty" yaml:"envFile,omitempty"`
 	// ConfigFile is a task-specific config path. Replaces the inherited
-	// path when set.
+	// path when set. The path is recorded. It is not mounted yet; see #114.
 	ConfigFile string `json:"configFile,omitempty" yaml:"configFile,omitempty"`
 	// Environments limits the task to the named environments. Replaces the
 	// inherited filter when set.
@@ -193,8 +195,10 @@ func (t Task) UsesParentImage() bool {
 }
 
 // MergeFrom copies inheritable fields from parent when the task left them
-// empty. Task env overlays parent env. Command, args, and service-only
-// fields are never copied. parent may be nil when From is empty.
+// empty. Env and EnvFile are not copied; runtime inheritance reads the
+// raw task and the parent's already-resolved runtime maps. Command, args,
+// and service-only fields are never copied. parent may be nil when From
+// is empty.
 func (t Task) MergeFrom(parent *Component) Task {
 	if parent == nil {
 		return t
@@ -202,9 +206,6 @@ func (t Task) MergeFrom(parent *Component) Task {
 	out := t
 	if out.Image == "" {
 		out.Image = parent.Image
-	}
-	if out.EnvFile == "" {
-		out.EnvFile = parent.EnvFile
 	}
 	if out.ConfigFile == "" {
 		out.ConfigFile = parent.ConfigFile
@@ -224,14 +225,6 @@ func (t Task) MergeFrom(parent *Component) Task {
 				EphemeralStorage: cloneQuantity(parent.Resources.EphemeralStorage),
 			}
 		}
-	}
-	// Always build a fresh map so the caller cannot reach back into the
-	// parent component or the task through the merged result.
-	if len(parent.Env) > 0 || len(out.Env) > 0 {
-		merged := make(map[string]string, len(parent.Env)+len(out.Env))
-		maps.Copy(merged, parent.Env)
-		maps.Copy(merged, out.Env)
-		out.Env = merged
 	}
 	return out
 }

@@ -325,9 +325,7 @@ func taskBaseChartValues(m *spec.Spec, name string, rt spec.ResolvedTask, desire
 	if len(fields.Args) > 0 {
 		values["args"] = fields.Args
 	}
-	if len(fields.Env) > 0 {
-		values["envVars"] = fields.Env
-	}
+	applyRuntimeChartValues(values, rt.Runtime)
 	if applyErr := applyMergedProfile(values, rt.MergedProfile); applyErr != nil {
 		return nil, spec.TaskJobSpec{}, applyErr
 	}

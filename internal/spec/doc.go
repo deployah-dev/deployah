@@ -14,9 +14,9 @@
 
 // Package spec parses, validates, and manipulates Deployah spec files.
 //
-// It loads YAML specs, resolves environments and env files, applies
-// schema defaults, substitutes variables, and validates against embedded
-// JSON schemas.
+// It loads YAML specs, selects an environment, substitutes ${...} from
+// variables and process DPY_VAR_*, resolves runtime container env, applies
+// schema defaults, and validates against embedded JSON schemas.
 //
 // # Loading and saving
 //

@@ -41,7 +41,7 @@ func taskSpec() *spec.Spec {
 				Role:  spec.ComponentRoleService,
 				Image: "ghcr.io/acme/shop:1.2.3",
 				Port:  8080,
-				Env:   map[string]string{"DATABASE_URL": "postgres://db", "LOG": "info"},
+				Env:   spec.StringMap{"DATABASE_URL": "postgres://db", "LOG": "info"},
 			},
 		},
 		Tasks: map[string]spec.Task{
@@ -51,7 +51,7 @@ func taskSpec() *spec.Spec {
 				Command:      []string{"migrate", "up"},
 				Timeout:      spec.DefaultHookTaskTimeout,
 				BackoffLimit: &backoff,
-				Env:          map[string]string{"LOG": "debug"},
+				Env:          spec.StringMap{"LOG": "debug"},
 			},
 			"smoke": {
 				From:         "api",
@@ -80,15 +80,8 @@ func TestMapSpecToChartValues_HookTasks(t *testing.T) {
 	t.Parallel()
 
 	m := taskSpec()
-	require.NoError(t, spec.FillSpecWithDefaults(m, spec.CurrentManifestVersion))
-	for name, task := range m.Tasks {
-		if p, ok := m.Components[task.From]; ok {
-			cp := p
-			m.Tasks[name] = task.MergeFrom(&cp)
-		}
-	}
-
-	vals, err := MapSpecToChartValues(m, "dev", nil)
+	resolved := resolveChart(t, m, "dev")
+	vals, err := MapSpecToChartValues(m, "dev", resolved)
 	require.NoError(t, err)
 
 	migrate := mustNestedMap(t, vals, "migrate")
@@ -126,8 +119,8 @@ func TestMapSpecToChartValues_HookTasks(t *testing.T) {
 	assert.False(t, hasJob, "scheduled tasks must not render a hook Job")
 
 	deployah := mustNestedMap(t, vals, "deployah")
-	resolved := mustNestedMap(t, deployah, "resolved")
-	require.Contains(t, resolved, "tasks")
+	resolvedBlock := mustNestedMap(t, deployah, "resolved")
+	require.Contains(t, resolvedBlock, "tasks")
 	_, hasSA := deployah["tasks"]
 	assert.False(t, hasSA, "hook tasks must not request a dedicated ServiceAccount")
 }
@@ -402,7 +395,7 @@ func TestHelmJob_EnvBracesAreData(t *testing.T) {
 		From:    "api",
 		On:      spec.TaskOnPreDeploy,
 		Command: []string{"true"},
-		Env:     map[string]string{"NOTE": "{{ .Release.Name }}"},
+		Env:     spec.StringMap{"NOTE": "{{ .Release.Name }}"},
 	})
 	job := renderHookJob(t, m, "dev", "migrate")
 	require.Len(t, job.Spec.Template.Spec.Containers, 1)
@@ -462,7 +455,7 @@ func TestHelmJobPodMatchesBuildTaskJob(t *testing.T) {
 		On:      spec.TaskOnPreDeploy,
 		Command: []string{"migrate", "up"},
 		Args:    []string{"--strict"},
-		Env:     map[string]string{"LOG": "debug"},
+		Env:     spec.StringMap{"LOG": "debug"},
 		Fanout:  spec.Fanout{Count: 2, Parallelism: 1},
 		Timeout: spec.DefaultHookTaskTimeout,
 	}
@@ -472,12 +465,14 @@ func TestHelmJobPodMatchesBuildTaskJob(t *testing.T) {
 	require.True(t, ok)
 
 	helmJob := renderHookJob(t, m, "dev", "migrate")
+	resolved := resolveChart(t, m, "dev")
 	cliJob, err := k8s.BuildTaskJob(k8s.TaskJobOptions{
 		Project:     m.Project,
 		Environment: "dev",
 		Namespace:   "default",
 		TaskName:    "migrate",
 		Task:        merged,
+		Runtime:     resolved.Tasks["migrate"].Runtime,
 	})
 	require.NoError(t, err)
 
@@ -520,7 +515,7 @@ func hookRenderSpec(task spec.Task) *spec.Spec {
 				Role:  spec.ComponentRoleService,
 				Image: "ghcr.io/acme/shop:1.2.3",
 				Port:  8080,
-				Env:   map[string]string{"DATABASE_URL": "postgres://db", "LOG": "info"},
+				Env:   spec.StringMap{"DATABASE_URL": "postgres://db", "LOG": "info"},
 			},
 		},
 		Tasks: map[string]spec.Task{
@@ -532,19 +527,24 @@ func hookRenderSpec(task spec.Task) *spec.Spec {
 	}
 }
 
+func resolveChart(t *testing.T, manifest *spec.Spec, env string) *spec.ResolvedSpec {
+	t.Helper()
+	if manifest.SpecDir == "" {
+		manifest.SpecDir = t.TempDir()
+	}
+	require.NoError(t, spec.FillSpecWithDefaults(manifest, spec.CurrentManifestVersion))
+	resolved, _, err := spec.Resolve(manifest, nil, spec.NormalizeEnv(env), spec.SubstitutionReport{})
+	require.NoError(t, err)
+	return resolved
+}
+
 func renderHookJob(t *testing.T, manifest *spec.Spec, env, taskName string) *batchv1.Job {
 	t.Helper()
-	require.NoError(t, spec.FillSpecWithDefaults(manifest, spec.CurrentManifestVersion))
-	for name, task := range manifest.Tasks {
-		if p, ok := manifest.Components[task.From]; ok {
-			cp := p
-			manifest.Tasks[name] = task.MergeFrom(&cp)
-		}
-	}
+	resolved := resolveChart(t, manifest, env)
 
 	client, err := NewClient(WithNamespace("default"))
 	require.NoError(t, err)
-	result, cleanup, err := client.RenderOffline(t.Context(), manifest, env, nil, nil)
+	result, cleanup, err := client.RenderOffline(t.Context(), manifest, env, resolved, nil)
 	require.NoError(t, err)
 	if cleanup != nil {
 		t.Cleanup(cleanup)

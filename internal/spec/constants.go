@@ -102,6 +102,9 @@ const (
 
 	// EnvironmentNamePattern is the regex pattern for valid environment names
 	EnvironmentNamePattern = "^[a-zA-Z0-9_-]+$"
+
+	// EnvKeyPattern is the POSIX pattern for runtime environment variable names.
+	EnvKeyPattern = `^[A-Za-z_][A-Za-z0-9_]*$`
 )
 
 // Spec Processing

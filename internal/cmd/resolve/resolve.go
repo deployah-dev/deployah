@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-	"sort"
 	"strings"
 
 	"nabat.dev/nabat"
@@ -46,7 +45,11 @@ func Register(app *nabat.App) {
 resolve is offline: it never contacts a Kubernetes cluster. It loads the
 platform file (deployah.platform.yaml) when present and performs full
 resolution, including FQDN construction and TLS mode selection. When the
-platform file is absent the output is partial and includes PLATFORM_NOT_FOUND.
+platform file is absent the output is partial and a warning is recorded.
+
+It prints resolved runtime FileValues and ExplicitValues in text and JSON.
+Those maps are not a secret store; do not treat resolve output as
+secret-safe CI output.
 
 With --environments it instead lists every environment from the spec and
 platform files: where each is registered, its context (or the kubeconfig
@@ -125,51 +128,58 @@ func runResolve(c *nabat.Context) error {
 
 // outputText writes a human-readable resolution summary to stdout.
 func outputText(c *nabat.Context, resolved *spec.ResolvedSpec, report *spec.ResolutionReport) error {
-	if report.ErrorCode != "" {
-		c.Println(fmt.Sprintf("Resolution error [%s]: %s", report.ErrorCode, report.ErrorMessage))
-		return nil
-	}
-
 	c.Println(fmt.Sprintf("Environment: %s", report.Env.Original))
 	if resolved.KubeContext != "" {
 		c.Println(fmt.Sprintf("Context:     %s", resolved.KubeContext))
 	}
 
-	// Sort components for deterministic output.
-	names := make([]string, 0, len(resolved.Components))
-	for n := range resolved.Components {
-		names = append(names, n)
+	names := slices.Sorted(maps.Keys(resolved.Components))
+	if len(names) > 0 {
+		c.Println("\nComponents:")
+		for _, name := range names {
+			rc := resolved.Components[name]
+			if rc.FQDN == "" && len(rc.Profiles) == 0 && !hasRuntimeMaps(rc.Runtime) {
+				continue
+			}
+			c.Println(fmt.Sprintf("  %s:", name))
+			if rc.FQDN != "" {
+				c.Println(fmt.Sprintf("    hostname: %s", rc.FQDN))
+			}
+			if rc.TLSMode != "" {
+				c.Println(fmt.Sprintf("    tls.mode: %s", rc.TLSMode))
+			}
+			if rc.TLSIssuer != "" {
+				c.Println(fmt.Sprintf("    tls.issuer: %s", rc.TLSIssuer))
+			}
+			if rc.TLSSecretName != "" {
+				c.Println(fmt.Sprintf("    tls.secretName: %s", rc.TLSSecretName))
+			}
+			if len(rc.Profiles) > 0 {
+				c.Println(fmt.Sprintf("    profiles: %s", strings.Join(rc.Profiles, ", ")))
+			}
+			if rc.MergedProfile != nil {
+				printMergedProfile(c, rc.MergedProfile)
+			}
+			if rc.StorageClass != "" {
+				c.Println(fmt.Sprintf("    storageClass: %s", rc.StorageClass))
+			}
+			printRuntimeMaps(c, rc.Runtime)
+		}
 	}
-	sort.Strings(names)
 
-	c.Println("\nComponents:")
-	for _, name := range names {
-		rc := resolved.Components[name]
-		if rc.FQDN == "" && len(rc.Profiles) == 0 {
+	taskNames := slices.Sorted(maps.Keys(resolved.Tasks))
+	printedTasks := false
+	for _, name := range taskNames {
+		rt := resolved.Tasks[name]
+		if !hasRuntimeMaps(rt.Runtime) {
 			continue
 		}
+		if !printedTasks {
+			c.Println("\nTasks:")
+			printedTasks = true
+		}
 		c.Println(fmt.Sprintf("  %s:", name))
-		if rc.FQDN != "" {
-			c.Println(fmt.Sprintf("    hostname: %s", rc.FQDN))
-		}
-		if rc.TLSMode != "" {
-			c.Println(fmt.Sprintf("    tls.mode: %s", rc.TLSMode))
-		}
-		if rc.TLSIssuer != "" {
-			c.Println(fmt.Sprintf("    tls.issuer: %s", rc.TLSIssuer))
-		}
-		if rc.TLSSecretName != "" {
-			c.Println(fmt.Sprintf("    tls.secretName: %s", rc.TLSSecretName))
-		}
-		if len(rc.Profiles) > 0 {
-			c.Println(fmt.Sprintf("    profiles: %s", strings.Join(rc.Profiles, ", ")))
-		}
-		if rc.MergedProfile != nil {
-			printMergedProfile(c, rc.MergedProfile)
-		}
-		if rc.StorageClass != "" {
-			c.Println(fmt.Sprintf("    storageClass: %s", rc.StorageClass))
-		}
+		printRuntimeMaps(c, rt.Runtime)
 	}
 
 	if len(report.Warnings) > 0 {
@@ -181,6 +191,25 @@ func outputText(c *nabat.Context, resolved *spec.ResolvedSpec, report *spec.Reso
 	return nil
 }
 
+func hasRuntimeMaps(rt spec.ResolvedRuntimeEnvironment) bool {
+	return len(rt.FileValues) > 0 || len(rt.ExplicitValues) > 0
+}
+
+func printRuntimeMaps(c *nabat.Context, rt spec.ResolvedRuntimeEnvironment) {
+	if len(rt.FileValues) > 0 {
+		c.Println("    fileValues:")
+		for _, k := range slices.Sorted(maps.Keys(rt.FileValues)) {
+			c.Println(fmt.Sprintf("      %s: %s", k, rt.FileValues[k]))
+		}
+	}
+	if len(rt.ExplicitValues) > 0 {
+		c.Println("    explicitValues:")
+		for _, k := range slices.Sorted(maps.Keys(rt.ExplicitValues)) {
+			c.Println(fmt.Sprintf("      %s: %s", k, rt.ExplicitValues[k]))
+		}
+	}
+}
+
 // jsonResolveOutput is the stable JSON representation of a resolution result.
 // Fields are in a fixed order; encoding/json sorts map keys since Go 1.12,
 // so the output is byte-stable for the same input.
@@ -188,19 +217,27 @@ type jsonResolveOutput struct {
 	Environment  string                   `json:"environment"`
 	Context      string                   `json:"context,omitempty"`
 	Components   map[string]jsonComponent `json:"components"`
+	Tasks        map[string]jsonRuntime   `json:"tasks,omitempty"`
 	Warnings     []string                 `json:"warnings,omitempty"`
 	ErrorCode    string                   `json:"error_code,omitempty"`
 	ErrorMessage string                   `json:"error_message,omitempty"`
 }
 
+type jsonRuntime struct {
+	FileValues     map[string]string `json:"file_values,omitempty"`
+	ExplicitValues map[string]string `json:"explicit_values,omitempty"`
+}
+
 type jsonComponent struct {
-	FQDN          string                `json:"fqdn,omitempty"`
-	TLSMode       string                `json:"tls_mode,omitempty"`
-	TLSIssuer     string                `json:"tls_issuer,omitempty"`
-	TLSSecretName string                `json:"tls_secret_name,omitempty"`
-	Profiles      []string              `json:"profiles,omitempty"`
-	MergedProfile *spec.PlatformProfile `json:"merged_profile,omitempty"`
-	StorageClass  string                `json:"storage_class,omitempty"`
+	FQDN           string                `json:"fqdn,omitempty"`
+	TLSMode        string                `json:"tls_mode,omitempty"`
+	TLSIssuer      string                `json:"tls_issuer,omitempty"`
+	TLSSecretName  string                `json:"tls_secret_name,omitempty"`
+	Profiles       []string              `json:"profiles,omitempty"`
+	MergedProfile  *spec.PlatformProfile `json:"merged_profile,omitempty"`
+	StorageClass   string                `json:"storage_class,omitempty"`
+	FileValues     map[string]string     `json:"file_values,omitempty"`
+	ExplicitValues map[string]string     `json:"explicit_values,omitempty"`
 }
 
 // printMergedProfile writes key merged profile fields for text output.
@@ -370,15 +407,37 @@ func outputJSON(c *nabat.Context, resolved *spec.ResolvedSpec, report *spec.Reso
 
 	for name, rc := range resolved.Components {
 		out.Components[name] = jsonComponent{
-			FQDN:          rc.FQDN,
-			TLSMode:       string(rc.TLSMode),
-			TLSIssuer:     rc.TLSIssuer,
-			TLSSecretName: rc.TLSSecretName,
-			Profiles:      rc.Profiles,
-			MergedProfile: rc.MergedProfile,
-			StorageClass:  rc.StorageClass,
+			FQDN:           rc.FQDN,
+			TLSMode:        string(rc.TLSMode),
+			TLSIssuer:      rc.TLSIssuer,
+			TLSSecretName:  rc.TLSSecretName,
+			Profiles:       rc.Profiles,
+			MergedProfile:  rc.MergedProfile,
+			StorageClass:   rc.StorageClass,
+			FileValues:     cloneIfPresent(rc.Runtime.FileValues),
+			ExplicitValues: cloneIfPresent(rc.Runtime.ExplicitValues),
 		}
+	}
+	for name, rt := range resolved.Tasks {
+		runtime := jsonRuntime{
+			FileValues:     cloneIfPresent(rt.Runtime.FileValues),
+			ExplicitValues: cloneIfPresent(rt.Runtime.ExplicitValues),
+		}
+		if len(runtime.FileValues) == 0 && len(runtime.ExplicitValues) == 0 {
+			continue
+		}
+		if out.Tasks == nil {
+			out.Tasks = make(map[string]jsonRuntime)
+		}
+		out.Tasks[name] = runtime
 	}
 
 	return c.JSON(out)
+}
+
+func cloneIfPresent(vals map[string]string) map[string]string {
+	if len(vals) == 0 {
+		return nil
+	}
+	return maps.Clone(vals)
 }
