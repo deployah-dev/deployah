@@ -15,6 +15,7 @@
 package spec
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -26,15 +27,17 @@ import (
 // and envsubst can use them.
 type StringMap map[string]string
 
-// UnmarshalJSON accepts an object whose values are strings, numbers, or
-// booleans and stores each value as a string.
+// UnmarshalJSON unmarshals a JSON object into a StringMap.
 func (m *StringMap) UnmarshalJSON(data []byte) error {
 	if string(data) == "null" {
 		*m = nil
 		return nil
 	}
+	// Accept string, number, or boolean; UseNumber keeps large ints exact.
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
 	var raw map[string]any
-	if err := json.Unmarshal(data, &raw); err != nil {
+	if err := dec.Decode(&raw); err != nil {
 		return fmt.Errorf("string map: %w", err)
 	}
 	out := make(StringMap, len(raw))

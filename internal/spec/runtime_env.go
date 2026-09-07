@@ -44,6 +44,7 @@ type ResolvedRuntimeEnvironment struct {
 type runtimeEnvRequest struct {
 	specDir    string
 	envName    string
+	envKey     string // matched spec environments key for provenance
 	env        *Environment
 	entityName string
 	entityKind string // "component" or "task"
@@ -51,6 +52,14 @@ type runtimeEnvRequest struct {
 	explicit   StringMap
 	from       string
 	parent     *ResolvedRuntimeEnvironment
+}
+
+// specEnvRef is the spec environments entry that matched the requested
+// environment instance. key is the map key in the manifest (for example
+// "review" when the instance is "review/pr-123").
+type specEnvRef struct {
+	key string
+	env *Environment
 }
 
 type runtimeKeyHistory struct {
@@ -104,7 +113,7 @@ func implicitEntityFiles(entityName, envName string) []string {
 func resolveRuntimeEnvironment(req runtimeEnvRequest) (ResolvedRuntimeEnvironment, []runtimeKeyHistory, []runtimeKeyHistory, error) {
 	out := emptyRuntime()
 
-	envVals, envHist, err := loadEnvironmentValues(req.specDir, req.envName, req.env)
+	envVals, envHist, err := loadEnvironmentValues(req.specDir, req.envName, req.envKey, req.env)
 	if err != nil {
 		return emptyRuntime(), nil, nil, err
 	}
@@ -142,7 +151,7 @@ func resolveRuntimeEnvironment(req runtimeEnvRequest) (ResolvedRuntimeEnvironmen
 	return out, sortHistories(fileHist, out.FileValues), sortHistories(explicitHist, out.ExplicitValues), nil
 }
 
-func loadEnvironmentValues(specDir, envName string, env *Environment) (map[string]string, []runtimeKeyHistory, error) {
+func loadEnvironmentValues(specDir, envName, envKey string, env *Environment) (map[string]string, []runtimeKeyHistory, error) {
 	out := make(map[string]string)
 	var hist []runtimeKeyHistory
 	if env != nil && env.EnvFile != "" {
@@ -151,7 +160,11 @@ func loadEnvironmentValues(specDir, envName string, env *Environment) (map[strin
 		if err != nil {
 			return nil, nil, err
 		}
-		source := fmt.Sprintf("environments.%s.envFile %s", envName, env.EnvFile)
+		key := envKey
+		if key == "" {
+			key = envName
+		}
+		source := fmt.Sprintf("environments.%s.envFile %s", key, env.EnvFile)
 		maps.Copy(out, vals)
 		return out, historiesFromMap(vals, source), nil
 	}
@@ -290,41 +303,91 @@ func validateEnvKeys(vals map[string]string, origin string) error {
 	return nil
 }
 
-func parentRuntime(appSpec *Spec, env EnvIdentity, specEnv *Environment, resolved *ResolvedSpec, from string) (*ResolvedRuntimeEnvironment, error) {
-	if prc, ok := resolved.Components[from]; ok {
-		parentRT := prc.Runtime
-		return &parentRT, nil
+// parentRuntimeCache resolves a from: parent once per [Resolve] call.
+// Active parents are read from resolved.Components. Inactive parents that
+// active tasks still inherit from are resolved once and kept here; they
+// are not added to resolved.Components.
+type parentRuntimeCache struct {
+	appSpec  *Spec
+	env      EnvIdentity
+	specEnv  specEnvRef
+	resolved *ResolvedSpec
+	inactive map[string]ResolvedRuntimeEnvironment
+	load     func(from string, parent Component) (ResolvedRuntimeEnvironment, error)
+}
+
+func newParentRuntimeCache(appSpec *Spec, env EnvIdentity, specEnv specEnvRef, resolved *ResolvedSpec) *parentRuntimeCache {
+	c := &parentRuntimeCache{
+		appSpec:  appSpec,
+		env:      env,
+		specEnv:  specEnv,
+		resolved: resolved,
+		inactive: make(map[string]ResolvedRuntimeEnvironment),
 	}
-	parentComp, ok := appSpec.Components[from]
+	c.load = c.resolveInactive
+	return c
+}
+
+func (c *parentRuntimeCache) resolveInactive(from string, parent Component) (ResolvedRuntimeEnvironment, error) {
+	rt, _, _, err := resolveRuntimeEnvironment(runtimeEnvRequest{
+		specDir:    c.appSpec.SpecDir,
+		envName:    c.env.Original,
+		envKey:     c.specEnv.key,
+		env:        c.specEnv.env,
+		entityName: from,
+		entityKind: "component",
+		envFile:    parent.EnvFile,
+		explicit:   parent.Env,
+	})
+	if err != nil {
+		return emptyRuntime(), fmt.Errorf("parent %s: %w", from, err)
+	}
+	return rt, nil
+}
+
+func (c *parentRuntimeCache) get(from string) (*ResolvedRuntimeEnvironment, error) {
+	if c.resolved != nil {
+		if prc, ok := c.resolved.Components[from]; ok {
+			rt := cloneRuntime(prc.Runtime)
+			return &rt, nil
+		}
+	}
+	if cached, ok := c.inactive[from]; ok {
+		rt := cloneRuntime(cached)
+		return &rt, nil
+	}
+	parentComp, ok := c.appSpec.Components[from]
 	if !ok {
 		// Validation already rejects unknown from. Display resolve still
 		// attaches runtime on a partial spec, so treat this as no parent.
 		return nil, nil //nolint:nilnil // absent parent is not an error; callers check for nil
 	}
-	rt, _, _, err := resolveRuntimeEnvironment(runtimeEnvRequest{
-		specDir:    appSpec.SpecDir,
-		envName:    env.Original,
-		env:        specEnv,
-		entityName: from,
-		entityKind: "component",
-		envFile:    parentComp.EnvFile,
-		explicit:   parentComp.Env,
-	})
+	rt, err := c.load(from, parentComp)
 	if err != nil {
-		return nil, fmt.Errorf("parent %s: %w", from, err)
+		return nil, err
 	}
-	return &rt, nil
+	c.inactive[from] = cloneRuntime(rt)
+	cloned := cloneRuntime(rt)
+	return &cloned, nil
 }
 
-func specEnvironment(appSpec *Spec, envName string) *Environment {
+func cloneRuntime(rt ResolvedRuntimeEnvironment) ResolvedRuntimeEnvironment {
+	return ResolvedRuntimeEnvironment{
+		FileValues:     maps.Clone(rt.FileValues),
+		ExplicitValues: maps.Clone(rt.ExplicitValues),
+		EntityValues:   maps.Clone(rt.EntityValues),
+	}
+}
+
+func specEnvironment(appSpec *Spec, envName string) specEnvRef {
 	if appSpec == nil || len(appSpec.Environments) == 0 {
-		return &Environment{}
+		return specEnvRef{env: &Environment{}}
 	}
 	if matched, ok := matchEnvKey(envName, slices.Collect(maps.Keys(appSpec.Environments))); ok {
 		env := appSpec.Environments[matched]
-		return &env
+		return specEnvRef{key: matched, env: &env}
 	}
-	return &Environment{}
+	return specEnvRef{env: &Environment{}}
 }
 
 func attachRuntimeEnvironments(appSpec *Spec, env EnvIdentity, resolved *ResolvedSpec, report *ResolutionReport) error {
@@ -332,6 +395,7 @@ func attachRuntimeEnvironments(appSpec *Spec, env EnvIdentity, resolved *Resolve
 		return nil
 	}
 	specEnv := specEnvironment(appSpec, env.Original)
+	parents := newParentRuntimeCache(appSpec, env, specEnv, resolved)
 	var fields []ResolvedField
 
 	for _, name := range slices.Sorted(maps.Keys(resolved.Components)) {
@@ -339,7 +403,8 @@ func attachRuntimeEnvironments(appSpec *Spec, env EnvIdentity, resolved *Resolve
 		rt, fileHist, explicitHist, err := resolveRuntimeEnvironment(runtimeEnvRequest{
 			specDir:    appSpec.SpecDir,
 			envName:    env.Original,
-			env:        specEnv,
+			envKey:     specEnv.key,
+			env:        specEnv.env,
 			entityName: name,
 			entityKind: "component",
 			envFile:    comp.EnvFile,
@@ -359,7 +424,7 @@ func attachRuntimeEnvironments(appSpec *Spec, env EnvIdentity, resolved *Resolve
 		var parent *ResolvedRuntimeEnvironment
 		if raw.From != "" {
 			var err error
-			parent, err = parentRuntime(appSpec, env, specEnv, resolved, raw.From)
+			parent, err = parents.get(raw.From)
 			if err != nil {
 				return fmt.Errorf("task %s: %w", name, err)
 			}
@@ -367,7 +432,8 @@ func attachRuntimeEnvironments(appSpec *Spec, env EnvIdentity, resolved *Resolve
 		rt, fileHist, explicitHist, err := resolveRuntimeEnvironment(runtimeEnvRequest{
 			specDir:    appSpec.SpecDir,
 			envName:    env.Original,
-			env:        specEnv,
+			envKey:     specEnv.key,
+			env:        specEnv.env,
 			entityName: name,
 			entityKind: "task",
 			envFile:    raw.EnvFile,

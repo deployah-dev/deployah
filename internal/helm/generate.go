@@ -84,25 +84,15 @@ func GenerateReleaseName(projectName, environmentName string) string {
 	return projectName + "-" + spec.NormalizeEnv(environmentName).K8sSafe
 }
 
-// PrepareChart expands the embedded chart into a temporary directory,
-// rendering .gotmpl files with Go templates and Sprig functions, and returns
-// the prepared chart root directory. Identical charts are reused via cache.
+// PrepareChart expands the embedded chart into a temporary directory and
+// returns the chart root. Identical charts are reused via cache.
 //
 // cache must be non-nil. If ctx is already canceled or past its deadline,
 // PrepareChart returns [context.Canceled] or [context.DeadlineExceeded]
 // immediately; chart expansion itself is not interrupted mid-flight.
 //
-// When resolved is non-nil, the cache key hashes resolved (including
-// [spec.ResolvedSpec.Spec]), not the separate manifest parameter. Callers
-// must pass a manifest consistent with resolved.Spec: chart rendering still
-// reads component names and project from manifest, so a mismatched pair
-// could reuse a stale chart.
-//
 // On a cache miss, every 10th entry may start a background goroutine that
 // removes expired cache directories; that work outlives this call.
-//
-// Errors: [context.Canceled], [context.DeadlineExceeded], or a wrapped
-// error when cache is nil or chart generation fails.
 func PrepareChart(ctx context.Context, manifest *spec.Spec, desiredEnvironment string, resolved *spec.ResolvedSpec, cache *ChartCache) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
@@ -111,9 +101,9 @@ func PrepareChart(ctx context.Context, manifest *spec.Spec, desiredEnvironment s
 		return "", errors.New("chart cache is required")
 	}
 
-	// Generate comprehensive cache key based on resolved spec (or raw spec if
-	// no platform resolution was performed), the target environment, and
-	// embedded chart templates.
+	// Hash resolved when set (including resolved.Spec). A nil resolved is
+	// not a full Deployah render; callers should pass [spec.Resolve] output
+	// even without a platform file.
 	cacheKey, err := cache.GenerateKey(manifest, desiredEnvironment, resolved)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate cache key: %w", err)
@@ -333,8 +323,8 @@ func componentActiveInEnvironment(component spec.Component, desiredEnvironment s
 const resolvedSchemaVersion = "1"
 
 // MapSpecToChartValues converts a spec into Helm chart values for the given
-// environment (resolved, if non-nil, supplies FQDN/TLS) and writes a
-// deployah.resolved block so the hostname guard can compare across deploys.
+// environment and writes a deployah.resolved block so the hostname guard can
+// compare across deploys.
 func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string, resolved *spec.ResolvedSpec) (map[string]any, error) {
 	values := make(map[string]any)
 	// Track resolved per-component data for the deployah.resolved block.
@@ -549,6 +539,7 @@ func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string, resolved *spe
 			entry["persistenceSize"] = component.Persistence.Size
 		}
 
+		// Nil resolved omits runtime env; it is not a full Deployah render.
 		if resolved != nil {
 			if rc, ok := resolved.Components[componentName]; ok {
 				applyRuntimeChartValues(componentValues, rc.Runtime)

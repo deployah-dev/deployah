@@ -88,7 +88,8 @@ func runResolve(c *nabat.Context) error {
 		return fmt.Errorf("environment argument required; or pass --environments for an overview")
 	}
 
-	// Load and parse the manifest (no envsubst, no cluster).
+	// Raw manifest is only for the substitution prescan. Resolution must
+	// see the substituted spec so ${...} in env and envFile match deploy.
 	rawSpec, _, err := spec.ParseManifest(sess.SpecPath())
 	if err != nil {
 		return fmt.Errorf("load manifest: %w", err)
@@ -106,11 +107,15 @@ func runResolve(c *nabat.Context) error {
 	// registry keys internally.
 	envIdentity := spec.NormalizeEnv(opts.Environment)
 
-	// Build substitution report (pre-scan for ${VAR} tokens).
 	substReport := spec.PrescanSubstitutionReport(rawSpec)
 
+	manifest, err := spec.Load(c, sess.SpecPath(), opts.Environment, platform)
+	if err != nil {
+		return fmt.Errorf("load spec: %w", err)
+	}
+
 	// Run resolution (display mode: degrades gracefully when platform is nil).
-	resolved, report, resolveErr := spec.ResolveForDisplay(rawSpec, platform, envIdentity, substReport)
+	resolved, report, resolveErr := spec.ResolveForDisplay(manifest, platform, envIdentity, substReport)
 	if resolveErr != nil {
 		if report != nil && report.ErrorCode != "" {
 			return fmt.Errorf("resolution failed (%s): %w", report.ErrorCode, resolveErr)

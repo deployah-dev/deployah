@@ -15,6 +15,7 @@
 package spec
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -31,9 +32,11 @@ func TestStringMap_StringifiesScalars(t *testing.T) {
 		want StringMap
 	}{
 		{name: "string", raw: "LOG_LEVEL: debug", want: StringMap{"LOG_LEVEL": "debug"}},
-		{name: "bool", raw: "DEBUG: true", want: StringMap{"DEBUG": "true"}},
+		{name: "bool true", raw: "DEBUG: true", want: StringMap{"DEBUG": "true"}},
+		{name: "bool false", raw: "DEBUG: false", want: StringMap{"DEBUG": "false"}},
 		{name: "int", raw: "MAX_RETRIES: 5", want: StringMap{"MAX_RETRIES": "5"}},
 		{name: "float", raw: "TIMEOUT: 30.5", want: StringMap{"TIMEOUT": "30.5"}},
+		{name: "large integer", raw: "BIG_ID: 9007199254740993", want: StringMap{"BIG_ID": "9007199254740993"}},
 	}
 
 	for _, tt := range tests {
@@ -44,6 +47,38 @@ func TestStringMap_StringifiesScalars(t *testing.T) {
 			}
 			require.NoError(t, yaml.Unmarshal([]byte("env:\n  "+tt.raw+"\n"), &got))
 			assert.Equal(t, tt.want, got.Env)
+		})
+	}
+}
+
+func TestStringMap_JSONPreservesLargeInteger(t *testing.T) {
+	t.Parallel()
+
+	var got StringMap
+	require.NoError(t, json.Unmarshal([]byte(`{"BIG_ID":9007199254740993}`), &got))
+	assert.Equal(t, "9007199254740993", got["BIG_ID"])
+}
+
+func TestStringMap_RejectsNonScalars(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		raw  string
+	}{
+		{name: "nested map", raw: "NESTED:\n    FOO: bar"},
+		{name: "list", raw: "ITEMS:\n    - a\n    - b"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var got struct {
+				Env StringMap `yaml:"env"`
+			}
+			err := yaml.Unmarshal([]byte("env:\n  "+tt.raw+"\n"), &got)
+			require.Error(t, err)
+			assert.ErrorContains(t, err, "expected string, number, or boolean")
 		})
 	}
 }

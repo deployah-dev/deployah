@@ -46,7 +46,12 @@ spec:
                             topologyKey: kubernetes.io/hostname
                           weight: 1
             containers:
-                - image: docker.io/library/nginx:latest
+                - env:
+                    - name: DATABASE_URL
+                      value: postgres://db
+                    - name: LOG
+                      value: info
+                  image: docker.io/library/nginx:latest
                   imagePullPolicy: Always
                   livenessProbe:
                     failureThreshold: 6

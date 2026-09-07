@@ -280,7 +280,7 @@ func (s *Session) PlatformPath() string {
 // ParseManifest reads and partially validates the spec (apiVersion +
 // environments only, no envsubst, no defaults). It is intended for commands
 // that need the raw manifest structure without environment-specific processing
-// (e.g. validate manifest-only mode, resolve offline mode).
+// (e.g. validate manifest-only mode, substitution prescan).
 func (s *Session) ParseManifest() (*spec.Spec, error) {
 	rawSpec, _, err := spec.ParseManifest(s.SpecPath())
 	if err != nil {

@@ -156,8 +156,10 @@ environment key in `deployah.platform.yaml`.
 
 To check your spec, run `deployah validate`; when a platform file exists it
 also cross-checks `expose.domain` keys and environment names against it. To
-check the full resolution for a given environment, run
-`deployah validate <environment>`.
+check resolution for a given environment, including runtime env files, run
+`deployah validate <environment>`. That check does not require a platform
+file unless the spec uses platform-owned features such as profiles or
+`expose`.
 
 ## Value rules
 

@@ -24,13 +24,14 @@ func Register(app *nabat.App) {
 		nabat.WithLongDescription("Validate a Deployah spec against the JSON schema. "+
 			"Without an environment, validates the manifest (offline, fast) and, when a "+
 			"platform file exists, cross-checks expose.domain keys and environment names against it. "+
-			"With an environment, also runs full cross-file resolution validation."),
+			"With an environment, also runs resolution for that environment, including runtime env files. "+
+			"A platform file is required only when the spec uses platform-owned features such as profiles or expose."),
 		nabat.WithArg("environment", "", nabat.WithUsage("Environment to validate (optional; enables cross-file resolution check)"), nabat.WithPrompt("Environment", "", nabat.WithHint("e.g. production"))),
 		nabat.WithExample(`
 # Validate manifest schema only (offline, no environment required)
 deployah validate
 
-# Validate manifest + cross-file resolution against the platform file
+# Validate manifest + environment resolution (runtime env; platform only if required)
 deployah validate production
 
 # Validate with an explicit spec path
@@ -114,15 +115,16 @@ func runManifestOnly(c *nabat.Context, rt *session.Session) error {
 	}
 
 	c.Success("Manifest schema valid")
-	c.Println("Hint: run 'deployah validate <environment>' to also check cross-file resolution against the platform file.")
+	c.Println("Hint: run 'deployah validate <environment>' to also check environment resolution, including runtime env files.")
 
 	return nil
 }
 
-// runCrossFile validates manifest schema AND loads the platform file to run
-// full cross-file resolution validation for the named environment.
+// runCrossFile validates the substituted spec and runs [spec.Resolve] for
+// the named environment. A missing platform file is allowed when the spec
+// does not use platform-owned features.
 func runCrossFile(c *nabat.Context, rt *session.Session, environment string) error {
-	rawSpec, err := rt.ParseManifest()
+	rawSpec, _, err := spec.ParseManifest(rt.SpecPath())
 	if err != nil {
 		return fmt.Errorf("manifest invalid: %w", err)
 	}
@@ -131,29 +133,28 @@ func runCrossFile(c *nabat.Context, rt *session.Session, environment string) err
 	if platformErr != nil {
 		return fmt.Errorf("platform file error: %w", platformErr)
 	}
-	if platform == nil {
-		return fmt.Errorf(
-			"cross-file validation requires a platform file; "+
-				"create %s or pass --platform-file",
-			spec.DefaultPlatformPath,
-		)
-	}
 
 	substReport := spec.PrescanSubstitutionReport(rawSpec)
+
+	loaded, err := spec.Load(c, rt.SpecPath(), environment, platform)
+	if err != nil {
+		return fmt.Errorf("load spec: %w", err)
+	}
+
 	envIdentity := spec.NormalizeEnv(environment)
-	resolvedSpec, report, resolveErr := spec.Resolve(rawSpec, platform, envIdentity, substReport)
+	_, report, resolveErr := spec.Resolve(loaded, platform, envIdentity, substReport)
 	if resolveErr != nil {
+		if report != nil && report.ErrorCode != "" {
+			return fmt.Errorf("resolution failed (%s): %w", report.ErrorCode, resolveErr)
+		}
 		return fmt.Errorf("resolution failed: %w", resolveErr)
 	}
 
-	_ = resolvedSpec
-
-	// Surface any warnings from the resolution report.
 	for _, w := range report.Warnings {
 		c.Warn(w)
 	}
 
-	c.Success("Manifest and platform valid", "project", rawSpec.Project, "environment", environment)
+	c.Success("Manifest and environment valid", "project", loaded.Project, "environment", environment)
 
 	return nil
 }

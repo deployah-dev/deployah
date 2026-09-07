@@ -508,3 +508,121 @@ func TestResolveRuntimeEnvironment_ComponentsBeforeTasks(t *testing.T) {
 	require.NoError(t, err)
 	assertRuntimeFieldOrder(t, runtimeFieldPaths(report), resolved)
 }
+
+func TestResolveRuntimeEnvironment_WildcardProvenanceUsesSpecKey(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	requireWrite(t, dir, "review.env", "REGION=eu\n")
+	appSpec := runtimeShopSpec(dir)
+	appSpec.Environments = map[string]Environment{
+		"review": {EnvFile: "review.env"},
+	}
+
+	resolved, report, err := Resolve(appSpec, nil, NormalizeEnv("review/pr-123"), SubstitutionReport{})
+	require.NoError(t, err)
+	assert.Equal(t, "review/pr-123", resolved.Env.Original)
+	assert.Equal(t, "eu", resolved.Components["api"].Runtime.FileValues["REGION"])
+
+	var source string
+	for _, f := range report.Fields {
+		if f.Component == "api" && f.Path == "runtime.fileValues.REGION" {
+			source = f.Source
+		}
+	}
+	assert.Contains(t, source, "environments.review.envFile")
+	assert.NotContains(t, source, "environments.review/pr-123.envFile")
+}
+
+func TestResolveRuntimeEnvironment_InactiveParentInheritedByActiveTasks(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	requireWrite(t, dir, ".env", "REGION=eu\n")
+	requireWrite(t, dir, ".env.api", "FEATURE_X=off\n")
+	appSpec := &Spec{
+		APIVersion: CurrentManifestVersion,
+		Project:    "shop",
+		SpecDir:    dir,
+		Environments: map[string]Environment{
+			"staging":    {},
+			"production": {},
+		},
+		Components: map[string]Component{
+			"api": {
+				Role:         ComponentRoleService,
+				Image:        "ghcr.io/acme/shop:1",
+				Environments: []string{"production"},
+				Env:          StringMap{"LOG_LEVEL": "debug"},
+			},
+		},
+		Tasks: map[string]Task{
+			"migrate": {
+				From:         "api",
+				On:           TaskOnPreDeploy,
+				Command:      []string{"migrate"},
+				Environments: []string{"staging"},
+			},
+			"seed": {
+				From:         "api",
+				On:           TaskOnPreDeploy,
+				Command:      []string{"seed"},
+				Environments: []string{"staging"},
+			},
+		},
+	}
+
+	resolved, _, err := Resolve(appSpec, nil, NormalizeEnv("staging"), SubstitutionReport{})
+	require.NoError(t, err)
+	_, parentRendered := resolved.Components["api"]
+	assert.False(t, parentRendered)
+
+	wantEntity := map[string]string{"FEATURE_X": "off"}
+	wantExplicit := map[string]string{"LOG_LEVEL": "debug"}
+	wantFile := map[string]string{"REGION": "eu", "FEATURE_X": "off"}
+	for _, name := range []string{"migrate", "seed"} {
+		rt := resolved.Tasks[name].Runtime
+		assert.Equal(t, wantFile, rt.FileValues, name)
+		assert.Equal(t, wantExplicit, rt.ExplicitValues, name)
+		assert.Equal(t, wantEntity, rt.EntityValues, name)
+	}
+
+	resolved.Tasks["migrate"].Runtime.EntityValues["FEATURE_X"] = "mutated"
+	resolved.Tasks["migrate"].Runtime.ExplicitValues["LOG_LEVEL"] = "mutated"
+	assert.Equal(t, "off", resolved.Tasks["seed"].Runtime.EntityValues["FEATURE_X"])
+	assert.Equal(t, "debug", resolved.Tasks["seed"].Runtime.ExplicitValues["LOG_LEVEL"])
+}
+
+func TestParentRuntimeCache_ResolvesInactiveParentOnce(t *testing.T) {
+	t.Parallel()
+
+	calls := 0
+	cache := &parentRuntimeCache{
+		appSpec: &Spec{
+			Components: map[string]Component{"api": {EnvFile: ".env.api"}},
+		},
+		resolved: &ResolvedSpec{Components: map[string]ResolvedComponent{}},
+		inactive: make(map[string]ResolvedRuntimeEnvironment),
+		load: func(from string, parent Component) (ResolvedRuntimeEnvironment, error) {
+			calls++
+			assert.Equal(t, "api", from)
+			assert.Equal(t, ".env.api", parent.EnvFile)
+			return ResolvedRuntimeEnvironment{
+				FileValues:     map[string]string{"FEATURE_X": "off"},
+				ExplicitValues: map[string]string{"LOG_LEVEL": "debug"},
+				EntityValues:   map[string]string{"FEATURE_X": "off"},
+			}, nil
+		},
+	}
+
+	first, err := cache.get("api")
+	require.NoError(t, err)
+	second, err := cache.get("api")
+	require.NoError(t, err)
+	assert.Equal(t, 1, calls)
+	assert.Equal(t, "off", first.EntityValues["FEATURE_X"])
+	assert.Equal(t, "off", second.EntityValues["FEATURE_X"])
+	first.EntityValues["FEATURE_X"] = "mutated"
+	assert.Equal(t, "off", second.EntityValues["FEATURE_X"])
+	assert.Equal(t, "off", cache.inactive["api"].EntityValues["FEATURE_X"])
+}

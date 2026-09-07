@@ -14,8 +14,9 @@
 
 package spec
 
-// ResolvedSpec is the load+platform+resolution result for one environment;
-// primary input to [MapSpecToChartValues], the hostname guard, and cache keys.
+// ResolvedSpec is the load+resolution result for one environment; primary
+// input to [MapSpecToChartValues], the hostname guard, and cache keys.
+// Platform may be nil. A nil *ResolvedSpec omits runtime env on render.
 //
 // Its deployah.resolved block, written to Helm chart values, has this contract:
 //
