@@ -161,12 +161,12 @@ tasks:
 Each copy sees `JOB_COMPLETION_INDEX` (0, 1, 2, ...). Parallelism is capped at
 count and cannot exceed 100000 (the Kubernetes Indexed Job limit).
 
-## First install and the database
+## First install
 
-On a first install, `preDeploy` runs **before** Deployments and Services. A
-migrate task that talks to Postgres needs that database already reachable
-(another release, a managed DB, or a job you ran first). `deployah plan`
-prints this reminder on a fresh install.
+On a first install, `preDeploy` runs **before** Deployments and Services.
+Anything the task talks to (Postgres, RabbitMQ, another API) must already
+be reachable: another release, a managed service, or a job you ran first.
+`deployah plan` prints this reminder on a fresh install.
 
 ## Logs
 

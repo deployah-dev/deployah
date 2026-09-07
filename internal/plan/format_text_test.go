@@ -379,7 +379,7 @@ func TestRenderText_TasksSection(t *testing.T) {
 				"cleanup",
 				"manual (CLI only)",
 				"backfill",
-				"database must already be reachable",
+				"anything it talks to must already be reachable",
 			},
 		},
 		{
@@ -389,7 +389,7 @@ func TestRenderText_TasksSection(t *testing.T) {
 				Tasks:  grouped[:1],
 			},
 			contains: []string{"Tasks:", "migrate (timeout 5m) weight 0"},
-			omits:    []string{"database must already be reachable"},
+			omits:    []string{"anything it talks to must already be reachable"},
 		},
 		{
 			name: "postDeploy only skips empty groups",
@@ -440,7 +440,7 @@ func TestRenderText_TasksSection(t *testing.T) {
 func TestPlan_FirstInstallTaskNote(t *testing.T) {
 	t.Parallel()
 
-	const note = "preDeploy runs before other resources on a first install; the database must already be reachable."
+	const note = "preDeploy runs before other resources on a first install; anything it talks to must already be reachable."
 	tests := []struct {
 		name string
 		plan *Plan

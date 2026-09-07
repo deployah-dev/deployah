@@ -255,7 +255,7 @@ func (c *Client) InstallApp(ctx context.Context, manifest *spec.Spec, environmen
 		}
 	}
 
-	chartPath, err := PrepareChart(ctx, manifest, environment, resolved, c.chartCache)
+	chartPath, err := PrepareChart(ctx, environment, resolved, c.chartCache)
 	if err != nil {
 		return fmt.Errorf("failed to prepare chart: %w", err)
 	}

@@ -87,9 +87,10 @@ func GenerateReleaseName(projectName, environmentName string) string {
 // PrepareChart expands the embedded chart into a temporary directory and
 // returns the chart root. Identical charts are reused via cache.
 //
-// resolved must be non-nil. It is the output of [spec.Resolve], which may
-// run with a nil platform. A nil resolved returns an error; full render
-// does not silently omit runtime environment.
+// resolved must be non-nil and resolved.Spec must be set.
+// [spec.ResolvedSpec] is the only source of truth for full render. A nil
+// resolved returns an error; full render does not silently omit runtime
+// environment.
 //
 // cache must be non-nil. If ctx is already canceled or past its deadline,
 // PrepareChart returns [context.Canceled] or [context.DeadlineExceeded]
@@ -97,7 +98,7 @@ func GenerateReleaseName(projectName, environmentName string) string {
 //
 // On a cache miss, every 10th entry may start a background goroutine that
 // removes expired cache directories; that work outlives this call.
-func PrepareChart(ctx context.Context, manifest *spec.Spec, desiredEnvironment string, resolved *spec.ResolvedSpec, cache *ChartCache) (string, error) {
+func PrepareChart(ctx context.Context, desiredEnvironment string, resolved *spec.ResolvedSpec, cache *ChartCache) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -107,6 +108,10 @@ func PrepareChart(ctx context.Context, manifest *spec.Spec, desiredEnvironment s
 	if resolved == nil {
 		return "", errors.New("render requires resolved spec; call spec.Resolve first")
 	}
+	if resolved.Spec == nil {
+		return "", errors.New("render requires resolved spec source")
+	}
+	manifest := resolved.Spec
 
 	cacheKey, err := cache.GenerateKey(desiredEnvironment, resolved)
 	if err != nil {
@@ -128,7 +133,7 @@ func PrepareChart(ctx context.Context, manifest *spec.Spec, desiredEnvironment s
 
 	// Resolve the sub-chart names once, before creating anything on disk, so
 	// Chart.yaml and the sub-chart directories below cannot disagree.
-	componentNames := activeComponentNames(manifest, desiredEnvironment)
+	componentNames := slices.Sorted(maps.Keys(resolved.Components))
 	hookNames, err := hookTaskNames(manifest, desiredEnvironment, resolved)
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve task sub-chart names: %w", err)
@@ -243,11 +248,12 @@ func PrepareChart(ctx context.Context, manifest *spec.Spec, desiredEnvironment s
 }
 
 // createComponentSubCharts creates a sub-chart directory for each name in
-// componentNames, as returned by [activeComponentNames]. A component
-// excluded from the target environment is absent from that list and gets no
-// subchart at all: an empty subchart would still render default-valued
-// resources (e.g. a Service from app.yaml's base values.yaml), leaking them
-// into an environment the component was never meant to reach.
+// componentNames, taken from [spec.ResolvedSpec.Components] on full render.
+// A component excluded from the target environment is absent from that
+// list and gets no subchart at all: an empty subchart would still render
+// default-valued resources (e.g. a Service from app.yaml's base
+// values.yaml), leaking them into an environment the component was never
+// meant to reach.
 func createComponentSubCharts(chartDir string, componentNames []string) error {
 	chartsDir := filepath.Join(chartDir, "charts")
 	if err := os.MkdirAll(chartsDir, 0o750); err != nil {
@@ -295,9 +301,22 @@ func createComponentAppTemplate(templatesDir string) error {
 	return os.WriteFile(filepath.Join(templatesDir, "app.yaml"), []byte(appTemplate), 0o600)
 }
 
+// chartComponentNames returns the sorted names of components to render.
+// When resolved is non-nil, [spec.ResolvedSpec.Components] is the active
+// set. Otherwise names are filtered from the spec for desiredEnvironment.
+func chartComponentNames(manifest *spec.Spec, desiredEnvironment string, resolved *spec.ResolvedSpec) []string {
+	if resolved != nil {
+		return slices.Sorted(maps.Keys(resolved.Components))
+	}
+	return activeComponentNames(manifest, desiredEnvironment)
+}
+
 // activeComponentNames returns the sorted names of the components that get a
-// sub-chart in desiredEnvironment.
+// sub-chart in desiredEnvironment when no [spec.ResolvedSpec] is available.
 func activeComponentNames(manifest *spec.Spec, desiredEnvironment string) []string {
+	if manifest == nil {
+		return nil
+	}
 	names := make([]string, 0, len(manifest.Components))
 	for name, component := range manifest.Components {
 		if componentActiveInEnvironment(component, desiredEnvironment) {
@@ -329,16 +348,20 @@ const resolvedSchemaVersion = "1"
 // MapSpecToChartValues converts a spec into Helm chart values for the given
 // environment and writes a deployah.resolved block so the hostname guard can
 // compare across deploys.
+//
+// When resolved is non-nil, resolved.Components is the active set and
+// resolved.Spec (when set) replaces m as the component definition source.
 func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string, resolved *spec.ResolvedSpec) (map[string]any, error) {
+	if resolved != nil && resolved.Spec != nil {
+		m = resolved.Spec
+	}
 	values := make(map[string]any)
 	// Track resolved per-component data for the deployah.resolved block.
 	resolvedComponents := make(map[string]any)
 
-	for componentName, component := range m.Components {
-		// Skip component if it is not deployed in the desired environment.
-		// Same matcher as spec.Resolve, so wildcard deploys agree on the
-		// active component set.
-		if !componentActiveInEnvironment(component, desiredEnvironment) {
+	for _, componentName := range chartComponentNames(m, desiredEnvironment, resolved) {
+		component, found := m.Components[componentName]
+		if !found {
 			continue
 		}
 

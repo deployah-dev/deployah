@@ -251,8 +251,10 @@ func TestHelmHook_EnvConfigMapWeightAndDeletePolicy(t *testing.T) {
 	assert.Equal(t, migrateJob.Weight-1, migrateCM.Weight)
 	assert.Equal(t, seedJob.Weight-1, seedCM.Weight)
 	assert.Less(t, seedCM.Weight, seedJob.Weight)
-	assert.Contains(t, seedCM.Manifest, "before-hook-creation")
-	assert.NotContains(t, seedCM.Manifest, "hook-succeeded")
+	assert.Contains(t, seedCM.Manifest, `helm.sh/hook: "pre-install,pre-upgrade"`)
+	assert.Contains(t, seedCM.Manifest, "before-hook-creation,hook-succeeded")
+	assert.NotContains(t, seedCM.Manifest, "hook-failed")
+	assert.Contains(t, seedJob.Manifest, "before-hook-creation,hook-succeeded")
 
 	var migrateJobObj batchv1.Job
 	require.NoError(t, yaml.Unmarshal([]byte(migrateJob.Manifest), &migrateJobObj))
@@ -260,6 +262,48 @@ func TestHelmHook_EnvConfigMapWeightAndDeletePolicy(t *testing.T) {
 	require.Len(t, migrateJobObj.Spec.Template.Spec.Containers[0].EnvFrom, 1)
 	require.NotNil(t, migrateJobObj.Spec.Template.Spec.Containers[0].EnvFrom[0].ConfigMapRef)
 	assert.Equal(t, migrateCM.Name, migrateJobObj.Spec.Template.Spec.Containers[0].EnvFrom[0].ConfigMapRef.Name)
+}
+
+func TestHelmHook_EnvConfigMapWeightFollowsJob(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".env"), []byte("REGION=eu\n"), 0o600))
+
+	m := envWorkloadSpec(dir, nil, "Job")
+	resolved := resolveChart(t, m, "dev")
+	rt := resolved.Tasks["migrate"]
+	rt.HookWeight = 4
+	resolved.Tasks["migrate"] = rt
+
+	client, err := NewClient(WithNamespace("default"))
+	require.NoError(t, err)
+	result, cleanup, err := client.RenderOffline(t.Context(), m, "dev", resolved, nil)
+	require.NoError(t, err)
+	if cleanup != nil {
+		t.Cleanup(cleanup)
+	}
+
+	cm := hookBySuffix(t, result, "ConfigMap", "-migrate-env")
+	job := hookBySuffix(t, result, "Job", "-migrate")
+	assert.Equal(t, 3, cm.Weight)
+	assert.Equal(t, 4, job.Weight)
+	assert.Contains(t, cm.Manifest, `helm.sh/hook-weight: "3"`)
+}
+
+func TestHelmHook_NoFileValuesOmitsEnvConfigMap(t *testing.T) {
+	t.Parallel()
+
+	m := envWorkloadSpec(t.TempDir(), spec.StringMap{"LOG_LEVEL": "debug"}, "Job")
+	result := renderEnvManifest(t, m, "dev")
+
+	assertNoHookKindSuffix(t, result, "ConfigMap", "-migrate-env")
+	hook := hookBySuffix(t, result, "Job", "-migrate")
+	var job batchv1.Job
+	require.NoError(t, yaml.Unmarshal([]byte(hook.Manifest), &job))
+	require.Len(t, job.Spec.Template.Spec.Containers, 1)
+	assert.Equal(t, []corev1.EnvVar{{Name: "LOG_LEVEL", Value: "debug"}}, job.Spec.Template.Spec.Containers[0].Env)
+	assert.Empty(t, job.Spec.Template.Spec.Containers[0].EnvFrom)
 }
 
 func envWorkloadSpec(dir string, env spec.StringMap, kind string) *spec.Spec {
@@ -498,4 +542,13 @@ func hookBySuffix(t *testing.T, result *render.RenderResult, kind, suffix string
 	}
 	t.Fatalf("no hook %s ending with %q", kind, suffix)
 	return nil
+}
+
+func assertNoHookKindSuffix(t *testing.T, result *render.RenderResult, kind, suffix string) {
+	t.Helper()
+	for _, h := range result.Hooks {
+		if h != nil && h.Kind == kind && strings.HasSuffix(h.Name, suffix) {
+			t.Fatalf("unexpected hook %s ending with %q: %s", kind, suffix, h.Name)
+		}
+	}
 }

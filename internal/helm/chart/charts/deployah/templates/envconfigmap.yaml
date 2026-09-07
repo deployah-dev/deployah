@@ -12,7 +12,7 @@ metadata:
     {{- if and .Values.job .Values.job.hook }}
     helm.sh/hook: {{ .Values.job.hook | quote }}
     helm.sh/hook-weight: {{ sub .Values.job.hookWeight 1 | quote }}
-    helm.sh/hook-delete-policy: before-hook-creation
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
     {{- end }}
     {{- $annotations := include "common.tplvalues.merge" (dict "values" (list .Values.annotations .Values.commonAnnotations) "context" .) | fromYaml }}
     {{- if $annotations }}

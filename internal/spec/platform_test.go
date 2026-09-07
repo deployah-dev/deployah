@@ -17,6 +17,7 @@ package spec_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -1805,4 +1806,49 @@ func TestCrossCheckPlatformReferences_TaskProfilesWithoutSection(t *testing.T) {
 	require.Len(t, problems, 1)
 	assert.Contains(t, problems[0], `task "migrate"`)
 	assert.Contains(t, problems[0], "no profiles section")
+}
+
+func TestResolve_PlatformProvenanceUsesMatchedEnvKey(t *testing.T) {
+	t.Parallel()
+
+	platform := &spec.PlatformConfig{
+		APIVersion: "platform/v1-alpha.3",
+		Environments: map[string]spec.PlatformEnvironment{
+			"review": {
+				Domains: map[string]spec.PlatformDomain{
+					"public": {
+						BaseDomain: "example.com",
+						TLS: &spec.PlatformTLS{
+							Mode:   spec.TLSModeCertManager,
+							Issuer: "letsencrypt",
+						},
+					},
+				},
+			},
+		},
+	}
+	appSpec := &spec.Spec{
+		APIVersion: spec.CurrentManifestVersion,
+		Project:    "shop",
+		Environments: map[string]spec.Environment{
+			"review": {},
+		},
+		Components: map[string]spec.Component{
+			"api": {Expose: &spec.Expose{Domain: "public"}},
+		},
+	}
+
+	resolved, report, err := spec.Resolve(appSpec, platform, spec.NormalizeEnv("review/pr-123"), spec.SubstitutionReport{})
+	require.NoError(t, err)
+	assert.Equal(t, "review/pr-123", resolved.Env.Original)
+
+	sources := make([]string, 0, len(report.Fields))
+	for _, field := range report.Fields {
+		sources = append(sources, field.Source)
+	}
+	joined := strings.Join(sources, "\n")
+	assert.Contains(t, joined, "platform environments.review.domains.public.baseDomain")
+	assert.Contains(t, joined, "platform environments.review.domains.public.tls.mode")
+	assert.Contains(t, joined, "platform environments.review.domains.public.tls.issuer")
+	assert.NotContains(t, joined, "platform environments.review/pr-123.")
 }

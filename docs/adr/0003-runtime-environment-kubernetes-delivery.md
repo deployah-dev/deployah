@@ -13,9 +13,10 @@ A `deployah run` Job is not part of the release and may detach.
 
 If run reused the release ConfigMap, two concurrent runs would race and
 a failed run could rewrite env for the live app. If a hook ConfigMap
-used `hook-succeeded`, a retry could see a missing or stale file. If
-`env` and `envFrom` were flattened in Deployah, Kubernetes would no
-longer be the owner of overlap.
+used only `before-hook-creation`, a later deploy that drops FileValues
+or the task would leave the old ConfigMap behind: no new hook exists to
+trigger delete. If `env` and `envFrom` were flattened in Deployah,
+Kubernetes would no longer be the owner of overlap.
 
 ## Decision
 
@@ -29,7 +30,11 @@ Representation is the same everywhere. Ownership follows the workload.
   String values are quoted as data. They are not Helm templates.
 - Hook Jobs use the same `{fullname}-env` shape, with the same hook
   events as the Job, weight one less than the Job, and delete policy
-  `before-hook-creation` only.
+  `before-hook-creation,hook-succeeded`. Helm executes all hooks in
+  weight order and performs successful-hook cleanup after hook
+  execution, so the lower-weight runtime ConfigMap remains available
+  for the Job that consumes it. `hook-failed` is not set; failed-hook
+  artifacts stay until a later `before-hook-creation` replace.
 - `deployah run` never writes the release ConfigMap. Each invocation
   creates a GenerateName ConfigMap, points the Job `envFrom` at the
   name Kubernetes assigned, then sets a Job ownerReference (no
@@ -45,6 +50,7 @@ Representation is the same everywhere. Ownership follows the workload.
 - Live app env and a manual run cannot overwrite each other.
 - Concurrent runs of the same task get separate ConfigMaps.
 - Hook retries replace the hook ConfigMap before the Job starts.
+- After a successful hook event, Helm deletes the hook ConfigMap.
 - Overlap behavior matches every other Kubernetes workload.
 
 ### Negative

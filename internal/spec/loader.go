@@ -183,6 +183,23 @@ func Save(spec *Spec, path string) error {
 	return nil
 }
 
+// LoadOption configures optional behavior of [Load].
+type LoadOption func(*loadOptions)
+
+type loadOptions struct {
+	allowHookCycleForDisplay bool
+}
+
+// AllowHookCycleForDisplay returns a [LoadOption] that passes true to
+// [ValidateSpecTasks] so [ResolveForDisplay] can record a hook cycle as a
+// warning. Other task validation still runs. Deploy, plan, validate, and
+// run must not pass this option.
+func AllowHookCycleForDisplay() LoadOption {
+	return func(o *loadOptions) {
+		o.allowHookCycleForDisplay = true
+	}
+}
+
 // Load reads and parses the spec YAML file at the given path, resolves the
 // environment (using desiredEnv or default resolution rules), substitutes
 // variables according to precedence, validates the spec, and applies defaults.
@@ -190,7 +207,16 @@ func Save(spec *Spec, path string) error {
 // platform supplies the environment registry for [ResolveEnvironment]; pass
 // nil when no platform file exists. This function performs the load pipeline
 // without platform resolution; for [ResolvedSpec] see [Resolve].
-func Load(ctx context.Context, path, desiredEnv string, platform *PlatformConfig) (*Spec, error) {
+//
+// opts may include [AllowHookCycleForDisplay] for inspect-only commands.
+func Load(ctx context.Context, path, desiredEnv string, platform *PlatformConfig, opts ...LoadOption) (*Spec, error) {
+	options := loadOptions{}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&options)
+		}
+	}
+
 	if path == "" {
 		path = DefaultSpecPath
 	}
@@ -253,7 +279,7 @@ func Load(ctx context.Context, path, desiredEnv string, platform *PlatformConfig
 		return nil, fmt.Errorf("validation failed: %w", err)
 	}
 
-	if err = ValidateSpecTasks(&finalSpec); err != nil {
+	if err = ValidateSpecTasks(&finalSpec, options.allowHookCycleForDisplay); err != nil {
 		return nil, fmt.Errorf("validation failed: %w", err)
 	}
 

@@ -360,3 +360,106 @@ environments:
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "profile")
 }
+
+const hookCycleSpecYAML = `apiVersion: v1-alpha.5
+project: shop
+components:
+  api:
+    image: busybox
+    env:
+      LOG_LEVEL: debug
+tasks:
+  migrate:
+    from: api
+    "on": preDeploy
+    after: [seed]
+    command: [migrate]
+  seed:
+    from: api
+    "on": preDeploy
+    after: [migrate]
+    command: [seed]
+environments:
+  staging: {}
+`
+
+func TestLoad_HookCycleIsHardError(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "deployah.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(hookCycleSpecYAML), 0o600))
+
+	_, err := Load(t.Context(), path, "staging", nil)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "cycle")
+}
+
+func TestLoad_AllowHookCycleForDisplay_DefersCycle(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "deployah.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(hookCycleSpecYAML), 0o600))
+
+	got, err := Load(t.Context(), path, "staging", nil, AllowHookCycleForDisplay())
+	require.NoError(t, err)
+	require.Contains(t, got.Tasks, "migrate")
+	require.Contains(t, got.Tasks, "seed")
+}
+
+func TestLoad_AllowHookCycleForDisplay_StillRejectsInvalidAfter(t *testing.T) {
+	t.Parallel()
+
+	const specYAML = `apiVersion: v1-alpha.5
+project: shop
+components:
+  api:
+    image: busybox
+tasks:
+  migrate:
+    from: api
+    "on": preDeploy
+    after: [missing]
+    command: [migrate]
+environments:
+  staging: {}
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "deployah.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(specYAML), 0o600))
+
+	_, err := Load(t.Context(), path, "staging", nil, AllowHookCycleForDisplay())
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "does not name a task")
+}
+
+func TestLoad_AllowHookCycleForDisplay_StillRejectsWrongAfterPhase(t *testing.T) {
+	t.Parallel()
+
+	const specYAML = `apiVersion: v1-alpha.5
+project: shop
+components:
+  api:
+    image: busybox
+tasks:
+  migrate:
+    from: api
+    "on": preDeploy
+    after: [seed]
+    command: [migrate]
+  seed:
+    from: api
+    "on": postDeploy
+    command: [seed]
+environments:
+  staging: {}
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "deployah.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(specYAML), 0o600))
+
+	_, err := Load(t.Context(), path, "staging", nil, AllowHookCycleForDisplay())
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "not in the same on phase")
+}

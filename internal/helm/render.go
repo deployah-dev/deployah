@@ -49,7 +49,7 @@ const offlineMonitorAPIVersion = "monitoring.coreos.com/v1"
 func (c *Client) RenderManifests(ctx context.Context, manifest *spec.Spec, environment string, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) (result *render.RenderResult, cleanup func(), err error) {
 	releaseName := GenerateReleaseName(manifest.Project, environment)
 
-	ch, chartPath, cleanup, err := c.prepareAndLoadChart(ctx, manifest, environment, resolved)
+	ch, chartPath, cleanup, err := c.prepareAndLoadChart(ctx, environment, resolved)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -84,7 +84,7 @@ func (c *Client) RenderManifests(ctx context.Context, manifest *spec.Spec, envir
 func (c *Client) RenderOffline(ctx context.Context, manifest *spec.Spec, environment string, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) (result *render.RenderResult, cleanup func(), err error) {
 	releaseName := GenerateReleaseName(manifest.Project, environment)
 
-	ch, chartPath, cleanup, err := c.prepareAndLoadChart(ctx, manifest, environment, resolved)
+	ch, chartPath, cleanup, err := c.prepareAndLoadChart(ctx, environment, resolved)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -101,13 +101,13 @@ func (c *Client) RenderOffline(ctx context.Context, manifest *spec.Spec, environ
 }
 
 // prepareAndLoadChart generates (or fetches from cache) the Helm chart for
-// manifest/environment and loads it, returning a cleanup func for the
-// generated chart directory. It is the common first step shared by
-// [Client.RenderManifests] and [Client.RenderOffline]. When the client was
-// constructed with WithDebug(true), cleanup is a no-op and the temp dir is
-// left behind for inspection.
-func (c *Client) prepareAndLoadChart(ctx context.Context, manifest *spec.Spec, environment string, resolved *spec.ResolvedSpec) (ch *chart.Chart, chartPath string, cleanup func(), err error) {
-	chartPath, err = PrepareChart(ctx, manifest, environment, resolved, c.chartCache)
+// environment from [spec.ResolvedSpec] and loads it, returning a cleanup
+// func for the generated chart directory. It is the common first step
+// shared by [Client.RenderManifests] and [Client.RenderOffline]. When the
+// client was constructed with WithDebug(true), cleanup is a no-op and the
+// temp dir is left behind for inspection.
+func (c *Client) prepareAndLoadChart(ctx context.Context, environment string, resolved *spec.ResolvedSpec) (ch *chart.Chart, chartPath string, cleanup func(), err error) {
+	chartPath, err = PrepareChart(ctx, environment, resolved, c.chartCache)
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("failed to prepare chart: %w", err)
 	}

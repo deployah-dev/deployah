@@ -46,7 +46,7 @@ func TestPrepareChart_CacheSurvivesCallerCleanup(t *testing.T) {
 	resolved, _, err := spec.Resolve(manifest, nil, spec.NormalizeEnv("production"), spec.SubstitutionReport{})
 	require.NoError(t, err)
 
-	returnedPath, err := PrepareChart(t.Context(), manifest, "production", resolved, cache)
+	returnedPath, err := PrepareChart(t.Context(), "production", resolved, cache)
 	require.NoError(t, err)
 
 	key, err := cache.GenerateKey("production", resolved)
@@ -90,7 +90,7 @@ func removeChartDir(tb testing.TB, path string) {
 // TestPrepareChart_RequiresCache verifies PrepareChart rejects a nil cache.
 func TestPrepareChart_RequiresCache(t *testing.T) {
 	t.Parallel()
-	_, err := PrepareChart(t.Context(), &spec.Spec{Project: "x"}, "prod", nil, nil)
+	_, err := PrepareChart(t.Context(), "prod", nil, nil)
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "chart cache is required")
 }
@@ -209,7 +209,7 @@ func TestPrepareChart_CanceledContextReturnsImmediately(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	_, err := PrepareChart(ctx, &spec.Spec{Project: "x"}, "prod", nil, NewChartCache(time.Hour))
+	_, err := PrepareChart(ctx, "prod", nil, NewChartCache(time.Hour))
 	require.ErrorIs(t, err, context.Canceled)
 }
 
@@ -256,9 +256,67 @@ func TestGenerateKey_RequiresResolvedSpec(t *testing.T) {
 	assert.ErrorContains(t, err, "resolved spec is required")
 }
 
+func TestGenerateKey_RuntimePlatformAndEnvironmentInvalidate(t *testing.T) {
+	t.Parallel()
+	cache := NewChartCache(time.Hour)
+
+	base := &spec.ResolvedSpec{
+		Spec: &spec.Spec{Project: "cache-key"},
+		Env:  spec.NormalizeEnv("production"),
+		Components: map[string]spec.ResolvedComponent{
+			"api": {
+				FQDN:    "api.example.com",
+				TLSMode: spec.TLSModeCertManager,
+				Runtime: spec.ResolvedRuntimeEnvironment{
+					ExplicitValues: map[string]string{"LOG_LEVEL": "debug"},
+				},
+			},
+		},
+	}
+	runtimeChanged := &spec.ResolvedSpec{
+		Spec: base.Spec,
+		Env:  base.Env,
+		Components: map[string]spec.ResolvedComponent{
+			"api": {
+				FQDN:    "api.example.com",
+				TLSMode: spec.TLSModeCertManager,
+				Runtime: spec.ResolvedRuntimeEnvironment{
+					ExplicitValues: map[string]string{"LOG_LEVEL": "info"},
+				},
+			},
+		},
+	}
+	platformChanged := &spec.ResolvedSpec{
+		Spec: base.Spec,
+		Env:  base.Env,
+		Components: map[string]spec.ResolvedComponent{
+			"api": {
+				FQDN:    "api.other.example.com",
+				TLSMode: spec.TLSModeCertManager,
+				Runtime: spec.ResolvedRuntimeEnvironment{
+					ExplicitValues: map[string]string{"LOG_LEVEL": "debug"},
+				},
+			},
+		},
+	}
+
+	keyBase, err := cache.GenerateKey("production", base)
+	require.NoError(t, err)
+	keyRuntime, err := cache.GenerateKey("production", runtimeChanged)
+	require.NoError(t, err)
+	keyPlatform, err := cache.GenerateKey("production", platformChanged)
+	require.NoError(t, err)
+	keyEnv, err := cache.GenerateKey("staging", base)
+	require.NoError(t, err)
+
+	assert.NotEqual(t, keyBase, keyRuntime, "ResolvedSpec.Runtime must be part of the cache key")
+	assert.NotEqual(t, keyBase, keyPlatform, "resolved platform fields must be part of the cache key")
+	assert.NotEqual(t, keyBase, keyEnv, "environment must be part of the cache key")
+}
+
 func TestPrepareChart_RequiresResolvedSpec(t *testing.T) {
 	t.Parallel()
-	_, err := PrepareChart(t.Context(), &spec.Spec{Project: "x"}, "prod", nil, NewChartCache(time.Hour))
+	_, err := PrepareChart(t.Context(), "prod", nil, NewChartCache(time.Hour))
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "render requires resolved spec")
 }

@@ -167,7 +167,7 @@ func TestPrepareChart_ChartYAMLImportsOnlySubCharts(t *testing.T) {
 	cache := NewChartCache(time.Hour)
 	const environment = "dev"
 	resolved := resolveChart(t, m, environment)
-	chartDir, err := PrepareChart(t.Context(), m, environment, resolved, cache)
+	chartDir, err := PrepareChart(t.Context(), environment, resolved, cache)
 	require.NoError(t, err)
 	t.Cleanup(func() { removeChartDirs(t, cache, resolved, environment, chartDir) })
 

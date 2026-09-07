@@ -187,15 +187,15 @@ type PlannedTask struct {
 
 // FirstInstallTaskNote returns a warning when this plan is a fresh install
 // that includes a preDeploy task. Helm runs those hooks before other
-// resources, so the database they talk to must already exist. It returns
-// "" otherwise.
+// resources, so anything the task talks to (a database, a queue, another
+// API) must already exist. It returns "" otherwise.
 func (p *Plan) FirstInstallTaskNote() string {
 	if p == nil || !p.Header.FreshInstall {
 		return ""
 	}
 	for _, task := range p.Tasks {
 		if task.On == TaskOnPreDeploy {
-			return "preDeploy runs before other resources on a first install; the database must already be reachable."
+			return "preDeploy runs before other resources on a first install; anything it talks to must already be reachable."
 		}
 	}
 	return ""

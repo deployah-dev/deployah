@@ -51,6 +51,7 @@ func Resolve(
 
 	// Resolve Kubernetes context from platform.
 	var platformEnv *PlatformEnvironment
+	var platformEnvKey string
 	if platform != nil {
 		keys := make([]string, 0, len(platform.Environments))
 		for k := range platform.Environments {
@@ -59,6 +60,7 @@ func Resolve(
 		if matched, ok := matchEnvKey(env.Original, keys); ok {
 			pe := platform.Environments[matched]
 			platformEnv = &pe
+			platformEnvKey = matched
 			resolved.KubeContext = pe.Context
 			report.Fields = append(report.Fields, ResolvedField{
 				Path:   "context",
@@ -104,7 +106,7 @@ func Resolve(
 			}
 		}
 
-		rc, compFields, err := resolveComponent(compName, comp, platformEnv, env, substReport, platform)
+		rc, compFields, err := resolveComponent(compName, comp, platformEnv, platformEnvKey, env, substReport, platform)
 		if err != nil {
 			if re, ok := errors.AsType[*ResolutionError](err); ok {
 				report.ErrorCode = re.Code
@@ -158,6 +160,7 @@ func resolveComponent(
 	name string,
 	comp Component,
 	platformEnv *PlatformEnvironment,
+	platformEnvKey string,
 	env EnvIdentity,
 	substReport SubstitutionReport,
 	platform *PlatformConfig,
@@ -205,7 +208,7 @@ func resolveComponent(
 		if profileErr := validateMergedProfile(name, comp, rc.MergedProfile, platformEnv, ""); profileErr != nil {
 			return rc, result, profileErr
 		}
-		if scErr := applyResolvedStorageClass(&rc, &result, name, comp, env, platformEnv); scErr != nil {
+		if scErr := applyResolvedStorageClass(&rc, &result, name, comp, platformEnvKey, platformEnv); scErr != nil {
 			return rc, result, scErr
 		}
 		return rc, result, nil
@@ -251,7 +254,7 @@ func resolveComponent(
 		}
 	}
 	rc.DomainKey = domainKey
-	domainSource := fmt.Sprintf("platform environments.%s.domains.%s", env.Original, domainKey)
+	domainSource := fmt.Sprintf("platform environments.%s.domains.%s", platformEnvKey, domainKey)
 	if domainDefaulted {
 		domainSource += " (default domain)"
 	}
@@ -354,7 +357,7 @@ func resolveComponent(
 			Component: name,
 			Path:      "expose.tls.mode",
 			Value:     string(domain.TLS.Mode),
-			Source:    fmt.Sprintf("platform environments.%s.domains.%s.tls.mode", env.Original, domainKey),
+			Source:    fmt.Sprintf("platform environments.%s.domains.%s.tls.mode", platformEnvKey, domainKey),
 		})
 		switch domain.TLS.Mode {
 		case TLSModeCertManager:
@@ -363,7 +366,7 @@ func resolveComponent(
 				Component: name,
 				Path:      "expose.tls.issuer",
 				Value:     domain.TLS.Issuer,
-				Source:    fmt.Sprintf("platform environments.%s.domains.%s.tls.issuer", env.Original, domainKey),
+				Source:    fmt.Sprintf("platform environments.%s.domains.%s.tls.issuer", platformEnvKey, domainKey),
 			})
 		case TLSModeSecretName:
 			rc.TLSSecretName = domain.TLS.SecretName
@@ -371,7 +374,7 @@ func resolveComponent(
 				Component: name,
 				Path:      "expose.tls.secretName",
 				Value:     domain.TLS.SecretName,
-				Source:    fmt.Sprintf("platform environments.%s.domains.%s.tls.secretName", env.Original, domainKey),
+				Source:    fmt.Sprintf("platform environments.%s.domains.%s.tls.secretName", platformEnvKey, domainKey),
 			})
 		}
 	}
@@ -379,7 +382,7 @@ func resolveComponent(
 	if profileErr := validateMergedProfile(name, comp, rc.MergedProfile, platformEnv, domainKey); profileErr != nil {
 		return rc, result, profileErr
 	}
-	if scErr := applyResolvedStorageClass(&rc, &result, name, comp, env, platformEnv); scErr != nil {
+	if scErr := applyResolvedStorageClass(&rc, &result, name, comp, platformEnvKey, platformEnv); scErr != nil {
 		return rc, result, scErr
 	}
 
@@ -414,7 +417,7 @@ func applyResolvedStorageClass(
 	result *componentResolveResult,
 	compName string,
 	comp Component,
-	env EnvIdentity,
+	platformEnvKey string,
 	platformEnv *PlatformEnvironment,
 ) error {
 	logicalKey := ""
@@ -458,7 +461,7 @@ func applyResolvedStorageClass(
 		Value:     sc.ClassName,
 		Source: fmt.Sprintf(
 			"%s %q -> environments.%s.storageClasses.%s.className",
-			sourceKind, logicalKey, env.Original, logicalKey,
+			sourceKind, logicalKey, platformEnvKey, logicalKey,
 		),
 	})
 	return nil

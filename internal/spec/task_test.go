@@ -937,7 +937,7 @@ func TestValidateSpecTasks(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			err := ValidateSpecTasks(tt.spec)
+			err := ValidateSpecTasks(tt.spec, false)
 			if tt.wantErr == "" {
 				require.NoError(t, err)
 				return
@@ -951,7 +951,7 @@ func TestValidateSpecTasks(t *testing.T) {
 func TestValidateSpecTasks_Nil(t *testing.T) {
 	t.Parallel()
 
-	err := ValidateSpecTasks(nil)
+	err := ValidateSpecTasks(nil, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "spec cannot be nil")
 }

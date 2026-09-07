@@ -384,7 +384,7 @@ func renderScheduled(t *testing.T, manifest *spec.Spec, env, releaseName, kubeVe
 	client, err := NewClient(WithNamespace("default"))
 	require.NoError(t, err)
 
-	ch, _, cleanup, err := client.prepareAndLoadChart(t.Context(), manifest, env, resolved)
+	ch, _, cleanup, err := client.prepareAndLoadChart(t.Context(), env, resolved)
 	if err != nil {
 		return nil, err
 	}

@@ -33,6 +33,16 @@ layer, not how streams merge.
 - `from:` names a component, not another task. Inheritance copies
   resolved maps, not paths and not Kubernetes objects. Task merge does
   not copy `env` or `envFile`.
+- An inactive component referenced by an active task is an inheritance
+  dependency, not an active rendered component. Its ExplicitValues are
+  resolved once for the top-level Resolve operation. Its EntityValues
+  are resolved lazily only when a child without an explicit envFile
+  needs them. These dependency layers are cached for that Resolve call
+  and cloned into children; resolving the dependency does not add the
+  parent to `ResolvedSpec.Components`.
+- A task with an explicit envFile replaces the inherited entity layer,
+  so the parent's entity dotenv must not be read merely to satisfy
+  `from:` inheritance.
 - Missing implicit files are skipped. A missing explicit path is an
   error. Keys must be POSIX names.
 - Source precedence follows the declared file lists. Emitted keys and

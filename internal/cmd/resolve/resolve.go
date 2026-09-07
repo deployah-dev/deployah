@@ -109,7 +109,7 @@ func runResolve(c *nabat.Context) error {
 
 	substReport := spec.PrescanSubstitutionReport(rawSpec)
 
-	manifest, err := spec.Load(c, sess.SpecPath(), opts.Environment, platform)
+	manifest, err := spec.Load(c, sess.SpecPath(), opts.Environment, platform, spec.AllowHookCycleForDisplay())
 	if err != nil {
 		return fmt.Errorf("load spec: %w", err)
 	}
@@ -131,7 +131,7 @@ func runResolve(c *nabat.Context) error {
 	}
 }
 
-// outputText writes a human-readable resolution summary to stdout.
+// outputText writes a human-readable resolution summary.
 func outputText(c *nabat.Context, resolved *spec.ResolvedSpec, report *spec.ResolutionReport) error {
 	c.Println(fmt.Sprintf("Environment: %s", report.Env.Original))
 	if resolved.KubeContext != "" {
@@ -139,13 +139,16 @@ func outputText(c *nabat.Context, resolved *spec.ResolvedSpec, report *spec.Reso
 	}
 
 	names := slices.Sorted(maps.Keys(resolved.Components))
-	if len(names) > 0 {
+	visible := make([]string, 0, len(names))
+	for _, name := range names {
+		if hasDisplayableComponentResolution(resolved.Components[name]) {
+			visible = append(visible, name)
+		}
+	}
+	if len(visible) > 0 {
 		c.Println("\nComponents:")
-		for _, name := range names {
+		for _, name := range visible {
 			rc := resolved.Components[name]
-			if rc.FQDN == "" && len(rc.Profiles) == 0 && !hasRuntimeMaps(rc.Runtime) {
-				continue
-			}
 			c.Println(fmt.Sprintf("  %s:", name))
 			if rc.FQDN != "" {
 				c.Println(fmt.Sprintf("    hostname: %s", rc.FQDN))
@@ -194,6 +197,17 @@ func outputText(c *nabat.Context, resolved *spec.ResolvedSpec, report *spec.Reso
 		}
 	}
 	return nil
+}
+
+func hasDisplayableComponentResolution(rc spec.ResolvedComponent) bool {
+	return rc.FQDN != "" ||
+		rc.TLSMode != "" ||
+		rc.TLSIssuer != "" ||
+		rc.TLSSecretName != "" ||
+		len(rc.Profiles) > 0 ||
+		rc.MergedProfile != nil ||
+		rc.StorageClass != "" ||
+		hasRuntimeMaps(rc.Runtime)
 }
 
 func hasRuntimeMaps(rt spec.ResolvedRuntimeEnvironment) bool {
