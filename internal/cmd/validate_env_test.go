@@ -100,6 +100,35 @@ environments:
 	}
 }
 
+func TestValidateEnvironment_TaskProfilesRequirePlatform(t *testing.T) {
+	t.Parallel()
+
+	const specBody = `apiVersion: v1-alpha.5
+project: shop
+components:
+  api:
+    image: nginx:1.27
+    port: 80
+tasks:
+  migrate:
+    from: api
+    "on": preDeploy
+    command: ["true"]
+    profiles: [batch]
+environments:
+  dev: {}
+`
+	dir := t.TempDir()
+	writeValidateSpec(t, dir, specBody)
+
+	appIO, _, _, _ := nabattest.NewIO()
+	app := cmd.NewApp(nabat.WithIO(appIO))
+	err := nabattest.RunParallel(t, app, []string{"validate", "dev"}, nabattest.WithDir(dir))
+	require.Error(t, err)
+	assert.ErrorContains(t, err, spec.ErrCodePlatformNotFound)
+	assert.ErrorContains(t, err, "resolution failed (PLATFORM_NOT_FOUND)")
+}
+
 func TestValidateEnvironment_PlatformOwnedFeatureStillFails(t *testing.T) {
 	t.Parallel()
 

@@ -722,6 +722,54 @@ func TestCreateRunJob_TemporaryConfigMapAndOwnerRef(t *testing.T) {
 	}
 }
 
+func TestCreateRunJob_RollbackSurvivesCanceledContext(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		verb     string
+		resource string
+		wantErr  string
+	}{
+		{
+			name:     "canceled after configmap create deletes configmap",
+			verb:     "create",
+			resource: "jobs",
+			wantErr:  "context canceled",
+		},
+		{
+			name:     "canceled after job create deletes job and configmap",
+			verb:     "update",
+			resource: "configmaps",
+			wantErr:  "set configmap owner",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cs := fake.NewSimpleClientset()
+			assignGenerateName(cs)
+			ctx, cancel := context.WithCancel(t.Context())
+			t.Cleanup(cancel)
+			cs.PrependReactor(tt.verb, tt.resource, func(k8stesting.Action) (bool, runtime.Object, error) {
+				cancel()
+				return true, nil, context.Canceled
+			})
+			_, err := CreateRunJob(ctx, cs, runJob(t), map[string]string{"REGION": "eu"})
+			require.Error(t, err)
+			assert.ErrorContains(t, err, tt.wantErr)
+			require.ErrorIs(t, ctx.Err(), context.Canceled)
+			jobs, jobErr := cs.BatchV1().Jobs("default").List(t.Context(), metav1.ListOptions{})
+			require.NoError(t, jobErr)
+			assert.Empty(t, jobs.Items)
+			cms, cmErr := cs.CoreV1().ConfigMaps("default").List(t.Context(), metav1.ListOptions{})
+			require.NoError(t, cmErr)
+			assert.Empty(t, cms.Items)
+		})
+	}
+}
+
 func TestCreateRunJob_RollbackDeletesJobThenConfigMap(t *testing.T) {
 	t.Parallel()
 

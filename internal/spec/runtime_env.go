@@ -305,15 +305,28 @@ func validateEnvKeys(vals map[string]string, origin string) error {
 
 // parentRuntimeCache resolves a from: parent once per [Resolve] call.
 // Active parents are read from resolved.Components. Inactive parents that
-// active tasks still inherit from are resolved once and kept here; they
-// are not added to resolved.Components.
+// active tasks still inherit from are resolved here and not added to
+// resolved.Components.
+//
+// Inheritance copies already-resolved maps, not file paths. A from: task
+// always needs the parent's ExplicitValues. It needs EntityValues only
+// when the task does not set its own envFile.
 type parentRuntimeCache struct {
-	appSpec  *Spec
-	env      EnvIdentity
-	specEnv  specEnvRef
-	resolved *ResolvedSpec
-	inactive map[string]ResolvedRuntimeEnvironment
-	load     func(from string, parent Component) (ResolvedRuntimeEnvironment, error)
+	appSpec      *Spec
+	env          EnvIdentity
+	specEnv      specEnvRef
+	resolved     *ResolvedSpec
+	inactive     map[string]*cachedParentLayers
+	loadExplicit func(from string, parent Component) (map[string]string, error)
+	loadEntity   func(from string, parent Component) (map[string]string, error)
+}
+
+// cachedParentLayers holds inactive-parent runtime layers. entity is loaded
+// only when a child needs inherited EntityValues.
+type cachedParentLayers struct {
+	explicit     map[string]string
+	entity       map[string]string
+	entityLoaded bool
 }
 
 func newParentRuntimeCache(appSpec *Spec, env EnvIdentity, specEnv specEnvRef, resolved *ResolvedSpec) *parentRuntimeCache {
@@ -322,14 +335,22 @@ func newParentRuntimeCache(appSpec *Spec, env EnvIdentity, specEnv specEnvRef, r
 		env:      env,
 		specEnv:  specEnv,
 		resolved: resolved,
-		inactive: make(map[string]ResolvedRuntimeEnvironment),
+		inactive: make(map[string]*cachedParentLayers),
 	}
-	c.load = c.resolveInactive
+	c.loadExplicit = c.resolveInactiveExplicit
+	c.loadEntity = c.resolveInactiveEntity
 	return c
 }
 
-func (c *parentRuntimeCache) resolveInactive(from string, parent Component) (ResolvedRuntimeEnvironment, error) {
-	rt, _, _, err := resolveRuntimeEnvironment(runtimeEnvRequest{
+func (c *parentRuntimeCache) resolveInactiveExplicit(_ string, parent Component) (map[string]string, error) {
+	if len(parent.Env) == 0 {
+		return map[string]string{}, nil
+	}
+	return maps.Clone(map[string]string(parent.Env)), nil
+}
+
+func (c *parentRuntimeCache) resolveInactiveEntity(from string, parent Component) (map[string]string, error) {
+	vals, _, err := loadEntityValues(runtimeEnvRequest{
 		specDir:    c.appSpec.SpecDir,
 		envName:    c.env.Original,
 		envKey:     c.specEnv.key,
@@ -337,24 +358,25 @@ func (c *parentRuntimeCache) resolveInactive(from string, parent Component) (Res
 		entityName: from,
 		entityKind: "component",
 		envFile:    parent.EnvFile,
-		explicit:   parent.Env,
 	})
 	if err != nil {
-		return emptyRuntime(), fmt.Errorf("parent %s: %w", from, err)
+		return nil, err
 	}
-	return rt, nil
+	return vals, nil
 }
 
-func (c *parentRuntimeCache) get(from string) (*ResolvedRuntimeEnvironment, error) {
+func (c *parentRuntimeCache) get(from string, needEntity bool) (*ResolvedRuntimeEnvironment, error) {
 	if c.resolved != nil {
 		if prc, ok := c.resolved.Components[from]; ok {
 			rt := cloneRuntime(prc.Runtime)
 			return &rt, nil
 		}
 	}
-	if cached, ok := c.inactive[from]; ok {
-		rt := cloneRuntime(cached)
-		return &rt, nil
+	if layers, ok := c.inactive[from]; ok {
+		if err := c.ensureEntity(layers, from, needEntity); err != nil {
+			return nil, err
+		}
+		return snapshotParentLayers(layers), nil
 	}
 	parentComp, ok := c.appSpec.Components[from]
 	if !ok {
@@ -362,13 +384,43 @@ func (c *parentRuntimeCache) get(from string) (*ResolvedRuntimeEnvironment, erro
 		// attaches runtime on a partial spec, so treat this as no parent.
 		return nil, nil //nolint:nilnil // absent parent is not an error; callers check for nil
 	}
-	rt, err := c.load(from, parentComp)
+	explicit, err := c.loadExplicit(from, parentComp)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parent %s: %w", from, err)
 	}
-	c.inactive[from] = cloneRuntime(rt)
-	cloned := cloneRuntime(rt)
-	return &cloned, nil
+	layers := &cachedParentLayers{explicit: explicit}
+	c.inactive[from] = layers
+	if ensureErr := c.ensureEntity(layers, from, needEntity); ensureErr != nil {
+		return nil, ensureErr
+	}
+	return snapshotParentLayers(layers), nil
+}
+
+func (c *parentRuntimeCache) ensureEntity(layers *cachedParentLayers, from string, needEntity bool) error {
+	if !needEntity || layers.entityLoaded {
+		return nil
+	}
+	parentComp, ok := c.appSpec.Components[from]
+	if !ok {
+		layers.entityLoaded = true
+		return nil
+	}
+	entity, err := c.loadEntity(from, parentComp)
+	if err != nil {
+		return fmt.Errorf("parent %s: %w", from, err)
+	}
+	layers.entity = entity
+	layers.entityLoaded = true
+	return nil
+}
+
+func snapshotParentLayers(layers *cachedParentLayers) *ResolvedRuntimeEnvironment {
+	rt := emptyRuntime()
+	maps.Copy(rt.ExplicitValues, layers.explicit)
+	if layers.entityLoaded {
+		maps.Copy(rt.EntityValues, layers.entity)
+	}
+	return &rt
 }
 
 func cloneRuntime(rt ResolvedRuntimeEnvironment) ResolvedRuntimeEnvironment {
@@ -424,7 +476,7 @@ func attachRuntimeEnvironments(appSpec *Spec, env EnvIdentity, resolved *Resolve
 		var parent *ResolvedRuntimeEnvironment
 		if raw.From != "" {
 			var err error
-			parent, err = parents.get(raw.From)
+			parent, err = parents.get(raw.From, raw.EnvFile == "")
 			if err != nil {
 				return fmt.Errorf("task %s: %w", name, err)
 			}

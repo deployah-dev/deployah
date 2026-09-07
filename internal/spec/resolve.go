@@ -25,13 +25,13 @@ import (
 	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 )
 
-// Resolve processes all components in spec at once for env, combining them
-// with the platform configuration. It returns a [ResolvedSpec] containing
-// per-component resolved values and a [ResolutionReport] with field provenance.
+// Resolve processes all components and tasks in spec for env and returns a
+// [ResolvedSpec] plus a [ResolutionReport] with field provenance.
 //
-// The platform parameter may be nil only when no component uses an expose block
-// (offline manifest-only validation). When any component uses expose and
-// platform is nil, Resolve returns a hard error.
+// platform may be nil. Runtime environment and other platform-independent
+// fields are still resolved. Resolution fails with [ErrCodePlatformNotFound]
+// only when an active component or task uses a feature that requires
+// platform configuration, such as profiles or expose/domain resolution.
 //
 // substReport identifies which expose.subdomain fields were produced by
 // envsubst; the wildcard static-subdomain warning does not fire for those.
@@ -136,6 +136,7 @@ func Resolve(
 	}
 
 	if err := resolveTasks(appSpec, env, platform, platformEnv, resolved, report); err != nil {
+		recordResolutionError(report, err)
 		return nil, report, err
 	}
 

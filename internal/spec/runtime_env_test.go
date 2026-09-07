@@ -596,33 +596,209 @@ func TestResolveRuntimeEnvironment_InactiveParentInheritedByActiveTasks(t *testi
 func TestParentRuntimeCache_ResolvesInactiveParentOnce(t *testing.T) {
 	t.Parallel()
 
-	calls := 0
+	explicitCalls := 0
+	entityCalls := 0
 	cache := &parentRuntimeCache{
 		appSpec: &Spec{
 			Components: map[string]Component{"api": {EnvFile: ".env.api"}},
 		},
 		resolved: &ResolvedSpec{Components: map[string]ResolvedComponent{}},
-		inactive: make(map[string]ResolvedRuntimeEnvironment),
-		load: func(from string, parent Component) (ResolvedRuntimeEnvironment, error) {
-			calls++
+		inactive: make(map[string]*cachedParentLayers),
+		loadExplicit: func(from string, parent Component) (map[string]string, error) {
+			explicitCalls++
 			assert.Equal(t, "api", from)
 			assert.Equal(t, ".env.api", parent.EnvFile)
-			return ResolvedRuntimeEnvironment{
-				FileValues:     map[string]string{"FEATURE_X": "off"},
-				ExplicitValues: map[string]string{"LOG_LEVEL": "debug"},
-				EntityValues:   map[string]string{"FEATURE_X": "off"},
-			}, nil
+			return map[string]string{"LOG_LEVEL": "debug"}, nil
+		},
+		loadEntity: func(from string, parent Component) (map[string]string, error) {
+			entityCalls++
+			assert.Equal(t, "api", from)
+			return map[string]string{"FEATURE_X": "off"}, nil
 		},
 	}
 
-	first, err := cache.get("api")
+	first, err := cache.get("api", true)
 	require.NoError(t, err)
-	second, err := cache.get("api")
+	second, err := cache.get("api", true)
 	require.NoError(t, err)
-	assert.Equal(t, 1, calls)
+	assert.Equal(t, 1, explicitCalls)
+	assert.Equal(t, 1, entityCalls)
 	assert.Equal(t, "off", first.EntityValues["FEATURE_X"])
 	assert.Equal(t, "off", second.EntityValues["FEATURE_X"])
 	first.EntityValues["FEATURE_X"] = "mutated"
 	assert.Equal(t, "off", second.EntityValues["FEATURE_X"])
-	assert.Equal(t, "off", cache.inactive["api"].EntityValues["FEATURE_X"])
+	assert.Equal(t, "off", cache.inactive["api"].entity["FEATURE_X"])
+}
+
+func TestParentRuntimeCache_SkipsEntityWhenChildHasEnvFile(t *testing.T) {
+	t.Parallel()
+
+	entityCalls := 0
+	cache := &parentRuntimeCache{
+		appSpec: &Spec{
+			Components: map[string]Component{"api": {EnvFile: "missing.env"}},
+		},
+		resolved: &ResolvedSpec{Components: map[string]ResolvedComponent{}},
+		inactive: make(map[string]*cachedParentLayers),
+		loadExplicit: func(string, Component) (map[string]string, error) {
+			return map[string]string{"LOG_LEVEL": "debug"}, nil
+		},
+		loadEntity: func(string, Component) (map[string]string, error) {
+			entityCalls++
+			return nil, errors.New("parent entity should not load")
+		},
+	}
+
+	first, err := cache.get("api", false)
+	require.NoError(t, err)
+	assert.Equal(t, 0, entityCalls)
+	assert.Equal(t, "debug", first.ExplicitValues["LOG_LEVEL"])
+	assert.Empty(t, first.EntityValues)
+
+	second, err := cache.get("api", true)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "parent entity should not load")
+	assert.Equal(t, 1, entityCalls)
+	assert.Nil(t, second)
+}
+
+func TestResolveRuntimeEnvironment_InactiveParentMissingEnvFileIgnoredWhenChildHasEnvFile(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	requireWrite(t, dir, "migrate.env", "MIGRATION_TARGET=users\n")
+	appSpec := &Spec{
+		APIVersion: CurrentManifestVersion,
+		Project:    "shop",
+		SpecDir:    dir,
+		Environments: map[string]Environment{
+			"staging":    {},
+			"production": {},
+		},
+		Components: map[string]Component{
+			"api": {
+				Role:         ComponentRoleService,
+				Image:        "ghcr.io/acme/shop:1",
+				Environments: []string{"production"},
+				EnvFile:      "missing.env",
+				Env:          StringMap{"LOG_LEVEL": "debug"},
+			},
+		},
+		Tasks: map[string]Task{
+			"migrate": {
+				From:         "api",
+				On:           TaskOnPreDeploy,
+				Command:      []string{"migrate"},
+				Environments: []string{"staging"},
+				EnvFile:      "migrate.env",
+				Env:          StringMap{"MIGRATION_MODE": "safe"},
+			},
+		},
+	}
+
+	resolved, _, err := Resolve(appSpec, nil, NormalizeEnv("staging"), SubstitutionReport{})
+	require.NoError(t, err)
+	_, parentRendered := resolved.Components["api"]
+	assert.False(t, parentRendered)
+
+	rt := resolved.Tasks["migrate"].Runtime
+	assert.Equal(t, map[string]string{"MIGRATION_TARGET": "users"}, rt.FileValues)
+	assert.Equal(t, map[string]string{
+		"LOG_LEVEL":      "debug",
+		"MIGRATION_MODE": "safe",
+	}, rt.ExplicitValues)
+	assert.Equal(t, map[string]string{"MIGRATION_TARGET": "users"}, rt.EntityValues)
+}
+
+func TestResolveRuntimeEnvironment_InactiveParentInvalidEnvKeyIgnoredWhenChildHasEnvFile(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	requireWrite(t, dir, "missing.env", "FOO-BAR=1\n")
+	requireWrite(t, dir, "migrate.env", "MIGRATION_TARGET=users\n")
+	appSpec := &Spec{
+		APIVersion: CurrentManifestVersion,
+		Project:    "shop",
+		SpecDir:    dir,
+		Environments: map[string]Environment{
+			"staging":    {},
+			"production": {},
+		},
+		Components: map[string]Component{
+			"api": {
+				Role:         ComponentRoleService,
+				Image:        "ghcr.io/acme/shop:1",
+				Environments: []string{"production"},
+				EnvFile:      "missing.env",
+				Env:          StringMap{"LOG_LEVEL": "debug"},
+			},
+		},
+		Tasks: map[string]Task{
+			"migrate": {
+				From:         "api",
+				On:           TaskOnPreDeploy,
+				Command:      []string{"migrate"},
+				Environments: []string{"staging"},
+				EnvFile:      "migrate.env",
+			},
+			"seed": {
+				From:         "api",
+				On:           TaskOnPreDeploy,
+				Command:      []string{"seed"},
+				Environments: []string{"staging"},
+			},
+		},
+	}
+
+	resolved, _, err := Resolve(appSpec, nil, NormalizeEnv("staging"), SubstitutionReport{})
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "FOO-BAR")
+	var re *ResolutionError
+	require.ErrorAs(t, err, &re)
+	assert.Equal(t, ErrCodeInvalidEnvKey, re.Code)
+	assert.Nil(t, resolved)
+
+	delete(appSpec.Tasks, "seed")
+	resolved, _, err = Resolve(appSpec, nil, NormalizeEnv("staging"), SubstitutionReport{})
+	require.NoError(t, err)
+	rt := resolved.Tasks["migrate"].Runtime
+	assert.Equal(t, map[string]string{"MIGRATION_TARGET": "users"}, rt.FileValues)
+	assert.Equal(t, map[string]string{"LOG_LEVEL": "debug"}, rt.ExplicitValues)
+}
+
+func TestResolveRuntimeEnvironment_InactiveParentMissingEnvFileRequiredWithoutChildEnvFile(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	appSpec := &Spec{
+		APIVersion: CurrentManifestVersion,
+		Project:    "shop",
+		SpecDir:    dir,
+		Environments: map[string]Environment{
+			"staging":    {},
+			"production": {},
+		},
+		Components: map[string]Component{
+			"api": {
+				Role:         ComponentRoleService,
+				Image:        "ghcr.io/acme/shop:1",
+				Environments: []string{"production"},
+				EnvFile:      "missing.env",
+				Env:          StringMap{"LOG_LEVEL": "debug"},
+			},
+		},
+		Tasks: map[string]Task{
+			"migrate": {
+				From:         "api",
+				On:           TaskOnPreDeploy,
+				Command:      []string{"migrate"},
+				Environments: []string{"staging"},
+			},
+		},
+	}
+
+	_, report, err := Resolve(appSpec, nil, NormalizeEnv("staging"), SubstitutionReport{})
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "missing.env")
+	assert.Equal(t, ErrCodeEnvFileNotFound, report.ErrorCode)
 }

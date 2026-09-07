@@ -52,6 +52,11 @@ const (
 	// after Create without spinning until ctx times out if the Job was
 	// deleted.
 	jobNotFoundLimit = 5
+	// runJobCleanupTimeout bounds best-effort rollback after a partial
+	// CreateRunJob. The cleanup context is detached from caller
+	// cancellation so Ctrl+C or a command timeout can still delete the
+	// temporary ConfigMap (and Job, when one was created).
+	runJobCleanupTimeout = 5 * time.Second
 )
 
 // TaskJobOptions controls a CLI-created Job.
@@ -258,15 +263,19 @@ func CreateRunJob(ctx context.Context, cs kubernetes.Interface, job *batchv1.Job
 
 	created, err := CreateTaskJob(ctx, cs, job)
 	if err != nil {
-		if delErr := deleteConfigMap(ctx, cs, cm); delErr != nil {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), runJobCleanupTimeout)
+		defer cancel()
+		if delErr := deleteConfigMap(cleanupCtx, cs, cm); delErr != nil {
 			return nil, fmt.Errorf("%w; also failed to delete configmap %s: %w", err, cm.Name, delErr)
 		}
 		return nil, err
 	}
 
 	if ownErr := setConfigMapJobOwner(ctx, cs, cm, created); ownErr != nil {
-		jobDel := deleteJob(ctx, cs, created)
-		cmDel := deleteConfigMap(ctx, cs, cm)
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), runJobCleanupTimeout)
+		defer cancel()
+		jobDel := deleteJob(cleanupCtx, cs, created)
+		cmDel := deleteConfigMap(cleanupCtx, cs, cm)
 		switch {
 		case jobDel != nil && cmDel != nil:
 			return nil, fmt.Errorf("%w; also failed to delete job %s: %w; also failed to delete configmap %s: %w", ownErr, created.Name, jobDel, cm.Name, cmDel)

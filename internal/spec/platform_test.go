@@ -1737,9 +1737,10 @@ func TestResolve_TaskProfilesRequirePlatform(t *testing.T) {
 			},
 		},
 	}
-	_, _, err := spec.Resolve(appSpec, nil, spec.NormalizeEnv("dev"), spec.SubstitutionReport{})
+	_, report, err := spec.Resolve(appSpec, nil, spec.NormalizeEnv("dev"), spec.SubstitutionReport{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no platform file")
+	assert.Equal(t, spec.ErrCodePlatformNotFound, report.ErrorCode)
 }
 
 func TestResolve_UnknownTaskProfile(t *testing.T) {
@@ -1759,10 +1760,11 @@ func TestResolve_UnknownTaskProfile(t *testing.T) {
 			},
 		},
 	}
-	_, _, err := spec.Resolve(appSpec, platformWithProfiles(), spec.NormalizeEnv("production"), spec.SubstitutionReport{})
+	_, report, err := spec.Resolve(appSpec, platformWithProfiles(), spec.NormalizeEnv("production"), spec.SubstitutionReport{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `task "migrate"`)
 	assert.Contains(t, err.Error(), "missing")
+	assert.Equal(t, spec.ErrCodeProfileNotFound, report.ErrorCode)
 }
 
 func TestResolve_TaskCycle(t *testing.T) {

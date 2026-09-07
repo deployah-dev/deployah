@@ -87,6 +87,10 @@ func GenerateReleaseName(projectName, environmentName string) string {
 // PrepareChart expands the embedded chart into a temporary directory and
 // returns the chart root. Identical charts are reused via cache.
 //
+// resolved must be non-nil. It is the output of [spec.Resolve], which may
+// run with a nil platform. A nil resolved returns an error; full render
+// does not silently omit runtime environment.
+//
 // cache must be non-nil. If ctx is already canceled or past its deadline,
 // PrepareChart returns [context.Canceled] or [context.DeadlineExceeded]
 // immediately; chart expansion itself is not interrupted mid-flight.
@@ -100,11 +104,11 @@ func PrepareChart(ctx context.Context, manifest *spec.Spec, desiredEnvironment s
 	if cache == nil {
 		return "", errors.New("chart cache is required")
 	}
+	if resolved == nil {
+		return "", errors.New("render requires resolved spec; call spec.Resolve first")
+	}
 
-	// Hash resolved when set (including resolved.Spec). A nil resolved is
-	// not a full Deployah render; callers should pass [spec.Resolve] output
-	// even without a platform file.
-	cacheKey, err := cache.GenerateKey(manifest, desiredEnvironment, resolved)
+	cacheKey, err := cache.GenerateKey(desiredEnvironment, resolved)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate cache key: %w", err)
 	}

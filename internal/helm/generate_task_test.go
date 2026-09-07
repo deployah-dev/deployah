@@ -166,9 +166,10 @@ func TestPrepareChart_ChartYAMLImportsOnlySubCharts(t *testing.T) {
 
 	cache := NewChartCache(time.Hour)
 	const environment = "dev"
-	chartDir, err := PrepareChart(t.Context(), m, environment, nil, cache)
+	resolved := resolveChart(t, m, environment)
+	chartDir, err := PrepareChart(t.Context(), m, environment, resolved, cache)
 	require.NoError(t, err)
-	t.Cleanup(func() { removeChartDirs(t, cache, m, environment, chartDir) })
+	t.Cleanup(func() { removeChartDirs(t, cache, resolved, environment, chartDir) })
 
 	raw, err := os.ReadFile(filepath.Join(chartDir, "Chart.yaml")) // #nosec G304 -- chartDir is the temp dir PrepareChart just created
 	require.NoError(t, err)
@@ -201,10 +202,10 @@ func TestPrepareChart_ChartYAMLImportsOnlySubCharts(t *testing.T) {
 
 // removeChartDirs deletes both the copy PrepareChart returned and the
 // directory backing its cache entry.
-func removeChartDirs(tb testing.TB, cache *ChartCache, m *spec.Spec, environment, returned string) {
+func removeChartDirs(tb testing.TB, cache *ChartCache, resolved *spec.ResolvedSpec, environment, returned string) {
 	tb.Helper()
 	removeChartDir(tb, returned)
-	key, err := cache.GenerateKey(m, environment, nil)
+	key, err := cache.GenerateKey(environment, resolved)
 	if err != nil {
 		tb.Logf("cleanup: cache key: %v", err)
 		return
