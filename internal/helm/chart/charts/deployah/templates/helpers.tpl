@@ -1,4 +1,33 @@
 {{/*
+DNS-1123 name: {base}-{keep} when that fits in max, otherwise
+{truncatedBase}-{4hex}-{keep}. The hash is the first four hex characters
+of sha256(base-keep) so two long names that share a prefix cannot collide.
+The keep token always survives. Used by env ConfigMap names (max 63) and
+CronJob names (max 52).
+*/}}
+{{- define "deployah.dns1123Name" -}}
+{{- $base := .base -}}
+{{- $keep := .keep -}}
+{{- $max := int .max -}}
+{{- $full := printf "%s-%s" $base $keep -}}
+{{- if le (len $full) $max -}}
+{{- $full -}}
+{{- else -}}
+{{- $hash := substr 0 4 (sha256sum $full) -}}
+{{- $budget := int (sub $max (add (len $keep) 6)) -}}
+{{- printf "%s-%s-%s" (trunc $budget $base | trimSuffix "-") $hash $keep -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Runtime FileValues ConfigMap name: {fullname}-env, hashed to stay
+within the 63-character DNS-1123 label limit.
+*/}}
+{{- define "deployah.envconfigmap.name" -}}
+{{- include "deployah.dns1123Name" (dict "base" (include "common.names.fullname" .) "keep" "env" "max" 63) -}}
+{{- end -}}
+
+{{/*
 Create the name of the service account to use
 */}}
 {{- define "deployah.serviceAccountName" -}}
@@ -11,24 +40,15 @@ Create the name of the service account to use
 
 
 {{/*
-Render an array of env variables. The input can be a map or a slice.
-Values can be templates using the "common.tplvalues.render" helper, but changes to scope are not processed.
+Render container env from a string map. Values are quoted as data (no Helm tpl).
 Usage:
-{{ include "deployah.toEnvArray" ( dict "envVars" .Values.envVars "context" $ ) }}
+{{ include "deployah.toEnvArray" ( dict "envVars" .Values.envVars ) }}
 */}}
 {{- define "deployah.toEnvArray" -}}
-{{- if kindIs "map" .envVars }}
-{{- range $key, $val := .envVars }}
+{{- range $key := keys .envVars | sortAlpha }}
 - name: {{ $key | quote }}
-{{- if kindIs "string" $val }}
-  value: {{ (include "common.tplvalues.render" (dict "value" $val "context" $.context)) | quote }}
-{{- else if kindIs "map" $val }}
-{{ include "common.tplvalues.render" (dict "value" (omit $val "name") "context" $.context) | indent 2 }}
+  value: {{ index $.envVars $key | quote }}
 {{- end -}}
-{{- end -}}
-{{- else if kindIs "slice" .envVars }}
-{{ include "common.tplvalues.render" (dict "value" .envVars "context" $.context) }}
-{{- end }}
 {{- end -}}
 
 {{/*
@@ -43,13 +63,5 @@ prefix cannot collide. Task names are capped at 30 by the schema and Go
 validation, so the prefix budget is never below 16.
 */}}
 {{- define "deployah.cronjob.name" -}}
-{{- $task := .Chart.Name -}}
-{{- $full := printf "%s-%s" .Release.Name $task -}}
-{{- if le (len $full) 52 -}}
-{{- $full -}}
-{{- else -}}
-{{- $hash := substr 0 4 (sha256sum $full) -}}
-{{- $budget := int (sub 52 (add (len $task) 6)) -}}
-{{- printf "%s-%s-%s" (trunc $budget .Release.Name | trimSuffix "-") $hash $task -}}
-{{- end -}}
+{{- include "deployah.dns1123Name" (dict "base" .Release.Name "keep" .Chart.Name "max" 52) -}}
 {{- end -}}

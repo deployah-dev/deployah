@@ -15,7 +15,6 @@
 package testing
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -217,14 +216,10 @@ func readRawManifestFile(t *testing.T, path string) (manifestSide, bool) {
 	return manifestSide{Manifest: string(data)}, true
 }
 
-// renderManifestFile loads dir/filename as a Deployah spec and renders it
-// via [helm.Client.RenderOffline] (no cluster access, matching `deployah
-// plan --offline`). When dir contains a deployah.platform.yaml, the spec is
-// resolved against it so scenarios can exercise platform-dependent output
-// such as Ingress/TLS, with self-signed certs materialized offline.
+// renderManifestFile loads dir/filename and renders it offline.
 func renderManifestFile(t *testing.T, dir, filename string) manifestSide {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 	specPath := filepath.Join(dir, filename)
 
 	var platform *spec.PlatformConfig
@@ -240,14 +235,11 @@ func renderManifestFile(t *testing.T, dir, filename string) manifestSide {
 	envName, _, err := spec.ResolveEnvironment(manifest.Environments, platform, "")
 	require.NoError(t, err)
 
-	var resolved *spec.ResolvedSpec
-	if platform != nil {
-		envIdentity := spec.NormalizeEnv(envName)
-		resolvedSpec, _, resolveErr := spec.Resolve(manifest, platform, envIdentity, spec.SubstitutionReport{})
-		require.NoError(t, resolveErr)
-		require.NoError(t, k8s.MaterializeSelfSignedTLS(ctx, nil, "", resolvedSpec))
-		resolved = resolvedSpec
-	}
+	// Resolve even when platform is nil so runtime env reaches the chart.
+	envIdentity := spec.NormalizeEnv(envName)
+	resolved, _, resolveErr := spec.Resolve(manifest, platform, envIdentity, spec.SubstitutionReport{})
+	require.NoError(t, resolveErr)
+	require.NoError(t, k8s.MaterializeSelfSignedTLS(ctx, nil, "", resolved))
 
 	// Pin the release namespace so goldens stay stable regardless of
 	// HELM_NAMESPACE or the ambient kubeconfig context.
@@ -257,7 +249,7 @@ func renderManifestFile(t *testing.T, dir, filename string) manifestSide {
 	bundle, loadErr := extras.LoadFromSpec(specPath, manifest, platform, envName, client.Namespace(), nil)
 	require.NoError(t, loadErr)
 
-	result, cleanup, err := client.RenderOffline(ctx, manifest, envName, resolved, bundle.PostRendererFor())
+	result, cleanup, err := client.RenderOffline(ctx, resolved, bundle.PostRendererFor())
 	if cleanup != nil {
 		t.Cleanup(cleanup)
 	}

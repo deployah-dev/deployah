@@ -47,7 +47,7 @@ func scheduledRenderSpec(task spec.Task) *spec.Spec {
 				Role:  spec.ComponentRoleService,
 				Image: "ghcr.io/acme/shop:1.2.3",
 				Port:  8080,
-				Env:   map[string]string{"DATABASE_URL": "postgres://db", "LOG": "info"},
+				Env:   spec.StringMap{"DATABASE_URL": "postgres://db", "LOG": "info"},
 			},
 		},
 		Tasks: map[string]spec.Task{
@@ -354,16 +354,15 @@ func renderScheduledCronJob(t *testing.T, manifest *spec.Spec, env, taskName str
 
 func renderOfflineScheduled(t *testing.T, manifest *spec.Spec, env string) (*render.RenderResult, func(), error) {
 	t.Helper()
-	require.NoError(t, spec.FillSpecWithDefaults(manifest, spec.CurrentManifestVersion))
-	for name, task := range manifest.Tasks {
-		if p, ok := manifest.Components[task.From]; ok {
-			cp := p
-			manifest.Tasks[name] = task.MergeFrom(&cp)
-		}
+	if manifest.SpecDir == "" {
+		manifest.SpecDir = t.TempDir()
 	}
+	require.NoError(t, spec.FillSpecWithDefaults(manifest, spec.CurrentManifestVersion))
+	resolved, _, err := spec.Resolve(manifest, nil, spec.NormalizeEnv(env), spec.SubstitutionReport{})
+	require.NoError(t, err)
 	client, err := NewClient(WithNamespace("default"))
 	require.NoError(t, err)
-	return client.RenderOffline(t.Context(), manifest, env, nil, nil)
+	return client.RenderOffline(t.Context(), resolved, nil)
 }
 
 func mustRenderScheduled(t *testing.T, manifest *spec.Spec, env, releaseName, kubeVersion string) *render.RenderResult {
@@ -375,24 +374,24 @@ func mustRenderScheduled(t *testing.T, manifest *spec.Spec, env, releaseName, ku
 
 func renderScheduled(t *testing.T, manifest *spec.Spec, env, releaseName, kubeVersion string) (*render.RenderResult, error) {
 	t.Helper()
-	require.NoError(t, spec.FillSpecWithDefaults(manifest, spec.CurrentManifestVersion))
-	for name, task := range manifest.Tasks {
-		if p, ok := manifest.Components[task.From]; ok {
-			cp := p
-			manifest.Tasks[name] = task.MergeFrom(&cp)
-		}
+	if manifest.SpecDir == "" {
+		manifest.SpecDir = t.TempDir()
 	}
+	require.NoError(t, spec.FillSpecWithDefaults(manifest, spec.CurrentManifestVersion))
+	resolved, _, err := spec.Resolve(manifest, nil, spec.NormalizeEnv(env), spec.SubstitutionReport{})
+	require.NoError(t, err)
 
 	client, err := NewClient(WithNamespace("default"))
 	require.NoError(t, err)
 
-	ch, _, cleanup, err := client.prepareAndLoadChart(t.Context(), manifest, env, nil)
+	ch, _, cleanup, err := client.prepareAndLoadChart(t.Context(), resolved)
 	if err != nil {
 		return nil, err
 	}
 	t.Cleanup(cleanup)
 
-	values, labels := renderInputs(manifest, env)
+	_, labels, err := releaseIdentity(resolved)
+	require.NoError(t, err)
 	defer restoreCapabilitiesForDryRun(client.config)()
 
 	install := action.NewInstall(client.config)
@@ -409,7 +408,7 @@ func renderScheduled(t *testing.T, manifest *spec.Spec, env, releaseName, kubeVe
 		install.KubeVersion = kv
 	}
 
-	rel, runErr := install.RunWithContext(t.Context(), ch, values)
+	rel, runErr := install.RunWithContext(t.Context(), ch, map[string]any{})
 	if runErr != nil {
 		return nil, client.wrapHelmError("render", releaseName, runErr)
 	}

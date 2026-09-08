@@ -2,6 +2,7 @@ apiVersion: v1
 kind: Service
 metadata:
     annotations:
+        deployah.dev/environment-instance: dev
         deployah.dev/project: health-check-http
         deployah.dev/source: spec
     labels:
@@ -10,6 +11,7 @@ metadata:
         app.kubernetes.io/name: api
         deployah.dev/component: api
         deployah.dev/environment: dev
+        deployah.dev/instance: health-check-http-dev
         deployah.dev/project: health-check-http
         helm.sh/chart: api-0.1.0
     name: health-check-http-dev-api

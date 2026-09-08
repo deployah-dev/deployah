@@ -25,13 +25,19 @@ import (
 	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 )
 
-// Resolve processes all components in spec at once for env, combining them
-// with the platform configuration. It returns a [ResolvedSpec] containing
-// per-component resolved values and a [ResolutionReport] with field provenance.
+// resolveMode selects strict versus inspect-only resolution behavior.
+type resolveMode struct {
+	hookCycleAsWarning   bool
+	allowMissingPlatform bool
+}
+
+// Resolve processes all components and tasks in spec for env and returns a
+// [ResolvedSpec] plus a [ResolutionReport] with field provenance.
 //
-// The platform parameter may be nil only when no component uses an expose block
-// (offline manifest-only validation). When any component uses expose and
-// platform is nil, Resolve returns a hard error.
+// platform may be nil. Runtime environment and other platform-independent
+// fields are still resolved. Resolution fails with [ErrCodePlatformNotFound]
+// only when an active component or task uses a feature that requires
+// platform configuration, such as profiles or expose/domain resolution.
 //
 // substReport identifies which expose.subdomain fields were produced by
 // envsubst; the wildcard static-subdomain warning does not fire for those.
@@ -41,6 +47,19 @@ func Resolve(
 	env EnvIdentity,
 	substReport SubstitutionReport,
 ) (*ResolvedSpec, *ResolutionReport, error) {
+	return resolveInternal(appSpec, platform, env, substReport, resolveMode{})
+}
+
+func resolveInternal(
+	appSpec *Spec,
+	platform *PlatformConfig,
+	env EnvIdentity,
+	substReport SubstitutionReport,
+	mode resolveMode,
+) (*ResolvedSpec, *ResolutionReport, error) {
+	if platform == nil && mode.allowMissingPlatform {
+		return resolveDisplayWithoutPlatform(appSpec, env)
+	}
 	report := &ResolutionReport{Env: env}
 	resolved := &ResolvedSpec{
 		Spec:       appSpec,
@@ -51,6 +70,7 @@ func Resolve(
 
 	// Resolve Kubernetes context from platform.
 	var platformEnv *PlatformEnvironment
+	var platformEnvKey string
 	if platform != nil {
 		keys := make([]string, 0, len(platform.Environments))
 		for k := range platform.Environments {
@@ -59,6 +79,7 @@ func Resolve(
 		if matched, ok := matchEnvKey(env.Original, keys); ok {
 			pe := platform.Environments[matched]
 			platformEnv = &pe
+			platformEnvKey = matched
 			resolved.KubeContext = pe.Context
 			report.Fields = append(report.Fields, ResolvedField{
 				Path:   "context",
@@ -104,7 +125,7 @@ func Resolve(
 			}
 		}
 
-		rc, compFields, err := resolveComponent(compName, comp, platformEnv, env, substReport, platform)
+		rc, compFields, err := resolveComponent(compName, comp, platformEnv, platformEnvKey, env, substReport, platform)
 		if err != nil {
 			if re, ok := errors.AsType[*ResolutionError](err); ok {
 				report.ErrorCode = re.Code
@@ -135,7 +156,13 @@ func Resolve(
 		resolved.Components[compName] = rc
 	}
 
-	if err := resolveTasks(appSpec, env, platform, platformEnv, resolved, report); err != nil {
+	if err := resolveTasks(appSpec, env, platform, platformEnv, resolved, report, mode); err != nil {
+		recordResolutionError(report, err)
+		return nil, report, err
+	}
+
+	if err := attachRuntimeEnvironments(appSpec, env, resolved, report); err != nil {
+		recordResolutionError(report, err)
 		return nil, report, err
 	}
 
@@ -152,6 +179,7 @@ func resolveComponent(
 	name string,
 	comp Component,
 	platformEnv *PlatformEnvironment,
+	platformEnvKey string,
 	env EnvIdentity,
 	substReport SubstitutionReport,
 	platform *PlatformConfig,
@@ -165,7 +193,7 @@ func resolveComponent(
 	}
 
 	// Profiles require a platform file when the component sets them.
-	if comp.Profiles != nil && platform == nil {
+	if len(comp.Profiles) > 0 && platform == nil {
 		return rc, result, &ResolutionError{
 			Code: ErrCodePlatformNotFound,
 			Message: fmt.Sprintf(
@@ -199,7 +227,7 @@ func resolveComponent(
 		if profileErr := validateMergedProfile(name, comp, rc.MergedProfile, platformEnv, ""); profileErr != nil {
 			return rc, result, profileErr
 		}
-		if scErr := applyResolvedStorageClass(&rc, &result, name, comp, env, platformEnv); scErr != nil {
+		if scErr := applyResolvedStorageClass(&rc, &result, name, comp, platformEnvKey, platformEnv); scErr != nil {
 			return rc, result, scErr
 		}
 		return rc, result, nil
@@ -245,7 +273,7 @@ func resolveComponent(
 		}
 	}
 	rc.DomainKey = domainKey
-	domainSource := fmt.Sprintf("platform environments.%s.domains.%s", env.Original, domainKey)
+	domainSource := fmt.Sprintf("platform environments.%s.domains.%s", platformEnvKey, domainKey)
 	if domainDefaulted {
 		domainSource += " (default domain)"
 	}
@@ -348,7 +376,7 @@ func resolveComponent(
 			Component: name,
 			Path:      "expose.tls.mode",
 			Value:     string(domain.TLS.Mode),
-			Source:    fmt.Sprintf("platform environments.%s.domains.%s.tls.mode", env.Original, domainKey),
+			Source:    fmt.Sprintf("platform environments.%s.domains.%s.tls.mode", platformEnvKey, domainKey),
 		})
 		switch domain.TLS.Mode {
 		case TLSModeCertManager:
@@ -357,7 +385,7 @@ func resolveComponent(
 				Component: name,
 				Path:      "expose.tls.issuer",
 				Value:     domain.TLS.Issuer,
-				Source:    fmt.Sprintf("platform environments.%s.domains.%s.tls.issuer", env.Original, domainKey),
+				Source:    fmt.Sprintf("platform environments.%s.domains.%s.tls.issuer", platformEnvKey, domainKey),
 			})
 		case TLSModeSecretName:
 			rc.TLSSecretName = domain.TLS.SecretName
@@ -365,7 +393,7 @@ func resolveComponent(
 				Component: name,
 				Path:      "expose.tls.secretName",
 				Value:     domain.TLS.SecretName,
-				Source:    fmt.Sprintf("platform environments.%s.domains.%s.tls.secretName", env.Original, domainKey),
+				Source:    fmt.Sprintf("platform environments.%s.domains.%s.tls.secretName", platformEnvKey, domainKey),
 			})
 		}
 	}
@@ -373,7 +401,7 @@ func resolveComponent(
 	if profileErr := validateMergedProfile(name, comp, rc.MergedProfile, platformEnv, domainKey); profileErr != nil {
 		return rc, result, profileErr
 	}
-	if scErr := applyResolvedStorageClass(&rc, &result, name, comp, env, platformEnv); scErr != nil {
+	if scErr := applyResolvedStorageClass(&rc, &result, name, comp, platformEnvKey, platformEnv); scErr != nil {
 		return rc, result, scErr
 	}
 
@@ -408,7 +436,7 @@ func applyResolvedStorageClass(
 	result *componentResolveResult,
 	compName string,
 	comp Component,
-	env EnvIdentity,
+	platformEnvKey string,
 	platformEnv *PlatformEnvironment,
 ) error {
 	logicalKey := ""
@@ -452,7 +480,7 @@ func applyResolvedStorageClass(
 		Value:     sc.ClassName,
 		Source: fmt.Sprintf(
 			"%s %q -> environments.%s.storageClasses.%s.className",
-			sourceKind, logicalKey, env.Original, logicalKey,
+			sourceKind, logicalKey, platformEnvKey, logicalKey,
 		),
 	})
 	return nil
@@ -625,31 +653,101 @@ func joinStrings(ss []string) string {
 	return strings.Join(quoted, ", ")
 }
 
-// ResolveForDisplay is like [Resolve] but never returns a hard error for
-// missing platform file. Instead it marks the report with PLATFORM_NOT_FOUND
-// and returns partial results. Used by the resolve command in offline mode.
+// ResolveForDisplay is like [Resolve] but inspect-only: a missing platform
+// file is a warning, and a hook-cycle is a warning instead of a hard error.
+// Other task-graph errors still fail. Display semantics apply whether or
+// not a platform file is present.
 func ResolveForDisplay(
 	appSpec *Spec,
 	platform *PlatformConfig,
 	env EnvIdentity,
 	substReport SubstitutionReport,
 ) (*ResolvedSpec, *ResolutionReport, error) {
-	if platform == nil {
-		// Partial result: no platform, emit PLATFORM_NOT_FOUND.
-		report := &ResolutionReport{
-			Env:          env,
-			ErrorCode:    ErrCodePlatformNotFound,
-			ErrorMessage: fmt.Sprintf("platform file not found; run with --platform-file or create %s", DefaultPlatformPath),
-		}
-		resolved := &ResolvedSpec{
-			Spec:       appSpec,
-			Env:        env,
-			Components: make(map[string]ResolvedComponent),
-			Tasks:      make(map[string]ResolvedTask),
-		}
-		return resolved, report, nil
+	return resolveInternal(appSpec, platform, env, substReport, resolveMode{
+		hookCycleAsWarning:   true,
+		allowMissingPlatform: true,
+	})
+}
+
+func resolveDisplayWithoutPlatform(appSpec *Spec, env EnvIdentity) (*ResolvedSpec, *ResolutionReport, error) {
+	warn := fmt.Sprintf("platform file not found; run with --platform-file or create %s", DefaultPlatformPath)
+	report := &ResolutionReport{
+		Env:      env,
+		Warnings: []string{warn},
 	}
-	return Resolve(appSpec, platform, env, substReport)
+	resolved := &ResolvedSpec{
+		Spec:       appSpec,
+		Env:        env,
+		Components: make(map[string]ResolvedComponent),
+		Tasks:      make(map[string]ResolvedTask),
+		Warnings:   []string{warn},
+	}
+	if err := populateActiveEntities(appSpec, env, resolved, report); err != nil {
+		recordResolutionError(report, err)
+		return nil, report, err
+	}
+	if err := attachRuntimeEnvironments(appSpec, env, resolved, report); err != nil {
+		recordResolutionError(report, err)
+		return nil, report, err
+	}
+	return resolved, report, nil
+}
+
+func recordHookCycleWarning(resolved *ResolvedSpec, report *ResolutionReport, err error) {
+	msg := fmt.Sprintf("task hook ordering could not be resolved: %v", err)
+	if report != nil {
+		report.Warnings = append(report.Warnings, msg)
+	}
+	if resolved != nil {
+		resolved.Warnings = append(resolved.Warnings, msg)
+	}
+}
+
+func recordResolutionError(report *ResolutionReport, err error) {
+	if report == nil || err == nil {
+		return
+	}
+	report.ErrorMessage = err.Error()
+	if re, ok := errors.AsType[*ResolutionError](err); ok {
+		report.ErrorCode = re.Code
+	}
+}
+
+func populateActiveEntities(appSpec *Spec, env EnvIdentity, resolved *ResolvedSpec, report *ResolutionReport) error {
+	if appSpec == nil || resolved == nil {
+		return nil
+	}
+	for _, name := range slices.Sorted(maps.Keys(appSpec.Components)) {
+		comp := appSpec.Components[name]
+		if len(comp.Environments) > 0 {
+			if _, ok := matchEnvKey(env.Original, comp.Environments); !ok {
+				continue
+			}
+		}
+		resolved.Components[name] = ResolvedComponent{}
+	}
+	weights, weightErr := AssignHookWeights(appSpec.Tasks)
+	if weightErr != nil {
+		if !isHookCycle(weightErr) {
+			return weightErr
+		}
+		// HookWeight stays 0 below. That is an unresolved fallback, not a
+		// computed independent-hook weight. Display must not treat it as
+		// resolved.
+		recordHookCycleWarning(resolved, report, weightErr)
+	}
+	for _, name := range appSpec.TaskNames() {
+		task, ok := appSpec.MergedTask(name)
+		if !ok || !task.activeInEnvironment(env.Original) {
+			continue
+		}
+		rt := ResolvedTask{Task: task}
+		if weightErr == nil {
+			rt.HookWeight = weights[name]
+		}
+		resolved.Tasks[name] = rt
+	}
+	return nil
 }
 
 // PlatformEnvContext returns the Kubernetes context for the given environment
@@ -668,10 +766,15 @@ func PlatformEnvContext(platform *PlatformConfig, envName string) string {
 	return ""
 }
 
-func resolveTasks(appSpec *Spec, env EnvIdentity, platform *PlatformConfig, platformEnv *PlatformEnvironment, resolved *ResolvedSpec, report *ResolutionReport) error {
+func resolveTasks(appSpec *Spec, env EnvIdentity, platform *PlatformConfig, platformEnv *PlatformEnvironment, resolved *ResolvedSpec, report *ResolutionReport, mode resolveMode) error {
 	weights, err := AssignHookWeights(appSpec.Tasks)
 	if err != nil {
-		return err
+		if mode.hookCycleAsWarning && isHookCycle(err) {
+			recordHookCycleWarning(resolved, report, err)
+			weights = map[string]int{}
+		} else {
+			return err
+		}
 	}
 	var platformProfiles map[string]PlatformProfile
 	if platform != nil {

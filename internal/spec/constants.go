@@ -102,6 +102,9 @@ const (
 
 	// EnvironmentNamePattern is the regex pattern for valid environment names
 	EnvironmentNamePattern = "^[a-zA-Z0-9_-]+$"
+
+	// EnvKeyPattern is the POSIX pattern for runtime environment variable names.
+	EnvKeyPattern = `^[A-Za-z_][A-Za-z0-9_]*$`
 )
 
 // Spec Processing
@@ -291,8 +294,15 @@ const (
 	// LabelProject is the label key for project identification
 	LabelProject = LabelPrefix + "/project"
 
-	// LabelEnvironment is the label key for environment identification
+	// LabelEnvironment is the label key for the logical Deployah
+	// environment ([EnvIdentity.MapKey], for example "review").
 	LabelEnvironment = LabelPrefix + "/environment"
+
+	// LabelInstance is the Deployah-owned exact deployment identity.
+	// The value is the Helm release name ([EnvIdentity.ReleaseName]).
+	// It is not Helm's app.kubernetes.io/instance label; that key stays
+	// user-owned on extra manifests.
+	LabelInstance = LabelPrefix + "/instance"
 
 	// LabelManagedBy is the label key indicating management by Deployah
 	LabelManagedBy = LabelPrefix + "/managed-by"
@@ -315,6 +325,11 @@ const (
 	// annotation so CRDs (which carry no environment label) still identify
 	// the owning project.
 	AnnotationProject = LabelProject
+
+	// AnnotationEnvironmentInstance stores [EnvIdentity.Original] for
+	// discovery round-trips. Annotations may contain "/"; labels must not.
+	// Plain environments set this equal to the logical name.
+	AnnotationEnvironmentInstance = LabelPrefix + "/environment-instance"
 
 	// SourceSpec is the AnnotationSource value for chart-generated objects.
 	SourceSpec = "spec"

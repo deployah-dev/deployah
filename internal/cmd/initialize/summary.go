@@ -363,7 +363,7 @@ func buildValidatedSpec(config *ProjectConfig) (*spec.Spec, error) {
 	if err = spec.ValidateSpecComponents(clone); err != nil {
 		return nil, fmt.Errorf("component validation failed: %w", err)
 	}
-	if err = spec.ValidateSpecTasks(clone); err != nil {
+	if err = spec.ValidateSpecTasks(clone, false); err != nil {
 		return nil, fmt.Errorf("task validation failed: %w", err)
 	}
 	return &sparse, nil

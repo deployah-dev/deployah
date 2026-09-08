@@ -1,6 +1,6 @@
 {{- define "deployah.app" -}}
-{{- if .Values.configMap.data }}
-{{ include "deployah.configmap" . }}
+{{- if .Values.envFileValues }}
+{{ include "deployah.envconfigmap" . }}
 {{- end }}
 
 {{- if eq .Values.workloadKind "StatefulSet" }}

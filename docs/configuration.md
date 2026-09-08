@@ -39,17 +39,22 @@ built-in `default` environment is used.
 
 ### Two kinds of variables
 
-It helps to know there are two different things:
+There are two different things, and they do not share sources:
 
 1. **Substitution variables.** These fill `${...}` placeholders in your spec
    before Deployah reads it. Use them to change the spec itself, such as the
-   image tag or the ingress host. This works today and is described below.
-2. **Container environment variables.** These are the variables your app reads
-   at runtime. You would set them with the `env` field on a component. Note:
-   that field is accepted by the schema but is **not applied to Deployments
-   yet**. Task `env` (inherited from `from` or set on the task) **is** inlined
-   onto the Job. For components, put runtime values into your image or your
-   app's own config for now.
+   image tag or the ingress host. Values come from `environments.*.variables`
+   and from process `DPY_VAR_*` (prefix stripped). Dotenv files are not part
+   of this path.
+2. **Container environment variables.** These are what your process reads
+   inside the pod. They come from dotenv files (`FileValues`, delivered as a
+   ConfigMap plus `envFrom`) and from YAML `env:` (`ExplicitValues`, delivered
+   as container `env:`). Kubernetes lets `env:` win when a key exists in both.
+   Keys in a dotenv file named `DPY_VAR_TAG` stay `DPY_VAR_TAG` in the
+   container. They do not fill `${TAG}`.
+
+`envFile` is ConfigMap data. It is not a secret store. Deployah does not treat
+names such as `PASSWORD` specially.
 
 ### Substitution variables
 
@@ -106,18 +111,13 @@ In the table, `var` is your variable name.
 Remember: Deployah runs in strict mode. A variable with no default must be set,
 or the deploy stops with an error.
 
-### Where values come from
+### Where substitution values come from
 
-Deployah looks for a variable in three places. If the same name is set in more
-than one place, the later one wins (lowest to highest):
+`${...}` looks in two places. The later one wins:
 
 1. **The environment's `variables`** in your spec. Write these with their plain
    name, with no prefix.
-2. **The environment's env file**, for example `.env.production`. Only keys that
-   start with `DPY_VAR_` are used, and the prefix is removed.
-3. **Your shell**, also with the `DPY_VAR_` prefix.
-
-So the same `${APP_ENV}` can come from any of these:
+2. **Your shell**, with the `DPY_VAR_` prefix. The prefix is removed.
 
 ```yaml
 # in deployah.yaml (no prefix here)
@@ -127,49 +127,61 @@ environments:
       APP_ENV: from-spec
 ```
 
-```env
-# in .env.production (needs the prefix)
-DPY_VAR_APP_ENV=from-envfile
-```
-
 ```sh
 # in your shell (needs the prefix)
 export DPY_VAR_APP_ENV=from-shell
 ```
 
-With all three set, `${APP_ENV}` is `from-shell`, because the shell wins.
+With both set, `${APP_ENV}` is `from-shell`.
 
 > [!NOTE]
-> Only env-file and shell variables need the `DPY_VAR_` prefix, because
-> Deployah has to pick its own variables out of all the others on your system.
-> The `variables` you write inside the spec do not need a prefix.
+> Shell variables need the `DPY_VAR_` prefix so Deployah can pick them out of
+> the rest of your process environment (`HOME`, `CI`, and so on). Those
+> unprefixed process keys never enter the pod. The `variables` you write
+> inside the spec do not need a prefix.
 
-### Env files
+### Container env files
 
-An env file is a simple list of `KEY=value` lines. Blank lines and lines that
-start with `#` are ignored, and spaces around the key and value are trimmed.
+An env file is a list of `KEY=value` lines. Blank lines and lines that start
+with `#` are ignored, and spaces around the key and value are trimmed. Every
+key becomes ConfigMap data. Keys must be POSIX names
+(`^[A-Za-z_][A-Za-z0-9_]*$`).
 
-If you do not set `envFile` for an environment, Deployah looks for a file in
-this order and uses the first one it finds:
+Discovery is relative to the directory that contains `deployah.yaml`. Explicit
+`envFile` replaces that layer only. Missing implicit files are skipped.
+A missing explicit path is an error.
 
-1. `.env.<environment>` (for example `.env.production`)
-2. `.deployah/.env.<environment>`
-3. `.env`
-4. `.deployah/.env`
+**Environment values** (shared by every component and task in that
+environment):
 
-If you do set `envFile` and the file is missing, Deployah stops with an error.
+- Explicit `environments.<env>.envFile`, or
+- Merge, later wins: `.deployah/.env` then `.env` then
+  `.deployah/.env.<env>` then `.env.<env>`
+
+**Entity values** (one component or task):
+
+- Explicit `envFile` on that entity, or
+- If the task has `from:`, a copy of the parent component's already-resolved
+  entity values (not the parent's file path), or
+- Merge, later wins: `.deployah/.env.<name>` then `.env.<name>` then
+  `.deployah/.env.<name>.<env>` then `.env.<name>.<env>`
+
+**FileValues** = environment values, then entity values (entity wins on
+overlap). **ExplicitValues** = inherited YAML `env:` from `from:`, then this
+entity's `env:`.
+
+`deployah resolve <env>` lists both maps with their resolved values. It is
+a debugging command; do not treat that output as secret-safe CI output.
+`deployah run` does not reuse the Helm `{fullname}-env` ConfigMap. Each run
+creates a Job-owned ConfigMap and only detaches after that ownership is set.
 
 ### Files: Deployah vs. your app
 
 | File | Used by | Purpose |
 |---|---|---|
 | `deployah.yaml` | Deployah | Your spec. |
-| `.env` / `.env.<env>` | Deployah and your app | Variables. Deployah only reads the keys that start with `DPY_VAR_`. |
+| `.env` / `.env.<env>` / `.env.<component>` | Deployah | Container env (ConfigMap data). Not `${...}` substitution. |
 | `config.yaml` / `config.<env>.yaml` | Your app | Your app's own config. Deployah ignores these. |
-
-Keys in an env file that do not start with `DPY_VAR_` are left alone. Deployah
-does not use them, so they are free for your app to read on its own. The `config`
-files are for your app only.
 
 ## Precedence rules
 
@@ -184,8 +196,9 @@ order Deployah checks them in; the first match wins.
 | Expose domain | `expose.domain` in the spec → the domain marked `default: true` in the platform file → the environment's only domain |
 | Expose hostname label | `expose.apex: true` (bare domain) → `expose.subdomain` in the spec → the component name |
 | Profiles | component `profiles` list (with platform `default` prepended when defined) → merged left to right; omitted field applies only `default` when present |
-| Substitution variables (`${...}`) | shell `DPY_VAR_*` → env file `DPY_VAR_*` → the environment's `variables` in the spec |
-| Env file | explicit `envFile` in the spec → `.env.<env>` → `.deployah/.env.<env>` → `.env` → `.deployah/.env` |
+| Substitution variables (`${...}`) | process `DPY_VAR_*` (prefix stripped) → the environment's `variables` in the spec |
+| Container FileValues | entity dotenv layer → environment dotenv layer |
+| Container ExplicitValues | entity YAML `env:` → inherited parent `env:` |
 | Platform file location | `--platform-file` flag → `DEPLOYAH_PLATFORM_FILE` env var → same directory as the spec |
 
 Two context situations print a warning, so a deploy to the wrong cluster is

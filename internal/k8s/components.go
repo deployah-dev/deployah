@@ -17,6 +17,8 @@ package k8s
 import (
 	"context"
 	"fmt"
+	"maps"
+	"slices"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -67,14 +69,13 @@ func (c *Client) ValidateComponentExists(ctx context.Context, projectName, compo
 }
 
 // GetAvailableEnvironments lists environment names from running pods for a
-// project and component.
+// project and component. Wildcard instances appear as review/pr-123.
 func (c *Client) GetAvailableEnvironments(ctx context.Context, projectName, componentName string) ([]string, error) {
 	selector, err := BuildComponentSelector(projectName, componentName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build component selector: %w", err)
 	}
 
-	// Get all pods with deployah.dev/project and deployah.dev/component labels in the namespace
 	pods, err := c.k8sClient.CoreV1().Pods(c.namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: selector,
 		FieldSelector: "status.phase=Running",
@@ -83,19 +84,11 @@ func (c *Client) GetAvailableEnvironments(ctx context.Context, projectName, comp
 		return nil, fmt.Errorf("failed to list pods: %w", err)
 	}
 
-	// Extract unique environment names from pod labels
-	environmentSet := make(map[string]bool)
+	environmentSet := make(map[string]struct{})
 	for _, pod := range pods.Items {
-		if environmentName, exists := pod.Labels[EnvironmentLabel]; exists {
-			environmentSet[environmentName] = true
+		if name := environmentFromMeta(pod.Annotations); name != "" {
+			environmentSet[name] = struct{}{}
 		}
 	}
-
-	// Convert to slice
-	environments := make([]string, 0, len(environmentSet))
-	for environment := range environmentSet {
-		environments = append(environments, environment)
-	}
-
-	return environments, nil
+	return slices.Sorted(maps.Keys(environmentSet)), nil
 }

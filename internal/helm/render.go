@@ -31,30 +31,26 @@ import (
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 )
 
-// offlineMonitorAPIVersion is appended to Helm Install.APIVersions on
-// DryRunClient installs so ServiceMonitor/PodMonitor templates can render
-// when there is no discovery client. Online plan/deploy still gate on
-// k8s.CheckAPIRequirements; real installs use cluster Capabilities.
+// offlineMonitorAPIVersion lets ServiceMonitor/PodMonitor templates
+// render when there is no discovery client.
 const offlineMonitorAPIVersion = "monitoring.coreos.com/v1"
 
-// RenderManifests renders the chart via Helm's DryRunClient strategy, so
-// hooks/templates see the same values, capabilities, and revision as a real
-// apply. It mirrors InstallApp's install-vs-upgrade decision so the result
-// compares 1:1 with what InstallApp would produce, but on an upgrade this
-// means it also performs InstallApp's cluster-reachability check (skipped
-// only for a fresh install).
-//
-// Callers must invoke the returned cleanup func; ChartPath is not removed
-// automatically so callers like deploy can reuse it for the real apply.
-func (c *Client) RenderManifests(ctx context.Context, manifest *spec.Spec, environment string, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) (result *render.RenderResult, cleanup func(), err error) {
-	releaseName := GenerateReleaseName(manifest.Project, environment)
-
-	ch, chartPath, cleanup, err := c.prepareAndLoadChart(ctx, manifest, environment, resolved)
+// RenderManifests renders the chart from [spec.ResolvedSpec] client-side,
+// matching [Client.InstallApp]. Upgrade dry-runs still check cluster
+// reachability. A nil or unresolved spec is an error. Callers must run
+// the returned cleanup func.
+func (c *Client) RenderManifests(ctx context.Context, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) (result *render.RenderResult, cleanup func(), err error) {
+	releaseName, labels, err := releaseIdentity(resolved)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	values, labels := renderInputs(manifest, environment)
+	ch, chartPath, cleanup, err := c.prepareAndLoadChart(ctx, resolved)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	values := map[string]any{}
 
 	history := action.NewHistory(c.config)
 	history.Max = 1
@@ -74,22 +70,21 @@ func (c *Client) RenderManifests(ctx context.Context, manifest *spec.Spec, envir
 	return result, cleanup, nil
 }
 
-// RenderOffline renders the chart for manifest/environment as a fresh
-// install, without any Kubernetes API access: no reachability check and no
-// release-history lookup. It is the engine behind `deployah plan --offline`.
-// Because it never looks at release history, the result always describes a
-// fresh install (IsUpgrade false, Revision 1) even when a release already
-// exists, so it can't be diffed against a prior release like
-// [Client.RenderManifests] can; use that instead when cluster access is fine.
-func (c *Client) RenderOffline(ctx context.Context, manifest *spec.Spec, environment string, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) (result *render.RenderResult, cleanup func(), err error) {
-	releaseName := GenerateReleaseName(manifest.Project, environment)
-
-	ch, chartPath, cleanup, err := c.prepareAndLoadChart(ctx, manifest, environment, resolved)
+// RenderOffline renders the chart from [spec.ResolvedSpec] as a fresh
+// install without Kubernetes API access. A nil or unresolved spec is an
+// error. Callers must run the returned cleanup func.
+func (c *Client) RenderOffline(ctx context.Context, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) (result *render.RenderResult, cleanup func(), err error) {
+	releaseName, labels, err := releaseIdentity(resolved)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	values, labels := renderInputs(manifest, environment)
+	ch, chartPath, cleanup, err := c.prepareAndLoadChart(ctx, resolved)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	values := map[string]any{}
 
 	result, err = c.renderInstall(ctx, releaseName, ch, values, labels, postRenderer)
 	if err != nil {
@@ -100,14 +95,10 @@ func (c *Client) RenderOffline(ctx context.Context, manifest *spec.Spec, environ
 	return result, cleanup, nil
 }
 
-// prepareAndLoadChart generates (or fetches from cache) the Helm chart for
-// manifest/environment and loads it, returning a cleanup func for the
-// generated chart directory. It is the common first step shared by
-// [Client.RenderManifests] and [Client.RenderOffline]. When the client was
-// constructed with WithDebug(true), cleanup is a no-op and the temp dir is
-// left behind for inspection.
-func (c *Client) prepareAndLoadChart(ctx context.Context, manifest *spec.Spec, environment string, resolved *spec.ResolvedSpec) (ch *chart.Chart, chartPath string, cleanup func(), err error) {
-	chartPath, err = PrepareChart(ctx, manifest, environment, resolved, c.chartCache)
+// prepareAndLoadChart generates or caches the Helm chart from resolved
+// and loads it. Cleanup removes the temp dir unless WithDebug(true).
+func (c *Client) prepareAndLoadChart(ctx context.Context, resolved *spec.ResolvedSpec) (ch *chart.Chart, chartPath string, cleanup func(), err error) {
+	chartPath, err = PrepareChart(ctx, resolved, c.chartCache)
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("failed to prepare chart: %w", err)
 	}
@@ -129,27 +120,9 @@ func (c *Client) prepareAndLoadChart(ctx context.Context, manifest *spec.Spec, e
 	return ch, chartPath, cleanup, nil
 }
 
-// renderInputs builds the Helm values and labels shared by every render
-// path (install, upgrade, offline). Values are empty: the chart's own
-// values.yaml, written by [PrepareChart], already carries the mapped spec
-// data. This mirrors InstallApp.
-func renderInputs(manifest *spec.Spec, environment string) (values map[string]any, labels map[string]string) {
-	values = map[string]any{}
-	labels = map[string]string{
-		"deployah.dev/project":     manifest.Project,
-		"deployah.dev/environment": environment,
-		"deployah.dev/managed-by":  "deployah",
-		"deployah.dev/version":     manifest.APIVersion,
-	}
-	return values, labels
-}
-
-// restoreConfigForDryRun snapshots the Configuration fields a client-side dry
-// run can mutate and returns a func that restores them. c.config is shared
-// with the real, non-dry-run InstallApp on this Client, so an unrestored
-// swap would silently turn every later real install/upgrade into a no-op
-// that reports success but never touches the cluster. Call it as
-// `defer restoreConfigForDryRun(cfg)()` around any action that might dry-run.
+// restoreConfigForDryRun returns a func that restores cfg after a client-side
+// dry run. Call as `defer restoreConfigForDryRun(cfg)()`. Skipping restore
+// makes later real installs a silent no-op.
 func restoreConfigForDryRun(cfg *action.Configuration) func() {
 	// Install's dry-run path (action/install.go, !interactWithServer branch)
 	// sets KubeClient to a kubefake.PrintingKubeClient that discards
@@ -172,12 +145,9 @@ func restoreConfigForDryRun(cfg *action.Configuration) func() {
 	}
 }
 
-// restoreCapabilitiesForDryRun wraps restoreConfigForDryRun and additionally
-// snapshots/restores cfg.Capabilities. Only Install's dry-run path swaps
-// Capabilities to a fake value; Upgrade instead populates it on demand from
-// the real cluster and caches it for reuse, so restoring it after an
-// upgrade dry-run would discard a legitimate discovery result. Use this
-// variant only for renderInstall.
+// restoreCapabilitiesForDryRun restores cfg including Capabilities.
+// Use only from renderInstall; upgrade dry-run must keep discovered
+// Capabilities.
 func restoreCapabilitiesForDryRun(cfg *action.Configuration) func() {
 	restoreRest := restoreConfigForDryRun(cfg)
 	capabilities := cfg.Capabilities

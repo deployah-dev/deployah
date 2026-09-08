@@ -8,4 +8,6 @@ components:
     resourcePreset: small
     environments: [dev]
 environments:
-  dev: {}
+  dev:
+    variables:
+      IMAGE_TAG: "1.4.2"

@@ -78,7 +78,7 @@
         "envFile": {
           "type": "string",
           "title": "Environment File",
-          "description": "Path to a dotenv file for variable substitution in this environment.",
+          "description": "Path to a dotenv file whose keys become ConfigMap data for container env (not secrets, not substitution).",
           "examples": [
             ".env.production"
           ]
@@ -279,7 +279,7 @@
         "envFile": {
           "type": "string",
           "title": "Component Environment File",
-          "description": "Component-specific dotenv file path.",
+          "description": "Component-specific dotenv file whose keys become ConfigMap data for container env (not secrets, not substitution).",
           "examples": [
             ".env.api",
             ".env.api.production"
@@ -358,9 +358,9 @@
         "env": {
           "type": "object",
           "title": "Environment Variables",
-          "description": "Static environment variables for the container.",
+          "description": "Static environment variables for the container. Keys follow POSIX names.",
           "propertyNames": {
-            "pattern": "^[A-Z_][A-Z0-9_]*$"
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
           },
           "additionalProperties": {
             "type": [
@@ -887,7 +887,7 @@
         "from": {
           "type": "string",
           "title": "From",
-          "description": "Component name to inherit env, envFile, configFile, environments, profiles, and resources from. Does not copy command, args, or service-only fields.",
+          "description": "Component name to inherit image, configFile, environments, profiles, and resources from. Runtime env inherits the parent EntityValues and ExplicitValues, not the parent's final FileValues. Does not copy command, args, or service-only fields.",
           "minLength": 1,
           "examples": [
             "api"
@@ -938,9 +938,9 @@
         "env": {
           "type": "object",
           "title": "Environment Variables",
-          "description": "Static environment variables. Overlay the inherited map from from.",
+          "description": "Static environment variables. Overlay inherited ExplicitValues from from. Keys follow POSIX names.",
           "propertyNames": {
-            "pattern": "^[A-Z_][A-Z0-9_]*$"
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
           },
           "additionalProperties": {
             "type": [

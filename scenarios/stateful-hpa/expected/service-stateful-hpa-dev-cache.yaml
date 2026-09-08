@@ -2,6 +2,7 @@ apiVersion: v1
 kind: Service
 metadata:
     annotations:
+        deployah.dev/environment-instance: dev
         deployah.dev/project: stateful-hpa
         deployah.dev/source: spec
     labels:
@@ -10,6 +11,7 @@ metadata:
         app.kubernetes.io/name: cache
         deployah.dev/component: cache
         deployah.dev/environment: dev
+        deployah.dev/instance: stateful-hpa-dev
         deployah.dev/project: stateful-hpa
         helm.sh/chart: cache-0.1.0
     name: stateful-hpa-dev-cache

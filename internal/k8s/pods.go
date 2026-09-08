@@ -82,7 +82,7 @@ func (c *Client) GetPodInfo(ctx context.Context, podName string) (*PodInfo, erro
 
 // GetPodStatus retrieves pod status information for a release.
 func (c *Client) GetPodStatus(ctx context.Context, releaseName string) (int, int, string, error) {
-	req, err := labels.NewRequirement("app.kubernetes.io/instance", selection.Equals, []string{releaseName})
+	req, err := labels.NewRequirement(InstanceLabel, selection.Equals, []string{releaseName})
 	if err != nil {
 		return 0, 0, "0/0", fmt.Errorf("build selector for release %s: %w", releaseName, err)
 	}

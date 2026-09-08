@@ -1,14 +1,17 @@
 package list
 
 import (
+	"context"
 	"fmt"
 
 	"nabat.dev/nabat"
 
+	"deployah.dev/deployah/internal/action"
 	"deployah.dev/deployah/internal/cli"
 	"deployah.dev/deployah/internal/cmd/cmdopts"
-	"deployah.dev/deployah/internal/k8s"
 	"deployah.dev/deployah/internal/session"
+
+	v1 "helm.sh/helm/v4/pkg/release/v1"
 )
 
 // Options holds command-line flags for list.
@@ -60,25 +63,12 @@ func runList(c *nabat.Context) error {
 		return fmt.Errorf("helm client: %w", err)
 	}
 
-	selector, err := k8s.BuildLabelSelector(opts.Project, opts.Environment)
+	releases, err := listReleases(c, helmClient, *opts)
 	if err != nil {
-		return fmt.Errorf("build selector: %w", err)
+		return err
 	}
 
-	releases, err := helmClient.ListReleases(c, selector)
-	if err != nil {
-		return fmt.Errorf("list releases: %w", err)
-	}
-
-	// Filter nil releases
-	valid := releases[:0]
-	for _, r := range releases {
-		if r != nil {
-			valid = append(valid, r)
-		}
-	}
-
-	if len(valid) == 0 {
+	if len(releases) == 0 {
 		args := []any{}
 		if opts.Project != "" {
 			args = append(args, "project", opts.Project)
@@ -90,15 +80,28 @@ func runList(c *nabat.Context) error {
 		return nil
 	}
 
-	headers := []string{"PROJECT", "ENV", "STATUS", "REV", "AGE", "NAMESPACE"}
-	rows := make([][]string, 0, len(valid))
-	jsonData := make([]map[string]any, 0, len(valid))
+	headers, rows, jsonData := listOutput(releases)
+	return cli.Render(c, opts.OutputFormat, headers, rows, jsonData)
+}
 
-	for _, rel := range valid {
+func listReleases(ctx context.Context, lister action.ReleaseLister, opts Options) ([]*v1.Release, error) {
+	return action.NewList(lister).Run(ctx, action.ListParams{
+		Project:     opts.Project,
+		Environment: opts.Environment,
+	})
+}
+
+func listOutput(releases []*v1.Release) (headers []string, rows [][]string, jsonData []map[string]any) {
+	headers = []string{"PROJECT", "ENV", "INSTANCE", "STATUS", "REV", "AGE", "NAMESPACE"}
+	rows = make([][]string, 0, len(releases))
+	jsonData = make([]map[string]any, 0, len(releases))
+
+	for _, rel := range releases {
 		vm := cli.ReleaseToViewModel(rel)
 		rows = append(rows, []string{
 			vm.Project,
 			vm.Environment,
+			vm.Instance,
 			fmt.Sprintf("● %s", vm.Status),
 			fmt.Sprintf("%d", vm.Revision),
 			vm.Age,
@@ -107,12 +110,13 @@ func runList(c *nabat.Context) error {
 		jsonData = append(jsonData, map[string]any{
 			"project":     vm.Project,
 			"environment": vm.Environment,
+			"instance":    vm.Instance,
+			"release":     vm.Release,
 			"status":      vm.Status,
 			"revision":    vm.Revision,
 			"age":         vm.Age,
 			"namespace":   vm.Namespace,
 		})
 	}
-
-	return cli.Render(c, opts.OutputFormat, headers, rows, jsonData)
+	return headers, rows, jsonData
 }

@@ -24,6 +24,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"deployah.dev/deployah/internal/extras"
+	"deployah.dev/deployah/internal/helm"
 	"deployah.dev/deployah/internal/spec"
 )
 
@@ -246,6 +247,13 @@ metadata:
 		names = append(names, m.Obj.GetName())
 	}
 	assert.ElementsMatch(t, []string{"common", "review-only"}, names)
+	for _, m := range bundle.Manifests {
+		assert.Equal(t, "review", m.Obj.GetLabels()[spec.LabelEnvironment])
+		assert.NotEqual(t, "review-pr-42", m.Obj.GetLabels()[spec.LabelEnvironment])
+		assert.Equal(t, helm.GenerateReleaseName("demo", "review/pr-42"), m.Obj.GetLabels()[spec.LabelInstance])
+		assert.Equal(t, "review/pr-42", m.Obj.GetAnnotations()[spec.AnnotationEnvironmentInstance])
+		assert.NotContains(t, m.Obj.GetLabels(), "app.kubernetes.io/instance")
+	}
 }
 
 // TestLoad_MergesIdentityAndFillsNamespace exercises extras package behavior.
@@ -280,6 +288,8 @@ metadata:
 	assert.Equal(t, "data", obj.GetName())
 	assert.Equal(t, "shop", obj.GetLabels()[spec.LabelProject])
 	assert.Equal(t, "prod", obj.GetLabels()[spec.LabelEnvironment])
+	assert.Equal(t, helm.GenerateReleaseName("shop", "prod"), obj.GetLabels()[spec.LabelInstance])
+	assert.Equal(t, "prod", obj.GetAnnotations()[spec.AnnotationEnvironmentInstance])
 	assert.Equal(t, "mine", obj.GetLabels()["app"])
 	assert.Equal(t, spec.SourceManifests, obj.GetAnnotations()[spec.AnnotationSource])
 	assert.Equal(t, "shop", obj.GetAnnotations()[spec.AnnotationProject])
@@ -287,6 +297,59 @@ metadata:
 	assert.NotContains(t, obj.GetLabels(), spec.LabelComponent)
 	assert.NotContains(t, obj.GetLabels(), spec.LabelManagedBy)
 	assert.NotContains(t, obj.GetLabels(), spec.LabelVersion)
+}
+
+func TestLoad_PreservesUserHelmInstanceLabel(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".deployah", "manifests", "cm.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: data
+  labels:
+    app.kubernetes.io/instance: my-custom-app
+`)
+	bundle, err := extras.Load(extras.LoadConfig{
+		SpecDir:          dir,
+		Project:          "shop",
+		Environment:      "review/pr-123",
+		DeclaredEnvs:     []string{"review"},
+		ReleaseNamespace: "apps",
+		Scope:            &extras.TableResolver{},
+	})
+	require.NoError(t, err)
+	require.Len(t, bundle.Manifests, 1)
+	obj := bundle.Manifests[0].Obj
+	assert.Equal(t, "my-custom-app", obj.GetLabels()["app.kubernetes.io/instance"])
+	assert.Equal(t, helm.GenerateReleaseName("shop", "review/pr-123"), obj.GetLabels()[spec.LabelInstance])
+	assert.Equal(t, "review", obj.GetLabels()[spec.LabelEnvironment])
+	assert.Equal(t, "review/pr-123", obj.GetAnnotations()[spec.AnnotationEnvironmentInstance])
+}
+
+func TestLoad_ClusterScopedKeepsInstance(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".deployah", "manifests", "ns.yaml"), `
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: extra
+`)
+	bundle, err := extras.Load(extras.LoadConfig{
+		SpecDir:          dir,
+		Project:          "shop",
+		Environment:      "prod",
+		DeclaredEnvs:     []string{"prod"},
+		ReleaseNamespace: "apps",
+		Scope:            &extras.TableResolver{},
+	})
+	require.NoError(t, err)
+	require.Len(t, bundle.Manifests, 1)
+	obj := bundle.Manifests[0].Obj
+	assert.Equal(t, helm.GenerateReleaseName("shop", "prod"), obj.GetLabels()[spec.LabelInstance])
+	assert.Empty(t, obj.GetNamespace())
+	assert.NotContains(t, obj.GetLabels(), "app.kubernetes.io/instance")
 }
 
 // TestLoad_NamespaceMismatchFails exercises extras package behavior.
@@ -378,7 +441,9 @@ spec:
 	assert.Equal(t, "demo", obj.GetLabels()[spec.LabelProject])
 	assert.Equal(t, "custom", obj.GetLabels()["keep"])
 	assert.NotContains(t, obj.GetLabels(), spec.LabelEnvironment)
+	assert.NotContains(t, obj.GetLabels(), spec.LabelInstance)
 	assert.NotContains(t, obj.GetLabels(), spec.LabelManagedBy)
+	assert.NotContains(t, obj.GetAnnotations(), spec.AnnotationEnvironmentInstance)
 }
 
 // TestLoad_MissingRequiredFieldsFails exercises extras package behavior.

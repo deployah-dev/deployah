@@ -1,11 +1,15 @@
 package k8s
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/labels"
+
+	"deployah.dev/deployah/internal/helm"
+	"deployah.dev/deployah/internal/spec"
 )
 
 // TestSelectorBuilder_Build_Empty verifies an empty builder yields an
@@ -81,8 +85,7 @@ func TestSelectorBuilder_WithComponent(t *testing.T) {
 }
 
 // TestSelectorBuilder_WithEnvironment verifies environment label requirement
-// handling, including normalization of wildcard "/" environments to their
-// Kubernetes-safe form.
+// handling, including wildcard names using the logical MapKey.
 func TestSelectorBuilder_WithEnvironment(t *testing.T) {
 	t.Parallel()
 
@@ -94,8 +97,8 @@ func TestSelectorBuilder_WithEnvironment(t *testing.T) {
 		{name: "empty is a no-op", value: "", want: ""},
 		{name: "plain environment name is unchanged", value: "production", want: "deployah.dev/environment=production"},
 		{
-			name: "wildcard environment is normalized to k8s-safe form", value: "review/pr-42",
-			want: "deployah.dev/environment=review-pr-42",
+			name: "wildcard environment uses logical map key", value: "review/pr-42",
+			want: "deployah.dev/environment=review",
 		},
 	}
 
@@ -270,10 +273,10 @@ func TestBuildLabelSelector(t *testing.T) {
 			},
 		},
 		{
-			name: "environment only normalizes wildcard names", environment: "review/pr-7",
+			name: "environment only uses logical map key", environment: "review/pr-7",
 			check: func(t *testing.T, sel labels.Selector) {
 				t.Helper()
-				assert.Equal(t, "deployah.dev/environment=review-pr-7", sel.String())
+				assert.Equal(t, "deployah.dev/environment=review", sel.String())
 			},
 		},
 		{
@@ -290,7 +293,7 @@ func TestBuildLabelSelector(t *testing.T) {
 		},
 		{
 			name: "invalid environment value returns error", environment: "bad value!",
-			wantErr: true, errContains: "environment label",
+			wantErr: true, errContains: "invalid",
 		},
 	}
 
@@ -307,6 +310,93 @@ func TestBuildLabelSelector(t *testing.T) {
 			}
 			require.NoError(t, err)
 			tt.check(t, sel)
+		})
+	}
+}
+
+func TestBuildSelector_WildcardUsesMapKey(t *testing.T) {
+	t.Parallel()
+
+	got, err := BuildSelector("shop", "api", "review/pr-123")
+	require.NoError(t, err)
+	assert.Contains(t, got, "deployah.dev/environment=review")
+	assert.NotContains(t, got, "deployah.dev/environment=review-pr-123")
+	assert.NotContains(t, got, "deployah.dev/environment=review/pr-123")
+	assert.Contains(t, got, "app.kubernetes.io/instance="+helm.GenerateReleaseName("shop", "review/pr-123"))
+}
+
+func TestBuildLabelSelector_WildcardUsesMapKey(t *testing.T) {
+	t.Parallel()
+
+	sel, err := BuildLabelSelector("shop", "review/pr-123")
+	require.NoError(t, err)
+	got := sel.String()
+	assert.Contains(t, got, "deployah.dev/environment=review")
+	assert.NotContains(t, got, "deployah.dev/environment=review-pr-123")
+	assert.NotContains(t, got, "app.kubernetes.io/instance=")
+}
+
+func TestBuildSelector_InvalidWildcardRejected(t *testing.T) {
+	t.Parallel()
+
+	_, err := BuildSelector("shop", "api", "review/PR-123")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "lowercase DNS label")
+
+	_, err = BuildLabelSelector("shop", "review/foo/bar")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exactly one '/'")
+}
+
+func TestEnvironmentFromMeta(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		annotations map[string]string
+		want        string
+	}{
+		{name: "missing annotation"},
+		{
+			name: "plain production",
+			annotations: map[string]string{
+				spec.AnnotationEnvironmentInstance: "production",
+			},
+			want: "production",
+		},
+		{
+			name: "wildcard original",
+			annotations: map[string]string{
+				spec.AnnotationEnvironmentInstance: "review/pr-123",
+			},
+			want: "review/pr-123",
+		},
+		{
+			name: "long original",
+			annotations: map[string]string{
+				spec.AnnotationEnvironmentInstance: "review/" + strings.Repeat("a", 80),
+			},
+			want: "review/" + strings.Repeat("a", 80),
+		},
+		{
+			name: "empty and whitespace annotation",
+			annotations: map[string]string{
+				spec.AnnotationEnvironmentInstance: "   ",
+			},
+		},
+		{
+			name: "malformed annotation is returned as stored",
+			annotations: map[string]string{
+				spec.AnnotationEnvironmentInstance: "not a valid env!!!",
+			},
+			want: "not a valid env!!!",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, environmentFromMeta(tt.annotations))
 		})
 	}
 }

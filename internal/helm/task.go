@@ -303,18 +303,13 @@ func taskBaseChartValues(m *spec.Spec, name string, rt spec.ResolvedTask, desire
 		}
 	}
 
+	labels, annotations, podAnnotations := chartIdentity(m.Project, name, desiredEnvironment)
 	values := map[string]any{
-		"commonLabels": map[string]string{
-			spec.LabelProject:     m.Project,
-			spec.LabelComponent:   name,
-			spec.LabelEnvironment: spec.NormalizeEnv(desiredEnvironment).K8sSafe,
-		},
-		"commonAnnotations": map[string]string{
-			spec.AnnotationSource:  spec.SourceSpec,
-			spec.AnnotationProject: m.Project,
-		},
-		"image":     imageValues,
-		"resources": resources,
+		"commonLabels":      labels,
+		"commonAnnotations": annotations,
+		"podAnnotations":    podAnnotations,
+		"image":             imageValues,
+		"resources":         resources,
 		"service": map[string]any{
 			"enabled": false,
 		},
@@ -325,11 +320,10 @@ func taskBaseChartValues(m *spec.Spec, name string, rt spec.ResolvedTask, desire
 	if len(fields.Args) > 0 {
 		values["args"] = fields.Args
 	}
-	if len(fields.Env) > 0 {
-		values["envVars"] = fields.Env
-	}
+	applyRuntimeChartValues(values, rt.Runtime)
 	if applyErr := applyMergedProfile(values, rt.MergedProfile); applyErr != nil {
 		return nil, spec.TaskJobSpec{}, applyErr
 	}
+	restampChartIdentity(values, m.Project, name, desiredEnvironment)
 	return values, fields, nil
 }

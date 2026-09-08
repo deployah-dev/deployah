@@ -22,9 +22,11 @@ import (
 )
 
 // mergeIdentity applies Deployah identity labels/annotations and fills
-// namespace for namespaced objects. Reserved deployah.dev/* keys always win;
-// other common keys lose to the manifest. Names are never rewritten.
-func mergeIdentity(o *Object, project, environment, source, releaseNamespace string, namespaced bool) error {
+// namespace for namespaced objects. Reserved deployah.dev/* keys always
+// win; other common keys lose to the manifest. Names are never rewritten.
+// [spec.LabelInstance] is Deployah-owned. app.kubernetes.io/instance is
+// left to the user.
+func mergeIdentity(o *Object, project, environment, instance, original, source, releaseNamespace string, namespaced bool) error {
 	if namespaced {
 		ns := o.Obj.GetNamespace()
 		if ns == "" {
@@ -52,6 +54,10 @@ func mergeIdentity(o *Object, project, environment, source, releaseNamespace str
 	if keepEnv {
 		labels[spec.LabelEnvironment] = environment
 	}
+	keepInstance := source == spec.SourceManifests && instance != ""
+	if keepInstance {
+		labels[spec.LabelInstance] = instance
+	}
 	for k := range labels {
 		if !strings.HasPrefix(k, spec.LabelPrefix+"/") {
 			continue
@@ -60,6 +66,9 @@ func mergeIdentity(o *Object, project, environment, source, releaseNamespace str
 			continue
 		}
 		if keepEnv && k == spec.LabelEnvironment {
+			continue
+		}
+		if keepInstance && k == spec.LabelInstance {
 			continue
 		}
 		delete(labels, k)
@@ -72,12 +81,23 @@ func mergeIdentity(o *Object, project, environment, source, releaseNamespace str
 	}
 	annotations[spec.AnnotationSource] = source
 	annotations[spec.AnnotationProject] = project
+	keepOriginal := source == spec.SourceManifests && original != ""
+	if keepOriginal {
+		annotations[spec.AnnotationEnvironmentInstance] = original
+	}
 	// Strip any other reserved deployah.dev/* annotation keys the user set
 	// that we do not own, so they cannot impersonate reserved semantics.
 	for k := range annotations {
-		if strings.HasPrefix(k, spec.LabelPrefix+"/") && k != spec.AnnotationSource && k != spec.AnnotationProject {
-			delete(annotations, k)
+		if !strings.HasPrefix(k, spec.LabelPrefix+"/") {
+			continue
 		}
+		if k == spec.AnnotationSource || k == spec.AnnotationProject {
+			continue
+		}
+		if keepOriginal && k == spec.AnnotationEnvironmentInstance {
+			continue
+		}
+		delete(annotations, k)
 	}
 	o.Obj.SetAnnotations(annotations)
 

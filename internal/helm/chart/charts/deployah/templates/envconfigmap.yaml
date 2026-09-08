@@ -1,0 +1,26 @@
+{{- define "deployah.envconfigmap" -}}
+{{- if .Values.envFileValues }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "deployah.envconfigmap.name" . }}
+  namespace: {{ include "common.names.namespace" . | quote }}
+  {{- $labels := include "common.tplvalues.merge" (dict "values" (list .Values.labels .Values.commonLabels) "context" .) | fromYaml }}
+  labels: {{- include "common.labels.standard" ( dict "customLabels" $labels "context" $ ) | nindent 4 }}
+  annotations:
+    {{- if and .Values.job .Values.job.hook }}
+    helm.sh/hook: {{ .Values.job.hook | quote }}
+    helm.sh/hook-weight: {{ sub .Values.job.hookWeight 1 | quote }}
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    {{- end }}
+    {{- $annotations := include "common.tplvalues.merge" (dict "values" (list .Values.annotations .Values.commonAnnotations) "context" .) | fromYaml }}
+    {{- if $annotations }}
+    {{- include "common.tplvalues.render" ( dict "value" $annotations "context" $ ) | nindent 4 }}
+    {{- end }}
+data:
+  {{- range $key := keys .Values.envFileValues | sortAlpha }}
+  {{ $key | quote }}: {{ index $.Values.envFileValues $key | quote }}
+  {{- end }}
+{{- end }}
+{{- end -}}

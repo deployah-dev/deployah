@@ -118,6 +118,24 @@ func TestResolveEnvironment(t *testing.T) {
 			wantName:    "default",
 			wantEnvFile: "",
 		},
+		{
+			name:     "undeclared logical prefix of a wildcard instance is rejected",
+			platform: platform,
+			desired:  "qa/pr-123",
+			wantErr:  "not found in the platform file",
+		},
+		{
+			name:     "invalid wildcard instance syntax is rejected",
+			platform: platform,
+			desired:  "production/PR-123",
+			wantErr:  "instance id must be a lowercase DNS label",
+		},
+		{
+			name:     "nested wildcard suffix is rejected",
+			platform: platform,
+			desired:  "production/eu/west",
+			wantErr:  "exactly one '/'",
+		},
 	}
 
 	for _, tt := range tests {
@@ -226,127 +244,6 @@ func TestSanitizeEnvName(t *testing.T) {
 	}
 }
 
-// TestResolveEnvFileWithSanitization verifies env file resolution for names
-// containing wildcards and path separators.
-func TestResolveEnvFileWithSanitization(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name             string
-		envName          string
-		setupFiles       []string
-		expectedPath     string
-		expectedExplicit bool
-	}{
-		{
-			name:    "wildcard environment name finds sanitized file",
-			envName: "review/*",
-			setupFiles: []string{
-				".env.review", // Should find this file
-			},
-			expectedPath:     ".env.review",
-			expectedExplicit: false,
-		},
-		{
-			name:    "path separator environment name finds sanitized file",
-			envName: "feature/branch",
-			setupFiles: []string{
-				".env.featurebranch", // Should find this file
-			},
-			expectedPath:     ".env.featurebranch",
-			expectedExplicit: false,
-		},
-		{
-			name:    "multiple special chars in environment name",
-			envName: "dev/*/test?env",
-			setupFiles: []string{
-				".deployah/.env.devtestenv", // Should find this file in .deployah directory
-			},
-			expectedPath:     filepath.Join(".deployah", ".env.devtestenv"),
-			expectedExplicit: false,
-		},
-		{
-			name:    "fallback to default .env when sanitized file not found",
-			envName: "review/*",
-			setupFiles: []string{
-				".env", // Should fallback to this
-			},
-			expectedPath:     ".env",
-			expectedExplicit: false,
-		},
-		{
-			name:             "no files found",
-			envName:          "review/*",
-			setupFiles:       []string{},
-			expectedPath:     "",
-			expectedExplicit: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			specDir := t.TempDir()
-
-			for _, file := range tt.setupFiles {
-				full := filepath.Join(specDir, file)
-				dir := filepath.Dir(full)
-				mkdirErr := os.MkdirAll(dir, 0o750)
-				require.NoError(t, mkdirErr)
-				writeErr := os.WriteFile(full, []byte("TEST_VAR=test"), 0o600)
-				require.NoError(t, writeErr)
-			}
-
-			env := &Environment{}
-
-			path, explicit, resolveErr := resolveEnvFile(env, tt.envName, specDir)
-			require.NoError(t, resolveErr)
-			want := tt.expectedPath
-			if want != "" {
-				want = filepath.Join(specDir, tt.expectedPath)
-			}
-			assert.Equal(t, want, path)
-			assert.Equal(t, tt.expectedExplicit, explicit)
-		})
-	}
-}
-
-// TestResolveEnvFileExplicitWithWildcard verifies explicit env files work
-// when the environment name contains wildcards.
-func TestResolveEnvFileExplicitWithWildcard(t *testing.T) {
-	t.Parallel()
-
-	specDir := t.TempDir()
-
-	explicitFile := "custom.env"
-	err := os.WriteFile(filepath.Join(specDir, explicitFile), []byte("EXPLICIT_VAR=explicit"), 0o600)
-	require.NoError(t, err)
-
-	env := &Environment{
-		EnvFile: explicitFile,
-	}
-
-	path, explicit, err := resolveEnvFile(env, "review/*", specDir)
-	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(specDir, explicitFile), path)
-	assert.True(t, explicit)
-}
-
-// TestResolveEnvFile_MissingExplicitIncludesResolvedPath reports the
-// spec-relative envFile and the path resolved against specDir.
-func TestResolveEnvFile_MissingExplicitIncludesResolvedPath(t *testing.T) {
-	t.Parallel()
-
-	specDir := t.TempDir()
-	env := &Environment{EnvFile: "missing.env"}
-	path, explicit, err := resolveEnvFile(env, "dev", specDir)
-	require.Error(t, err)
-	assert.True(t, explicit)
-	assert.Empty(t, path)
-	assert.ErrorContains(t, err, `explicit envFile "missing.env" does not exist`)
-	assert.ErrorContains(t, err, filepath.Join(specDir, "missing.env"))
-}
-
 // TestLoad_EnvFileRelativeToSpecDir loads a spec whose .env.dev lives next
 // to the spec file, while the process cwd is elsewhere (no [os.Chdir]).
 func TestLoad_EnvFileRelativeToSpecDir(t *testing.T) {
@@ -362,10 +259,11 @@ components:
     environments: [dev]
 environments:
   dev:
-    envFile: .env.dev
+    variables:
+      IMAGE: nginx:1.27
 `
 	require.NoError(t, os.WriteFile(filepath.Join(specDir, "deployah.yaml"), []byte(specYAML), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(specDir, ".env.dev"), []byte("DPY_VAR_IMAGE=nginx:1.27\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(specDir, ".env.dev"), []byte("DPY_VAR_IMAGE=ignored\n"), 0o600))
 
 	got, err := Load(t.Context(), filepath.Join(specDir, "deployah.yaml"), "dev", nil)
 	require.NoError(t, err)
@@ -479,4 +377,133 @@ environments:
 	_, err := Load(t.Context(), "deployah.yaml", "production", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "profile")
+}
+
+const hookCycleSpecYAML = `apiVersion: v1-alpha.5
+project: shop
+components:
+  api:
+    image: busybox
+    env:
+      LOG_LEVEL: debug
+tasks:
+  migrate:
+    from: api
+    "on": preDeploy
+    after: [seed]
+    command: [migrate]
+  seed:
+    from: api
+    "on": preDeploy
+    after: [migrate]
+    command: [seed]
+environments:
+  staging: {}
+`
+
+func TestLoad_HookCycleIsHardError(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "deployah.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(hookCycleSpecYAML), 0o600))
+
+	_, err := Load(t.Context(), path, "staging", nil)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "cycle")
+}
+
+func TestLoad_AllowHookCycleForDisplay_DefersCycle(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "deployah.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(hookCycleSpecYAML), 0o600))
+
+	got, err := Load(t.Context(), path, "staging", nil, AllowHookCycleForDisplay())
+	require.NoError(t, err)
+	require.Contains(t, got.Tasks, "migrate")
+	require.Contains(t, got.Tasks, "seed")
+}
+
+func TestLoad_AllowHookCycleForDisplay_DefersSelfCycle(t *testing.T) {
+	t.Parallel()
+
+	const specYAML = `apiVersion: v1-alpha.5
+project: shop
+components:
+  api:
+    image: busybox
+tasks:
+  migrate:
+    from: api
+    "on": preDeploy
+    after: [migrate]
+    command: [migrate]
+environments:
+  staging: {}
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "deployah.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(specYAML), 0o600))
+
+	got, err := Load(t.Context(), path, "staging", nil, AllowHookCycleForDisplay())
+	require.NoError(t, err)
+	require.Contains(t, got.Tasks, "migrate")
+}
+
+func TestLoad_AllowHookCycleForDisplay_StillRejectsInvalidAfter(t *testing.T) {
+	t.Parallel()
+
+	const specYAML = `apiVersion: v1-alpha.5
+project: shop
+components:
+  api:
+    image: busybox
+tasks:
+  migrate:
+    from: api
+    "on": preDeploy
+    after: [missing]
+    command: [migrate]
+environments:
+  staging: {}
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "deployah.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(specYAML), 0o600))
+
+	_, err := Load(t.Context(), path, "staging", nil, AllowHookCycleForDisplay())
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "does not name a task")
+}
+
+func TestLoad_AllowHookCycleForDisplay_StillRejectsWrongAfterPhase(t *testing.T) {
+	t.Parallel()
+
+	const specYAML = `apiVersion: v1-alpha.5
+project: shop
+components:
+  api:
+    image: busybox
+tasks:
+  migrate:
+    from: api
+    "on": preDeploy
+    after: [seed]
+    command: [migrate]
+  seed:
+    from: api
+    "on": postDeploy
+    command: [seed]
+environments:
+  staging: {}
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "deployah.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(specYAML), 0o600))
+
+	_, err := Load(t.Context(), path, "staging", nil, AllowHookCycleForDisplay())
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "not in the same on phase")
 }

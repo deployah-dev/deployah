@@ -14,8 +14,10 @@
 
 package spec
 
-// ResolvedSpec is the load+platform+resolution result for one environment;
-// primary input to [MapSpecToChartValues], the hostname guard, and cache keys.
+// ResolvedSpec is the load+resolution result for one environment; primary
+// input to [MapSpecToChartValues], the hostname guard, and cache keys.
+// Platform may be nil during [Resolve]. A full Deployah render requires a
+// non-nil *ResolvedSpec; call [Resolve] first.
 //
 // Its deployah.resolved block, written to Helm chart values, has this contract:
 //
@@ -74,6 +76,9 @@ type ResolvedComponent struct {
 	// DomainKey is the logical domain key used for expose resolution.
 	// Empty when the component has no expose block.
 	DomainKey string
+	// Runtime is the resolved container environment for this component.
+	// Maps are read-only after [Resolve].
+	Runtime ResolvedRuntimeEnvironment
 }
 
 // ResolvedTask holds the merged, environment-filtered task used for chart
@@ -82,7 +87,9 @@ type ResolvedTask struct {
 	// Task is the task after from-merge and defaults.
 	Task Task
 	// HookWeight is the Helm hook-weight for preDeploy/postDeploy tasks.
-	// Zero for independent hooks; unused for manual tasks.
+	// Zero means an independent hook, or an unresolved fallback after
+	// [ResolveForDisplay] records a hook-ordering warning. Unused for
+	// manual tasks.
 	HookWeight int
 	// Profiles is the ordered list of profile names applied after default
 	// prepend. Empty when no profiles apply.
@@ -90,6 +97,9 @@ type ResolvedTask struct {
 	// MergedProfile is the left-to-right merge of Profiles. Nil when no
 	// profiles apply.
 	MergedProfile *PlatformProfile
+	// Runtime is the resolved container environment for this task.
+	// Maps are read-only after [Resolve].
+	Runtime ResolvedRuntimeEnvironment
 }
 
 // ResolutionReport holds the provenance of each resolved field, enabling
@@ -139,6 +149,9 @@ const (
 	ErrCodeProfileResourceExceeded       = "PROFILE_RESOURCE_EXCEEDED"
 	ErrCodeProfileOptOutBlocked          = "PROFILE_OPT_OUT_BLOCKED"
 	ErrCodeProfileMonitorLabelsMissing   = "PROFILE_MONITOR_LABELS_MISSING"
+	ErrCodeEnvFileNotFound               = "ENV_FILE_NOT_FOUND"
+	ErrCodeEnvFileReadError              = "ENV_FILE_READ_ERROR"
+	ErrCodeInvalidEnvKey                 = "INVALID_ENV_KEY"
 )
 
 // ResolutionError is a resolution error that carries a machine-readable code.

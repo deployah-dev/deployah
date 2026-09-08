@@ -1,0 +1,17 @@
+# $schema: ../../internal/spec/schema/v1-alpha.5/manifest.json
+apiVersion: v1-alpha.5
+project: revdemo
+components:
+  web:
+    image: nginx:latest
+    port: 80
+    environments: [review]
+    resourcePreset: nano
+tasks:
+  ping:
+    from: web
+    image: busybox:1.36
+    "on": manual
+    command: ["true"]
+environments:
+  review: {}

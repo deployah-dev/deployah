@@ -193,11 +193,10 @@ func (suite *IntegrationTestSuite) setupScenarioEnvironment(t *testing.T, scenar
 	return testDir
 }
 
-// loadAndResolve loads the manifest (and optional platform file), resolves the
-// environment, and runs [spec.Resolve] when a platform is present.
+// loadAndResolve loads the scenario spec and runs [spec.Resolve].
 func (suite *IntegrationTestSuite) loadAndResolve(t *testing.T, scenario TestScenario) (*spec.Spec, string, *spec.ResolvedSpec, *spec.PlatformConfig, error) {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	var platform *spec.PlatformConfig
 	if scenario.PlatformFile != "" {
@@ -217,10 +216,7 @@ func (suite *IntegrationTestSuite) loadAndResolve(t *testing.T, scenario TestSce
 		return nil, "", nil, platform, err
 	}
 
-	if platform == nil {
-		return manifest, envName, nil, nil, nil
-	}
-
+	// Resolve even when platform is nil so runtime env reaches the chart.
 	envIdentity := spec.NormalizeEnv(envName)
 	resolved, _, err := spec.Resolve(manifest, platform, envIdentity, spec.SubstitutionReport{})
 	if err != nil {
@@ -259,7 +255,7 @@ func (suite *IntegrationTestSuite) renderChart(t *testing.T, testDir string, man
 		return nil, fmt.Errorf("load extras: %w", loadErr)
 	}
 
-	result, cleanup, err := client.RenderOffline(context.Background(), manifest, environment, resolved, bundle.PostRendererFor())
+	result, cleanup, err := client.RenderOffline(context.Background(), resolved, bundle.PostRendererFor())
 	if cleanup != nil {
 		t.Cleanup(cleanup)
 	}

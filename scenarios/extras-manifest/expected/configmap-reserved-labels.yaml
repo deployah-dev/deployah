@@ -4,12 +4,14 @@ data:
 kind: ConfigMap
 metadata:
     annotations:
+        deployah.dev/environment-instance: dev
         deployah.dev/project: extras-manifest
         deployah.dev/source: manifests
         note: keep
     labels:
         app: keep-me
         deployah.dev/environment: dev
+        deployah.dev/instance: extras-manifest-dev
         deployah.dev/project: extras-manifest
     name: reserved-labels
     namespace: default

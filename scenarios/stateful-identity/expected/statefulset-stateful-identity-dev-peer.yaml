@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
     annotations:
+        deployah.dev/environment-instance: dev
         deployah.dev/project: stateful-identity
         deployah.dev/source: spec
     labels:
@@ -10,6 +11,7 @@ metadata:
         app.kubernetes.io/name: peer
         deployah.dev/component: peer
         deployah.dev/environment: dev
+        deployah.dev/instance: stateful-identity-dev
         deployah.dev/project: stateful-identity
         helm.sh/chart: peer-0.1.0
     name: stateful-identity-dev-peer
@@ -25,13 +27,15 @@ spec:
     serviceName: stateful-identity-dev-peer-headless
     template:
         metadata:
-            annotations: null
+            annotations:
+                deployah.dev/environment-instance: dev
             labels:
                 app.kubernetes.io/instance: stateful-identity-dev
                 app.kubernetes.io/managed-by: Helm
                 app.kubernetes.io/name: peer
                 deployah.dev/component: peer
                 deployah.dev/environment: dev
+                deployah.dev/instance: stateful-identity-dev
                 deployah.dev/project: stateful-identity
                 helm.sh/chart: peer-0.1.0
         spec:

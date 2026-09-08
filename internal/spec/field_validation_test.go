@@ -137,6 +137,7 @@ func TestValidateEnvName(t *testing.T) {
 			wantContains: `"/*" suffix is not supported`,
 		},
 		{name: "slash is invalid", input: "review/pr-123", expectErr: true},
+		{name: "consecutive dashes are reserved", input: "review--x", expectErr: true},
 	}
 
 	for _, tt := range tests {

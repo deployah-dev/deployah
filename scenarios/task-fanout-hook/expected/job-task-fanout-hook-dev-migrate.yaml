@@ -2,6 +2,7 @@ apiVersion: batch/v1
 kind: Job
 metadata:
     annotations:
+        deployah.dev/environment-instance: dev
         deployah.dev/project: task-fanout-hook
         deployah.dev/source: spec
         helm.sh/hook: pre-install,pre-upgrade
@@ -13,6 +14,7 @@ metadata:
         app.kubernetes.io/name: migrate
         deployah.dev/component: migrate
         deployah.dev/environment: dev
+        deployah.dev/instance: task-fanout-hook-dev
         deployah.dev/project: task-fanout-hook
         helm.sh/chart: migrate-0.1.0
     name: task-fanout-hook-dev-migrate
@@ -25,12 +27,15 @@ spec:
     parallelism: 1
     template:
         metadata:
+            annotations:
+                deployah.dev/environment-instance: dev
             labels:
                 app.kubernetes.io/instance: task-fanout-hook-dev
                 app.kubernetes.io/managed-by: Helm
                 app.kubernetes.io/name: migrate
                 deployah.dev/component: migrate
                 deployah.dev/environment: dev
+                deployah.dev/instance: task-fanout-hook-dev
                 deployah.dev/project: task-fanout-hook
                 helm.sh/chart: migrate-0.1.0
         spec:

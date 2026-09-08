@@ -130,16 +130,12 @@ func runDeploy(c *nabat.Context) error {
 	// Resolve using the substituted manifest (so expanded subdomains pass DNS
 	// validation) with the raw prescan report (so dynamic fields are skipped).
 	envIdentity := spec.NormalizeEnv(opts.Environment)
-	var resolvedSpec *spec.ResolvedSpec
-	if platform != nil {
-		var report *spec.ResolutionReport
-		resolvedSpec, report, err = spec.Resolve(manifest, platform, envIdentity, substReport)
-		if err != nil {
-			if report != nil && report.ErrorCode != "" {
-				return fmt.Errorf("resolution failed (%s): %w", report.ErrorCode, err)
-			}
-			return fmt.Errorf("resolution failed: %w", err)
+	resolvedSpec, report, err := spec.Resolve(manifest, platform, envIdentity, substReport)
+	if err != nil {
+		if report != nil && report.ErrorCode != "" {
+			return fmt.Errorf("resolution failed (%s): %w", report.ErrorCode, err)
 		}
+		return fmt.Errorf("resolution failed: %w", err)
 	}
 
 	if opts.Explain && resolvedSpec != nil {
@@ -202,7 +198,7 @@ func runDeploy(c *nabat.Context) error {
 	}
 	postRenderer := bundle.PostRendererFor()
 
-	plan, err := computePlan(c, helmClient, cluster, manifest, opts.Environment, resolvedSpec, postRenderer)
+	plan, err := computePlan(c, helmClient, cluster, resolvedSpec, postRenderer)
 	if err != nil {
 		return err
 	}
@@ -311,13 +307,13 @@ func confirmApply(c *nabat.Context, opts *Options, prompt string) (proceed bool,
 // computePlan renders the chart client-side and diffs it against the last
 // successful release. It never mutates the cluster or Helm's release history.
 // The caller must invoke deployPlan.cleanup when finished with the result.
-func computePlan(c *nabat.Context, helmClient session.HelmClient, cluster *session.Cluster, manifest *spec.Spec, environment string, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) (*deployPlan, error) {
-	diff, result, cleanup, err := planengine.BuildPlan(c, helmClient, manifest, environment, cluster.Context(), resolved, postRenderer)
+func computePlan(c *nabat.Context, helmClient session.HelmClient, cluster *session.Cluster, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) (*deployPlan, error) {
+	p, result, cleanup, err := planengine.BuildPlan(c, helmClient, cluster.Context(), resolved, postRenderer)
 	if err != nil {
 		cleanup()
 		return nil, fmt.Errorf("%w%s", err, cmdopts.ClusterHint(err))
 	}
-	return &deployPlan{diff: diff, result: result, cleanup: cleanup}, nil
+	return &deployPlan{diff: p, result: result, cleanup: cleanup}, nil
 }
 
 // skipDeploy handles a plan with no changes and no CRDs: Helm is never
@@ -398,7 +394,7 @@ func applyBundleCRDs(c *nabat.Context, sess *session.Session, cluster *session.C
 // non-empty, PVC expansion (and StatefulSet orphan-delete when needed) run
 // before Helm.
 func applyDeploy(c *nabat.Context, sess *session.Session, cluster *session.Cluster, helmClient session.HelmClient, platform *spec.PlatformConfig, manifest *spec.Spec, opts *Options, resolved *spec.ResolvedSpec, plan *deployPlan, k8sClient kubernetes.Interface, k8sErr error, bundle *extras.Bundle, postRenderer postrenderer.PostRenderer, resizes []persistenceResize) error {
-	verify, verifyCleanup, err := helmClient.RenderManifests(c, manifest, opts.Environment, resolved, postRenderer)
+	verify, verifyCleanup, err := helmClient.RenderManifests(c, resolved, postRenderer)
 	if verifyCleanup != nil {
 		defer verifyCleanup()
 	}
@@ -461,7 +457,7 @@ func applyDeploy(c *nabat.Context, sess *session.Session, cluster *session.Clust
 				watcher.Run(watchCtx, st)
 			})
 		}
-		helmErr := helmClient.InstallApp(c, manifest, opts.Environment, false, resolved, postRenderer)
+		helmErr := helmClient.InstallApp(c, false, resolved, postRenderer)
 		if cancel != nil {
 			cancel()
 		}

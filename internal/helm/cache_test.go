@@ -43,11 +43,13 @@ func TestPrepareChart_CacheSurvivesCallerCleanup(t *testing.T) {
 		Components: map[string]spec.Component{"web": serviceComponent()},
 	}
 	require.NoError(t, spec.FillSpecWithDefaults(manifest, spec.CurrentManifestVersion))
-
-	returnedPath, err := PrepareChart(t.Context(), manifest, "production", nil, cache)
+	resolved, _, err := spec.Resolve(manifest, nil, spec.NormalizeEnv("production"), spec.SubstitutionReport{})
 	require.NoError(t, err)
 
-	key, err := cache.GenerateKey(manifest, "production", nil)
+	returnedPath, err := PrepareChart(t.Context(), resolved, cache)
+	require.NoError(t, err)
+
+	key, err := cache.GenerateKey("production", resolved)
 	require.NoError(t, err)
 
 	cachedPath, found := cache.get(key)
@@ -88,7 +90,7 @@ func removeChartDir(tb testing.TB, path string) {
 // TestPrepareChart_RequiresCache verifies PrepareChart rejects a nil cache.
 func TestPrepareChart_RequiresCache(t *testing.T) {
 	t.Parallel()
-	_, err := PrepareChart(t.Context(), &spec.Spec{Project: "x"}, "prod", nil, nil)
+	_, err := PrepareChart(t.Context(), nil, nil)
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "chart cache is required")
 }
@@ -207,15 +209,12 @@ func TestPrepareChart_CanceledContextReturnsImmediately(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	_, err := PrepareChart(ctx, &spec.Spec{Project: "x"}, "prod", nil, NewChartCache(time.Hour))
+	_, err := PrepareChart(ctx, nil, NewChartCache(time.Hour))
 	require.ErrorIs(t, err, context.Canceled)
 }
 
-// TestGenerateKey_ResolvedSpecContentInvalidates verifies that when resolved
-// is non-nil, changes to resolved.Spec change the cache key. Callers must
-// keep the separate manifest parameter consistent with resolved.Spec (see
-// [PrepareChart]); a mismatched manifest would not invalidate the key on
-// its own.
+// TestGenerateKey_ResolvedSpecContentInvalidates verifies that changes to
+// resolved.Spec change the cache key.
 func TestGenerateKey_ResolvedSpecContentInvalidates(t *testing.T) {
 	t.Parallel()
 	cache := NewChartCache(time.Hour)
@@ -243,16 +242,81 @@ func TestGenerateKey_ResolvedSpecContentInvalidates(t *testing.T) {
 	resolvedA := &spec.ResolvedSpec{Spec: base, Env: spec.NormalizeEnv("production")}
 	resolvedB := &spec.ResolvedSpec{Spec: changed, Env: spec.NormalizeEnv("production")}
 
-	keyA, err := cache.GenerateKey(base, "production", resolvedA)
+	keyA, err := cache.GenerateKey("production", resolvedA)
 	require.NoError(t, err)
-	keyB, err := cache.GenerateKey(base, "production", resolvedB)
+	keyB, err := cache.GenerateKey("production", resolvedB)
 	require.NoError(t, err)
 	assert.NotEqual(t, keyA, keyB, "resolved.Spec content must be part of the cache key")
+}
 
-	// Same resolved, different manifest argument: key is unchanged. This is
-	// why PrepareChart documents that manifest must match resolved.Spec.
-	keySameResolved, err := cache.GenerateKey(changed, "production", resolvedA)
+func TestGenerateKey_RequiresResolvedSpec(t *testing.T) {
+	t.Parallel()
+	_, err := NewChartCache(time.Hour).GenerateKey("production", nil)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "resolved spec is required")
+}
+
+func TestGenerateKey_RuntimePlatformAndEnvironmentInvalidate(t *testing.T) {
+	t.Parallel()
+	cache := NewChartCache(time.Hour)
+
+	base := &spec.ResolvedSpec{
+		Spec: &spec.Spec{Project: "cache-key"},
+		Env:  spec.NormalizeEnv("production"),
+		Components: map[string]spec.ResolvedComponent{
+			"api": {
+				FQDN:    "api.example.com",
+				TLSMode: spec.TLSModeCertManager,
+				Runtime: spec.ResolvedRuntimeEnvironment{
+					ExplicitValues: map[string]string{"LOG_LEVEL": "debug"},
+				},
+			},
+		},
+	}
+	runtimeChanged := &spec.ResolvedSpec{
+		Spec: base.Spec,
+		Env:  base.Env,
+		Components: map[string]spec.ResolvedComponent{
+			"api": {
+				FQDN:    "api.example.com",
+				TLSMode: spec.TLSModeCertManager,
+				Runtime: spec.ResolvedRuntimeEnvironment{
+					ExplicitValues: map[string]string{"LOG_LEVEL": "info"},
+				},
+			},
+		},
+	}
+	platformChanged := &spec.ResolvedSpec{
+		Spec: base.Spec,
+		Env:  base.Env,
+		Components: map[string]spec.ResolvedComponent{
+			"api": {
+				FQDN:    "api.other.example.com",
+				TLSMode: spec.TLSModeCertManager,
+				Runtime: spec.ResolvedRuntimeEnvironment{
+					ExplicitValues: map[string]string{"LOG_LEVEL": "debug"},
+				},
+			},
+		},
+	}
+
+	keyBase, err := cache.GenerateKey("production", base)
 	require.NoError(t, err)
-	assert.Equal(t, keyA, keySameResolved,
-		"GenerateKey hashes resolved when non-nil, not the separate manifest parameter")
+	keyRuntime, err := cache.GenerateKey("production", runtimeChanged)
+	require.NoError(t, err)
+	keyPlatform, err := cache.GenerateKey("production", platformChanged)
+	require.NoError(t, err)
+	keyEnv, err := cache.GenerateKey("staging", base)
+	require.NoError(t, err)
+
+	assert.NotEqual(t, keyBase, keyRuntime, "ResolvedSpec.Runtime must be part of the cache key")
+	assert.NotEqual(t, keyBase, keyPlatform, "resolved platform fields must be part of the cache key")
+	assert.NotEqual(t, keyBase, keyEnv, "environment must be part of the cache key")
+}
+
+func TestPrepareChart_RequiresResolvedSpec(t *testing.T) {
+	t.Parallel()
+	_, err := PrepareChart(t.Context(), nil, NewChartCache(time.Hour))
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "render requires resolved spec")
 }

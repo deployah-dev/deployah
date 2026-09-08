@@ -9,7 +9,11 @@ Show the fully resolved configuration for a given environment.
 resolve is offline: it never contacts a Kubernetes cluster. It loads the
 platform file (deployah.platform.yaml) when present and performs full
 resolution, including FQDN construction and TLS mode selection. When the
-platform file is absent the output is partial and includes PLATFORM_NOT_FOUND.
+platform file is absent the output is partial and a warning is recorded.
+
+It prints resolved runtime FileValues and ExplicitValues in text and JSON.
+Those maps are not a secret store; do not treat resolve output as
+secret-safe CI output.
 
 With --environments it instead lists every environment from the spec and
 platform files: where each is registered, its context (or the kubeconfig

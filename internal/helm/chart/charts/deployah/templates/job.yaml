@@ -1,5 +1,8 @@
 {{- define "deployah.job" -}}
-{{- if .Values.job.enabled -}}
+{{- if .Values.envFileValues }}
+{{ include "deployah.envconfigmap" . }}
+{{- end }}
+{{- if .Values.job.enabled }}
 ---
 apiVersion: batch/v1
 kind: Job
@@ -63,13 +66,12 @@ spec:
           args: {{- toYaml .Values.args | nindent 12 }}
           {{- end }}
           {{- if .Values.envVars }}
-          env:
-            {{- $env := .Values.envVars }}
-            {{- range $key := keys $env | sortAlpha }}
-            {{- $val := index $env $key }}
-            - name: {{ $key | quote }}
-              value: {{ $val | quote }}
-            {{- end }}
+          env: {{- include "deployah.toEnvArray" (dict "envVars" .Values.envVars) | indent 12 }}
+          {{- end }}
+          {{- if .Values.envFileValues }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "deployah.envconfigmap.name" . }}
           {{- end }}
           {{- if .Values.resources }}
           resources: {{- toYaml .Values.resources | nindent 12 }}

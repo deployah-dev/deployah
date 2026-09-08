@@ -77,44 +77,122 @@ type ChartData struct {
 }
 
 // GenerateReleaseName returns the Helm release name for project and
-// environment. Format: PROJECT_NAME-ENVIRONMENT_NAME.
+// environment. It is the single Helm-facing wrapper around
+// [spec.EnvIdentity.ReleaseName].
 func GenerateReleaseName(projectName, environmentName string) string {
-	// K8sSafe: wildcard names like "review/pr-42" contain "/", which is
-	// illegal in release names and label values.
-	return projectName + "-" + spec.NormalizeEnv(environmentName).K8sSafe
+	return spec.NormalizeEnv(environmentName).ReleaseName(projectName)
 }
 
-// PrepareChart expands the embedded chart into a temporary directory,
-// rendering .gotmpl files with Go templates and Sprig functions, and returns
-// the prepared chart root directory. Identical charts are reused via cache.
+// validateReleaseEnvironment rejects concrete instance names that cannot
+// become a Helm release. Empty environment is allowed for callers that
+// omit the filter.
+func validateReleaseEnvironment(environment string) error {
+	if environment == "" {
+		return nil
+	}
+	return spec.ValidateRequestedEnv(environment)
+}
+
+// chartIdentity is project, component, and environment metadata for generated
+// chart resources. [spec.LabelInstance] is the Helm release name.
+func chartIdentity(project, component, environment string) (labels, annotations, podAnnotations map[string]string) {
+	env := spec.NormalizeEnv(environment)
+	release := env.ReleaseName(project)
+	labels = map[string]string{
+		spec.LabelProject:     project,
+		spec.LabelComponent:   component,
+		spec.LabelEnvironment: env.MapKey,
+		spec.LabelInstance:    release,
+	}
+	annotations = map[string]string{
+		spec.AnnotationSource:              spec.SourceSpec,
+		spec.AnnotationProject:             project,
+		spec.AnnotationEnvironmentInstance: env.Original,
+	}
+	podAnnotations = map[string]string{
+		spec.AnnotationEnvironmentInstance: env.Original,
+	}
+	return labels, annotations, podAnnotations
+}
+
+// restampChartIdentity writes reserved Deployah identity keys after profile
+// labels may have overwritten them, and keeps the Original annotation on pods.
+func restampChartIdentity(values map[string]any, project, component, environment string) {
+	labels, annotations, podAnns := chartIdentity(project, component, environment)
+	commonLabels := cloneStringMap(values["commonLabels"])
+	maps.Copy(commonLabels, labels)
+	values["commonLabels"] = commonLabels
+
+	commonAnns := cloneStringMap(values["commonAnnotations"])
+	maps.Copy(commonAnns, annotations)
+	values["commonAnnotations"] = commonAnns
+
+	merged := cloneStringMap(values["podAnnotations"])
+	maps.Copy(merged, podAnns)
+	values["podAnnotations"] = merged
+}
+
+// cloneStringMap copies v when it is a map[string]string.
+func cloneStringMap(v any) map[string]string {
+	m, ok := v.(map[string]string)
+	if !ok || m == nil {
+		return map[string]string{}
+	}
+	return maps.Clone(m)
+}
+
+// requireResolvedSpec reports an error unless resolved is a [spec.Resolve]
+// result: Spec set, Components and Tasks maps allocated (possibly empty).
+func requireResolvedSpec(resolved *spec.ResolvedSpec) error {
+	if resolved == nil {
+		return errors.New("render requires resolved spec; call spec.Resolve first")
+	}
+	if resolved.Spec == nil {
+		return errors.New("render requires resolved spec source")
+	}
+	if resolved.Components == nil || resolved.Tasks == nil {
+		return errors.New("render requires spec.Resolve result")
+	}
+	return nil
+}
+
+// releaseIdentity is the single derivation of Helm release name and labels
+// from [spec.ResolvedSpec]. Render, dry-run, and install all use this.
+func releaseIdentity(resolved *spec.ResolvedSpec) (string, map[string]string, error) {
+	if err := requireResolvedSpec(resolved); err != nil {
+		return "", nil, err
+	}
+	env := resolved.Env
+	return GenerateReleaseName(resolved.Spec.Project, env.Original), map[string]string{
+		"deployah.dev/project":     resolved.Spec.Project,
+		"deployah.dev/environment": env.MapKey,
+		"deployah.dev/managed-by":  "deployah",
+		"deployah.dev/version":     resolved.Spec.APIVersion,
+	}, nil
+}
+
+// PrepareChart expands the embedded chart into a temporary directory and
+// returns the chart root. Identical charts are reused via cache. A nil or
+// unresolved spec is an error; cache must be non-nil.
 //
-// cache must be non-nil. If ctx is already canceled or past its deadline,
-// PrepareChart returns [context.Canceled] or [context.DeadlineExceeded]
-// immediately; chart expansion itself is not interrupted mid-flight.
-//
-// When resolved is non-nil, the cache key hashes resolved (including
-// [spec.ResolvedSpec.Spec]), not the separate manifest parameter. Callers
-// must pass a manifest consistent with resolved.Spec: chart rendering still
-// reads component names and project from manifest, so a mismatched pair
-// could reuse a stale chart.
-//
-// On a cache miss, every 10th entry may start a background goroutine that
-// removes expired cache directories; that work outlives this call.
-//
-// Errors: [context.Canceled], [context.DeadlineExceeded], or a wrapped
-// error when cache is nil or chart generation fails.
-func PrepareChart(ctx context.Context, manifest *spec.Spec, desiredEnvironment string, resolved *spec.ResolvedSpec, cache *ChartCache) (string, error) {
+// If ctx is already canceled, PrepareChart returns [context.Canceled] or
+// [context.DeadlineExceeded] immediately. On a cache miss, every 10th
+// entry may start a background goroutine that removes expired cache
+// directories.
+func PrepareChart(ctx context.Context, resolved *spec.ResolvedSpec, cache *ChartCache) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
 	if cache == nil {
 		return "", errors.New("chart cache is required")
 	}
+	if err := requireResolvedSpec(resolved); err != nil {
+		return "", err
+	}
+	manifest := resolved.Spec
+	desiredEnvironment := resolved.Env.Original
 
-	// Generate comprehensive cache key based on resolved spec (or raw spec if
-	// no platform resolution was performed), the target environment, and
-	// embedded chart templates.
-	cacheKey, err := cache.GenerateKey(manifest, desiredEnvironment, resolved)
+	cacheKey, err := cache.GenerateKey(desiredEnvironment, resolved)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate cache key: %w", err)
 	}
@@ -134,7 +212,7 @@ func PrepareChart(ctx context.Context, manifest *spec.Spec, desiredEnvironment s
 
 	// Resolve the sub-chart names once, before creating anything on disk, so
 	// Chart.yaml and the sub-chart directories below cannot disagree.
-	componentNames := activeComponentNames(manifest, desiredEnvironment)
+	componentNames := slices.Sorted(maps.Keys(resolved.Components))
 	hookNames, err := hookTaskNames(manifest, desiredEnvironment, resolved)
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve task sub-chart names: %w", err)
@@ -248,12 +326,8 @@ func PrepareChart(ctx context.Context, manifest *spec.Spec, desiredEnvironment s
 	return createChartCopy(tmpDir)
 }
 
-// createComponentSubCharts creates a sub-chart directory for each name in
-// componentNames, as returned by [activeComponentNames]. A component
-// excluded from the target environment is absent from that list and gets no
-// subchart at all: an empty subchart would still render default-valued
-// resources (e.g. a Service from app.yaml's base values.yaml), leaking them
-// into an environment the component was never meant to reach.
+// createComponentSubCharts writes a sub-chart for each name. Names not in
+// the list get no subchart; an empty subchart would still render defaults.
 func createComponentSubCharts(chartDir string, componentNames []string) error {
 	chartsDir := filepath.Join(chartDir, "charts")
 	if err := os.MkdirAll(chartsDir, 0o750); err != nil {
@@ -301,9 +375,22 @@ func createComponentAppTemplate(templatesDir string) error {
 	return os.WriteFile(filepath.Join(templatesDir, "app.yaml"), []byte(appTemplate), 0o600)
 }
 
+// chartComponentNames returns the sorted names of components to render.
+// When resolved is non-nil, [spec.ResolvedSpec.Components] is the active
+// set. Otherwise names are filtered from the spec for desiredEnvironment.
+func chartComponentNames(manifest *spec.Spec, desiredEnvironment string, resolved *spec.ResolvedSpec) []string {
+	if resolved != nil {
+		return slices.Sorted(maps.Keys(resolved.Components))
+	}
+	return activeComponentNames(manifest, desiredEnvironment)
+}
+
 // activeComponentNames returns the sorted names of the components that get a
-// sub-chart in desiredEnvironment.
+// sub-chart in desiredEnvironment when no [spec.ResolvedSpec] is available.
 func activeComponentNames(manifest *spec.Spec, desiredEnvironment string) []string {
+	if manifest == nil {
+		return nil
+	}
 	names := make([]string, 0, len(manifest.Components))
 	for name, component := range manifest.Components {
 		if componentActiveInEnvironment(component, desiredEnvironment) {
@@ -314,12 +401,8 @@ func activeComponentNames(manifest *spec.Spec, desiredEnvironment string) []stri
 	return names
 }
 
-// componentActiveInEnvironment reports whether component belongs in the
-// chart for desiredEnvironment: true when it has no explicit Environments
-// filter (active everywhere), or desiredEnvironment matches one of them
-// via [spec.MatchEnvKey] (the same matcher [spec.Resolve] uses). Shared by
-// [MapSpecToChartValues] and [activeComponentNames] so values and sub-charts
-// agree on the active component set.
+// componentActiveInEnvironment reports whether component is active in
+// desiredEnvironment. An empty Environments list means every environment.
 func componentActiveInEnvironment(component spec.Component, desiredEnvironment string) bool {
 	if len(component.Environments) == 0 {
 		return true
@@ -333,40 +416,33 @@ func componentActiveInEnvironment(component spec.Component, desiredEnvironment s
 const resolvedSchemaVersion = "1"
 
 // MapSpecToChartValues converts a spec into Helm chart values for the given
-// environment (resolved, if non-nil, supplies FQDN/TLS) and writes a
-// deployah.resolved block so the hostname guard can compare across deploys.
+// environment and writes a deployah.resolved block so the hostname guard can
+// compare across deploys.
+//
+// When resolved is non-nil, resolved.Components is the active set and
+// resolved.Spec (when set) replaces m as the component definition source.
 func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string, resolved *spec.ResolvedSpec) (map[string]any, error) {
+	if resolved != nil && resolved.Spec != nil {
+		m = resolved.Spec
+	}
 	values := make(map[string]any)
 	// Track resolved per-component data for the deployah.resolved block.
 	resolvedComponents := make(map[string]any)
 
-	for componentName, component := range m.Components {
-		// Skip component if it is not deployed in the desired environment.
-		// Same matcher as spec.Resolve, so wildcard deploys agree on the
-		// active component set.
-		if !componentActiveInEnvironment(component, desiredEnvironment) {
+	for _, componentName := range chartComponentNames(m, desiredEnvironment, resolved) {
+		component, found := m.Components[componentName]
+		if !found {
 			continue
 		}
 
+		labels, annotations, podAnnotations := chartIdentity(m.Project, componentName, desiredEnvironment)
 		componentValues := map[string]any{
-			"commonLabels": map[string]string{
-				spec.LabelProject:     m.Project,
-				spec.LabelComponent:   componentName,
-				spec.LabelEnvironment: spec.NormalizeEnv(desiredEnvironment).K8sSafe,
-			},
-			"commonAnnotations": map[string]string{
-				spec.AnnotationSource:  spec.SourceSpec,
-				spec.AnnotationProject: m.Project,
-			},
+			"commonLabels":      labels,
+			"commonAnnotations": annotations,
+			"podAnnotations":    podAnnotations,
 		}
 
-		// TODO: Implement handling for component envFile
-		//   Exclude Deployah-specific environment variables (those prefixed with DPY_VAR_) and provide the remaining variables to the component
-
-		// TODO: Implement component configFile -- deep-merge config.yaml <
-		// config.<env>.yaml < config.<component>.yaml < config.<component>.<env>.yaml.
-
-		// TODO: Add support for component env, The user can specify the environment variables for the component e.g. NODE_ENV=roduction
+		// TODO(#114): deliver configFile as its own mounted artifact.
 
 		image := ""
 		tag := ""
@@ -510,7 +586,6 @@ func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string, resolved *spe
 
 		componentValues["image"] = imageValues
 
-		//
 		if len(component.Command) > 0 {
 			componentValues["command"] = component.Command
 		}
@@ -556,13 +631,16 @@ func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string, resolved *spe
 			entry["persistenceSize"] = component.Persistence.Size
 		}
 
+		// Nil resolved omits runtime env; it is not a full Deployah render.
 		if resolved != nil {
 			if rc, ok := resolved.Components[componentName]; ok {
+				applyRuntimeChartValues(componentValues, rc.Runtime)
 				if rc.MergedProfile != nil {
 					if err := applyMergedProfile(componentValues, rc.MergedProfile); err != nil {
 						return nil, fmt.Errorf("component %s: apply profile values: %w", componentName, err)
 					}
 				}
+				restampChartIdentity(componentValues, m.Project, componentName, desiredEnvironment)
 				if len(rc.Profiles) > 0 {
 					entry["profiles"] = rc.Profiles
 				}
@@ -588,18 +666,23 @@ func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string, resolved *spe
 		return nil, err
 	}
 
+	env := spec.NormalizeEnv(desiredEnvironment)
+	deployahVals, ok := values["deployah"].(map[string]any)
+	if !ok || deployahVals == nil {
+		deployahVals = map[string]any{}
+	}
+	deployahVals["environmentInstance"] = env.Original
+
 	// Write the deployah.resolved block so the hostname guard can compare
 	// values across deploys, and so plan/guards can see active tasks.
 	if len(resolvedComponents) > 0 || len(resolvedTasks) > 0 {
-		deployahVals := map[string]any{
-			"resolved": map[string]any{
-				"schemaVersion": resolvedSchemaVersion,
-				"components":    resolvedComponents,
-				"tasks":         resolvedTasks,
-			},
+		deployahVals["resolved"] = map[string]any{
+			"schemaVersion": resolvedSchemaVersion,
+			"components":    resolvedComponents,
+			"tasks":         resolvedTasks,
 		}
-		values["deployah"] = deployahVals
 	}
+	values["deployah"] = deployahVals
 
 	return values, nil
 }
@@ -1087,5 +1170,14 @@ func normalizeJSONNumbers(v any) {
 				normalizeJSONNumbers(child)
 			}
 		}
+	}
+}
+
+func applyRuntimeChartValues(values map[string]any, rt spec.ResolvedRuntimeEnvironment) {
+	if len(rt.ExplicitValues) > 0 {
+		values["envVars"] = maps.Clone(rt.ExplicitValues)
+	}
+	if len(rt.FileValues) > 0 {
+		values["envFileValues"] = maps.Clone(rt.FileValues)
 	}
 }

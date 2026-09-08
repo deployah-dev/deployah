@@ -103,8 +103,9 @@ func ResolveEnvironment(environments map[string]Environment, platform *PlatformC
 	if desiredEnvironment == "" {
 		switch len(registry) {
 		case 0:
-			// Zero value: a non-empty EnvFile is treated as explicit by
-			// resolveEnvFile and errors when the file is missing.
+			// No registry: callers still need a name for release identity
+			// and runtime resolution. "default" is the synthetic name when
+			// the spec and platform omit environments.
 			return "default", &Environment{}, nil
 		case 1:
 			name = registry[0]
@@ -114,15 +115,20 @@ func ResolveEnvironment(environments map[string]Environment, platform *PlatformC
 				source, joinStrings(registry),
 			)
 		}
-	} else if len(registry) > 0 {
-		matched, ok := matchEnvKey(desiredEnvironment, registry)
-		if !ok {
-			return "", nil, fmt.Errorf(
-				"environment %q not found in %s, available environments: %s",
-				desiredEnvironment, source, joinStrings(registry),
-			)
+	} else {
+		if err := ValidateRequestedEnv(desiredEnvironment); err != nil {
+			return "", nil, err
 		}
-		name = matched
+		if len(registry) > 0 {
+			matched, ok := matchEnvKey(desiredEnvironment, registry)
+			if !ok {
+				return "", nil, fmt.Errorf(
+					"environment %q not found in %s, available environments: %s",
+					desiredEnvironment, source, joinStrings(registry),
+				)
+			}
+			name = matched
+		}
 	}
 
 	// The spec entry is an optional override; absent means zero value.
@@ -131,44 +137,6 @@ func ResolveEnvironment(environments map[string]Environment, platform *PlatformC
 		return matched, &cp, nil
 	}
 	return name, &Environment{}, nil
-}
-
-// resolveEnvFile determines which env file to use for the given environment,
-// following Deployah's resolution order. Candidates are resolved against
-// specDir (the directory containing the spec), not the process working
-// directory. Returns the path, whether it was explicitly set, and an error
-// if explicitly set but missing.
-func resolveEnvFile(env *Environment, envName, specDir string) (string, bool, error) {
-	join := func(rel string) string {
-		if filepath.IsAbs(rel) {
-			return rel
-		}
-		return filepath.Join(specDir, rel)
-	}
-
-	if env.EnvFile != "" {
-		path := join(env.EnvFile)
-		if fileExists(path) {
-			return path, true, nil
-		}
-		return "", true, fmt.Errorf("explicit envFile %q does not exist (resolved %q)", env.EnvFile, path)
-	}
-
-	sanitizedName := sanitizeEnvName(envName)
-
-	candidates := []string{
-		fmt.Sprintf(".env.%s", sanitizedName),
-		filepath.Join(".deployah", fmt.Sprintf(".env.%s", sanitizedName)),
-		".env",
-		filepath.Join(".deployah", ".env"),
-	}
-	for _, rel := range candidates {
-		path := join(rel)
-		if fileExists(path) {
-			return path, false, nil
-		}
-	}
-	return "", false, nil
 }
 
 func fileExists(path string) bool {
@@ -220,6 +188,23 @@ func Save(spec *Spec, path string) error {
 	return nil
 }
 
+// LoadOption configures optional behavior of [Load].
+type LoadOption func(*loadOptions)
+
+type loadOptions struct {
+	allowHookCycleForDisplay bool
+}
+
+// AllowHookCycleForDisplay returns a [LoadOption] that passes true to
+// [ValidateSpecTasks] so [ResolveForDisplay] can record a hook cycle as a
+// warning. Other task validation still runs. Deploy, plan, validate, and
+// run must not pass this option.
+func AllowHookCycleForDisplay() LoadOption {
+	return func(o *loadOptions) {
+		o.allowHookCycleForDisplay = true
+	}
+}
+
 // Load reads and parses the spec YAML file at the given path, resolves the
 // environment (using desiredEnv or default resolution rules), substitutes
 // variables according to precedence, validates the spec, and applies defaults.
@@ -227,7 +212,16 @@ func Save(spec *Spec, path string) error {
 // platform supplies the environment registry for [ResolveEnvironment]; pass
 // nil when no platform file exists. This function performs the load pipeline
 // without platform resolution; for [ResolvedSpec] see [Resolve].
-func Load(ctx context.Context, path, desiredEnv string, platform *PlatformConfig) (*Spec, error) {
+//
+// opts may include [AllowHookCycleForDisplay] for inspect-only commands.
+func Load(ctx context.Context, path, desiredEnv string, platform *PlatformConfig, opts ...LoadOption) (*Spec, error) {
+	options := loadOptions{}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&options)
+		}
+	}
+
 	if path == "" {
 		path = DefaultSpecPath
 	}
@@ -266,22 +260,6 @@ func Load(ctx context.Context, path, desiredEnv string, platform *PlatformConfig
 
 	slog.InfoContext(ctx, "selected environment", "environment", envName)
 
-	envFilePath, explicitlySet, err := resolveEnvFile(env, envName, filepath.Dir(path))
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve environment file: %w", err)
-	}
-	if envFilePath != "" {
-		if explicitlySet {
-			slog.InfoContext(ctx, "using explicitly set env file", "envFile", envFilePath)
-		} else {
-			slog.InfoContext(ctx, "using resolved env file", "envFile", envFilePath)
-		}
-	} else {
-		slog.InfoContext(ctx, "no env file found for environment", "environment", envName)
-	}
-
-	env.EnvFile = envFilePath
-
 	substituted, err := SubstituteVariables(data, env)
 	if err != nil {
 		return nil, fmt.Errorf("failed to substitute variables: %w", err)
@@ -306,7 +284,7 @@ func Load(ctx context.Context, path, desiredEnv string, platform *PlatformConfig
 		return nil, fmt.Errorf("validation failed: %w", err)
 	}
 
-	if err = ValidateSpecTasks(&finalSpec); err != nil {
+	if err = ValidateSpecTasks(&finalSpec, options.allowHookCycleForDisplay); err != nil {
 		return nil, fmt.Errorf("validation failed: %w", err)
 	}
 
@@ -314,6 +292,7 @@ func Load(ctx context.Context, path, desiredEnv string, platform *PlatformConfig
 		return nil, fmt.Errorf("failed to apply defaults: %w", err)
 	}
 
+	finalSpec.SpecDir = filepath.Dir(path)
 	return &finalSpec, nil
 }
 
@@ -351,6 +330,7 @@ func ParseManifest(path string) (*Spec, string, error) {
 	}
 	rawSpec.APIVersion = version
 	normalizeComponents(&rawSpec)
+	rawSpec.SpecDir = filepath.Dir(path)
 
 	return &rawSpec, version, nil
 }

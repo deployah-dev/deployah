@@ -2,10 +2,12 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
     annotations:
+        deployah.dev/environment-instance: dev
         deployah.dev/project: extras-manifest
         deployah.dev/source: manifests
     labels:
         deployah.dev/environment: dev
+        deployah.dev/instance: extras-manifest-dev
         deployah.dev/project: extras-manifest
     name: web-deny-all
     namespace: default

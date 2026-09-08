@@ -47,12 +47,12 @@ type stubHelmClient struct {
 
 func (s *stubHelmClient) IsReachable() error { return nil }
 
-func (s *stubHelmClient) InstallApp(context.Context, *spec.Spec, string, bool, *spec.ResolvedSpec, postrenderer.PostRenderer) error {
+func (s *stubHelmClient) InstallApp(context.Context, bool, *spec.ResolvedSpec, postrenderer.PostRenderer) error {
 	s.installCallCount++
 	return s.installErr
 }
 
-func (s *stubHelmClient) RenderManifests(context.Context, *spec.Spec, string, *spec.ResolvedSpec, postrenderer.PostRenderer) (*render.RenderResult, func(), error) {
+func (s *stubHelmClient) RenderManifests(context.Context, *spec.ResolvedSpec, postrenderer.PostRenderer) (*render.RenderResult, func(), error) {
 	if s.renderErr != nil {
 		return nil, func() {}, s.renderErr
 	}
@@ -64,7 +64,7 @@ func (s *stubHelmClient) RenderManifests(context.Context, *spec.Spec, string, *s
 	return s.renderResults[i], func() {}, nil
 }
 
-func (s *stubHelmClient) RenderOffline(context.Context, *spec.Spec, string, *spec.ResolvedSpec, postrenderer.PostRenderer) (*render.RenderResult, func(), error) {
+func (s *stubHelmClient) RenderOffline(context.Context, *spec.ResolvedSpec, postrenderer.PostRenderer) (*render.RenderResult, func(), error) {
 	panic("unexpected RenderOffline call")
 }
 

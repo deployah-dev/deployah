@@ -29,8 +29,9 @@ deployed.
 error: variable ${IMAGE} not found
 ```
 
-Define the variable in the environment's `variables`, or in your env file or
-shell with the `DPY_VAR_` prefix.
+Define the variable in the environment's `variables`, or in your shell with
+the `DPY_VAR_` prefix. Keys in dotenv files do not fill `${...}` placeholders.
+They only become container env.
 
 **Hook task failed and was kept.**
 
@@ -52,10 +53,11 @@ so you can see the budget.
 `"on": manual` tasks only run via `deployah run`. Hook tasks skipped for this
 environment have an `environments` filter that does not match.
 
-**preDeploy cannot reach the database on first install.**
+**preDeploy cannot reach a dependency on first install.**
 
-On a first install, `preDeploy` runs before Deployments and Services. The
-database must already be reachable. See [Tasks](tasks.md#first-install-and-the-database).
+On a first install, `preDeploy` runs before Deployments and Services.
+Anything the task talks to must already be reachable. See
+[Tasks](tasks.md#first-install).
 
 **Cannot connect to Kubernetes.**
 

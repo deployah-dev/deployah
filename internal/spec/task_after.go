@@ -14,15 +14,37 @@
 package spec
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
 )
 
+// HookCycleError is returned when hook tasks form a cycle in after.
+// On names the hook phase. Tasks lists unresolved names in sorted order:
+// members of the cycle and tasks blocked behind it.
+type HookCycleError struct {
+	On    TaskOn
+	Tasks []string
+}
+
+func (e *HookCycleError) Error() string {
+	if e == nil {
+		return "after contains a cycle"
+	}
+	return fmt.Sprintf("tasks with on %s: after contains a cycle; unresolved tasks: %s", e.On, joinStrings(e.Tasks))
+}
+
+func isHookCycle(err error) bool {
+	cycle, ok := errors.AsType[*HookCycleError](err)
+	return ok && cycle != nil
+}
+
 // AssignHookWeights returns Helm hook-weight per task name for hook tasks.
 // Manual tasks are omitted. Independent tasks (no after) share weight 0;
 // Helm then runs them in name order. A task's weight is one greater than
-// the maximum weight of its after dependencies. Cycles return an error.
+// the maximum weight of its after dependencies. Cycles return a
+// [HookCycleError]. Self-dependencies are cycles.
 func AssignHookWeights(tasks map[string]Task) (map[string]int, error) {
 	weights := make(map[string]int)
 	for _, on := range []TaskOn{TaskOnPreDeploy, TaskOnPostDeploy} {
@@ -110,7 +132,7 @@ func hookWeightsForPhase(tasks map[string]Task, on TaskOn) (map[string]int, erro
 				stuck = append(stuck, n)
 			}
 		}
-		return nil, fmt.Errorf("tasks with on %s: after contains a cycle among %s", on, joinStrings(stuck))
+		return nil, &HookCycleError{On: on, Tasks: stuck}
 	}
 	return weights, nil
 }

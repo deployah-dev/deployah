@@ -24,7 +24,7 @@
                     "envFile": {
                         "type": "string",
                         "title": "Environment File",
-                        "description": "Path to a dotenv file for variable substitution.",
+                        "description": "Path to a dotenv file whose keys become ConfigMap data for container env (not secrets, not substitution).",
                         "examples": [".env.production"]
                     },
                     "configFile": {

@@ -1,16 +1,19 @@
 package status
 
 import (
+	"context"
 	"errors"
 	"fmt"
-	"sort"
 
 	"nabat.dev/nabat"
 
+	"deployah.dev/deployah/internal/action"
 	"deployah.dev/deployah/internal/cli"
 	"deployah.dev/deployah/internal/cmd/cmdopts"
 	"deployah.dev/deployah/internal/k8s"
 	"deployah.dev/deployah/internal/session"
+
+	v1 "helm.sh/helm/v4/pkg/release/v1"
 )
 
 // Options holds command-line flags for status.
@@ -60,27 +63,10 @@ func runStatus(c *nabat.Context) error {
 		return fmt.Errorf("helm client: %w", err)
 	}
 
-	selector, err := k8s.BuildLabelSelector(opts.Project, opts.Environment)
+	releases, err := statusReleases(c, helmClient, *opts)
 	if err != nil {
-		return fmt.Errorf("build selector: %w", err)
+		return wrapStatusError(err)
 	}
-
-	releases, err := helmClient.ListReleases(c, selector)
-	if err != nil {
-		return fmt.Errorf("list releases: %w", err)
-	}
-
-	if len(releases) == 0 {
-		msg := fmt.Sprintf("no releases found for project '%s'", opts.Project)
-		if opts.Environment != "" {
-			msg += fmt.Sprintf(" in environment '%s'", opts.Environment)
-		}
-		return errors.New(msg + "\n\nHint: Use 'deployah list' to see all available projects and environments")
-	}
-
-	sort.Slice(releases, func(i, j int) bool {
-		return releases[i].Name < releases[j].Name
-	})
 
 	var k8sClient *k8s.Client
 	if opts.Detailed {
@@ -91,41 +77,46 @@ func runStatus(c *nabat.Context) error {
 		k8sClient = k8s.NewClient(clientset, cluster.Namespace())
 	}
 
-	headers := []string{"PROJECT", "ENV", "STATUS", "REV", "AGE", "NAMESPACE"}
-	if opts.Detailed {
-		headers = append(headers, "PODS", "READY")
-	}
+	headers, rows, viewModels := statusOutput(releases, func(rel *v1.Release) cli.ReleaseViewModel {
+		if opts.Detailed && k8sClient != nil {
+			return cli.ReleaseToViewModelWithPods(c, k8sClient, rel)
+		}
+		return cli.ReleaseToViewModel(rel)
+	})
+	return cli.Render(c, opts.OutputFormat, headers, rows, viewModels)
+}
 
-	rows := make([][]string, 0, len(releases))
-	viewModels := make([]cli.ReleaseViewModel, 0, len(releases))
+func statusReleases(ctx context.Context, getter action.ReleaseGetter, opts Options) ([]*v1.Release, error) {
+	return action.NewStatus(getter).Run(ctx, action.StatusParams{
+		Project:     opts.Project,
+		Environment: opts.Environment,
+	})
+}
+
+func wrapStatusError(err error) error {
+	if errors.Is(err, action.ErrNoReleases) {
+		return fmt.Errorf("%w\n\nHint: Use 'deployah list' to see all available projects and environments", err)
+	}
+	return err
+}
+
+func statusOutput(releases []*v1.Release, view func(*v1.Release) cli.ReleaseViewModel) (headers []string, rows [][]string, viewModels []cli.ReleaseViewModel) {
+	headers = []string{"PROJECT", "ENV", "INSTANCE", "STATUS", "REV", "AGE", "NAMESPACE"}
+	rows = make([][]string, 0, len(releases))
+	viewModels = make([]cli.ReleaseViewModel, 0, len(releases))
 
 	for _, rel := range releases {
-		var vm cli.ReleaseViewModel
-		if opts.Detailed && k8sClient != nil {
-			vm = cli.ReleaseToViewModelWithPods(c, k8sClient, rel)
-		} else {
-			vm = cli.ReleaseToViewModel(rel)
-		}
-
-		row := []string{
+		vm := view(rel)
+		rows = append(rows, []string{
 			vm.Project,
 			vm.Environment,
+			vm.Instance,
 			fmt.Sprintf("● %s", vm.Status),
 			fmt.Sprintf("%d", vm.Revision),
 			vm.Age,
 			vm.Namespace,
-		}
-		if opts.Detailed {
-			if vm.PodCount > 0 {
-				row = append(row, fmt.Sprintf("%d", vm.PodCount), vm.PodStatus)
-			} else {
-				row = append(row, "", "")
-			}
-		}
-
-		rows = append(rows, row)
+		})
 		viewModels = append(viewModels, vm)
 	}
-
-	return cli.Render(c, opts.OutputFormat, headers, rows, viewModels)
+	return headers, rows, viewModels
 }

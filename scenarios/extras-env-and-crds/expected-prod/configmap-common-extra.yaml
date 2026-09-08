@@ -4,10 +4,12 @@ data:
 kind: ConfigMap
 metadata:
     annotations:
+        deployah.dev/environment-instance: prod
         deployah.dev/project: extras-env-and-crds
         deployah.dev/source: manifests
     labels:
         deployah.dev/environment: prod
+        deployah.dev/instance: extras-env-and-crds-prod
         deployah.dev/project: extras-env-and-crds
     name: common-extra
     namespace: default

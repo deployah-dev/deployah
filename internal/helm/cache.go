@@ -49,27 +49,24 @@ func NewChartCache(ttl time.Duration) *ChartCache {
 	}
 }
 
-// GenerateKey creates a cache key from the resolved spec (or raw spec when
-// resolved is nil), the target environment, and this cache's embedded chart
-// template hash.
+// GenerateKey creates a cache key from the resolved spec, the target
+// environment, and this cache's embedded chart template hash.
 //
-// environment must be part of the key: [PrepareChart] bakes the
-// environment-filtered component set and environment label into the cached
-// chart's values.yaml, so rendering environment A then B for the same
-// manifest must not reuse A's cached chart for B.
+// resolved must be non-nil. environment must be part of the key:
+// [PrepareChart] bakes the environment-filtered component set and
+// environment label into the cached chart's values.yaml, so rendering
+// environment A then B for the same spec must not reuse A's cached chart
+// for B.
 //
-// When resolved is non-nil it is hashed instead of the full raw spec: this
-// covers only the target-environment subset and ensures platform file changes
-// invalidate the cache. encoding/json sorts map keys deterministically since
-// Go 1.12, so the serialization is stable.
-func (c *ChartCache) GenerateKey(manifest *spec.Spec, environment string, resolved *spec.ResolvedSpec) (string, error) {
-	var inputBytes []byte
-	var err error
-	if resolved != nil {
-		inputBytes, err = json.Marshal(resolved)
-	} else {
-		inputBytes, err = json.Marshal(manifest)
+// Hashing [spec.ResolvedSpec] covers the target-environment subset and
+// invalidates the cache when platform resolution changes. encoding/json
+// sorts map keys deterministically since Go 1.12, so the serialization
+// is stable.
+func (c *ChartCache) GenerateKey(environment string, resolved *spec.ResolvedSpec) (string, error) {
+	if resolved == nil {
+		return "", errors.New("resolved spec is required")
 	}
+	inputBytes, err := json.Marshal(resolved)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal spec for hashing: %w", err)
 	}

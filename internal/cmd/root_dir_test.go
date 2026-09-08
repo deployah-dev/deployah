@@ -36,7 +36,8 @@ components:
     environments: [dev]
 environments:
   dev:
-    envFile: .env.dev
+    variables:
+      IMAGE: nginx:1.27
 `
 
 const specLiteralImage = `apiVersion: v1-alpha.5
@@ -61,31 +62,34 @@ func writeWithDirFixture(t *testing.T, specFile, spec, envBody string) string {
 }
 
 // TestWithDirResolvesSpecAndEnvFile checks that nabattest.WithDir and
-// c.Abs resolve --spec and .env files against the virtual directory
+// c.Abs resolve --spec and dotenv files against the virtual directory
 // rather than the process working directory. The test never calls [os.Chdir].
 func TestWithDirResolvesSpecAndEnvFile(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name     string
-		spec     string
-		specFile string
-		envBody  string
-		args     []string
+		name       string
+		spec       string
+		specFile   string
+		envBody    string
+		args       []string
+		wantStdout string
 	}{
 		{
-			name:     "env file relative to virtual dir",
-			spec:     specWithImageVar,
-			specFile: "deployah.yaml",
-			envBody:  "DPY_VAR_IMAGE=nginx:1.27\n",
-			args:     []string{"plan", "dev", "--offline"},
+			name:       "env file relative to virtual dir",
+			spec:       specWithImageVar,
+			specFile:   "deployah.yaml",
+			envBody:    "LOG_LEVEL=info\n",
+			args:       []string{"resolve", "dev"},
+			wantStdout: "LOG_LEVEL: info",
 		},
 		{
-			name:     "explicit --spec is Abs against virtual dir",
-			spec:     specWithImageVar,
-			specFile: "app.yaml",
-			envBody:  "DPY_VAR_IMAGE=nginx:1.27\n",
-			args:     []string{"plan", "dev", "--offline", "--spec", "app.yaml"},
+			name:       "explicit --spec is Abs against virtual dir",
+			spec:       specWithImageVar,
+			specFile:   "app.yaml",
+			envBody:    "LOG_LEVEL=info\n",
+			args:       []string{"resolve", "dev", "--spec", "app.yaml"},
+			wantStdout: "LOG_LEVEL: info",
 		},
 		{
 			name:     "literal image without env file",
@@ -99,10 +103,13 @@ func TestWithDirResolvesSpecAndEnvFile(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			dir := writeWithDirFixture(t, tt.specFile, tt.spec, tt.envBody)
-			appIO, _, _, errOut := nabattest.NewIO()
+			appIO, _, out, errOut := nabattest.NewIO()
 			app := cmd.NewApp(nabat.WithIO(appIO))
 			err := nabattest.RunParallel(t, app, tt.args, nabattest.WithDir(dir))
-			require.NoErrorf(t, err, "plan --offline under WithDir\nstderr:\n%s", errOut.String())
+			require.NoErrorf(t, err, "%s under WithDir\nstderr:\n%s", tt.args[0], errOut.String())
+			if tt.wantStdout != "" {
+				assert.Contains(t, out.String(), tt.wantStdout)
+			}
 		})
 	}
 }
@@ -118,11 +125,20 @@ func TestWithDirResolvesSpecAndEnvFile_Error(t *testing.T) {
 		wantErr  string
 	}{
 		{
-			name:     "missing env file fails substitution",
-			spec:     specWithImageVar,
+			name: "missing required substitution variable",
+			spec: `apiVersion: v1-alpha.5
+project: withdir
+components:
+  web:
+    image: ${IMAGE}
+    port: 80
+    environments: [dev]
+environments:
+  dev: {}
+`,
 			specFile: "deployah.yaml",
 			args:     []string{"plan", "dev", "--offline"},
-			wantErr:  "environment file",
+			wantErr:  "variable",
 		},
 	}
 

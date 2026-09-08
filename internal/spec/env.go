@@ -25,19 +25,26 @@ import (
 
 // parseEnvFile parses .env files.
 //
-// If explicitlySet is true, the function returns an error when the file does
-// not exist. If explicitlySet is false, the function returns nil when the
-// file does not exist.
+// If explicitlySet is true, a missing file returns [*ResolutionError] with
+// [ErrCodeEnvFileNotFound]. If explicitlySet is false, a missing file is
+// ignored. A file that exists but cannot be read returns [*ResolutionError]
+// with [ErrCodeEnvFileReadError].
 func parseEnvFile(path string, explicitlySet bool) (map[string]string, error) {
 	data, err := os.ReadFile(path) // #nosec G304 -- env file path from spec or CLI
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			if explicitlySet {
-				return nil, fmt.Errorf("failed to read %s file: %w", path, err)
+				return nil, &ResolutionError{
+					Code:    ErrCodeEnvFileNotFound,
+					Message: fmt.Sprintf("failed to read %s file: %v", path, err),
+				}
 			}
 			return map[string]string{}, nil
 		}
-		return nil, fmt.Errorf("failed to read %s file: %w", path, err)
+		return nil, &ResolutionError{
+			Code:    ErrCodeEnvFileReadError,
+			Message: fmt.Sprintf("failed to read %s file: %v", path, err),
+		}
 	}
 
 	vars := make(map[string]string)
@@ -55,7 +62,10 @@ func parseEnvFile(path string, explicitlySet bool) (map[string]string, error) {
 	}
 
 	if err = scanner.Err(); err != nil {
-		return nil, fmt.Errorf("error reading %s: %w", path, err)
+		return nil, &ResolutionError{
+			Code:    ErrCodeEnvFileReadError,
+			Message: fmt.Sprintf("error reading %s: %v", path, err),
+		}
 	}
 
 	return vars, nil
@@ -77,8 +87,8 @@ func parseOSVariables() (map[string]string, error) {
 }
 
 // filterVariables separates variables into two maps based on their prefix.
-// - deployahVars: variables prefixed with DPY_VAR_ used for template rendering
-// - envVars: regular environment variables passed to containers
+// - deployahVars: variables prefixed with DPY_VAR_ used for spec substitution
+// - envVars: remaining keys (unused by substitution)
 //
 // The DPY_VAR_ prefix is stripped from the keys in the returned deployahVars map.
 func filterVariables(vars map[string]string) (map[string]string, map[string]string) {

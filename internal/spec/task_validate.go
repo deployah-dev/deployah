@@ -27,7 +27,11 @@ import (
 // ValidateSpecTasks validates all tasks in spec: name pool and length, from,
 // on, after, schedule fields, fanout, command, timeout, and environment
 // filter.
-func ValidateSpecTasks(spec *Spec) error {
+//
+// When allowHookCycleForDisplay is true, hook-cycle detection is skipped so
+// [ResolveForDisplay] can record the cycle as a warning. Other task
+// validation still runs. Deploy, plan, validate, and run must pass false.
+func ValidateSpecTasks(spec *Spec, allowHookCycleForDisplay bool) error {
 	if spec == nil {
 		return fmt.Errorf("spec cannot be nil")
 	}
@@ -51,7 +55,7 @@ func ValidateSpecTasks(spec *Spec) error {
 			errs = append(errs, err)
 		}
 	}
-	if err := validateTaskAfterGraph(spec); err != nil {
+	if err := validateTaskAfterGraph(spec, allowHookCycleForDisplay); err != nil {
 		errs = append(errs, err)
 	}
 	if len(errs) > 0 {
@@ -117,9 +121,6 @@ func validateTask(name string, task Task, spec *Spec) error {
 		if strings.TrimSpace(dep) == "" {
 			errs = append(errs, fmt.Errorf("%s: after contains an empty name", prefix))
 			continue
-		}
-		if dep == name {
-			errs = append(errs, fmt.Errorf("%s: after cannot include itself", prefix))
 		}
 	}
 
@@ -223,7 +224,7 @@ func validateConcurrencyPolicy(policy string) error {
 	}
 }
 
-func validateTaskAfterGraph(spec *Spec) error {
+func validateTaskAfterGraph(spec *Spec, allowHookCycleForDisplay bool) error {
 	var errs []error
 	tasks := spec.Tasks
 	for _, name := range slices.Sorted(maps.Keys(tasks)) {
@@ -248,8 +249,10 @@ func validateTaskAfterGraph(spec *Spec) error {
 			}
 		}
 	}
-	if _, err := AssignHookWeights(tasks); err != nil {
-		errs = append(errs, err)
+	if !allowHookCycleForDisplay {
+		if _, err := AssignHookWeights(tasks); err != nil {
+			errs = append(errs, err)
+		}
 	}
 	if len(errs) > 0 {
 		return errors.Join(errs...)

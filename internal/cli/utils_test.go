@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"helm.sh/helm/v4/pkg/release/common"
 
+	chart "helm.sh/helm/v4/pkg/chart/v2"
 	v1 "helm.sh/helm/v4/pkg/release/v1"
 )
 
@@ -122,6 +123,7 @@ func TestReleaseToViewModel(t *testing.T) {
 				assert.Nil(t, vm.Values)
 				assert.Equal(t, "unknown", vm.Project)
 				assert.Equal(t, "unknown", vm.Environment)
+				assert.Empty(t, vm.Instance)
 			},
 		},
 		{
@@ -192,6 +194,26 @@ func TestReleaseToViewModel(t *testing.T) {
 				t.Helper()
 				assert.Equal(t, "acme", vm.Project)
 				assert.Equal(t, "prod", vm.Environment)
+				assert.Empty(t, vm.Instance)
+			},
+		},
+		{
+			name: "chart values supply original instance",
+			rel: &v1.Release{
+				Name: "shop-review--pr-123",
+				Labels: map[string]string{
+					"deployah.dev/project":     "shop",
+					"deployah.dev/environment": "review",
+				},
+				Chart: &chart.Chart{Values: map[string]any{
+					"deployah": map[string]any{"environmentInstance": "review/pr-123"},
+				}},
+			},
+			check: func(t *testing.T, vm ReleaseViewModel) {
+				t.Helper()
+				assert.Equal(t, "review", vm.Environment)
+				assert.Equal(t, "review/pr-123", vm.Instance)
+				assert.Equal(t, "shop-review--pr-123", vm.Release)
 			},
 		},
 	}

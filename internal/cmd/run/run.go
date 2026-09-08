@@ -133,6 +133,7 @@ func runTask(c *nabat.Context) error {
 		Namespace:   cluster.Namespace(),
 		TaskName:    opts.Task,
 		Task:        rt.Task,
+		Runtime:     rt.Runtime,
 		Count:       opts.Count,
 		Parallelism: opts.Parallelism,
 		Profile:     rt.MergedProfile,
@@ -141,11 +142,11 @@ func runTask(c *nabat.Context) error {
 		return fmt.Errorf("build job for %s: %w", opts.Task, err)
 	}
 
-	return executeRun(c, cs, sess.Timeout(), job, opts.Detach)
+	return executeRun(c, cs, sess.Timeout(), job, rt.Runtime.FileValues, opts.Detach)
 }
 
-func executeRun(c *nabat.Context, cs kubernetes.Interface, timeout time.Duration, job *batchv1.Job, detach bool) error {
-	created, err := k8s.CreateTaskJob(c, cs, job)
+func executeRun(c *nabat.Context, cs kubernetes.Interface, timeout time.Duration, job *batchv1.Job, fileValues map[string]string, detach bool) error {
+	created, err := k8s.CreateRunJob(c, cs, job, fileValues)
 	if err != nil {
 		return err
 	}
@@ -167,32 +168,23 @@ func executeRun(c *nabat.Context, cs kubernetes.Interface, timeout time.Duration
 
 func resolveRunTask(manifest *spec.Spec, platform *spec.PlatformConfig, environment, name string) (spec.ResolvedTask, error) {
 	envIdentity := spec.NormalizeEnv(environment)
-	if platform != nil {
-		resolved, _, err := spec.Resolve(manifest, platform, envIdentity, spec.SubstitutionReport{})
-		if err != nil {
-			return spec.ResolvedTask{}, fmt.Errorf("resolve spec: %w", err)
-		}
-		rt, ok := resolved.Tasks[name]
-		if !ok {
-			if _, exists := manifest.Tasks[name]; exists {
-				return spec.ResolvedTask{}, fmt.Errorf("task %s is skipped in environment %s", name, environment)
-			}
-			return spec.ResolvedTask{}, fmt.Errorf("unknown task %s", name)
-		}
-		return rt, nil
+	// Run needs the task's resolved runtime/profile data, not component FQDNs.
+	// Display resolution allows runtime-only tasks to resolve when no platform
+	// file exists; spec.Load above still performs strict task-graph validation
+	// for run.
+	resolved, _, err := spec.ResolveForDisplay(manifest, platform, envIdentity, spec.SubstitutionReport{})
+	if err != nil {
+		return spec.ResolvedTask{}, fmt.Errorf("resolve spec: %w", err)
 	}
-
-	merged, ok := manifest.MergedTask(name)
+	rt, ok := resolved.Tasks[name]
 	if !ok {
-		return spec.ResolvedTask{}, fmt.Errorf("unknown task %s", name)
-	}
-	if len(merged.Profiles) > 0 {
-		return spec.ResolvedTask{}, fmt.Errorf("task %s sets profiles but no platform file was found", name)
-	}
-	if len(merged.Environments) > 0 {
-		if _, match := spec.MatchEnvKey(environment, merged.Environments); !match {
+		if _, exists := manifest.Tasks[name]; exists {
 			return spec.ResolvedTask{}, fmt.Errorf("task %s is skipped in environment %s", name, environment)
 		}
+		return spec.ResolvedTask{}, fmt.Errorf("unknown task %s", name)
 	}
-	return spec.ResolvedTask{Task: merged}, nil
+	if platform == nil && len(rt.Task.Profiles) > 0 {
+		return spec.ResolvedTask{}, fmt.Errorf("task %s sets profiles but no platform file was found", name)
+	}
+	return rt, nil
 }

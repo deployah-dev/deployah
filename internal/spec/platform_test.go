@@ -17,6 +17,7 @@ package spec_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -249,26 +250,6 @@ func TestMatchEnvKey_ExactBeatsPrefix(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "review/pr-123", matched)
 }
-
-// --- normalizeEnv / EnvIdentity tests ---
-
-// TestNormalizeEnv_Simple verifies platform spec behavior.
-func TestNormalizeEnv_Simple(t *testing.T) {
-	id := spec.NormalizeEnv("production")
-	assert.Equal(t, "production", id.Original)
-	assert.Equal(t, "production", id.MapKey)
-	assert.Equal(t, "production", id.K8sSafe)
-}
-
-// TestNormalizeEnv_Wildcard verifies platform spec behavior.
-func TestNormalizeEnv_Wildcard(t *testing.T) {
-	id := spec.NormalizeEnv("review/pr-123")
-	assert.Equal(t, "review/pr-123", id.Original)
-	assert.Equal(t, "review", id.MapKey)
-	assert.Equal(t, "review-pr-123", id.K8sSafe)
-}
-
-// --- Resolve tests ---
 
 func minimalPlatform() *spec.PlatformConfig {
 	return &spec.PlatformConfig{
@@ -1078,8 +1059,6 @@ func TestResolve_StaticInvalidSubdomainFailsDNS(t *testing.T) {
 	assert.Equal(t, spec.ErrCodeInvalidDNS, report.ErrorCode)
 }
 
-// --- Profile tests ---
-
 func platformWithProfiles() *spec.PlatformConfig {
 	p := minimalPlatform()
 	p.Profiles = map[string]spec.PlatformProfile{
@@ -1542,14 +1521,17 @@ func TestResolveForDisplay(t *testing.T) {
 		check       func(t *testing.T, appSpec *spec.Spec, resolved *spec.ResolvedSpec, report *spec.ResolutionReport)
 	}{
 		{
-			name:        "missing platform returns partial report",
-			platform:    nil,
-			wantErrCode: spec.ErrCodePlatformNotFound,
-			check: func(t *testing.T, appSpec *spec.Spec, resolved *spec.ResolvedSpec, _ *spec.ResolutionReport) {
+			name:     "missing platform returns partial report",
+			platform: nil,
+			check: func(t *testing.T, appSpec *spec.Spec, resolved *spec.ResolvedSpec, report *spec.ResolutionReport) {
 				t.Helper()
-				assert.Empty(t, resolved.Components)
+				require.Contains(t, resolved.Components, "api")
+				assert.NotNil(t, resolved.Components["api"].Runtime.FileValues)
 				assert.NotNil(t, resolved.Tasks, "partial result must carry the same maps as Resolve")
 				assert.Equal(t, appSpec, resolved.Spec)
+				require.NotEmpty(t, report.Warnings)
+				assert.Contains(t, report.Warnings[0], "platform file not found")
+				assert.Empty(t, report.ErrorCode)
 			},
 		},
 		{
@@ -1734,9 +1716,10 @@ func TestResolve_TaskProfilesRequirePlatform(t *testing.T) {
 			},
 		},
 	}
-	_, _, err := spec.Resolve(appSpec, nil, spec.NormalizeEnv("dev"), spec.SubstitutionReport{})
+	_, report, err := spec.Resolve(appSpec, nil, spec.NormalizeEnv("dev"), spec.SubstitutionReport{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no platform file")
+	assert.Equal(t, spec.ErrCodePlatformNotFound, report.ErrorCode)
 }
 
 func TestResolve_UnknownTaskProfile(t *testing.T) {
@@ -1756,10 +1739,11 @@ func TestResolve_UnknownTaskProfile(t *testing.T) {
 			},
 		},
 	}
-	_, _, err := spec.Resolve(appSpec, platformWithProfiles(), spec.NormalizeEnv("production"), spec.SubstitutionReport{})
+	_, report, err := spec.Resolve(appSpec, platformWithProfiles(), spec.NormalizeEnv("production"), spec.SubstitutionReport{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `task "migrate"`)
 	assert.Contains(t, err.Error(), "missing")
+	assert.Equal(t, spec.ErrCodeProfileNotFound, report.ErrorCode)
 }
 
 func TestResolve_TaskCycle(t *testing.T) {
@@ -1800,4 +1784,49 @@ func TestCrossCheckPlatformReferences_TaskProfilesWithoutSection(t *testing.T) {
 	require.Len(t, problems, 1)
 	assert.Contains(t, problems[0], `task "migrate"`)
 	assert.Contains(t, problems[0], "no profiles section")
+}
+
+func TestResolve_PlatformProvenanceUsesMatchedEnvKey(t *testing.T) {
+	t.Parallel()
+
+	platform := &spec.PlatformConfig{
+		APIVersion: "platform/v1-alpha.3",
+		Environments: map[string]spec.PlatformEnvironment{
+			"review": {
+				Domains: map[string]spec.PlatformDomain{
+					"public": {
+						BaseDomain: "example.com",
+						TLS: &spec.PlatformTLS{
+							Mode:   spec.TLSModeCertManager,
+							Issuer: "letsencrypt",
+						},
+					},
+				},
+			},
+		},
+	}
+	appSpec := &spec.Spec{
+		APIVersion: spec.CurrentManifestVersion,
+		Project:    "shop",
+		Environments: map[string]spec.Environment{
+			"review": {},
+		},
+		Components: map[string]spec.Component{
+			"api": {Expose: &spec.Expose{Domain: "public"}},
+		},
+	}
+
+	resolved, report, err := spec.Resolve(appSpec, platform, spec.NormalizeEnv("review/pr-123"), spec.SubstitutionReport{})
+	require.NoError(t, err)
+	assert.Equal(t, "review/pr-123", resolved.Env.Original)
+
+	sources := make([]string, 0, len(report.Fields))
+	for _, field := range report.Fields {
+		sources = append(sources, field.Source)
+	}
+	joined := strings.Join(sources, "\n")
+	assert.Contains(t, joined, "platform environments.review.domains.public.baseDomain")
+	assert.Contains(t, joined, "platform environments.review.domains.public.tls.mode")
+	assert.Contains(t, joined, "platform environments.review.domains.public.tls.issuer")
+	assert.NotContains(t, joined, "platform environments.review/pr-123.")
 }

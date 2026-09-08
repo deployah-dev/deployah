@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
     annotations:
+        deployah.dev/environment-instance: dev
         deployah.dev/project: health-disabled
         deployah.dev/source: spec
     labels:
@@ -10,6 +11,7 @@ metadata:
         app.kubernetes.io/name: api
         deployah.dev/component: api
         deployah.dev/environment: dev
+        deployah.dev/instance: health-disabled-dev
         deployah.dev/project: health-disabled
         helm.sh/chart: api-0.1.0
     name: health-disabled-dev-api
@@ -25,13 +27,15 @@ spec:
         type: RollingUpdate
     template:
         metadata:
-            annotations: null
+            annotations:
+                deployah.dev/environment-instance: dev
             labels:
                 app.kubernetes.io/instance: health-disabled-dev
                 app.kubernetes.io/managed-by: Helm
                 app.kubernetes.io/name: api
                 deployah.dev/component: api
                 deployah.dev/environment: dev
+                deployah.dev/instance: health-disabled-dev
                 deployah.dev/project: health-disabled
                 helm.sh/chart: api-0.1.0
         spec:

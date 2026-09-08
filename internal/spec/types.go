@@ -37,6 +37,10 @@ type Spec struct {
 	Components map[string]Component `json:"components" yaml:"components"`
 	// Tasks is a map of task names to run-to-completion work.
 	Tasks map[string]Task `json:"tasks,omitempty" yaml:"tasks,omitempty"`
+	// SpecDir is the directory containing the spec file. Loaders set it so
+	// runtime environment paths resolve relative to the spec, not the
+	// process working directory. It is not part of the YAML schema.
+	SpecDir string `json:"-" yaml:"-"`
 }
 
 // EnvironmentNames returns the sorted list of environment names defined in the
@@ -56,21 +60,26 @@ func (m *Spec) EnvironmentNames() []string {
 // Environment defines developer-controlled settings for a deployment target.
 // Context is platform-owned and lives in deployah.platform.yaml.
 type Environment struct {
-	// EnvFile is the path to a dotenv file for this environment.
+	// EnvFile is an explicit dotenv path whose keys become ConfigMap data
+	// for container env. It is not used for ${...} substitution.
 	EnvFile string `json:"envFile,omitempty" yaml:"envFile,omitempty"`
 	// ConfigFile is the path to an environment-specific config file.
+	// The path is recorded and inherited. It is not mounted yet; see #114.
 	ConfigFile string `json:"configFile,omitempty" yaml:"configFile,omitempty"`
-	// Variables holds inline key-value overrides for this environment.
-	Variables map[string]string `json:"variables,omitempty" yaml:"variables,omitempty"`
+	// Variables holds inline substitution values for this environment.
+	// YAML strings, numbers, and booleans are stored as strings.
+	Variables StringMap `json:"variables,omitempty" yaml:"variables,omitempty"`
 }
 
 // Component defines a deployable unit in the project.
 type Component struct {
 	// Role selects the default deployment strategy for the component.
 	Role ComponentRole `json:"role,omitempty" yaml:"role,omitempty"`
-	// EnvFile is the path to a component-specific dotenv file.
+	// EnvFile is an explicit component dotenv path. When set it replaces
+	// the implicit entity file layer. Keys become ConfigMap data.
 	EnvFile string `json:"envFile,omitempty" yaml:"envFile,omitempty"`
 	// ConfigFile is the path to a component-specific config file.
+	// The path is recorded and inherited. It is not mounted yet; see #114.
 	ConfigFile string `json:"configFile,omitempty" yaml:"configFile,omitempty"`
 	// Environments limits the component to the named environments.
 	Environments []string `json:"environments,omitempty" yaml:"environments,omitempty"`
@@ -107,7 +116,8 @@ type Component struct {
 	// platform file.
 	Profiles []string `json:"profiles,omitempty" yaml:"profiles,omitempty"`
 	// Env sets static environment variables for the container.
-	Env map[string]string `json:"env,omitempty" yaml:"env,omitempty"`
+	// YAML strings, numbers, and booleans are stored as strings.
+	Env StringMap `json:"env,omitempty" yaml:"env,omitempty"`
 	// Health configures ready and alive checks for the component.
 	Health *Health `json:"health,omitempty" yaml:"health,omitempty"`
 	// ShutdownTimeout is how long Kubernetes waits after SIGTERM before

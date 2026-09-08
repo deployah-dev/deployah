@@ -2,6 +2,7 @@ apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
     annotations:
+        deployah.dev/environment-instance: production
         deployah.dev/project: worker-hpa
         deployah.dev/source: spec
     labels:
@@ -10,6 +11,7 @@ metadata:
         app.kubernetes.io/name: worker
         deployah.dev/component: worker
         deployah.dev/environment: production
+        deployah.dev/instance: worker-hpa-production
         deployah.dev/project: worker-hpa
         helm.sh/chart: worker-0.1.0
     name: worker-hpa-production

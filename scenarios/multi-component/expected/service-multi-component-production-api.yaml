@@ -2,6 +2,7 @@ apiVersion: v1
 kind: Service
 metadata:
     annotations:
+        deployah.dev/environment-instance: production
         deployah.dev/project: multi-component
         deployah.dev/source: spec
     labels:
@@ -10,6 +11,7 @@ metadata:
         app.kubernetes.io/name: api
         deployah.dev/component: api
         deployah.dev/environment: production
+        deployah.dev/instance: multi-component-production
         deployah.dev/project: multi-component
         helm.sh/chart: api-0.1.0
     name: multi-component-production-api

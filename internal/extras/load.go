@@ -82,7 +82,14 @@ func Load(cfg LoadConfig) (*Bundle, error) {
 	crdsRoot := filepath.Join(root, spec.CRDsDir)
 
 	envKey, _ := spec.MatchEnvKey(cfg.Environment, cfg.DeclaredEnvs)
-	envSafe := spec.NormalizeEnv(cfg.Environment).K8sSafe
+	env := spec.NormalizeEnv(cfg.Environment)
+	envLabel := env.MapKey
+	instance := ""
+	original := ""
+	if cfg.Environment != "" {
+		instance = env.ReleaseName(cfg.Project)
+		original = env.Original
+	}
 
 	manifestFiles, err := listManifestFiles(manifestsRoot, cfg.DeclaredEnvs, envKey)
 	if err != nil {
@@ -135,12 +142,12 @@ func Load(cfg LoadConfig) (*Bundle, error) {
 		if scopeErr != nil {
 			return nil, fmt.Errorf("%s: resolve scope: %w", manifests[i].Path, scopeErr)
 		}
-		if mergeErr := mergeIdentity(&manifests[i], cfg.Project, envSafe, spec.SourceManifests, cfg.ReleaseNamespace, namespaced); mergeErr != nil {
+		if mergeErr := mergeIdentity(&manifests[i], cfg.Project, envLabel, instance, original, spec.SourceManifests, cfg.ReleaseNamespace, namespaced); mergeErr != nil {
 			return nil, mergeErr
 		}
 	}
 	for i := range crds {
-		if mergeErr := mergeIdentity(&crds[i], cfg.Project, "", spec.SourceCRDs, "", false); mergeErr != nil {
+		if mergeErr := mergeIdentity(&crds[i], cfg.Project, "", "", "", spec.SourceCRDs, "", false); mergeErr != nil {
 			return nil, mergeErr
 		}
 	}
