@@ -2,10 +2,12 @@ apiVersion: example.com/v1
 kind: ClusterWidget
 metadata:
     annotations:
+        deployah.dev/environment-instance: dev
         deployah.dev/project: extras-env-and-crds
         deployah.dev/source: manifests
     labels:
         deployah.dev/environment: dev
+        deployah.dev/instance: extras-env-and-crds-dev
         deployah.dev/project: extras-env-and-crds
     name: shared-widget
 spec: {}

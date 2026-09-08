@@ -352,6 +352,9 @@ func (c *Client) ListReleases(ctx context.Context, selector labels.Selector) ([]
 
 // GetRelease retrieves a release by project and environment.
 func (c *Client) GetRelease(ctx context.Context, project, environment string) (*v1.Release, error) {
+	if err := validateReleaseEnvironment(environment); err != nil {
+		return nil, err
+	}
 	releaseName := GenerateReleaseName(project, environment)
 	get := action.NewGet(c.config)
 	get.Version = 0
@@ -372,6 +375,9 @@ func (c *Client) GetRelease(ctx context.Context, project, environment string) (*
 func (c *Client) DeleteRelease(ctx context.Context, project, environment string, wait bool) error {
 	if project == "" || environment == "" {
 		return errors.New("project or environment cannot be empty")
+	}
+	if err := spec.ValidateRequestedEnv(environment); err != nil {
+		return err
 	}
 
 	releaseName := GenerateReleaseName(project, environment)
@@ -398,6 +404,9 @@ func (c *Client) DeleteRelease(ctx context.Context, project, environment string,
 func (c *Client) GetReleaseHistory(ctx context.Context, project, environment string) ([]*v1.Release, error) {
 	if project == "" || environment == "" {
 		return nil, errors.New("project or environment cannot be empty")
+	}
+	if err := spec.ValidateRequestedEnv(environment); err != nil {
+		return nil, err
 	}
 
 	releaseName := GenerateReleaseName(project, environment)

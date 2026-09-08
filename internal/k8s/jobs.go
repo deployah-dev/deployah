@@ -111,34 +111,31 @@ func BuildTaskJob(opts TaskJobOptions) (*batchv1.Job, error) {
 		container.Resources.Requests = req
 	}
 
-	podLabels := map[string]string{
-		spec.LabelProject:     opts.Project,
-		spec.LabelComponent:   opts.TaskName,
-		spec.LabelEnvironment: env.MapKey,
-		spec.LabelManagedBy:   spec.ManagedByValue,
-		InstanceLabel:         release,
+	identity := jobIdentityLabels(opts.Project, opts.TaskName, env.MapKey, release)
+	podLabels := maps.Clone(identity)
+	podAnnotations := map[string]string{
+		spec.AnnotationEnvironmentInstance: env.Original,
 	}
-	var podAnnotations map[string]string
 	podSpec := corev1.PodSpec{
 		RestartPolicy:                corev1.RestartPolicyOnFailure,
 		AutomountServiceAccountToken: new(false),
 		Containers:                   []corev1.Container{container},
 	}
 	applyProfileToPod(&podSpec, podLabels, &podAnnotations, opts.Profile)
+	maps.Copy(podLabels, identity)
+	if podAnnotations == nil {
+		podAnnotations = map[string]string{}
+	}
+	podAnnotations[spec.AnnotationEnvironmentInstance] = env.Original
 
 	job := &batchv1.Job{
 		GenerateName: generateNamePrefix(release, opts.TaskName),
 		Namespace:    opts.Namespace,
-		Labels: map[string]string{
-			spec.LabelProject:     opts.Project,
-			spec.LabelComponent:   opts.TaskName,
-			spec.LabelEnvironment: env.MapKey,
-			spec.LabelManagedBy:   spec.ManagedByValue,
-			InstanceLabel:         release,
-		},
+		Labels:       identity,
 		Annotations: map[string]string{
-			spec.AnnotationSource:  spec.SourceSpec,
-			spec.AnnotationProject: opts.Project,
+			spec.AnnotationSource:              spec.SourceSpec,
+			spec.AnnotationProject:             opts.Project,
+			spec.AnnotationEnvironmentInstance: env.Original,
 		},
 		Spec: batchv1.JobSpec{
 			CompletionMode:          new(batchv1.IndexedCompletion),
@@ -157,6 +154,17 @@ func BuildTaskJob(opts TaskJobOptions) (*batchv1.Job, error) {
 		},
 	}
 	return job, nil
+}
+
+func jobIdentityLabels(project, taskName, mapKey, release string) map[string]string {
+	return map[string]string{
+		spec.LabelProject:     project,
+		spec.LabelComponent:   taskName,
+		spec.LabelEnvironment: mapKey,
+		spec.LabelManagedBy:   spec.ManagedByValue,
+		spec.LabelInstance:    release,
+		InstanceLabel:         release,
+	}
 }
 
 func applyProfileToPod(pod *corev1.PodSpec, labels map[string]string, annotations *map[string]string, profile *spec.PlatformProfile) {

@@ -20,6 +20,7 @@ metadata:
     - manager: helm
       operation: Update
   annotations:
+    deployah.dev/environment-instance: dev
     deployah.dev/project: plan-after-failed-upgrade
     deployah.dev/source: spec
     meta.helm.sh/release-name: plan-after-failed-upgrade-dev
@@ -31,6 +32,7 @@ metadata:
     app.kubernetes.io/name: web
     deployah.dev/component: web
     deployah.dev/environment: dev
+    deployah.dev/instance: plan-after-failed-upgrade-dev
     deployah.dev/project: plan-after-failed-upgrade
     helm.sh/chart: web-0.1.0
 status:
@@ -47,13 +49,15 @@ spec:
     type: RollingUpdate
   template:
     metadata:
-      annotations: null
+      annotations:
+        deployah.dev/environment-instance: dev
       labels:
         app.kubernetes.io/instance: plan-after-failed-upgrade-dev
         app.kubernetes.io/managed-by: Helm
         app.kubernetes.io/name: web
         deployah.dev/component: web
         deployah.dev/environment: dev
+        deployah.dev/instance: plan-after-failed-upgrade-dev
         deployah.dev/project: plan-after-failed-upgrade
         helm.sh/chart: web-0.1.0
     spec:
@@ -113,6 +117,7 @@ metadata:
   generation: 1
   creationTimestamp: "2024-01-01T00:00:00Z"
   annotations:
+    deployah.dev/environment-instance: dev
     deployah.dev/project: plan-after-failed-upgrade
     deployah.dev/source: spec
     meta.helm.sh/release-name: plan-after-failed-upgrade-dev
@@ -123,6 +128,7 @@ metadata:
     app.kubernetes.io/name: web
     deployah.dev/component: web
     deployah.dev/environment: dev
+    deployah.dev/instance: plan-after-failed-upgrade-dev
     deployah.dev/project: plan-after-failed-upgrade
     helm.sh/chart: web-0.1.0
 spec:

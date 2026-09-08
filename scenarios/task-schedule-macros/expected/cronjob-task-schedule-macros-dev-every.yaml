@@ -2,6 +2,7 @@ apiVersion: batch/v1
 kind: CronJob
 metadata:
     annotations:
+        deployah.dev/environment-instance: dev
         deployah.dev/project: task-schedule-macros
         deployah.dev/source: spec
     labels:
@@ -10,6 +11,7 @@ metadata:
         app.kubernetes.io/name: every
         deployah.dev/component: every
         deployah.dev/environment: dev
+        deployah.dev/instance: task-schedule-macros-dev
         deployah.dev/project: task-schedule-macros
         helm.sh/chart: every-0.1.0
     name: task-schedule-macros-dev-every
@@ -26,12 +28,15 @@ spec:
             parallelism: 1
             template:
                 metadata:
+                    annotations:
+                        deployah.dev/environment-instance: dev
                     labels:
                         app.kubernetes.io/instance: task-schedule-macros-dev
                         app.kubernetes.io/managed-by: Helm
                         app.kubernetes.io/name: every
                         deployah.dev/component: every
                         deployah.dev/environment: dev
+                        deployah.dev/instance: task-schedule-macros-dev
                         deployah.dev/project: task-schedule-macros
                         helm.sh/chart: every-0.1.0
                 spec:

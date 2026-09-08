@@ -103,6 +103,9 @@ func (sb *SelectorBuilder) Build() string {
 
 // BuildSelector builds a label selector from project, component, and environment.
 func BuildSelector(project, component, environment string) (string, error) {
+	if err := requireRequestedEnv(environment); err != nil {
+		return "", err
+	}
 	builder := NewSelectorBuilder()
 
 	var err error
@@ -144,6 +147,9 @@ func BuildComponentSelector(project, component string) (string, error) {
 // BuildLabelSelector returns a labels.Selector for project and/or
 // environment filters.
 func BuildLabelSelector(project, environment string) (labels.Selector, error) {
+	if err := requireRequestedEnv(environment); err != nil {
+		return nil, err
+	}
 	selector := labels.NewSelector()
 	if project != "" {
 		req, err := labels.NewRequirement(ProjectLabel, selection.Equals, []string{project})
@@ -199,29 +205,21 @@ func wildcardReleaseInstance(project, environment string) string {
 	return env.ReleaseName(project)
 }
 
-// environmentFromLabels is the environment name callers should pass to
-// [BuildSelector] for this pod. Logical releases stay as MapKey; wildcard
-// instances reconstruct review/pr-123 from the Helm instance label.
-func environmentFromLabels(project string, podLabels map[string]string) string {
-	mapKey := podLabels[EnvironmentLabel]
-	if mapKey == "" {
+// requireRequestedEnv validates a user-supplied environment filter.
+func requireRequestedEnv(environment string) error {
+	if environment == "" {
+		return nil
+	}
+	return spec.ValidateRequestedEnv(environment)
+}
+
+// environmentFromMeta is the environment name callers should pass to
+// [BuildSelector] for this object. It is [spec.AnnotationEnvironmentInstance]
+// (Original). Empty when the annotation is missing; labels and Helm
+// release names are not consulted.
+func environmentFromMeta(annotations map[string]string) string {
+	if annotations == nil {
 		return ""
 	}
-	instance := podLabels[InstanceLabel]
-	if instance == "" || project == "" {
-		return mapKey
-	}
-	logicalRelease := spec.NormalizeEnv(mapKey).ReleaseName(project)
-	if instance == logicalRelease {
-		return mapKey
-	}
-	rest, ok := strings.CutPrefix(instance, logicalRelease+"-")
-	if !ok || rest == "" {
-		return mapKey
-	}
-	candidate := mapKey + "/" + rest
-	if spec.NormalizeEnv(candidate).ReleaseName(project) == instance {
-		return candidate
-	}
-	return mapKey
+	return strings.TrimSpace(annotations[spec.AnnotationEnvironmentInstance])
 }

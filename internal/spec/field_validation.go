@@ -216,6 +216,9 @@ func ValidateEnvName(name string) error {
 	if !v.envNamePattern.MatchString(name) {
 		return fmt.Errorf("environment name '%s' is invalid: must be lowercase alphanumeric characters or dashes (-) separated and cannot start or end with a dash (-)", name)
 	}
+	if strings.Contains(name, "--") {
+		return fmt.Errorf("environment name %q is invalid: consecutive dashes are reserved for wildcard instance encoding", name)
+	}
 	return nil
 }
 

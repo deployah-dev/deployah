@@ -86,7 +86,7 @@ func (c *Client) GetAvailableEnvironments(ctx context.Context, projectName, comp
 
 	environmentSet := make(map[string]struct{})
 	for _, pod := range pods.Items {
-		if name := environmentFromLabels(projectName, pod.Labels); name != "" {
+		if name := environmentFromMeta(pod.Annotations); name != "" {
 			environmentSet[name] = struct{}{}
 		}
 	}

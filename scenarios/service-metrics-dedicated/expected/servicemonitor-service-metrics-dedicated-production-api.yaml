@@ -2,6 +2,7 @@ apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
     annotations:
+        deployah.dev/environment-instance: production
         deployah.dev/project: service-metrics-dedicated
         deployah.dev/source: spec
     labels:
@@ -10,6 +11,7 @@ metadata:
         app.kubernetes.io/name: api
         deployah.dev/component: api
         deployah.dev/environment: production
+        deployah.dev/instance: service-metrics-dedicated-production
         deployah.dev/project: service-metrics-dedicated
         helm.sh/chart: api-0.1.0
         release: prometheus

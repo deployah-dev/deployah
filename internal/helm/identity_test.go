@@ -187,6 +187,9 @@ func TestRenderOffline_WildcardEnvironmentLabels(t *testing.T) {
 	dep := findRenderedDeployment(t, result.Manifest, "-api")
 	assertLogicalEnvironmentLabel(t, dep.Labels)
 	assertLogicalEnvironmentLabel(t, dep.Spec.Template.Labels)
+	assert.Equal(t, "review/pr-123", dep.Annotations[spec.AnnotationEnvironmentInstance])
+	assert.Equal(t, "review/pr-123", dep.Spec.Template.Annotations[spec.AnnotationEnvironmentInstance])
+	assert.Equal(t, name, dep.Labels[spec.LabelInstance])
 }
 
 func TestRenderOffline_WildcardHookJobLabels(t *testing.T) {
@@ -197,6 +200,9 @@ func TestRenderOffline_WildcardHookJobLabels(t *testing.T) {
 	job := renderHookJob(t, m, "review/pr-123", "migrate")
 	assertLogicalEnvironmentLabel(t, job.Labels)
 	assertLogicalEnvironmentLabel(t, job.Spec.Template.Labels)
+	assert.Equal(t, "review/pr-123", job.Annotations[spec.AnnotationEnvironmentInstance])
+	assert.Equal(t, "review/pr-123", job.Spec.Template.Annotations[spec.AnnotationEnvironmentInstance])
+	assert.Equal(t, GenerateReleaseName("shop", "review/pr-123"), job.Labels[spec.LabelInstance])
 }
 
 func TestRenderOffline_WildcardCronJobLabels(t *testing.T) {
@@ -211,6 +217,7 @@ func TestRenderOffline_WildcardCronJobLabels(t *testing.T) {
 	cj := renderScheduledCronJob(t, m, "review/pr-123", "cleanup")
 	assertLogicalEnvironmentLabel(t, cj.Labels)
 	assertLogicalEnvironmentLabel(t, cj.Spec.JobTemplate.Spec.Template.Labels)
+	assert.Equal(t, "review/pr-123", cj.Annotations[spec.AnnotationEnvironmentInstance])
 }
 
 func assertLogicalEnvironmentLabel(t *testing.T, labels map[string]string) {

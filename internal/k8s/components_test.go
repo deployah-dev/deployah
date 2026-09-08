@@ -21,6 +21,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 
 	"deployah.dev/deployah/internal/helm"
+	"deployah.dev/deployah/internal/spec"
 
 	corev1 "k8s.io/api/core/v1"
 )
@@ -28,7 +29,7 @@ import (
 func TestGetAvailableEnvironments_DistinguishesWildcardInstances(t *testing.T) {
 	t.Parallel()
 
-	pod := func(name, component, env, instance string) *corev1.Pod {
+	pod := func(name, component, env, instance, original string) *corev1.Pod {
 		return &corev1.Pod{
 			Name:      name,
 			Namespace: "default",
@@ -38,15 +39,18 @@ func TestGetAvailableEnvironments_DistinguishesWildcardInstances(t *testing.T) {
 				EnvironmentLabel: env,
 				InstanceLabel:    instance,
 			},
+			Annotations: map[string]string{
+				spec.AnnotationEnvironmentInstance: original,
+			},
 			Status: corev1.PodStatus{Phase: corev1.PodRunning},
 		}
 	}
 
 	cs := fake.NewSimpleClientset(
-		pod("logical", "api", "review", helm.GenerateReleaseName("shop", "review")),
-		pod("pr-123", "api", "review", helm.GenerateReleaseName("shop", "review/pr-123")),
-		pod("pr-456", "api", "review", helm.GenerateReleaseName("shop", "review/pr-456")),
-		pod("web-pr", "web", "review", helm.GenerateReleaseName("shop", "review/pr-789")),
+		pod("logical", "api", "review", helm.GenerateReleaseName("shop", "review"), "review"),
+		pod("pr-123", "api", "review", helm.GenerateReleaseName("shop", "review/pr-123"), "review/pr-123"),
+		pod("pr-456", "api", "review", helm.GenerateReleaseName("shop", "review/pr-456"), "review/pr-456"),
+		pod("web-pr", "web", "review", helm.GenerateReleaseName("shop", "review/pr-789"), "review/pr-789"),
 	)
 	client := NewClient(cs, "default")
 	got, err := client.GetAvailableEnvironments(t.Context(), "shop", "api")

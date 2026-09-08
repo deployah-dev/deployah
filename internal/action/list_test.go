@@ -59,6 +59,51 @@ func TestList_Run_WildcardInstanceIsolated(t *testing.T) {
 	assert.Equal(t, helm.GenerateReleaseName("shop", "review/pr-123"), got[0].Name)
 }
 
+func TestList_Run_NoProjectWildcardInstanceIsolated(t *testing.T) {
+	t.Parallel()
+
+	rels := []*v1.Release{
+		{
+			Name: helm.GenerateReleaseName("shop", "review/pr-123"),
+			Labels: map[string]string{
+				"deployah.dev/project":     "shop",
+				"deployah.dev/environment": "review",
+			},
+		},
+		{
+			Name: helm.GenerateReleaseName("shop", "review/pr-456"),
+			Labels: map[string]string{
+				"deployah.dev/project":     "shop",
+				"deployah.dev/environment": "review",
+			},
+		},
+		{
+			Name: helm.GenerateReleaseName("billing", "review/pr-123"),
+			Labels: map[string]string{
+				"deployah.dev/project":     "billing",
+				"deployah.dev/environment": "review",
+			},
+		},
+		{
+			Name: helm.GenerateReleaseName("billing", "review/pr-456"),
+			Labels: map[string]string{
+				"deployah.dev/project":     "billing",
+				"deployah.dev/environment": "review",
+			},
+		},
+		nil,
+	}
+	l := action.NewList(&mockLister{releases: rels})
+	got, err := l.Run(t.Context(), action.ListParams{Environment: "review/pr-123"})
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	names := []string{got[0].Name, got[1].Name}
+	assert.ElementsMatch(t, []string{
+		helm.GenerateReleaseName("shop", "review/pr-123"),
+		helm.GenerateReleaseName("billing", "review/pr-123"),
+	}, names)
+}
+
 func TestList_Run_LogicalEnvironmentKeepsAllInstances(t *testing.T) {
 	t.Parallel()
 

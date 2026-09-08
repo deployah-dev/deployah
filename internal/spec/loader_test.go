@@ -118,6 +118,24 @@ func TestResolveEnvironment(t *testing.T) {
 			wantName:    "default",
 			wantEnvFile: "",
 		},
+		{
+			name:     "undeclared logical prefix of a wildcard instance is rejected",
+			platform: platform,
+			desired:  "qa/pr-123",
+			wantErr:  "not found in the platform file",
+		},
+		{
+			name:     "invalid wildcard instance syntax is rejected",
+			platform: platform,
+			desired:  "production/PR-123",
+			wantErr:  "instance id must be a lowercase DNS label",
+		},
+		{
+			name:     "nested wildcard suffix is rejected",
+			platform: platform,
+			desired:  "production/eu/west",
+			wantErr:  "exactly one '/'",
+		},
 	}
 
 	for _, tt := range tests {

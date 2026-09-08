@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
     annotations:
+        deployah.dev/environment-instance: review-feature-add-new-checkout-flow
         deployah.dev/project: longnameproj
         deployah.dev/source: spec
     labels:
@@ -10,6 +11,7 @@ metadata:
         app.kubernetes.io/name: api
         deployah.dev/component: api
         deployah.dev/environment: review-feature-add-new-checkout-flow
+        deployah.dev/instance: longnameproj-review-feature-add-new-checkout-flow
         deployah.dev/project: longnameproj
         helm.sh/chart: api-0.1.0
     name: longnameproj-review-feature-add-new-checkout-flow-api
@@ -25,13 +27,15 @@ spec:
         type: RollingUpdate
     template:
         metadata:
-            annotations: null
+            annotations:
+                deployah.dev/environment-instance: review-feature-add-new-checkout-flow
             labels:
                 app.kubernetes.io/instance: longnameproj-review-feature-add-new-checkout-flow
                 app.kubernetes.io/managed-by: Helm
                 app.kubernetes.io/name: api
                 deployah.dev/component: api
                 deployah.dev/environment: review-feature-add-new-checkout-flow
+                deployah.dev/instance: longnameproj-review-feature-add-new-checkout-flow
                 deployah.dev/project: longnameproj
                 helm.sh/chart: api-0.1.0
         spec:

@@ -115,15 +115,20 @@ func ResolveEnvironment(environments map[string]Environment, platform *PlatformC
 				source, joinStrings(registry),
 			)
 		}
-	} else if len(registry) > 0 {
-		matched, ok := matchEnvKey(desiredEnvironment, registry)
-		if !ok {
-			return "", nil, fmt.Errorf(
-				"environment %q not found in %s, available environments: %s",
-				desiredEnvironment, source, joinStrings(registry),
-			)
+	} else {
+		if err := ValidateRequestedEnv(desiredEnvironment); err != nil {
+			return "", nil, err
 		}
-		name = matched
+		if len(registry) > 0 {
+			matched, ok := matchEnvKey(desiredEnvironment, registry)
+			if !ok {
+				return "", nil, fmt.Errorf(
+					"environment %q not found in %s, available environments: %s",
+					desiredEnvironment, source, joinStrings(registry),
+				)
+			}
+			name = matched
+		}
 	}
 
 	// The spec entry is an optional override; absent means zero value.

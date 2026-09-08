@@ -2,6 +2,7 @@ apiVersion: v1
 kind: Service
 metadata:
     annotations:
+        deployah.dev/environment-instance: production
         deployah.dev/project: autoscaling-hpa
         deployah.dev/source: spec
     labels:
@@ -10,6 +11,7 @@ metadata:
         app.kubernetes.io/name: api
         deployah.dev/component: api
         deployah.dev/environment: production
+        deployah.dev/instance: autoscaling-hpa-production
         deployah.dev/project: autoscaling-hpa
         helm.sh/chart: api-0.1.0
     name: autoscaling-hpa-production-api

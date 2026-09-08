@@ -75,9 +75,17 @@ rewrites object names:
 
 | Object | Labels | Annotations |
 |---|---|---|
-| Generated (from the spec) | `deployah.dev/project`, `deployah.dev/environment`, `deployah.dev/component`, ... | `deployah.dev/source=spec`, `deployah.dev/project` |
-| Extra manifests | `deployah.dev/project`, `deployah.dev/environment` | `deployah.dev/source=manifests`, `deployah.dev/project` |
-| Extra CRDs | project only (no environment) | `deployah.dev/source=crds`, `deployah.dev/project` |
+| Generated (from the spec) | `deployah.dev/project`, `deployah.dev/environment`, `deployah.dev/component`, `deployah.dev/instance` | `deployah.dev/source=spec`, `deployah.dev/project`, `deployah.dev/environment-instance` |
+| Extra manifests | `deployah.dev/project`, `deployah.dev/environment`, `deployah.dev/instance` | `deployah.dev/source=manifests`, `deployah.dev/project`, `deployah.dev/environment-instance` |
+| Extra CRDs | project only (no environment or instance) | `deployah.dev/source=crds`, `deployah.dev/project` |
+
+`deployah.dev/environment` is the logical environment (`review`). Concrete
+wildcard instances such as `review/pr-123` are stored in the
+`deployah.dev/environment-instance` annotation (annotations may contain `/`).
+`deployah.dev/instance` is the Helm-safe exact deployment identity (the
+release name). Helm still sets `app.kubernetes.io/instance` on generated
+chart resources. Extra manifests do not take ownership of that conventional
+label: if you set it, Deployah leaves it alone.
 
 Reserved `deployah.dev/*` keys that Deployah does not own are stripped from
 extras so they cannot impersonate managed metadata. Your other labels and

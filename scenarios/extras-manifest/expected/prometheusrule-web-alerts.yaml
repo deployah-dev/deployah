@@ -2,10 +2,12 @@ apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
     annotations:
+        deployah.dev/environment-instance: dev
         deployah.dev/project: extras-manifest
         deployah.dev/source: manifests
     labels:
         deployah.dev/environment: dev
+        deployah.dev/instance: extras-manifest-dev
         deployah.dev/project: extras-manifest
     name: web-alerts
     namespace: default

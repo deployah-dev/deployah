@@ -603,7 +603,10 @@ func TestMapSpecToChartValues_Profiles(t *testing.T) {
 	web := mustNestedMap(t, vals, "web")
 	assert.Equal(t, map[string]string{"workload": "general"}, web["nodeSelector"])
 	assert.Equal(t, map[string]string{"tier": "web"}, web["podLabels"])
-	assert.Equal(t, map[string]string{"deployah.dev/profile": "public-web"}, web["podAnnotations"])
+	assert.Equal(t, map[string]string{
+		"deployah.dev/profile":             "public-web",
+		spec.AnnotationEnvironmentInstance: "production",
+	}, web["podAnnotations"])
 
 	labels, ok := web["commonLabels"].(map[string]string)
 	require.True(t, ok)
@@ -614,6 +617,8 @@ func TestMapSpecToChartValues_Profiles(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, spec.SourceSpec, annotations[spec.AnnotationSource])
 	assert.Equal(t, "shop", annotations[spec.AnnotationProject])
+	assert.Equal(t, "production", annotations[spec.AnnotationEnvironmentInstance])
+	assert.Equal(t, GenerateReleaseName("shop", "production"), labels[spec.LabelInstance])
 
 	tolerations, ok := web["tolerations"].([]any)
 	require.True(t, ok)
@@ -854,7 +859,7 @@ func TestParseContainerImage(t *testing.T) {
 }
 
 // TestGenerateReleaseName verifies release name composition, including
-// normalization of wildcard "/" environment names to their k8s-safe form.
+// collision-resistant encoding of wildcard instances.
 func TestGenerateReleaseName(t *testing.T) {
 	t.Parallel()
 
@@ -865,8 +870,8 @@ func TestGenerateReleaseName(t *testing.T) {
 		want            string
 	}{
 		{name: "plain names", projectName: "shop", environmentName: "production", want: "shop-production"},
-		{name: "wildcard environment normalized", projectName: "shop", environmentName: "review/pr-42", want: "shop-review-pr-42"},
-		{name: "empty environment", projectName: "shop", environmentName: "", want: "shop-"},
+		{name: "wildcard environment encoded", projectName: "shop", environmentName: "review/pr-42", want: "shop-review--pr-42"},
+		{name: "empty environment", projectName: "shop", environmentName: "", want: "shop"},
 	}
 
 	for _, tt := range tests {
@@ -877,6 +882,16 @@ func TestGenerateReleaseName(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
+
+	assert.NotEqual(t, GenerateReleaseName("shop", "review/pr-123"), GenerateReleaseName("shop", "review-pr-123"))
+}
+
+func TestValidateReleaseEnvironment(t *testing.T) {
+	t.Parallel()
+
+	require.NoError(t, validateReleaseEnvironment(""))
+	require.NoError(t, validateReleaseEnvironment("review/pr-123"))
+	require.Error(t, validateReleaseEnvironment("review/PR-123"))
 }
 
 // TestToValuesMap verifies JSON round-tripping of arbitrary structs and maps

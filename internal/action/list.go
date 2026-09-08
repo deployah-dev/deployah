@@ -7,6 +7,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 
 	"deployah.dev/deployah/internal/k8s"
+	"deployah.dev/deployah/internal/spec"
 
 	v1 "helm.sh/helm/v4/pkg/release/v1"
 )
@@ -37,6 +38,11 @@ func NewList(lister ReleaseLister) *List {
 // Run returns non-nil releases matching the filters.
 // Returns an empty slice (not an error) if none found.
 func (l *List) Run(ctx context.Context, params ListParams) ([]*v1.Release, error) {
+	if params.Environment != "" {
+		if err := spec.ValidateRequestedEnv(params.Environment); err != nil {
+			return nil, err
+		}
+	}
 	selector, err := k8s.BuildLabelSelector(params.Project, params.Environment)
 	if err != nil {
 		return nil, fmt.Errorf("build selector: %w", err)

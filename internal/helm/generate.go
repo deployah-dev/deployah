@@ -77,16 +77,68 @@ type ChartData struct {
 }
 
 // GenerateReleaseName returns the Helm release name for project and
-// environment. Format: PROJECT_NAME-ENVIRONMENT_NAME. Wildcard instances
-// such as review/pr-42 use [spec.EnvIdentity.K8sSafe] so each instance
-// gets its own release.
+// environment. It is the single Helm-facing wrapper around
+// [spec.EnvIdentity.ReleaseName].
 func GenerateReleaseName(projectName, environmentName string) string {
 	return spec.NormalizeEnv(environmentName).ReleaseName(projectName)
 }
 
-// environmentLabel is the logical environment for [spec.LabelEnvironment].
-func environmentLabel(environment string) string {
-	return spec.NormalizeEnv(environment).MapKey
+// validateReleaseEnvironment rejects concrete instance names that cannot
+// become a Helm release. Empty environment is allowed for callers that
+// omit the filter.
+func validateReleaseEnvironment(environment string) error {
+	if environment == "" {
+		return nil
+	}
+	return spec.ValidateRequestedEnv(environment)
+}
+
+// chartIdentity is project, component, and environment metadata for generated
+// chart resources. [spec.LabelInstance] is the Helm release name.
+func chartIdentity(project, component, environment string) (labels, annotations, podAnnotations map[string]string) {
+	env := spec.NormalizeEnv(environment)
+	release := env.ReleaseName(project)
+	labels = map[string]string{
+		spec.LabelProject:     project,
+		spec.LabelComponent:   component,
+		spec.LabelEnvironment: env.MapKey,
+		spec.LabelInstance:    release,
+	}
+	annotations = map[string]string{
+		spec.AnnotationSource:              spec.SourceSpec,
+		spec.AnnotationProject:             project,
+		spec.AnnotationEnvironmentInstance: env.Original,
+	}
+	podAnnotations = map[string]string{
+		spec.AnnotationEnvironmentInstance: env.Original,
+	}
+	return labels, annotations, podAnnotations
+}
+
+// restampChartIdentity writes reserved Deployah identity keys after profile
+// labels may have overwritten them, and keeps the Original annotation on pods.
+func restampChartIdentity(values map[string]any, project, component, environment string) {
+	labels, annotations, podAnns := chartIdentity(project, component, environment)
+	commonLabels := cloneStringMap(values["commonLabels"])
+	maps.Copy(commonLabels, labels)
+	values["commonLabels"] = commonLabels
+
+	commonAnns := cloneStringMap(values["commonAnnotations"])
+	maps.Copy(commonAnns, annotations)
+	values["commonAnnotations"] = commonAnns
+
+	merged := cloneStringMap(values["podAnnotations"])
+	maps.Copy(merged, podAnns)
+	values["podAnnotations"] = merged
+}
+
+// cloneStringMap copies v when it is a map[string]string.
+func cloneStringMap(v any) map[string]string {
+	m, ok := v.(map[string]string)
+	if !ok || m == nil {
+		return map[string]string{}
+	}
+	return maps.Clone(m)
 }
 
 // requireResolvedSpec reports an error unless resolved is a [spec.Resolve]
@@ -383,16 +435,11 @@ func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string, resolved *spe
 			continue
 		}
 
+		labels, annotations, podAnnotations := chartIdentity(m.Project, componentName, desiredEnvironment)
 		componentValues := map[string]any{
-			"commonLabels": map[string]string{
-				spec.LabelProject:     m.Project,
-				spec.LabelComponent:   componentName,
-				spec.LabelEnvironment: environmentLabel(desiredEnvironment),
-			},
-			"commonAnnotations": map[string]string{
-				spec.AnnotationSource:  spec.SourceSpec,
-				spec.AnnotationProject: m.Project,
-			},
+			"commonLabels":      labels,
+			"commonAnnotations": annotations,
+			"podAnnotations":    podAnnotations,
 		}
 
 		// TODO(#114): deliver configFile as its own mounted artifact.
@@ -593,6 +640,7 @@ func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string, resolved *spe
 						return nil, fmt.Errorf("component %s: apply profile values: %w", componentName, err)
 					}
 				}
+				restampChartIdentity(componentValues, m.Project, componentName, desiredEnvironment)
 				if len(rc.Profiles) > 0 {
 					entry["profiles"] = rc.Profiles
 				}
@@ -618,18 +666,23 @@ func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string, resolved *spe
 		return nil, err
 	}
 
+	env := spec.NormalizeEnv(desiredEnvironment)
+	deployahVals, ok := values["deployah"].(map[string]any)
+	if !ok || deployahVals == nil {
+		deployahVals = map[string]any{}
+	}
+	deployahVals["environmentInstance"] = env.Original
+
 	// Write the deployah.resolved block so the hostname guard can compare
 	// values across deploys, and so plan/guards can see active tasks.
 	if len(resolvedComponents) > 0 || len(resolvedTasks) > 0 {
-		deployahVals := map[string]any{
-			"resolved": map[string]any{
-				"schemaVersion": resolvedSchemaVersion,
-				"components":    resolvedComponents,
-				"tasks":         resolvedTasks,
-			},
+		deployahVals["resolved"] = map[string]any{
+			"schemaVersion": resolvedSchemaVersion,
+			"components":    resolvedComponents,
+			"tasks":         resolvedTasks,
 		}
-		values["deployah"] = deployahVals
 	}
+	values["deployah"] = deployahVals
 
 	return values, nil
 }

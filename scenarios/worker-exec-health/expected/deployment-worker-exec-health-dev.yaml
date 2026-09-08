@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
     annotations:
+        deployah.dev/environment-instance: dev
         deployah.dev/project: worker-exec-health
         deployah.dev/source: spec
     labels:
@@ -10,6 +11,7 @@ metadata:
         app.kubernetes.io/name: worker
         deployah.dev/component: worker
         deployah.dev/environment: dev
+        deployah.dev/instance: worker-exec-health-dev
         deployah.dev/project: worker-exec-health
         helm.sh/chart: worker-0.1.0
     name: worker-exec-health-dev
@@ -25,13 +27,15 @@ spec:
         type: RollingUpdate
     template:
         metadata:
-            annotations: null
+            annotations:
+                deployah.dev/environment-instance: dev
             labels:
                 app.kubernetes.io/instance: worker-exec-health-dev
                 app.kubernetes.io/managed-by: Helm
                 app.kubernetes.io/name: worker
                 deployah.dev/component: worker
                 deployah.dev/environment: dev
+                deployah.dev/instance: worker-exec-health-dev
                 deployah.dev/project: worker-exec-health
                 helm.sh/chart: worker-0.1.0
         spec:

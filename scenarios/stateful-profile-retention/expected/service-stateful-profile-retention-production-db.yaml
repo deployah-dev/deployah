@@ -2,6 +2,7 @@ apiVersion: v1
 kind: Service
 metadata:
     annotations:
+        deployah.dev/environment-instance: production
         deployah.dev/project: stateful-profile-retention
         deployah.dev/source: spec
     labels:
@@ -10,6 +11,7 @@ metadata:
         app.kubernetes.io/name: db
         deployah.dev/component: db
         deployah.dev/environment: production
+        deployah.dev/instance: stateful-profile-retention-production
         deployah.dev/project: stateful-profile-retention
         helm.sh/chart: db-0.1.0
     name: stateful-profile-retention-production-db

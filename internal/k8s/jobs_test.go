@@ -99,8 +99,11 @@ func TestBuildTaskJob_WildcardEnvironmentLabel(t *testing.T) {
 	assert.Equal(t, "review", job.Spec.Template.Labels[spec.LabelEnvironment])
 	assert.NotEqual(t, "review/pr-123", job.Labels[spec.LabelEnvironment])
 	assert.NotEqual(t, "review-pr-123", job.Labels[spec.LabelEnvironment])
-	assert.Equal(t, "shop-review-pr-123", job.Labels[InstanceLabel])
-	assert.Equal(t, "shop-review-pr-123", job.Spec.Template.Labels[InstanceLabel])
+	assert.Equal(t, helm.GenerateReleaseName("shop", "review/pr-123"), job.Labels[InstanceLabel])
+	assert.Equal(t, helm.GenerateReleaseName("shop", "review/pr-123"), job.Spec.Template.Labels[InstanceLabel])
+	assert.Equal(t, helm.GenerateReleaseName("shop", "review/pr-123"), job.Labels[spec.LabelInstance])
+	assert.Equal(t, "review/pr-123", job.Annotations[spec.AnnotationEnvironmentInstance])
+	assert.Equal(t, "review/pr-123", job.Spec.Template.Annotations[spec.AnnotationEnvironmentInstance])
 }
 
 func TestBuildTaskJob_EnvSorted(t *testing.T) {
@@ -173,7 +176,7 @@ func TestJobGenerateName_Truncates(t *testing.T) {
 			name:    "long hashed name",
 			release: release,
 			task:    task,
-			want:    strings.Repeat("p", 21) + "-9289-" + task + "-",
+			want:    strings.Repeat("p", 21) + "-167c-" + task + "-",
 		},
 		{
 			name:    "long prefix cleanup",
@@ -219,7 +222,7 @@ func TestRunConfigMapGenerateName_FitsAfterKubernetesSuffix(t *testing.T) {
 		{
 			name:      "long hashed name",
 			jobPrefix: generateNamePrefix(release, task),
-			want:      strings.Repeat("p", 21) + "-9289-" + strings.Repeat("t", 21) + "-0b8e-run-",
+			want:      strings.Repeat("p", 21) + "-167c-" + strings.Repeat("t", 21) + "-5c01-run-",
 		},
 		{
 			name:      "long prefix cleanup",
@@ -542,7 +545,7 @@ func TestListJobs_WildcardInstanceIsolated(t *testing.T) {
 		Labels: map[string]string{
 			spec.LabelProject:     "shop",
 			spec.LabelEnvironment: "review",
-			InstanceLabel:         "shop-review-pr-456",
+			InstanceLabel:         helm.GenerateReleaseName("shop", "review/pr-456"),
 		},
 	}
 	match := &batchv1.Job{
@@ -551,7 +554,7 @@ func TestListJobs_WildcardInstanceIsolated(t *testing.T) {
 		Labels: map[string]string{
 			spec.LabelProject:     "shop",
 			spec.LabelEnvironment: "review",
-			InstanceLabel:         "shop-review-pr-123",
+			InstanceLabel:         helm.GenerateReleaseName("shop", "review/pr-123"),
 		},
 	}
 	cs := fake.NewSimpleClientset(keep, match)
@@ -800,6 +803,45 @@ func TestBuildTaskJob_AppliesProfile(t *testing.T) {
 	require.NotNil(t, job.Spec.Template.Spec.Containers[0].SecurityContext)
 	require.NotNil(t, job.Spec.Template.Spec.Containers[0].SecurityContext.ReadOnlyRootFilesystem)
 	assert.True(t, *job.Spec.Template.Spec.Containers[0].SecurityContext.ReadOnlyRootFilesystem)
+}
+
+func TestBuildTaskJob_ProfileCannotOverwriteIdentity(t *testing.T) {
+	t.Parallel()
+
+	release := helm.GenerateReleaseName("shop", "review/pr-123")
+	job, err := BuildTaskJob(TaskJobOptions{
+		Project:     "shop",
+		Environment: "review/pr-123",
+		Namespace:   "default",
+		TaskName:    "migrate",
+		Task:        spec.Task{Image: "busybox:1.36", Command: []string{"true"}},
+		Profile: &spec.PlatformProfile{
+			PodLabels: map[string]string{
+				spec.LabelInstance:    "hijacked",
+				InstanceLabel:         "hijacked",
+				spec.LabelProject:     "other",
+				spec.LabelEnvironment: "staging",
+				spec.LabelManagedBy:   "not-deployah",
+				spec.LabelComponent:   "other-task",
+				"tier":                "jobs",
+			},
+			PodAnnotations: map[string]string{
+				spec.AnnotationEnvironmentInstance: "staging",
+				"team":                             "platform",
+			},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, release, job.Spec.Template.Labels[spec.LabelInstance])
+	assert.Equal(t, release, job.Spec.Template.Labels[InstanceLabel])
+	assert.Equal(t, "shop", job.Spec.Template.Labels[spec.LabelProject])
+	assert.Equal(t, "review", job.Spec.Template.Labels[spec.LabelEnvironment])
+	assert.Equal(t, spec.ManagedByValue, job.Spec.Template.Labels[spec.LabelManagedBy])
+	assert.Equal(t, "migrate", job.Spec.Template.Labels[spec.LabelComponent])
+	assert.Equal(t, "jobs", job.Spec.Template.Labels["tier"])
+	assert.Equal(t, "review/pr-123", job.Spec.Template.Annotations[spec.AnnotationEnvironmentInstance])
+	assert.Equal(t, "platform", job.Spec.Template.Annotations["team"])
+	assert.Equal(t, release, job.Labels[spec.LabelInstance])
 }
 
 func TestCreateRunJob_TemporaryConfigMapAndOwnerRef(t *testing.T) {

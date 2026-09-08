@@ -30,6 +30,7 @@ import (
 type ReleaseViewModel struct {
 	Project      string         `json:"project" yaml:"project"`
 	Environment  string         `json:"environment" yaml:"environment"`
+	Instance     string         `json:"instance" yaml:"instance"`
 	Release      string         `json:"release" yaml:"release"`
 	Namespace    string         `json:"namespace" yaml:"namespace"`
 	Status       string         `json:"status" yaml:"status"`
@@ -63,6 +64,37 @@ func extractDeployahLabels(release *v1.Release) (project, environment string) {
 	return project, environment
 }
 
+func nestedString(m map[string]any, keys ...string) string {
+	cur := any(m)
+	for _, k := range keys {
+		obj, ok := cur.(map[string]any)
+		if !ok {
+			return ""
+		}
+		cur = obj[k]
+	}
+	s, ok := cur.(string)
+	if !ok {
+		return ""
+	}
+	return s
+}
+
+func originalFromRelease(rel *v1.Release) string {
+	if rel == nil {
+		return ""
+	}
+	if s := nestedString(rel.Config, "deployah", "environmentInstance"); s != "" {
+		return s
+	}
+	if rel.Chart != nil {
+		if s := nestedString(rel.Chart.Values, "deployah", "environmentInstance"); s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
 // getPodInfo retrieves pod information for a release
 func getPodInfo(ctx context.Context, k8sClient *k8s.Client, release *v1.Release) (int, int, string) {
 	if k8sClient == nil {
@@ -84,6 +116,7 @@ func ReleaseToViewModel(rel *v1.Release) ReleaseViewModel {
 	vm := ReleaseViewModel{
 		Project:     project,
 		Environment: environment,
+		Instance:    originalFromRelease(rel),
 		Release:     rel.Name,
 		Namespace:   rel.Namespace,
 		Revision:    int(rel.Version),
