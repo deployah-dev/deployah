@@ -77,11 +77,16 @@ type ChartData struct {
 }
 
 // GenerateReleaseName returns the Helm release name for project and
-// environment. Format: PROJECT_NAME-ENVIRONMENT_NAME.
+// environment. Format: PROJECT_NAME-ENVIRONMENT_NAME. Wildcard instances
+// such as review/pr-42 use [spec.EnvIdentity.K8sSafe] so each instance
+// gets its own release.
 func GenerateReleaseName(projectName, environmentName string) string {
-	// K8sSafe: wildcard names like "review/pr-42" contain "/", which is
-	// illegal in release names and label values.
-	return projectName + "-" + spec.NormalizeEnv(environmentName).K8sSafe
+	return spec.NormalizeEnv(environmentName).ReleaseName(projectName)
+}
+
+// environmentLabel is the logical environment for [spec.LabelEnvironment].
+func environmentLabel(environment string) string {
+	return spec.NormalizeEnv(environment).MapKey
 }
 
 // requireResolvedSpec reports an error unless resolved is a [spec.Resolve]
@@ -105,10 +110,10 @@ func releaseIdentity(resolved *spec.ResolvedSpec) (string, map[string]string, er
 	if err := requireResolvedSpec(resolved); err != nil {
 		return "", nil, err
 	}
-	environment := resolved.Env.Original
-	return GenerateReleaseName(resolved.Spec.Project, environment), map[string]string{
+	env := resolved.Env
+	return GenerateReleaseName(resolved.Spec.Project, env.Original), map[string]string{
 		"deployah.dev/project":     resolved.Spec.Project,
-		"deployah.dev/environment": environment,
+		"deployah.dev/environment": env.MapKey,
 		"deployah.dev/managed-by":  "deployah",
 		"deployah.dev/version":     resolved.Spec.APIVersion,
 	}, nil
@@ -269,13 +274,8 @@ func PrepareChart(ctx context.Context, resolved *spec.ResolvedSpec, cache *Chart
 	return createChartCopy(tmpDir)
 }
 
-// createComponentSubCharts creates a sub-chart directory for each name in
-// componentNames, taken from [spec.ResolvedSpec.Components] on full render.
-// A component excluded from the target environment is absent from that
-// list and gets no subchart at all: an empty subchart would still render
-// default-valued resources (e.g. a Service from app.yaml's base
-// values.yaml), leaking them into an environment the component was never
-// meant to reach.
+// createComponentSubCharts writes a sub-chart for each name. Names not in
+// the list get no subchart; an empty subchart would still render defaults.
 func createComponentSubCharts(chartDir string, componentNames []string) error {
 	chartsDir := filepath.Join(chartDir, "charts")
 	if err := os.MkdirAll(chartsDir, 0o750); err != nil {
@@ -349,12 +349,8 @@ func activeComponentNames(manifest *spec.Spec, desiredEnvironment string) []stri
 	return names
 }
 
-// componentActiveInEnvironment reports whether component belongs in the
-// chart for desiredEnvironment: true when it has no explicit Environments
-// filter (active everywhere), or desiredEnvironment matches one of them
-// via [spec.MatchEnvKey] (the same matcher [spec.Resolve] uses). Shared by
-// [MapSpecToChartValues] and [activeComponentNames] so values and sub-charts
-// agree on the active component set.
+// componentActiveInEnvironment reports whether component is active in
+// desiredEnvironment. An empty Environments list means every environment.
 func componentActiveInEnvironment(component spec.Component, desiredEnvironment string) bool {
 	if len(component.Environments) == 0 {
 		return true
@@ -391,7 +387,7 @@ func MapSpecToChartValues(m *spec.Spec, desiredEnvironment string, resolved *spe
 			"commonLabels": map[string]string{
 				spec.LabelProject:     m.Project,
 				spec.LabelComponent:   componentName,
-				spec.LabelEnvironment: spec.NormalizeEnv(desiredEnvironment).K8sSafe,
+				spec.LabelEnvironment: environmentLabel(desiredEnvironment),
 			},
 			"commonAnnotations": map[string]string{
 				spec.AnnotationSource:  spec.SourceSpec,

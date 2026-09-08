@@ -135,6 +135,38 @@ func TestResolveRunTask(t *testing.T) {
 		require.Error(t, err)
 		assert.ErrorContains(t, err, "unknown task")
 	})
+
+	t.Run("runtime-only manual task without platform", func(t *testing.T) {
+		t.Parallel()
+		local := &spec.Spec{
+			APIVersion: spec.CurrentManifestVersion,
+			Project:    "shop",
+			Components: map[string]spec.Component{
+				"api": {Image: "busybox"},
+			},
+			Tasks: map[string]spec.Task{
+				"migrate": {
+					From:    "api",
+					On:      spec.TaskOnManual,
+					Command: []string{"echo", "ok"},
+				},
+			},
+		}
+		rt, err := resolveRunTask(local, nil, "dev", "migrate")
+		require.NoError(t, err)
+		assert.Equal(t, "busybox", rt.Task.Image)
+		assert.Equal(t, []string{"echo", "ok"}, rt.Task.Command)
+		job, err := k8s.BuildTaskJob(k8s.TaskJobOptions{
+			Project:     "shop",
+			Environment: "dev",
+			Namespace:   "default",
+			TaskName:    "migrate",
+			Task:        rt.Task,
+			Runtime:     rt.Runtime,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "busybox", job.Spec.Template.Spec.Containers[0].Image)
+	})
 }
 
 func TestResolveRunTask_Error(t *testing.T) {

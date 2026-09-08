@@ -294,8 +294,13 @@ const (
 	// LabelProject is the label key for project identification
 	LabelProject = LabelPrefix + "/project"
 
-	// LabelEnvironment is the label key for environment identification
+	// LabelEnvironment is the label key for the logical Deployah
+	// environment ([EnvIdentity.MapKey], for example "review").
 	LabelEnvironment = LabelPrefix + "/environment"
+
+	// LabelInstance is Helm's app.kubernetes.io/instance label, set to
+	// the Helm release name.
+	LabelInstance = "app.kubernetes.io/instance"
 
 	// LabelManagedBy is the label key indicating management by Deployah
 	LabelManagedBy = LabelPrefix + "/managed-by"

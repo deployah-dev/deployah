@@ -10,6 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 
 	"deployah.dev/deployah/internal/action"
+	"deployah.dev/deployah/internal/helm"
 
 	v1 "helm.sh/helm/v4/pkg/release/v1"
 )
@@ -42,6 +43,33 @@ func TestList_Run_WithReleases(t *testing.T) {
 	releases, err := l.Run(t.Context(), action.ListParams{Project: "my-app"})
 	require.NoError(t, err)
 	assert.Len(t, releases, 2)
+}
+
+func TestList_Run_WildcardInstanceIsolated(t *testing.T) {
+	t.Parallel()
+
+	rels := []*v1.Release{
+		{Name: helm.GenerateReleaseName("shop", "review/pr-123")},
+		{Name: helm.GenerateReleaseName("shop", "review/pr-456")},
+	}
+	l := action.NewList(&mockLister{releases: rels})
+	got, err := l.Run(t.Context(), action.ListParams{Project: "shop", Environment: "review/pr-123"})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, helm.GenerateReleaseName("shop", "review/pr-123"), got[0].Name)
+}
+
+func TestList_Run_LogicalEnvironmentKeepsAllInstances(t *testing.T) {
+	t.Parallel()
+
+	rels := []*v1.Release{
+		{Name: helm.GenerateReleaseName("shop", "review/pr-123")},
+		{Name: helm.GenerateReleaseName("shop", "review/pr-456")},
+	}
+	l := action.NewList(&mockLister{releases: rels})
+	got, err := l.Run(t.Context(), action.ListParams{Project: "shop", Environment: "review"})
+	require.NoError(t, err)
+	require.Len(t, got, 2)
 }
 
 // Run wraps lister errors.

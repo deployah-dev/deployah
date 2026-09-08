@@ -65,7 +65,9 @@ func TestAssignHookWeights_Cycle(t *testing.T) {
 	assert.Equal(t, TaskOnPreDeploy, cycle.On)
 	assert.Equal(t, []string{"a", "b"}, cycle.Tasks)
 	assert.Contains(t, err.Error(), "cycle")
+	assert.Contains(t, err.Error(), "unresolved tasks")
 	assert.Contains(t, err.Error(), `"a", "b"`)
+	assert.NotContains(t, err.Error(), "cycle among")
 }
 
 func TestAssignHookWeights_SelfCycle(t *testing.T) {
@@ -79,6 +81,8 @@ func TestAssignHookWeights_SelfCycle(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, []string{"migrate"}, cycle.Tasks)
 	assert.Contains(t, err.Error(), "cycle")
+	assert.Contains(t, err.Error(), `"migrate"`)
+	assert.Contains(t, err.Error(), "unresolved tasks")
 }
 
 func TestAssignHookWeights_CycleNamesOnlyStuckTasks(t *testing.T) {
@@ -92,4 +96,21 @@ func TestAssignHookWeights_CycleNamesOnlyStuckTasks(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `"a", "b"`)
 	assert.NotContains(t, err.Error(), "migrate")
+}
+
+func TestAssignHookWeights_CyclePlusBlockedTask(t *testing.T) {
+	t.Parallel()
+
+	_, err := AssignHookWeights(map[string]Task{
+		"c": {On: TaskOnPreDeploy, After: []string{"b"}},
+		"a": {On: TaskOnPreDeploy, After: []string{"b"}},
+		"b": {On: TaskOnPreDeploy, After: []string{"a"}},
+	})
+	require.Error(t, err)
+	cycle, ok := errors.AsType[*HookCycleError](err)
+	require.True(t, ok)
+	assert.Equal(t, []string{"a", "b", "c"}, cycle.Tasks)
+	assert.Contains(t, err.Error(), "after contains a cycle")
+	assert.Contains(t, err.Error(), `unresolved tasks: "a", "b", "c"`)
+	assert.NotContains(t, err.Error(), "cycle among")
 }

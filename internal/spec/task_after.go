@@ -21,8 +21,8 @@ import (
 )
 
 // HookCycleError is returned when hook tasks form a cycle in after.
-// On names the hook phase. Tasks lists the names still stuck in the cycle
-// (and tasks waiting behind it), in sorted order.
+// On names the hook phase. Tasks lists unresolved names in sorted order:
+// members of the cycle and tasks blocked behind it.
 type HookCycleError struct {
 	On    TaskOn
 	Tasks []string
@@ -32,7 +32,7 @@ func (e *HookCycleError) Error() string {
 	if e == nil {
 		return "after contains a cycle"
 	}
-	return fmt.Sprintf("tasks with on %s: after contains a cycle among %s", e.On, joinStrings(e.Tasks))
+	return fmt.Sprintf("tasks with on %s: after contains a cycle; unresolved tasks: %s", e.On, joinStrings(e.Tasks))
 }
 
 func isHookCycle(err error) bool {

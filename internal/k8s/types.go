@@ -32,4 +32,8 @@ const (
 	ProjectLabel     = "deployah.dev/project"
 	ComponentLabel   = "deployah.dev/component"
 	EnvironmentLabel = "deployah.dev/environment"
+	// InstanceLabel is Helm's release-instance label. Wildcard environments
+	// share [EnvironmentLabel]; this value distinguishes review/pr-123 from
+	// review/pr-456.
+	InstanceLabel = "app.kubernetes.io/instance"
 )

@@ -29,6 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/fake"
 
+	"deployah.dev/deployah/internal/helm"
 	"deployah.dev/deployah/internal/spec"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -68,6 +69,7 @@ func TestBuildTaskJob_IndexedAndLabels(t *testing.T) {
 	assert.Equal(t, "shop", job.Labels[spec.LabelProject])
 	assert.Equal(t, "backfill", job.Labels[spec.LabelComponent])
 	assert.Equal(t, "dev", job.Labels[spec.LabelEnvironment])
+	assert.Equal(t, "shop-dev", job.Labels[InstanceLabel])
 	require.Len(t, job.Spec.Template.Spec.Containers, 1)
 	assert.Equal(t, "busybox:1.36", job.Spec.Template.Spec.Containers[0].Image)
 	assert.Equal(t, []string{"backfill"}, job.Spec.Template.Spec.Containers[0].Command)
@@ -77,6 +79,28 @@ func TestBuildTaskJob_IndexedAndLabels(t *testing.T) {
 	assert.Empty(t, job.Spec.Template.Spec.ServiceAccountName)
 	require.NotNil(t, job.Spec.TTLSecondsAfterFinished)
 	assert.Equal(t, int32(spec.DefaultCLIJobTTLSeconds), *job.Spec.TTLSecondsAfterFinished)
+}
+
+func TestBuildTaskJob_WildcardEnvironmentLabel(t *testing.T) {
+	t.Parallel()
+
+	job, err := BuildTaskJob(TaskJobOptions{
+		Project:     "shop",
+		Environment: "review/pr-123",
+		Namespace:   "default",
+		TaskName:    "backfill",
+		Task: spec.Task{
+			Image:   "busybox:1.36",
+			Command: []string{"backfill"},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "review", job.Labels[spec.LabelEnvironment])
+	assert.Equal(t, "review", job.Spec.Template.Labels[spec.LabelEnvironment])
+	assert.NotEqual(t, "review/pr-123", job.Labels[spec.LabelEnvironment])
+	assert.NotEqual(t, "review-pr-123", job.Labels[spec.LabelEnvironment])
+	assert.Equal(t, "shop-review-pr-123", job.Labels[InstanceLabel])
+	assert.Equal(t, "shop-review-pr-123", job.Spec.Template.Labels[InstanceLabel])
 }
 
 func TestBuildTaskJob_EnvSorted(t *testing.T) {
@@ -129,7 +153,7 @@ func TestBuildTaskJob_FlagOverrides(t *testing.T) {
 func TestJobGenerateName_Truncates(t *testing.T) {
 	t.Parallel()
 
-	release := strings.Repeat("p", spec.MaxProjectNameLength) + "-" + spec.NormalizeEnv(strings.Repeat("e", 80)).K8sSafe
+	release := helm.GenerateReleaseName(strings.Repeat("p", spec.MaxProjectNameLength), strings.Repeat("e", 80))
 	task := strings.Repeat("t", spec.MaxTaskNameLength)
 	shared := strings.Repeat("n", 80)
 
@@ -178,7 +202,7 @@ func TestJobGenerateName_Truncates(t *testing.T) {
 func TestRunConfigMapGenerateName_FitsAfterKubernetesSuffix(t *testing.T) {
 	t.Parallel()
 
-	release := strings.Repeat("p", spec.MaxProjectNameLength) + "-" + spec.NormalizeEnv(strings.Repeat("e", 80)).K8sSafe
+	release := helm.GenerateReleaseName(strings.Repeat("p", spec.MaxProjectNameLength), strings.Repeat("e", 80))
 	task := strings.Repeat("t", spec.MaxTaskNameLength)
 	shared := strings.Repeat("n", 80)
 
@@ -496,13 +520,85 @@ func TestListJobs(t *testing.T) {
 	match := &batchv1.Job{
 		Name:      "shop-job",
 		Namespace: "default",
-		Labels:    map[string]string{spec.LabelProject: "shop", spec.LabelEnvironment: "dev"},
+		Labels: map[string]string{
+			spec.LabelProject:     "shop",
+			spec.LabelEnvironment: "dev",
+			InstanceLabel:         helm.GenerateReleaseName("shop", "dev"),
+		},
 	}
 	cs := fake.NewSimpleClientset(keep, match)
 	got, err := ListJobs(t.Context(), cs, "default", "shop", "dev")
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, "shop-job", got[0].Name)
+}
+
+func TestListJobs_WildcardInstanceIsolated(t *testing.T) {
+	t.Parallel()
+
+	keep := &batchv1.Job{
+		Name:      "pr-456",
+		Namespace: "default",
+		Labels: map[string]string{
+			spec.LabelProject:     "shop",
+			spec.LabelEnvironment: "review",
+			InstanceLabel:         "shop-review-pr-456",
+		},
+	}
+	match := &batchv1.Job{
+		Name:      "pr-123",
+		Namespace: "default",
+		Labels: map[string]string{
+			spec.LabelProject:     "shop",
+			spec.LabelEnvironment: "review",
+			InstanceLabel:         "shop-review-pr-123",
+		},
+	}
+	cs := fake.NewSimpleClientset(keep, match)
+	got, err := ListJobs(t.Context(), cs, "default", "shop", "review/pr-123")
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "pr-123", got[0].Name)
+
+	require.NoError(t, DeleteJobs(t.Context(), cs, "default", "shop", "review/pr-123"))
+	remaining, err := cs.BatchV1().Jobs("default").List(t.Context(), metav1.ListOptions{})
+	require.NoError(t, err)
+	require.Len(t, remaining.Items, 1)
+	assert.Equal(t, "pr-456", remaining.Items[0].Name)
+}
+
+func TestListJobs_LogicalEnvironmentIsolated(t *testing.T) {
+	t.Parallel()
+
+	keepPR := &batchv1.Job{
+		Name:      "pr-123",
+		Namespace: "default",
+		Labels: map[string]string{
+			spec.LabelProject:     "shop",
+			spec.LabelEnvironment: "review",
+			InstanceLabel:         helm.GenerateReleaseName("shop", "review/pr-123"),
+		},
+	}
+	match := &batchv1.Job{
+		Name:      "logical-review",
+		Namespace: "default",
+		Labels: map[string]string{
+			spec.LabelProject:     "shop",
+			spec.LabelEnvironment: "review",
+			InstanceLabel:         helm.GenerateReleaseName("shop", "review"),
+		},
+	}
+	cs := fake.NewSimpleClientset(keepPR, match)
+	got, err := ListJobs(t.Context(), cs, "default", "shop", "review")
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "logical-review", got[0].Name)
+
+	require.NoError(t, DeleteJobs(t.Context(), cs, "default", "shop", "review"))
+	remaining, err := cs.BatchV1().Jobs("default").List(t.Context(), metav1.ListOptions{})
+	require.NoError(t, err)
+	require.Len(t, remaining.Items, 1)
+	assert.Equal(t, "pr-123", remaining.Items[0].Name)
 }
 
 func TestListJobs_Error(t *testing.T) {
@@ -532,7 +628,11 @@ func TestDeleteJobs(t *testing.T) {
 	drop := &batchv1.Job{
 		Name:      "shop-job",
 		Namespace: "default",
-		Labels:    map[string]string{spec.LabelProject: "shop", spec.LabelEnvironment: "dev"},
+		Labels: map[string]string{
+			spec.LabelProject:     "shop",
+			spec.LabelEnvironment: "dev",
+			InstanceLabel:         helm.GenerateReleaseName("shop", "dev"),
+		},
 	}
 	cs := fake.NewSimpleClientset(keep, drop)
 	require.NoError(t, DeleteJobs(t.Context(), cs, "default", "shop", "dev"))
@@ -549,12 +649,20 @@ func TestDeleteJobs_IgnoresNotFound(t *testing.T) {
 	gone := &batchv1.Job{
 		Name:      "shop-gone",
 		Namespace: "default",
-		Labels:    map[string]string{spec.LabelProject: "shop", spec.LabelEnvironment: "dev"},
+		Labels: map[string]string{
+			spec.LabelProject:     "shop",
+			spec.LabelEnvironment: "dev",
+			InstanceLabel:         helm.GenerateReleaseName("shop", "dev"),
+		},
 	}
 	stay := &batchv1.Job{
 		Name:      "shop-stay",
 		Namespace: "default",
-		Labels:    map[string]string{spec.LabelProject: "shop", spec.LabelEnvironment: "dev"},
+		Labels: map[string]string{
+			spec.LabelProject:     "shop",
+			spec.LabelEnvironment: "dev",
+			InstanceLabel:         helm.GenerateReleaseName("shop", "dev"),
+		},
 	}
 	cs := fake.NewSimpleClientset(gone, stay)
 	cs.PrependReactor("delete", "jobs", func(action k8stesting.Action) (bool, runtime.Object, error) {
@@ -581,12 +689,20 @@ func TestDeleteJobs_JoinsDeleteErrors(t *testing.T) {
 	first := &batchv1.Job{
 		Name:      "shop-a",
 		Namespace: "default",
-		Labels:    map[string]string{spec.LabelProject: "shop", spec.LabelEnvironment: "dev"},
+		Labels: map[string]string{
+			spec.LabelProject:     "shop",
+			spec.LabelEnvironment: "dev",
+			InstanceLabel:         helm.GenerateReleaseName("shop", "dev"),
+		},
 	}
 	second := &batchv1.Job{
 		Name:      "shop-b",
 		Namespace: "default",
-		Labels:    map[string]string{spec.LabelProject: "shop", spec.LabelEnvironment: "dev"},
+		Labels: map[string]string{
+			spec.LabelProject:     "shop",
+			spec.LabelEnvironment: "dev",
+			InstanceLabel:         helm.GenerateReleaseName("shop", "dev"),
+		},
 	}
 	cs := fake.NewSimpleClientset(first, second)
 	cs.PrependReactor("delete", "jobs", func(action k8stesting.Action) (bool, runtime.Object, error) {
@@ -612,7 +728,11 @@ func TestDeleteJobs_BackgroundPropagation(t *testing.T) {
 	job := &batchv1.Job{
 		Name:      "shop-job",
 		Namespace: "default",
-		Labels:    map[string]string{spec.LabelProject: "shop", spec.LabelEnvironment: "dev"},
+		Labels: map[string]string{
+			spec.LabelProject:     "shop",
+			spec.LabelEnvironment: "dev",
+			InstanceLabel:         helm.GenerateReleaseName("shop", "dev"),
+		},
 	}
 	cs := fake.NewSimpleClientset(job)
 	var got *metav1.DeletionPropagation

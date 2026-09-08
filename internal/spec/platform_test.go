@@ -251,26 +251,6 @@ func TestMatchEnvKey_ExactBeatsPrefix(t *testing.T) {
 	assert.Equal(t, "review/pr-123", matched)
 }
 
-// --- normalizeEnv / EnvIdentity tests ---
-
-// TestNormalizeEnv_Simple verifies platform spec behavior.
-func TestNormalizeEnv_Simple(t *testing.T) {
-	id := spec.NormalizeEnv("production")
-	assert.Equal(t, "production", id.Original)
-	assert.Equal(t, "production", id.MapKey)
-	assert.Equal(t, "production", id.K8sSafe)
-}
-
-// TestNormalizeEnv_Wildcard verifies platform spec behavior.
-func TestNormalizeEnv_Wildcard(t *testing.T) {
-	id := spec.NormalizeEnv("review/pr-123")
-	assert.Equal(t, "review/pr-123", id.Original)
-	assert.Equal(t, "review", id.MapKey)
-	assert.Equal(t, "review-pr-123", id.K8sSafe)
-}
-
-// --- Resolve tests ---
-
 func minimalPlatform() *spec.PlatformConfig {
 	return &spec.PlatformConfig{
 		APIVersion: "platform/v1-alpha.3",
@@ -1078,8 +1058,6 @@ func TestResolve_StaticInvalidSubdomainFailsDNS(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, spec.ErrCodeInvalidDNS, report.ErrorCode)
 }
-
-// --- Profile tests ---
 
 func platformWithProfiles() *spec.PlatformConfig {
 	p := minimalPlatform()

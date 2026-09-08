@@ -47,11 +47,5 @@ func (l *List) Run(ctx context.Context, params ListParams) ([]*v1.Release, error
 		return nil, fmt.Errorf("list releases: %w", err)
 	}
 
-	valid := make([]*v1.Release, 0, len(releases))
-	for _, r := range releases {
-		if r != nil {
-			valid = append(valid, r)
-		}
-	}
-	return valid, nil
+	return matchingReleases(releases, params.Project, params.Environment), nil
 }

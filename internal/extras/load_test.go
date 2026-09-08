@@ -24,6 +24,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"deployah.dev/deployah/internal/extras"
+	"deployah.dev/deployah/internal/helm"
 	"deployah.dev/deployah/internal/spec"
 )
 
@@ -246,6 +247,11 @@ metadata:
 		names = append(names, m.Obj.GetName())
 	}
 	assert.ElementsMatch(t, []string{"common", "review-only"}, names)
+	for _, m := range bundle.Manifests {
+		assert.Equal(t, "review", m.Obj.GetLabels()[spec.LabelEnvironment])
+		assert.NotEqual(t, "review-pr-42", m.Obj.GetLabels()[spec.LabelEnvironment])
+		assert.Equal(t, helm.GenerateReleaseName("demo", "review/pr-42"), m.Obj.GetLabels()[spec.LabelInstance])
+	}
 }
 
 // TestLoad_MergesIdentityAndFillsNamespace exercises extras package behavior.
@@ -280,6 +286,7 @@ metadata:
 	assert.Equal(t, "data", obj.GetName())
 	assert.Equal(t, "shop", obj.GetLabels()[spec.LabelProject])
 	assert.Equal(t, "prod", obj.GetLabels()[spec.LabelEnvironment])
+	assert.Equal(t, helm.GenerateReleaseName("shop", "prod"), obj.GetLabels()[spec.LabelInstance])
 	assert.Equal(t, "mine", obj.GetLabels()["app"])
 	assert.Equal(t, spec.SourceManifests, obj.GetAnnotations()[spec.AnnotationSource])
 	assert.Equal(t, "shop", obj.GetAnnotations()[spec.AnnotationProject])
@@ -378,6 +385,7 @@ spec:
 	assert.Equal(t, "demo", obj.GetLabels()[spec.LabelProject])
 	assert.Equal(t, "custom", obj.GetLabels()["keep"])
 	assert.NotContains(t, obj.GetLabels(), spec.LabelEnvironment)
+	assert.NotContains(t, obj.GetLabels(), spec.LabelInstance)
 	assert.NotContains(t, obj.GetLabels(), spec.LabelManagedBy)
 }
 

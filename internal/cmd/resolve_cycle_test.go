@@ -111,6 +111,7 @@ func TestResolve_HookCycleIsWarning(t *testing.T) {
 			got := out.String()
 			assert.Contains(t, got, "hook ordering")
 			assert.Contains(t, strings.ToLower(got), "cycle")
+			assert.Contains(t, got, "unresolved tasks")
 			assert.Contains(t, got, "LOG_LEVEL: debug")
 		})
 	}
@@ -136,6 +137,7 @@ func TestResolve_HookCycleJSONWarning(t *testing.T) {
 	joined := strings.Join(got.Warnings, "\n")
 	assert.Contains(t, joined, "hook ordering")
 	assert.Contains(t, strings.ToLower(joined), "cycle")
+	assert.Contains(t, joined, "unresolved tasks")
 	require.Contains(t, got.Components, "api")
 	assert.Equal(t, "debug", got.Components["api"].ExplicitValues["LOG_LEVEL"])
 }
@@ -261,4 +263,69 @@ func TestResolve_HookCycleRemainsHardError(t *testing.T) {
 			assert.ErrorContains(t, err, "cycle")
 		})
 	}
+}
+
+func TestStrictCommands_HookCycleIsHardError(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "validate", args: []string{"validate", "staging"}},
+		{name: "run", args: []string{"run", "migrate", "staging", "--yes"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := writeResolveSpec(t, resolveHookCycleSpec, true)
+			appIO, _, _, errOut := nabattest.NewIO()
+			app := cmd.NewApp(nabat.WithIO(appIO))
+			err := nabattest.RunParallel(t, app, tt.args, nabattest.WithDir(dir))
+			require.Error(t, err)
+			assert.ErrorContains(t, err, "cycle")
+			assert.Contains(t, errOut.String()+err.Error(), "cycle")
+		})
+	}
+}
+
+func TestResolve_HookCyclePlusBlockedWarning(t *testing.T) {
+	t.Parallel()
+
+	const specYAML = `apiVersion: v1-alpha.5
+project: shop
+components:
+  api:
+    image: busybox
+    env:
+      LOG_LEVEL: debug
+tasks:
+  migrate:
+    from: api
+    "on": preDeploy
+    after: [seed]
+    command: [migrate]
+  seed:
+    from: api
+    "on": preDeploy
+    after: [migrate]
+    command: [seed]
+  smoke:
+    from: api
+    "on": preDeploy
+    after: [seed]
+    command: [smoke]
+environments:
+  staging: {}
+`
+	dir := writeResolveSpec(t, specYAML, true)
+	appIO, _, out, errOut := nabattest.NewIO()
+	app := cmd.NewApp(nabat.WithIO(appIO))
+	err := nabattest.RunParallel(t, app, []string{"resolve", "staging"}, nabattest.WithDir(dir))
+	require.NoErrorf(t, err, "stderr:\n%s", errOut.String())
+	got := out.String()
+	assert.Contains(t, got, "after contains a cycle")
+	assert.Contains(t, got, `unresolved tasks: "migrate", "seed", "smoke"`)
+	assert.NotContains(t, got, "cycle among")
 }

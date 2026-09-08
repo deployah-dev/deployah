@@ -82,8 +82,8 @@ func BuildTaskJob(opts TaskJobOptions) (*batchv1.Job, error) {
 		return nil, err
 	}
 
-	envName := spec.NormalizeEnv(opts.Environment).K8sSafe
-	release := opts.Project + "-" + envName
+	env := spec.NormalizeEnv(opts.Environment)
+	release := env.ReleaseName(opts.Project)
 
 	ttl := int32(spec.DefaultCLIJobTTLSeconds)
 	if fields.TTLSecondsAfterFinished != nil {
@@ -114,8 +114,9 @@ func BuildTaskJob(opts TaskJobOptions) (*batchv1.Job, error) {
 	podLabels := map[string]string{
 		spec.LabelProject:     opts.Project,
 		spec.LabelComponent:   opts.TaskName,
-		spec.LabelEnvironment: envName,
+		spec.LabelEnvironment: env.MapKey,
 		spec.LabelManagedBy:   spec.ManagedByValue,
+		InstanceLabel:         release,
 	}
 	var podAnnotations map[string]string
 	podSpec := corev1.PodSpec{
@@ -131,8 +132,9 @@ func BuildTaskJob(opts TaskJobOptions) (*batchv1.Job, error) {
 		Labels: map[string]string{
 			spec.LabelProject:     opts.Project,
 			spec.LabelComponent:   opts.TaskName,
-			spec.LabelEnvironment: envName,
+			spec.LabelEnvironment: env.MapKey,
 			spec.LabelManagedBy:   spec.ManagedByValue,
+			InstanceLabel:         release,
 		},
 		Annotations: map[string]string{
 			spec.AnnotationSource:  spec.SourceSpec,
@@ -403,11 +405,17 @@ func isPermanentJobGet(err error) bool {
 		apierrors.IsBadRequest(err)
 }
 
-// ListJobs returns Jobs labeled with project and environment.
+// ListJobs returns Jobs labeled with project, environment, and the Helm
+// release instance. Logical names such as review match shop-review, not
+// sibling review/pr-123 Jobs.
 func ListJobs(ctx context.Context, cs kubernetes.Interface, namespace, project, environment string) ([]batchv1.Job, error) {
 	selector, err := BuildLabelSelector(project, environment)
 	if err != nil {
 		return nil, fmt.Errorf("build job selector: %w", err)
+	}
+	selector, err = withReleaseInstance(selector, project, environment)
+	if err != nil {
+		return nil, err
 	}
 	list, err := cs.BatchV1().Jobs(namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: selector.String(),

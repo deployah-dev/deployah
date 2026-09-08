@@ -307,7 +307,7 @@ func taskBaseChartValues(m *spec.Spec, name string, rt spec.ResolvedTask, desire
 		"commonLabels": map[string]string{
 			spec.LabelProject:     m.Project,
 			spec.LabelComponent:   name,
-			spec.LabelEnvironment: spec.NormalizeEnv(desiredEnvironment).K8sSafe,
+			spec.LabelEnvironment: environmentLabel(desiredEnvironment),
 		},
 		"commonAnnotations": map[string]string{
 			spec.AnnotationSource:  spec.SourceSpec,

@@ -81,8 +81,7 @@ func TestSelectorBuilder_WithComponent(t *testing.T) {
 }
 
 // TestSelectorBuilder_WithEnvironment verifies environment label requirement
-// handling, including normalization of wildcard "/" environments to their
-// Kubernetes-safe form.
+// handling, including wildcard names using the logical MapKey.
 func TestSelectorBuilder_WithEnvironment(t *testing.T) {
 	t.Parallel()
 
@@ -94,8 +93,8 @@ func TestSelectorBuilder_WithEnvironment(t *testing.T) {
 		{name: "empty is a no-op", value: "", want: ""},
 		{name: "plain environment name is unchanged", value: "production", want: "deployah.dev/environment=production"},
 		{
-			name: "wildcard environment is normalized to k8s-safe form", value: "review/pr-42",
-			want: "deployah.dev/environment=review-pr-42",
+			name: "wildcard environment uses logical map key", value: "review/pr-42",
+			want: "deployah.dev/environment=review",
 		},
 	}
 
@@ -270,10 +269,10 @@ func TestBuildLabelSelector(t *testing.T) {
 			},
 		},
 		{
-			name: "environment only normalizes wildcard names", environment: "review/pr-7",
+			name: "environment only uses logical map key", environment: "review/pr-7",
 			check: func(t *testing.T, sel labels.Selector) {
 				t.Helper()
-				assert.Equal(t, "deployah.dev/environment=review-pr-7", sel.String())
+				assert.Equal(t, "deployah.dev/environment=review", sel.String())
 			},
 		},
 		{
@@ -307,6 +306,81 @@ func TestBuildLabelSelector(t *testing.T) {
 			}
 			require.NoError(t, err)
 			tt.check(t, sel)
+		})
+	}
+}
+
+func TestBuildSelector_WildcardUsesMapKey(t *testing.T) {
+	t.Parallel()
+
+	got, err := BuildSelector("shop", "api", "review/pr-123")
+	require.NoError(t, err)
+	assert.Contains(t, got, "deployah.dev/environment=review")
+	assert.NotContains(t, got, "deployah.dev/environment=review-pr-123")
+	assert.NotContains(t, got, "deployah.dev/environment=review/pr-123")
+	assert.Contains(t, got, "app.kubernetes.io/instance=shop-review-pr-123")
+}
+
+func TestBuildLabelSelector_WildcardUsesMapKey(t *testing.T) {
+	t.Parallel()
+
+	sel, err := BuildLabelSelector("shop", "review/pr-123")
+	require.NoError(t, err)
+	got := sel.String()
+	assert.Contains(t, got, "deployah.dev/environment=review")
+	assert.NotContains(t, got, "deployah.dev/environment=review-pr-123")
+	assert.NotContains(t, got, "app.kubernetes.io/instance=")
+}
+
+func TestEnvironmentFromLabels(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		project string
+		labels  map[string]string
+		want    string
+	}{
+		{name: "missing environment", project: "shop", labels: map[string]string{}},
+		{
+			name:    "logical without instance",
+			project: "shop",
+			labels:  map[string]string{EnvironmentLabel: "dev"},
+			want:    "dev",
+		},
+		{
+			name:    "logical with matching instance",
+			project: "shop",
+			labels: map[string]string{
+				EnvironmentLabel: "review",
+				InstanceLabel:    "shop-review",
+			},
+			want: "review",
+		},
+		{
+			name:    "wildcard instance",
+			project: "shop",
+			labels: map[string]string{
+				EnvironmentLabel: "review",
+				InstanceLabel:    "shop-review-pr-123",
+			},
+			want: "review/pr-123",
+		},
+		{
+			name:    "unrelated instance keeps map key",
+			project: "shop",
+			labels: map[string]string{
+				EnvironmentLabel: "review",
+				InstanceLabel:    "other-release",
+			},
+			want: "review",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, environmentFromLabels(tt.project, tt.labels))
 		})
 	}
 }

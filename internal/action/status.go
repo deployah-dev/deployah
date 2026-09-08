@@ -48,6 +48,7 @@ func (s *Status) Run(ctx context.Context, params StatusParams) ([]*v1.Release, e
 	if err != nil {
 		return nil, fmt.Errorf("list releases: %w", err)
 	}
+	releases = matchingReleases(releases, params.Project, params.Environment)
 
 	if len(releases) == 0 {
 		msg := fmt.Sprintf("no releases found for project '%s'", params.Project)

@@ -21,21 +21,16 @@ import (
 	"strings"
 )
 
-// EnvIdentity is the canonical identity for an environment name. A single
-// NormalizeEnv call is the only entry point. All subsystems (manifest lookup,
-// platform lookup, component.Environments filter, release name generation,
-// cache keys, and explain output) use fields from the same EnvIdentity.
+// EnvIdentity is the canonical identity for an environment name from
+// [NormalizeEnv].
 type EnvIdentity struct {
-	// Original is the raw environment name as supplied by the caller.
+	// Original is the requested instance, for example review/pr-123.
 	Original string
-	// MapKey is the key used for map lookups: split on the first "/" and take
-	// the prefix. For "review/pr-123" MapKey is "review". For "production" it
-	// equals Original.
+	// MapKey is the logical environment and [LabelEnvironment] value.
 	MapKey string
-	// K8sSafe is a Kubernetes-safe version of Original: "/" replaced with "-",
-	// truncated to 53 characters. When truncation changes the string a 4-char
-	// hex hash of Original is appended (after truncating to 49 chars) to keep
-	// uniqueness. Safe for Helm release name suffixes and label values.
+	// K8sSafe is Original with "/" replaced by "-", truncated to 53
+	// characters with a hash suffix if truncated. Used for Helm release
+	// names, not [LabelEnvironment].
 	K8sSafe string
 }
 
@@ -59,6 +54,11 @@ func NormalizeEnv(name string) EnvIdentity {
 		MapKey:   mapKey,
 		K8sSafe:  k8sSafe,
 	}
+}
+
+// ReleaseName is the Helm release name: project plus [K8sSafe].
+func (e EnvIdentity) ReleaseName(project string) string {
+	return project + "-" + e.K8sSafe
 }
 
 // matchEnvKey returns the matching map key for candidate within mapKeys.

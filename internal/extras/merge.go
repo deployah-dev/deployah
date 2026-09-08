@@ -22,9 +22,10 @@ import (
 )
 
 // mergeIdentity applies Deployah identity labels/annotations and fills
-// namespace for namespaced objects. Reserved deployah.dev/* keys always win;
-// other common keys lose to the manifest. Names are never rewritten.
-func mergeIdentity(o *Object, project, environment, source, releaseNamespace string, namespaced bool) error {
+// namespace for namespaced objects. Reserved deployah.dev/* keys and
+// [spec.LabelInstance] always win; other common keys lose to the manifest.
+// Names are never rewritten.
+func mergeIdentity(o *Object, project, environment, instance, source, releaseNamespace string, namespaced bool) error {
 	if namespaced {
 		ns := o.Obj.GetNamespace()
 		if ns == "" {
@@ -51,6 +52,9 @@ func mergeIdentity(o *Object, project, environment, source, releaseNamespace str
 	keepEnv := source == spec.SourceManifests && environment != ""
 	if keepEnv {
 		labels[spec.LabelEnvironment] = environment
+	}
+	if instance != "" {
+		labels[spec.LabelInstance] = instance
 	}
 	for k := range labels {
 		if !strings.HasPrefix(k, spec.LabelPrefix+"/") {

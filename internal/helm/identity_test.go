@@ -20,6 +20,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/util/validation"
 
 	"deployah.dev/deployah/internal/spec"
 )
@@ -52,7 +53,7 @@ func TestReleaseIdentity_FromResolvedSpec(t *testing.T) {
 	}, labels)
 }
 
-func TestReleaseIdentity_WildcardKeepsOriginal(t *testing.T) {
+func TestReleaseIdentity_WildcardUsesMapKey(t *testing.T) {
 	t.Parallel()
 
 	resolved := identityResolved("shop", "review/pr-123")
@@ -60,8 +61,10 @@ func TestReleaseIdentity_WildcardKeepsOriginal(t *testing.T) {
 	name, labels, err := releaseIdentity(resolved)
 	require.NoError(t, err)
 	assert.Equal(t, GenerateReleaseName("shop", "review/pr-123"), name)
-	assert.Equal(t, "review/pr-123", labels["deployah.dev/environment"])
-	assert.NotEqual(t, "review", labels["deployah.dev/environment"])
+	assert.Equal(t, "review", labels["deployah.dev/environment"])
+	assert.NotEqual(t, "review/pr-123", labels["deployah.dev/environment"])
+	assert.NotEqual(t, "review-pr-123", labels["deployah.dev/environment"])
+	require.Empty(t, validation.IsValidLabelValue(labels["deployah.dev/environment"]))
 }
 
 func TestReleaseIdentity_RejectsNil(t *testing.T) {
@@ -127,7 +130,7 @@ func TestRenderOffline_ChartAndReleaseAgree(t *testing.T) {
 
 	dep := findRenderedDeployment(t, result.Manifest, "-api")
 	assert.Equal(t, resolved.Spec.Project, dep.Labels[spec.LabelProject])
-	assert.Equal(t, spec.NormalizeEnv(resolved.Env.Original).K8sSafe, dep.Labels[spec.LabelEnvironment])
+	assert.Equal(t, resolved.Env.MapKey, dep.Labels[spec.LabelEnvironment])
 	assert.Equal(t, wantLabels["deployah.dev/project"], dep.Labels[spec.LabelProject])
 	assert.Equal(t, wantLabels["deployah.dev/environment"], dep.Labels[spec.LabelEnvironment])
 }
@@ -155,6 +158,68 @@ func TestPrepareChart_UsesResolvedEnvironment(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "shop", labels[spec.LabelProject])
 	assert.Equal(t, "staging", labels[spec.LabelEnvironment])
+}
+
+func TestRenderOffline_WildcardEnvironmentLabels(t *testing.T) {
+	t.Parallel()
+
+	m := envServiceSpec(t.TempDir(), spec.StringMap{"LOG_LEVEL": "debug"})
+	m.Environments["review"] = spec.Environment{}
+	resolved := resolveChart(t, m, "review/pr-123")
+	require.Equal(t, "review/pr-123", resolved.Env.Original)
+	require.Equal(t, "review", resolved.Env.MapKey)
+
+	name, labels, err := releaseIdentity(resolved)
+	require.NoError(t, err)
+	assert.Equal(t, GenerateReleaseName("shop", "review/pr-123"), name)
+	assert.Equal(t, "review", labels["deployah.dev/environment"])
+	require.Empty(t, validation.IsValidLabelValue(labels["deployah.dev/environment"]))
+
+	client, err := NewClient(WithNamespace("default"))
+	require.NoError(t, err)
+	result, cleanup, err := client.RenderOffline(t.Context(), resolved, nil)
+	require.NoError(t, err)
+	if cleanup != nil {
+		t.Cleanup(cleanup)
+	}
+
+	assert.Equal(t, name, result.ReleaseName)
+	dep := findRenderedDeployment(t, result.Manifest, "-api")
+	assertLogicalEnvironmentLabel(t, dep.Labels)
+	assertLogicalEnvironmentLabel(t, dep.Spec.Template.Labels)
+}
+
+func TestRenderOffline_WildcardHookJobLabels(t *testing.T) {
+	t.Parallel()
+
+	m := taskSpec()
+	m.Environments = map[string]spec.Environment{"review": {}}
+	job := renderHookJob(t, m, "review/pr-123", "migrate")
+	assertLogicalEnvironmentLabel(t, job.Labels)
+	assertLogicalEnvironmentLabel(t, job.Spec.Template.Labels)
+}
+
+func TestRenderOffline_WildcardCronJobLabels(t *testing.T) {
+	t.Parallel()
+
+	m := scheduledRenderSpec(spec.Task{
+		From:    "api",
+		On:      spec.TaskOnSchedule,
+		Command: []string{"cleanup"},
+	})
+	m.Environments["review"] = spec.Environment{}
+	cj := renderScheduledCronJob(t, m, "review/pr-123", "cleanup")
+	assertLogicalEnvironmentLabel(t, cj.Labels)
+	assertLogicalEnvironmentLabel(t, cj.Spec.JobTemplate.Spec.Template.Labels)
+}
+
+func assertLogicalEnvironmentLabel(t *testing.T, labels map[string]string) {
+	t.Helper()
+	got := labels[spec.LabelEnvironment]
+	assert.Equal(t, "review", got)
+	assert.NotEqual(t, "review/pr-123", got)
+	assert.NotEqual(t, "review-pr-123", got)
+	require.Empty(t, validation.IsValidLabelValue(got))
 }
 
 func TestInstallApp_RejectsNilResolved(t *testing.T) {

@@ -168,9 +168,10 @@ func executeRun(c *nabat.Context, cs kubernetes.Interface, timeout time.Duration
 
 func resolveRunTask(manifest *spec.Spec, platform *spec.PlatformConfig, environment, name string) (spec.ResolvedTask, error) {
 	envIdentity := spec.NormalizeEnv(environment)
-	// Run needs runtime maps, not FQDNs. ResolveForDisplay still calls
-	// Resolve when a platform file is present, and skips expose errors
-	// when it is not.
+	// Run needs the task's resolved runtime/profile data, not component FQDNs.
+	// Display resolution allows runtime-only tasks to resolve when no platform
+	// file exists; spec.Load above still performs strict task-graph validation
+	// for run.
 	resolved, _, err := spec.ResolveForDisplay(manifest, platform, envIdentity, spec.SubstitutionReport{})
 	if err != nil {
 		return spec.ResolvedTask{}, fmt.Errorf("resolve spec: %w", err)
