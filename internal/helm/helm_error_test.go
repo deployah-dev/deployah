@@ -228,6 +228,8 @@ func TestInstallApp_PendingReleaseRejects(t *testing.T) {
 		Components: map[string]spec.Component{"web": serviceComponent()},
 	}
 	require.NoError(t, spec.FillSpecWithDefaults(manifest, spec.CurrentManifestVersion))
+	resolved, _, err := spec.Resolve(manifest, nil, spec.NormalizeEnv("production"), spec.SubstitutionReport{})
+	require.NoError(t, err)
 	releaseName := GenerateReleaseName(manifest.Project, "production")
 
 	now := time.Now()
@@ -266,7 +268,7 @@ func TestInstallApp_PendingReleaseRejects(t *testing.T) {
 		Namespace: "default",
 	}))
 
-	err := c.InstallApp(t.Context(), manifest, "production", false, nil, nil)
+	err = c.InstallApp(t.Context(), false, resolved, nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrReleasePending)
 }

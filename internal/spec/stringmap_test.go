@@ -83,6 +83,51 @@ func TestStringMap_RejectsNonScalars(t *testing.T) {
 	}
 }
 
+func TestStringMap_YAML11ReservedKeys(t *testing.T) {
+	t.Parallel()
+
+	t.Run("quoted keys survive", func(t *testing.T) {
+		t.Parallel()
+		var got struct {
+			Env StringMap `yaml:"env"`
+		}
+		raw := `env:
+  "ON": enabled
+  "OFF": disabled
+  "YES": yes-value
+  "NO": no-value
+  "TRUE": true-value
+  "FALSE": false-value
+  "NULL": empty
+`
+		require.NoError(t, yaml.Unmarshal([]byte(raw), &got))
+		assert.Equal(t, StringMap{
+			"ON":    "enabled",
+			"OFF":   "disabled",
+			"YES":   "yes-value",
+			"NO":    "no-value",
+			"TRUE":  "true-value",
+			"FALSE": "false-value",
+			"NULL":  "empty",
+		}, got.Env)
+	})
+
+	t.Run("unquoted YAML 1.1 keys are rewritten", func(t *testing.T) {
+		t.Parallel()
+		var got struct {
+			Env StringMap `yaml:"env"`
+		}
+		require.NoError(t, yaml.Unmarshal([]byte("env:\n  ON: enabled\n"), &got))
+		_, hasON := got.Env["ON"]
+		assert.False(t, hasON, "unquoted ON must not survive YAML 1.1 as ON; quote it in the spec")
+		require.Len(t, got.Env, 1)
+		for key, val := range got.Env {
+			assert.Equal(t, "enabled", val)
+			assert.NotEqual(t, "ON", key)
+		}
+	})
+}
+
 func TestSubstituteVariables_Sources(t *testing.T) {
 	tests := []struct {
 		name      string

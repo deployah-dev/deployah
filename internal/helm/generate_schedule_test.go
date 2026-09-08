@@ -362,7 +362,7 @@ func renderOfflineScheduled(t *testing.T, manifest *spec.Spec, env string) (*ren
 	require.NoError(t, err)
 	client, err := NewClient(WithNamespace("default"))
 	require.NoError(t, err)
-	return client.RenderOffline(t.Context(), manifest, env, resolved, nil)
+	return client.RenderOffline(t.Context(), resolved, nil)
 }
 
 func mustRenderScheduled(t *testing.T, manifest *spec.Spec, env, releaseName, kubeVersion string) *render.RenderResult {
@@ -384,13 +384,14 @@ func renderScheduled(t *testing.T, manifest *spec.Spec, env, releaseName, kubeVe
 	client, err := NewClient(WithNamespace("default"))
 	require.NoError(t, err)
 
-	ch, _, cleanup, err := client.prepareAndLoadChart(t.Context(), env, resolved)
+	ch, _, cleanup, err := client.prepareAndLoadChart(t.Context(), resolved)
 	if err != nil {
 		return nil, err
 	}
 	t.Cleanup(cleanup)
 
-	values, labels := renderInputs(manifest, env)
+	_, labels, err := releaseIdentity(resolved)
+	require.NoError(t, err)
 	defer restoreCapabilitiesForDryRun(client.config)()
 
 	install := action.NewInstall(client.config)
@@ -407,7 +408,7 @@ func renderScheduled(t *testing.T, manifest *spec.Spec, env, releaseName, kubeVe
 		install.KubeVersion = kv
 	}
 
-	rel, runErr := install.RunWithContext(t.Context(), ch, values)
+	rel, runErr := install.RunWithContext(t.Context(), ch, map[string]any{})
 	if runErr != nil {
 		return nil, client.wrapHelmError("render", releaseName, runErr)
 	}

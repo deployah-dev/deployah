@@ -25,6 +25,12 @@ import (
 	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 )
 
+// resolveMode selects strict versus inspect-only resolution behavior.
+type resolveMode struct {
+	hookCycleAsWarning   bool
+	allowMissingPlatform bool
+}
+
 // Resolve processes all components and tasks in spec for env and returns a
 // [ResolvedSpec] plus a [ResolutionReport] with field provenance.
 //
@@ -41,6 +47,19 @@ func Resolve(
 	env EnvIdentity,
 	substReport SubstitutionReport,
 ) (*ResolvedSpec, *ResolutionReport, error) {
+	return resolveInternal(appSpec, platform, env, substReport, resolveMode{})
+}
+
+func resolveInternal(
+	appSpec *Spec,
+	platform *PlatformConfig,
+	env EnvIdentity,
+	substReport SubstitutionReport,
+	mode resolveMode,
+) (*ResolvedSpec, *ResolutionReport, error) {
+	if platform == nil && mode.allowMissingPlatform {
+		return resolveDisplayWithoutPlatform(appSpec, env)
+	}
 	report := &ResolutionReport{Env: env}
 	resolved := &ResolvedSpec{
 		Spec:       appSpec,
@@ -137,7 +156,7 @@ func Resolve(
 		resolved.Components[compName] = rc
 	}
 
-	if err := resolveTasks(appSpec, env, platform, platformEnv, resolved, report); err != nil {
+	if err := resolveTasks(appSpec, env, platform, platformEnv, resolved, report, mode); err != nil {
 		recordResolutionError(report, err)
 		return nil, report, err
 	}
@@ -634,36 +653,54 @@ func joinStrings(ss []string) string {
 	return strings.Join(quoted, ", ")
 }
 
-// ResolveForDisplay is like [Resolve] but never returns a hard error for a
-// missing platform file. It records a warning and returns partial results so
-// the resolve command can inspect runtime environment offline.
+// ResolveForDisplay is like [Resolve] but inspect-only: a missing platform
+// file is a warning, and a hook-cycle is a warning instead of a hard error.
+// Other task-graph errors still fail. Display semantics apply whether or
+// not a platform file is present.
 func ResolveForDisplay(
 	appSpec *Spec,
 	platform *PlatformConfig,
 	env EnvIdentity,
 	substReport SubstitutionReport,
 ) (*ResolvedSpec, *ResolutionReport, error) {
-	if platform == nil {
-		warn := fmt.Sprintf("platform file not found; run with --platform-file or create %s", DefaultPlatformPath)
-		report := &ResolutionReport{
-			Env:      env,
-			Warnings: []string{warn},
-		}
-		resolved := &ResolvedSpec{
-			Spec:       appSpec,
-			Env:        env,
-			Components: make(map[string]ResolvedComponent),
-			Tasks:      make(map[string]ResolvedTask),
-			Warnings:   []string{warn},
-		}
-		populateActiveEntities(appSpec, env, resolved, report)
-		if err := attachRuntimeEnvironments(appSpec, env, resolved, report); err != nil {
-			recordResolutionError(report, err)
-			return nil, report, err
-		}
-		return resolved, report, nil
+	return resolveInternal(appSpec, platform, env, substReport, resolveMode{
+		hookCycleAsWarning:   true,
+		allowMissingPlatform: true,
+	})
+}
+
+func resolveDisplayWithoutPlatform(appSpec *Spec, env EnvIdentity) (*ResolvedSpec, *ResolutionReport, error) {
+	warn := fmt.Sprintf("platform file not found; run with --platform-file or create %s", DefaultPlatformPath)
+	report := &ResolutionReport{
+		Env:      env,
+		Warnings: []string{warn},
 	}
-	return Resolve(appSpec, platform, env, substReport)
+	resolved := &ResolvedSpec{
+		Spec:       appSpec,
+		Env:        env,
+		Components: make(map[string]ResolvedComponent),
+		Tasks:      make(map[string]ResolvedTask),
+		Warnings:   []string{warn},
+	}
+	if err := populateActiveEntities(appSpec, env, resolved, report); err != nil {
+		recordResolutionError(report, err)
+		return nil, report, err
+	}
+	if err := attachRuntimeEnvironments(appSpec, env, resolved, report); err != nil {
+		recordResolutionError(report, err)
+		return nil, report, err
+	}
+	return resolved, report, nil
+}
+
+func recordHookCycleWarning(resolved *ResolvedSpec, report *ResolutionReport, err error) {
+	msg := fmt.Sprintf("task hook ordering could not be resolved: %v", err)
+	if report != nil {
+		report.Warnings = append(report.Warnings, msg)
+	}
+	if resolved != nil {
+		resolved.Warnings = append(resolved.Warnings, msg)
+	}
 }
 
 func recordResolutionError(report *ResolutionReport, err error) {
@@ -676,9 +713,9 @@ func recordResolutionError(report *ResolutionReport, err error) {
 	}
 }
 
-func populateActiveEntities(appSpec *Spec, env EnvIdentity, resolved *ResolvedSpec, report *ResolutionReport) {
+func populateActiveEntities(appSpec *Spec, env EnvIdentity, resolved *ResolvedSpec, report *ResolutionReport) error {
 	if appSpec == nil || resolved == nil {
-		return
+		return nil
 	}
 	for _, name := range slices.Sorted(maps.Keys(appSpec.Components)) {
 		comp := appSpec.Components[name]
@@ -691,14 +728,13 @@ func populateActiveEntities(appSpec *Spec, env EnvIdentity, resolved *ResolvedSp
 	}
 	weights, weightErr := AssignHookWeights(appSpec.Tasks)
 	if weightErr != nil {
+		if !isHookCycle(weightErr) {
+			return weightErr
+		}
 		// HookWeight stays 0 below. That is an unresolved fallback, not a
 		// computed independent-hook weight. Display must not treat it as
 		// resolved.
-		msg := fmt.Sprintf("task hook ordering could not be resolved: %v", weightErr)
-		if report != nil {
-			report.Warnings = append(report.Warnings, msg)
-		}
-		resolved.Warnings = append(resolved.Warnings, msg)
+		recordHookCycleWarning(resolved, report, weightErr)
 	}
 	for _, name := range appSpec.TaskNames() {
 		task, ok := appSpec.MergedTask(name)
@@ -711,6 +747,7 @@ func populateActiveEntities(appSpec *Spec, env EnvIdentity, resolved *ResolvedSp
 		}
 		resolved.Tasks[name] = rt
 	}
+	return nil
 }
 
 // PlatformEnvContext returns the Kubernetes context for the given environment
@@ -729,10 +766,15 @@ func PlatformEnvContext(platform *PlatformConfig, envName string) string {
 	return ""
 }
 
-func resolveTasks(appSpec *Spec, env EnvIdentity, platform *PlatformConfig, platformEnv *PlatformEnvironment, resolved *ResolvedSpec, report *ResolutionReport) error {
+func resolveTasks(appSpec *Spec, env EnvIdentity, platform *PlatformConfig, platformEnv *PlatformEnvironment, resolved *ResolvedSpec, report *ResolutionReport, mode resolveMode) error {
 	weights, err := AssignHookWeights(appSpec.Tasks)
 	if err != nil {
-		return err
+		if mode.hookCycleAsWarning && isHookCycle(err) {
+			recordHookCycleWarning(resolved, report, err)
+			weights = map[string]int{}
+		} else {
+			return err
+		}
 	}
 	var platformProfiles map[string]PlatformProfile
 	if platform != nil {

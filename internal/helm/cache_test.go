@@ -46,7 +46,7 @@ func TestPrepareChart_CacheSurvivesCallerCleanup(t *testing.T) {
 	resolved, _, err := spec.Resolve(manifest, nil, spec.NormalizeEnv("production"), spec.SubstitutionReport{})
 	require.NoError(t, err)
 
-	returnedPath, err := PrepareChart(t.Context(), "production", resolved, cache)
+	returnedPath, err := PrepareChart(t.Context(), resolved, cache)
 	require.NoError(t, err)
 
 	key, err := cache.GenerateKey("production", resolved)
@@ -90,7 +90,7 @@ func removeChartDir(tb testing.TB, path string) {
 // TestPrepareChart_RequiresCache verifies PrepareChart rejects a nil cache.
 func TestPrepareChart_RequiresCache(t *testing.T) {
 	t.Parallel()
-	_, err := PrepareChart(t.Context(), "prod", nil, nil)
+	_, err := PrepareChart(t.Context(), nil, nil)
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "chart cache is required")
 }
@@ -209,7 +209,7 @@ func TestPrepareChart_CanceledContextReturnsImmediately(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	_, err := PrepareChart(ctx, "prod", nil, NewChartCache(time.Hour))
+	_, err := PrepareChart(ctx, nil, NewChartCache(time.Hour))
 	require.ErrorIs(t, err, context.Canceled)
 }
 
@@ -316,16 +316,7 @@ func TestGenerateKey_RuntimePlatformAndEnvironmentInvalidate(t *testing.T) {
 
 func TestPrepareChart_RequiresResolvedSpec(t *testing.T) {
 	t.Parallel()
-	_, err := PrepareChart(t.Context(), "prod", nil, NewChartCache(time.Hour))
-	require.Error(t, err)
-	assert.ErrorContains(t, err, "render requires resolved spec")
-}
-
-func TestRenderOffline_RequiresResolvedSpec(t *testing.T) {
-	t.Parallel()
-	client, err := NewClient(WithNamespace("default"))
-	require.NoError(t, err)
-	_, _, err = client.RenderOffline(t.Context(), &spec.Spec{Project: "x"}, "prod", nil, nil)
+	_, err := PrepareChart(t.Context(), nil, NewChartCache(time.Hour))
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "render requires resolved spec")
 }

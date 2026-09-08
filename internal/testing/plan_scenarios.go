@@ -249,7 +249,7 @@ func renderManifestFile(t *testing.T, dir, filename string) manifestSide {
 	bundle, loadErr := extras.LoadFromSpec(specPath, manifest, platform, envName, client.Namespace(), nil)
 	require.NoError(t, loadErr)
 
-	result, cleanup, err := client.RenderOffline(ctx, manifest, envName, resolved, bundle.PostRendererFor())
+	result, cleanup, err := client.RenderOffline(ctx, resolved, bundle.PostRendererFor())
 	if cleanup != nil {
 		t.Cleanup(cleanup)
 	}

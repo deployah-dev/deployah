@@ -27,7 +27,7 @@ components:                        # required: one or more components
     environments: [staging, prod]  # which environments deploy this component
     command: ["/bin/api"]          # optional: override the image ENTRYPOINT
     args: ["--verbose"]            # optional: override the image CMD
-    env:                           # planned: not applied to the container yet
+    env:                           # explicit container environment variables
       LOG_LEVEL: info
     resourcePreset: small          # nano|micro|small|medium|large|xlarge|2xlarge
     shutdownTimeout: 30s           # how long Kubernetes waits for graceful stop
@@ -113,12 +113,14 @@ Component:
 
 ## Tasks
 
-Quote `"on"` in YAML 1.1 so parsers do not treat it as a boolean. `on` is a
-single value, not a list. See [Tasks](tasks.md) for how-to examples.
+Quote `"on"` in YAML 1.1 so parsers do not treat it as a boolean. Quote
+reserved env keys such as `"ON"`, `"TRUE"`, and `"NULL"` the same way.
+`on` is a single value, not a list. See [Tasks](tasks.md) for how-to
+examples.
 
 | Field | Default | Notes |
 |---|---|---|
-| `from` | none | Component to inherit image, environments, profiles, resources, and `configFile`. Runtime env inherits already-resolved FileValues and ExplicitValues, not `envFile` paths. |
+| `from` | none | Component to inherit image, environments, profiles, resources, and `configFile`. Runtime env inherits the parent's entity dotenv layer (`EntityValues`) and ExplicitValues, not the parent's final FileValues. The environment dotenv layer is resolved for the task's target environment. A task-level `envFile` replaces the inherited entity layer; task `env:` overlays inherited ExplicitValues. |
 | `image` | from `from` | Replaces the parent image when set. `from` and/or `image` is required. |
 | `command` / `args` | none | `command` is required when using the parent image. |
 | `"on"` | none (required) | `preDeploy`, `postDeploy`, `manual`, or `schedule`. |
@@ -170,7 +172,9 @@ A few fields have specific formats:
 - **`resources.memory`** and **`resources.ephemeralStorage`**: a number with a
   unit, like `256Mi` or `1Gi`.
 - **`env`**: POSIX keys (`^[A-Za-z_][A-Za-z0-9_]*$`, for example `LOG_LEVEL` or
-  `node_env`). Values are a string, number, or boolean.
+  `node_env`). Values are a string, number, or boolean. Quote YAML 1.1
+  reserved keys such as `"ON"`, `"YES"`, `"TRUE"`, and `"NULL"` so they
+  stay those names.
 - **`expose`**: `true`, `false`, or an object. `true` means all defaults.
 - **`expose.domain`**: a key that must exist in the target environment's
   `domains` map in the platform file. Omit it to use the environment's only

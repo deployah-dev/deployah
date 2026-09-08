@@ -34,22 +34,28 @@ import (
 // internal/session and tests can inject a minimal fake.
 type BuildClient interface {
 	historyClient
-	RenderManifests(ctx context.Context, manifest *spec.Spec, environment string, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) (*render.RenderResult, func(), error)
+	RenderManifests(ctx context.Context, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) (*render.RenderResult, func(), error)
 }
 
-// BuildPlan renders manifest for environment via client and diffs the
-// result against the last successful release, returning the fully
-// populated Plan (Header included) alongside the render result. It is the
-// single render-diff-header pipeline shared by `deployah plan` and the
-// plan `deployah deploy` shows before confirming.
+// BuildPlan renders [spec.ResolvedSpec] via client and diffs the result
+// against the last successful release, returning the fully populated Plan
+// (Header included) alongside the render result. It is the single
+// render-diff-header pipeline shared by `deployah plan` and the plan
+// `deployah deploy` shows before confirming. Project, environment, and
+// chart content all come from resolved.
 //
 // The caller must invoke the returned cleanup func once done with
 // result.ChartPath (same contract as [helm.Client.RenderManifests]). On
 // error, cleanup is still returned when a chart was prepared and must be
 // called. postRenderer, when non-nil, is forwarded to RenderManifests so
 // extras appear in the diff.
-func BuildPlan(ctx context.Context, client BuildClient, manifest *spec.Spec, environment, clusterContext string, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) (*Plan, *render.RenderResult, func(), error) {
-	result, cleanup, err := client.RenderManifests(ctx, manifest, environment, resolved, postRenderer)
+func BuildPlan(ctx context.Context, client BuildClient, clusterContext string, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) (*Plan, *render.RenderResult, func(), error) {
+	if resolved == nil || resolved.Spec == nil {
+		return nil, nil, func() {}, fmt.Errorf("plan requires resolved spec; call spec.Resolve first")
+	}
+	manifest := resolved.Spec
+	environment := resolved.Env.Original
+	result, cleanup, err := client.RenderManifests(ctx, resolved, postRenderer)
 	if cleanup == nil {
 		cleanup = func() {}
 	}

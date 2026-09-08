@@ -887,7 +887,7 @@
         "from": {
           "type": "string",
           "title": "From",
-          "description": "Component name to inherit image, configFile, environments, profiles, and resources from. Runtime env inherits already-resolved values, not envFile paths. Does not copy command, args, or service-only fields.",
+          "description": "Component name to inherit image, configFile, environments, profiles, and resources from. Runtime env inherits the parent EntityValues and ExplicitValues, not the parent's final FileValues. Does not copy command, args, or service-only fields.",
           "minLength": 1,
           "examples": [
             "api"

@@ -375,32 +375,69 @@ func TestResolveForDisplay_MissingEnvFile(t *testing.T) {
 func TestResolveForDisplay_HookCycleIsWarning(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
-	writeWorkedExampleFiles(t, dir)
-	appSpec := runtimeShopSpec(dir)
-	migrate := appSpec.Tasks["migrate"]
-	migrate.After = []string{"seed"}
-	appSpec.Tasks["migrate"] = migrate
-	appSpec.Tasks["seed"] = Task{
-		From:    "api",
-		On:      TaskOnPreDeploy,
-		After:   []string{"migrate"},
-		Command: []string{"seed"},
+	platform := &PlatformConfig{
+		APIVersion: "platform/v1-alpha.3",
+		Environments: map[string]PlatformEnvironment{
+			"production": {Context: "prod-eks"},
+		},
 	}
 
-	resolved, report, err := ResolveForDisplay(appSpec, nil, NormalizeEnv("production"), SubstitutionReport{})
-	require.NoError(t, err)
-	assert.Empty(t, report.ErrorCode)
-	assert.NotEqual(t, ErrCodePlatformNotFound, report.ErrorCode)
-	require.NotEmpty(t, report.Warnings)
-	assert.Contains(t, strings.Join(report.Warnings, "\n"), "hook ordering")
-	assert.Equal(t, "us", resolved.Components["api"].Runtime.FileValues["REGION"])
-	assert.Zero(t, resolved.Tasks["migrate"].HookWeight)
-	assert.Zero(t, resolved.Tasks["seed"].HookWeight)
+	tests := []struct {
+		name     string
+		platform *PlatformConfig
+		self     bool
+	}{
+		{name: "two-node without platform"},
+		{name: "two-node with platform", platform: platform},
+		{name: "self-cycle without platform", self: true},
+		{name: "self-cycle with platform", platform: platform, self: true},
+	}
 
-	_, _, resolveErr := Resolve(appSpec, nil, NormalizeEnv("production"), SubstitutionReport{})
-	require.Error(t, resolveErr)
-	assert.ErrorContains(t, resolveErr, "cycle")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			writeWorkedExampleFiles(t, dir)
+			appSpec := runtimeShopSpec(dir)
+			if tt.self {
+				migrate := appSpec.Tasks["migrate"]
+				migrate.After = []string{"migrate"}
+				appSpec.Tasks["migrate"] = migrate
+			} else {
+				migrate := appSpec.Tasks["migrate"]
+				migrate.After = []string{"seed"}
+				appSpec.Tasks["migrate"] = migrate
+				appSpec.Tasks["seed"] = Task{
+					From:    "api",
+					On:      TaskOnPreDeploy,
+					After:   []string{"migrate"},
+					Command: []string{"seed"},
+				}
+			}
+
+			resolved, report, err := ResolveForDisplay(appSpec, tt.platform, NormalizeEnv("production"), SubstitutionReport{})
+			require.NoError(t, err)
+			assert.Empty(t, report.ErrorCode)
+			assert.NotEqual(t, ErrCodePlatformNotFound, report.ErrorCode)
+			require.NotEmpty(t, report.Warnings)
+			joined := strings.Join(report.Warnings, "\n")
+			assert.Contains(t, joined, "hook ordering")
+			assert.Contains(t, strings.ToLower(joined), "cycle")
+			assert.Equal(t, "debug", resolved.Components["api"].Runtime.ExplicitValues["LOG_LEVEL"])
+			assert.Equal(t, "us", resolved.Components["api"].Runtime.FileValues["REGION"])
+			assert.Zero(t, resolved.Tasks["migrate"].HookWeight)
+			if !tt.self {
+				assert.Zero(t, resolved.Tasks["seed"].HookWeight)
+			}
+
+			_, _, resolveErr := Resolve(appSpec, tt.platform, NormalizeEnv("production"), SubstitutionReport{})
+			require.Error(t, resolveErr)
+			assert.ErrorContains(t, resolveErr, "cycle")
+			cycle, ok := errors.AsType[*HookCycleError](resolveErr)
+			assert.True(t, ok)
+			assert.NotNil(t, cycle)
+		})
+	}
 }
 
 func TestResolveRuntimeEnvironment_FromDoesNotAliasParent(t *testing.T) {

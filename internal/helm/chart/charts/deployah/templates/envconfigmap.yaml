@@ -20,7 +20,7 @@ metadata:
     {{- end }}
 data:
   {{- range $key := keys .Values.envFileValues | sortAlpha }}
-  {{ $key }}: {{ index $.Values.envFileValues $key | quote }}
+  {{ $key | quote }}: {{ index $.Values.envFileValues $key | quote }}
   {{- end }}
 {{- end }}
 {{- end -}}

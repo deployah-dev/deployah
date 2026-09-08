@@ -186,7 +186,7 @@ func runOffline(c *nabat.Context, sess *session.Session, platform *spec.Platform
 	}
 	postRenderer := bundle.PostRendererFor()
 
-	result, cleanup, err := helmClient.RenderOffline(c, manifest, opts.Environment, resolvedSpec, postRenderer)
+	result, cleanup, err := helmClient.RenderOffline(c, resolvedSpec, postRenderer)
 	if cleanup != nil {
 		defer cleanup()
 	}
@@ -257,7 +257,7 @@ func runOnline(c *nabat.Context, sess *session.Session, platform *spec.PlatformC
 	}
 	postRenderer := bundle.PostRendererFor()
 
-	p, result, cleanup, err := planengine.BuildPlan(c, helmClient, manifest, opts.Environment, cluster.Context(), resolvedSpec, postRenderer)
+	p, result, cleanup, err := planengine.BuildPlan(c, helmClient, cluster.Context(), resolvedSpec, postRenderer)
 	defer cleanup()
 	if err != nil {
 		return fmt.Errorf("%w%s", err, cmdopts.ClusterHint(err))

@@ -34,23 +34,23 @@ type HelmClient interface {
 	// IsReachable checks whether the configured Kubernetes cluster is reachable.
 	IsReachable() error
 
-	// InstallApp installs or upgrades an application using Helm. When resolved
-	// is non-nil, TLS and hostname values are sourced from it rather than the
-	// raw spec. postRenderer, when non-nil, is applied to the rendered
-	// manifests before they are sent to the cluster.
-	InstallApp(ctx context.Context, manifest *spec.Spec, environment string, dryRun bool, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) error
+	// InstallApp installs or upgrades an application from [spec.ResolvedSpec].
+	// Chart content, release name, and labels all come from resolved.
+	// postRenderer, when non-nil, is applied to the rendered manifests
+	// before they are sent to the cluster.
+	InstallApp(ctx context.Context, dryRun bool, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) error
 
-	// RenderManifests renders the chart for manifest/environment client-side,
+	// RenderManifests renders the chart from [spec.ResolvedSpec] client-side,
 	// without mutating the cluster or Helm's release history. The caller must
 	// run the returned cleanup func once done with the result's ChartPath.
 	// postRenderer, when non-nil, is applied to the rendered manifests.
-	RenderManifests(ctx context.Context, manifest *spec.Spec, environment string, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) (*render.RenderResult, func(), error)
+	RenderManifests(ctx context.Context, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) (*render.RenderResult, func(), error)
 
-	// RenderOffline renders the chart for manifest/environment as a fresh
+	// RenderOffline renders the chart from [spec.ResolvedSpec] as a fresh
 	// install, without any Kubernetes API access. The caller must run the
 	// returned cleanup func once done with the result's ChartPath.
 	// postRenderer, when non-nil, is applied to the rendered manifests.
-	RenderOffline(ctx context.Context, manifest *spec.Spec, environment string, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) (*render.RenderResult, func(), error)
+	RenderOffline(ctx context.Context, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) (*render.RenderResult, func(), error)
 
 	// DeleteRelease uninstalls a Helm release. When wait is true the call
 	// blocks until all resources are fully removed using the legacy polling

@@ -64,7 +64,7 @@ func TestRenderDeployment_EnvConfigMapAndOverlappingEnv(t *testing.T) {
 
 	client, err := NewClient(WithNamespace("default"))
 	require.NoError(t, err)
-	result, cleanup, err := client.RenderOffline(t.Context(), m, "dev", resolved, nil)
+	result, cleanup, err := client.RenderOffline(t.Context(), resolved, nil)
 	require.NoError(t, err)
 	if cleanup != nil {
 		t.Cleanup(cleanup)
@@ -172,6 +172,76 @@ func TestRenderWorkloads_EnvFromMatchesConfigMap(t *testing.T) {
 	}
 }
 
+func TestRenderWorkloads_YAMLSensitiveFileKeysSurvive(t *testing.T) {
+	t.Parallel()
+
+	const dotenv = "ON=one\nOFF=two\nYES=three\nNO=four\nTRUE=five\nFALSE=six\nNULL=seven\nFOO=upper\nfoo=lower\n_ABC=one\nnode_env=two\nDPY_VAR_TAG=three\n"
+	want := map[string]string{
+		"ON":          "one",
+		"OFF":         "two",
+		"YES":         "three",
+		"NO":          "four",
+		"TRUE":        "five",
+		"FALSE":       "six",
+		"NULL":        "seven",
+		"FOO":         "upper",
+		"foo":         "lower",
+		"_ABC":        "one",
+		"node_env":    "two",
+		"DPY_VAR_TAG": "three",
+	}
+
+	tests := []struct {
+		name       string
+		kind       string
+		nameSuffix string
+		cmSuffix   string
+	}{
+		{name: "deployment", kind: "Deployment", nameSuffix: "-api", cmSuffix: "-api-env"},
+		{name: "statefulset", kind: "StatefulSet", nameSuffix: "-api", cmSuffix: "-api-env"},
+		{name: "cronjob", kind: "CronJob", nameSuffix: "-cleanup", cmSuffix: "-cleanup-env"},
+		{name: "job", kind: "Job", nameSuffix: "-migrate", cmSuffix: "-migrate-env"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(dir, ".env"), []byte(dotenv), 0o600))
+			m := envWorkloadSpec(dir, nil, tt.kind)
+			result := renderEnvManifest(t, m, "dev")
+			cm := findEnvConfigMap(t, result, tt.kind, tt.cmSuffix)
+			assert.Equal(t, want, cm.Data)
+			assert.Equal(t, cm.Name, renderedEnvFromConfigMap(t, result, tt.kind, tt.nameSuffix))
+		})
+	}
+}
+
+func TestRenderWorkloads_QuotedYAMLReservedExplicitEnv(t *testing.T) {
+	t.Parallel()
+
+	want := []corev1.EnvVar{{Name: "ON", Value: "enabled"}}
+	tests := []struct {
+		name       string
+		kind       string
+		nameSuffix string
+	}{
+		{name: "deployment", kind: "Deployment", nameSuffix: "-api"},
+		{name: "statefulset", kind: "StatefulSet", nameSuffix: "-api"},
+		{name: "cronjob", kind: "CronJob", nameSuffix: "-cleanup"},
+		{name: "job", kind: "Job", nameSuffix: "-migrate"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			m := envWorkloadSpec(t.TempDir(), spec.StringMap{"ON": "enabled"}, tt.kind)
+			result := renderEnvManifest(t, m, "dev")
+			assert.Equal(t, want, renderedContainerEnv(t, result, tt.kind, tt.nameSuffix))
+		})
+	}
+}
+
 func TestRenderDeployment_LongFullnameEnvFromMatchesConfigMap(t *testing.T) {
 	t.Parallel()
 
@@ -237,7 +307,7 @@ func TestHelmHook_EnvConfigMapWeightAndDeletePolicy(t *testing.T) {
 
 	client, err := NewClient(WithNamespace("default"))
 	require.NoError(t, err)
-	result, cleanup, err := client.RenderOffline(t.Context(), m, "dev", resolved, nil)
+	result, cleanup, err := client.RenderOffline(t.Context(), resolved, nil)
 	require.NoError(t, err)
 	if cleanup != nil {
 		t.Cleanup(cleanup)
@@ -278,7 +348,7 @@ func TestHelmHook_EnvConfigMapWeightFollowsJob(t *testing.T) {
 
 	client, err := NewClient(WithNamespace("default"))
 	require.NoError(t, err)
-	result, cleanup, err := client.RenderOffline(t.Context(), m, "dev", resolved, nil)
+	result, cleanup, err := client.RenderOffline(t.Context(), resolved, nil)
 	require.NoError(t, err)
 	if cleanup != nil {
 		t.Cleanup(cleanup)
@@ -358,7 +428,7 @@ func renderEnvManifest(t *testing.T, m *spec.Spec, env string) *render.RenderRes
 	resolved := resolveChart(t, m, env)
 	client, err := NewClient(WithNamespace("default"))
 	require.NoError(t, err)
-	result, cleanup, err := client.RenderOffline(t.Context(), m, env, resolved, nil)
+	result, cleanup, err := client.RenderOffline(t.Context(), resolved, nil)
 	require.NoError(t, err)
 	if cleanup != nil {
 		t.Cleanup(cleanup)

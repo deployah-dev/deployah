@@ -61,14 +61,14 @@ type stubHelmClient struct {
 
 func (s *stubHelmClient) IsReachable() error { return s.reachableErr }
 
-func (s *stubHelmClient) RenderManifests(context.Context, *spec.Spec, string, *spec.ResolvedSpec, postrenderer.PostRenderer) (*render.RenderResult, func(), error) {
+func (s *stubHelmClient) RenderManifests(context.Context, *spec.ResolvedSpec, postrenderer.PostRenderer) (*render.RenderResult, func(), error) {
 	if s.renderErr != nil {
 		return nil, nil, s.renderErr
 	}
 	return s.renderResult, func() {}, nil
 }
 
-func (s *stubHelmClient) RenderOffline(context.Context, *spec.Spec, string, *spec.ResolvedSpec, postrenderer.PostRenderer) (*render.RenderResult, func(), error) {
+func (s *stubHelmClient) RenderOffline(context.Context, *spec.ResolvedSpec, postrenderer.PostRenderer) (*render.RenderResult, func(), error) {
 	if s.offlineErr != nil {
 		return nil, nil, s.offlineErr
 	}
@@ -82,7 +82,7 @@ func (s *stubHelmClient) GetReleaseHistory(context.Context, string, string) ([]*
 	return s.history, nil
 }
 
-func (s *stubHelmClient) InstallApp(context.Context, *spec.Spec, string, bool, *spec.ResolvedSpec, postrenderer.PostRenderer) error {
+func (s *stubHelmClient) InstallApp(context.Context, bool, *spec.ResolvedSpec, postrenderer.PostRenderer) error {
 	panic("unexpected InstallApp call")
 }
 
@@ -219,6 +219,13 @@ func testOptions() *Options {
 	return &Options{Environment: "production", OutputFormat: outputFormatText}
 }
 
+func testResolved(m *spec.Spec) *spec.ResolvedSpec {
+	if m == nil {
+		m = testManifest()
+	}
+	return &spec.ResolvedSpec{Spec: m, Env: spec.NormalizeEnv("production")}
+}
+
 func renderResult(manifest string) *render.RenderResult {
 	return &render.RenderResult{
 		ReleaseName: "web-production",
@@ -329,7 +336,7 @@ func TestRunOnline(t *testing.T) {
 			opts := testOptions()
 			opts.DetailedExitCode = tt.detailed
 
-			err := runOnline(c, sess, nil, testManifest(), opts, nil)
+			err := runOnline(c, sess, nil, testManifest(), opts, testResolved(nil))
 			if tt.wantErrIs != nil {
 				require.Error(t, err)
 				assert.ErrorIs(t, err, tt.wantErrIs)
@@ -364,7 +371,7 @@ func TestRunOnline_DriftOnFreshInstall_NoStdoutFootprint(t *testing.T) {
 
 	opts := testOptions()
 	opts.Drift = true
-	err := runOnline(c, sess, nil, testManifest(), opts, nil)
+	err := runOnline(c, sess, nil, testManifest(), opts, testResolved(nil))
 	require.NoError(t, err, "checkDrift must short-circuit cleanly without a working cluster config")
 
 	assert.NotContains(t, out.String(), "Drift (cluster changed outside deployah):",
@@ -504,7 +511,7 @@ spec:
 	c, out := nabatContext(t)
 	c.SetContext(session.WithContext(c.Context(), sess))
 
-	err := runOnline(c, sess, nil, testManifest(), testOptions(), nil)
+	err := runOnline(c, sess, nil, testManifest(), testOptions(), testResolved(nil))
 	require.NoError(t, err)
 	assert.Contains(t, out.String(), "CRDs: 1 pending from .deployah/crds/")
 }
@@ -532,7 +539,7 @@ func TestRunOnline_MetricsRequiresPrometheusOperatorAPI(t *testing.T) {
 		}
 		sess := sessionWithStubAndK8s(stub, fakeClientWithAPIs("v1"))
 		c, _ := nabatContext(t)
-		err := runOnline(c, sess, nil, manifest, testOptions(), nil)
+		err := runOnline(c, sess, nil, manifest, testOptions(), testResolved(manifest))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "monitoring.coreos.com/v1")
 	})
@@ -545,7 +552,7 @@ func TestRunOnline_MetricsRequiresPrometheusOperatorAPI(t *testing.T) {
 		}
 		sess := sessionWithStubAndK8s(stub, fakeClientWithAPIs("v1", "monitoring.coreos.com/v1"))
 		c, out := nabatContext(t)
-		err := runOnline(c, sess, nil, manifest, testOptions(), nil)
+		err := runOnline(c, sess, nil, manifest, testOptions(), testResolved(manifest))
 		require.NoError(t, err)
 		assert.NotEmpty(t, out.String())
 	})

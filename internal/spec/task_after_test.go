@@ -14,6 +14,7 @@
 package spec
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -59,8 +60,25 @@ func TestAssignHookWeights_Cycle(t *testing.T) {
 		"b": {On: TaskOnPreDeploy, After: []string{"a"}},
 	})
 	require.Error(t, err)
+	cycle, ok := errors.AsType[*HookCycleError](err)
+	require.True(t, ok)
+	assert.Equal(t, TaskOnPreDeploy, cycle.On)
+	assert.Equal(t, []string{"a", "b"}, cycle.Tasks)
 	assert.Contains(t, err.Error(), "cycle")
 	assert.Contains(t, err.Error(), `"a", "b"`)
+}
+
+func TestAssignHookWeights_SelfCycle(t *testing.T) {
+	t.Parallel()
+
+	_, err := AssignHookWeights(map[string]Task{
+		"migrate": {On: TaskOnPreDeploy, After: []string{"migrate"}},
+	})
+	require.Error(t, err)
+	cycle, ok := errors.AsType[*HookCycleError](err)
+	require.True(t, ok)
+	assert.Equal(t, []string{"migrate"}, cycle.Tasks)
+	assert.Contains(t, err.Error(), "cycle")
 }
 
 func TestAssignHookWeights_CycleNamesOnlyStuckTasks(t *testing.T) {

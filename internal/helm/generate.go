@@ -84,34 +84,56 @@ func GenerateReleaseName(projectName, environmentName string) string {
 	return projectName + "-" + spec.NormalizeEnv(environmentName).K8sSafe
 }
 
+// requireResolvedSpec reports an error unless resolved is a [spec.Resolve]
+// result: Spec set, Components and Tasks maps allocated (possibly empty).
+func requireResolvedSpec(resolved *spec.ResolvedSpec) error {
+	if resolved == nil {
+		return errors.New("render requires resolved spec; call spec.Resolve first")
+	}
+	if resolved.Spec == nil {
+		return errors.New("render requires resolved spec source")
+	}
+	if resolved.Components == nil || resolved.Tasks == nil {
+		return errors.New("render requires spec.Resolve result")
+	}
+	return nil
+}
+
+// releaseIdentity is the single derivation of Helm release name and labels
+// from [spec.ResolvedSpec]. Render, dry-run, and install all use this.
+func releaseIdentity(resolved *spec.ResolvedSpec) (string, map[string]string, error) {
+	if err := requireResolvedSpec(resolved); err != nil {
+		return "", nil, err
+	}
+	environment := resolved.Env.Original
+	return GenerateReleaseName(resolved.Spec.Project, environment), map[string]string{
+		"deployah.dev/project":     resolved.Spec.Project,
+		"deployah.dev/environment": environment,
+		"deployah.dev/managed-by":  "deployah",
+		"deployah.dev/version":     resolved.Spec.APIVersion,
+	}, nil
+}
+
 // PrepareChart expands the embedded chart into a temporary directory and
-// returns the chart root. Identical charts are reused via cache.
+// returns the chart root. Identical charts are reused via cache. A nil or
+// unresolved spec is an error; cache must be non-nil.
 //
-// resolved must be non-nil and resolved.Spec must be set.
-// [spec.ResolvedSpec] is the only source of truth for full render. A nil
-// resolved returns an error; full render does not silently omit runtime
-// environment.
-//
-// cache must be non-nil. If ctx is already canceled or past its deadline,
-// PrepareChart returns [context.Canceled] or [context.DeadlineExceeded]
-// immediately; chart expansion itself is not interrupted mid-flight.
-//
-// On a cache miss, every 10th entry may start a background goroutine that
-// removes expired cache directories; that work outlives this call.
-func PrepareChart(ctx context.Context, desiredEnvironment string, resolved *spec.ResolvedSpec, cache *ChartCache) (string, error) {
+// If ctx is already canceled, PrepareChart returns [context.Canceled] or
+// [context.DeadlineExceeded] immediately. On a cache miss, every 10th
+// entry may start a background goroutine that removes expired cache
+// directories.
+func PrepareChart(ctx context.Context, resolved *spec.ResolvedSpec, cache *ChartCache) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
 	if cache == nil {
 		return "", errors.New("chart cache is required")
 	}
-	if resolved == nil {
-		return "", errors.New("render requires resolved spec; call spec.Resolve first")
-	}
-	if resolved.Spec == nil {
-		return "", errors.New("render requires resolved spec source")
+	if err := requireResolvedSpec(resolved); err != nil {
+		return "", err
 	}
 	manifest := resolved.Spec
+	desiredEnvironment := resolved.Env.Original
 
 	cacheKey, err := cache.GenerateKey(desiredEnvironment, resolved)
 	if err != nil {

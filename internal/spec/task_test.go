@@ -875,7 +875,7 @@ func TestValidateSpecTasks(t *testing.T) {
 			spec: shopSpec(map[string]Task{
 				"migrate": {From: "api", On: TaskOnPreDeploy, After: []string{"migrate"}, Command: []string{"true"}},
 			}),
-			wantErr: "after cannot include itself",
+			wantErr: "cycle",
 		},
 		{
 			name: "backoffLimit exceeds int32",
@@ -954,6 +954,36 @@ func TestValidateSpecTasks_Nil(t *testing.T) {
 	err := ValidateSpecTasks(nil, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "spec cannot be nil")
+}
+
+func TestValidateSpecTasks_DisplayAllowsCycles(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		tasks map[string]Task
+	}{
+		{
+			name: "two-node cycle",
+			tasks: map[string]Task{
+				"migrate": {From: "api", On: TaskOnPreDeploy, After: []string{"seed"}, Command: []string{"migrate"}},
+				"seed":    {From: "api", On: TaskOnPreDeploy, After: []string{"migrate"}, Command: []string{"seed"}},
+			},
+		},
+		{
+			name: "self cycle",
+			tasks: map[string]Task{
+				"migrate": {From: "api", On: TaskOnPreDeploy, After: []string{"migrate"}, Command: []string{"migrate"}},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			require.NoError(t, ValidateSpecTasks(shopSpec(tt.tasks), true))
+			require.Error(t, ValidateSpecTasks(shopSpec(tt.tasks), false))
+		})
+	}
 }
 
 func Test_validateCronSchedule(t *testing.T) {

@@ -11,7 +11,7 @@ import (
 
 // Deployer abstracts Helm install/upgrade operations.
 type Deployer interface {
-	InstallApp(ctx context.Context, m *spec.Spec, environment string, dryRun bool, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) error
+	InstallApp(ctx context.Context, dryRun bool, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) error
 }
 
 // SpecLoader loads and validates a spec for an environment.
@@ -30,13 +30,18 @@ func NewDeploy(deployer Deployer, loader SpecLoader) *Deploy {
 	return &Deploy{deployer: deployer, loader: loader}
 }
 
-// Run loads the spec and installs or upgrades the Helm release.
+// Run loads the spec, resolves it for environment, and installs or upgrades
+// the Helm release.
 func (d *Deploy) Run(ctx context.Context, environment string, dryRun bool) (*spec.Spec, error) {
 	m, err := d.loader.Spec(ctx, environment)
 	if err != nil {
 		return nil, fmt.Errorf("load spec: %w", err)
 	}
-	if err = d.deployer.InstallApp(ctx, m, environment, dryRun, nil, nil); err != nil {
+	resolved, _, err := spec.Resolve(m, nil, spec.NormalizeEnv(environment), spec.SubstitutionReport{})
+	if err != nil {
+		return nil, fmt.Errorf("resolve spec: %w", err)
+	}
+	if err = d.deployer.InstallApp(ctx, dryRun, resolved, nil); err != nil {
 		return nil, fmt.Errorf("install: %w", err)
 	}
 	return m, nil

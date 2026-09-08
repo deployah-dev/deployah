@@ -408,6 +408,32 @@ func TestLoad_AllowHookCycleForDisplay_DefersCycle(t *testing.T) {
 	require.Contains(t, got.Tasks, "seed")
 }
 
+func TestLoad_AllowHookCycleForDisplay_DefersSelfCycle(t *testing.T) {
+	t.Parallel()
+
+	const specYAML = `apiVersion: v1-alpha.5
+project: shop
+components:
+  api:
+    image: busybox
+tasks:
+  migrate:
+    from: api
+    "on": preDeploy
+    after: [migrate]
+    command: [migrate]
+environments:
+  staging: {}
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "deployah.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(specYAML), 0o600))
+
+	got, err := Load(t.Context(), path, "staging", nil, AllowHookCycleForDisplay())
+	require.NoError(t, err)
+	require.Contains(t, got.Tasks, "migrate")
+}
+
 func TestLoad_AllowHookCycleForDisplay_StillRejectsInvalidAfter(t *testing.T) {
 	t.Parallel()
 

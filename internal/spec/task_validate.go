@@ -122,9 +122,6 @@ func validateTask(name string, task Task, spec *Spec) error {
 			errs = append(errs, fmt.Errorf("%s: after contains an empty name", prefix))
 			continue
 		}
-		if dep == name {
-			errs = append(errs, fmt.Errorf("%s: after cannot include itself", prefix))
-		}
 	}
 
 	usesParent := task.Image == "" && task.From != ""

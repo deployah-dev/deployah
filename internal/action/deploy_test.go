@@ -14,10 +14,12 @@ import (
 )
 
 type mockDeployer struct {
-	err error
+	err      error
+	resolved *spec.ResolvedSpec
 }
 
-func (m *mockDeployer) InstallApp(_ context.Context, _ *spec.Spec, _ string, _ bool, _ *spec.ResolvedSpec, _ postrenderer.PostRenderer) error {
+func (m *mockDeployer) InstallApp(_ context.Context, _ bool, resolved *spec.ResolvedSpec, _ postrenderer.PostRenderer) error {
+	m.resolved = resolved
 	return m.err
 }
 
@@ -43,10 +45,15 @@ func TestDeploy_Run(t *testing.T) {
 	t.Parallel()
 	t.Run("succeeds when deployer and loader succeed", func(t *testing.T) {
 		t.Parallel()
-		d := action.NewDeploy(&mockDeployer{}, &mockSpecLoader{m: testManifest})
+		deployer := &mockDeployer{}
+		d := action.NewDeploy(deployer, &mockSpecLoader{m: testManifest})
 		m, err := d.Run(t.Context(), "prod", false)
 		require.NoError(t, err)
 		assert.Equal(t, "my-app", m.Project)
+		require.NotNil(t, deployer.resolved)
+		require.NotNil(t, deployer.resolved.Components)
+		require.NotNil(t, deployer.resolved.Tasks)
+		assert.Equal(t, "prod", deployer.resolved.Env.Original)
 	})
 
 	t.Run("returns error when manifest loader fails", func(t *testing.T) {
@@ -63,5 +70,31 @@ func TestDeploy_Run(t *testing.T) {
 		_, err := d.Run(t.Context(), "prod", false)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "install")
+	})
+
+	t.Run("returns error when resolve fails", func(t *testing.T) {
+		t.Parallel()
+		m := &spec.Spec{
+			APIVersion: spec.CurrentManifestVersion,
+			Project:    "my-app",
+			Components: map[string]spec.Component{
+				"api": {Image: "busybox"},
+			},
+			Tasks: map[string]spec.Task{
+				"migrate": {
+					From:    "api",
+					On:      spec.TaskOnPreDeploy,
+					After:   []string{"migrate"},
+					Command: []string{"migrate"},
+				},
+			},
+			Environments: map[string]spec.Environment{
+				"prod": {},
+			},
+		}
+		d := action.NewDeploy(&mockDeployer{}, &mockSpecLoader{m: m})
+		_, err := d.Run(t.Context(), "prod", false)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "resolve spec")
 	})
 }
