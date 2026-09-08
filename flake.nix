@@ -26,7 +26,7 @@
 
         buildGoModule' = pkgs.buildGoModule.override { inherit go; };
 
-        deployahVendorHash = "sha256-F5vEDllJemWW2wiKneEZJw+vSWVFPfgv9z0g8ebNjaY=";
+        deployahVendorHash = "sha256-NbJT55BhT2/fd1fkJ30XK/dn1IxEptcyymLNgYPtY24=";
 
         inherit (pkgs) golangci-lint gopls;
 
