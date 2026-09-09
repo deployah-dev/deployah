@@ -31,6 +31,7 @@ import (
 	"deployah.dev/deployah/internal/render"
 	"deployah.dev/deployah/internal/session"
 	"deployah.dev/deployah/internal/spec"
+	"deployah.dev/deployah/internal/target"
 
 	planengine "deployah.dev/deployah/internal/plan"
 	corev1 "k8s.io/api/core/v1"
@@ -45,7 +46,7 @@ func newClusterWithStub(t *testing.T, stub *stubHelmClient, k8sClient kubernetes
 		session.WithHelmFactory(func(*session.Session) (session.HelmClient, error) {
 			return stub, nil
 		}),
-		session.WithKubernetesFactory(func(*session.Session) (kubernetes.Interface, error) {
+		session.WithKubernetesFactory(func(*target.Target) (kubernetes.Interface, error) {
 			if k8sClient == nil {
 				return nil, assertNever{}
 			}

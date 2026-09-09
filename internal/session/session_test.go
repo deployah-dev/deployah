@@ -34,6 +34,7 @@ import (
 
 	"deployah.dev/deployah/internal/render"
 	"deployah.dev/deployah/internal/spec"
+	"deployah.dev/deployah/internal/target"
 
 	v1 "helm.sh/helm/v4/pkg/release/v1"
 )
@@ -204,7 +205,7 @@ func TestSessionWithDependencyInjection(t *testing.T) {
 
 	t.Run("should use injected kubernetes factory via Target", func(t *testing.T) {
 		fakeCS := fake.NewSimpleClientset()
-		sess := New(WithKubernetesFactory(func(s *Session) (kubernetes.Interface, error) {
+		sess := New(WithKubernetesFactory(func(*target.Target) (kubernetes.Interface, error) {
 			return fakeCS, nil
 		}))
 
@@ -326,64 +327,52 @@ func TestContextOperations(t *testing.T) {
 	})
 }
 
-// TestTarget covers the named case.
+// TestTarget covers Session-to-target delegation, not the full
+// resolution matrix (that lives in internal/target).
 func TestTarget(t *testing.T) {
-	t.Run("empty env returns cluster with empty context", func(t *testing.T) {
-		sess := New()
-		cluster, err := sess.Target(t.Context(), "")
-		assert.NoError(t, err)
-		assert.NotNil(t, cluster)
-		assert.Equal(t, "", cluster.kubeContext)
-	})
-
 	t.Run("global context flag wins over platform", func(t *testing.T) {
+		t.Parallel()
+
 		sess := New(WithKubeContext("my-context"))
 		cluster, err := sess.Target(t.Context(), "prod")
 		assert.NoError(t, err)
-		assert.Equal(t, "my-context", cluster.kubeContext)
+		assert.Equal(t, "my-context", cluster.Context())
+		assert.Equal(t, target.ContextSourceExplicit, cluster.ContextSource())
 	})
 
-	t.Run("no platform file falls back to default context", func(t *testing.T) {
-		sess := New(WithSpecPath("/nonexistent/path/deployah.yaml"))
+	t.Run("no platform file falls back to kubeconfig source", func(t *testing.T) {
+		t.Parallel()
+
+		path := filepath.Join(t.TempDir(), "kubeconfig")
+		require.NoError(t, writeFile(path, minimalKubeconfig))
+		sess := New(
+			WithSpecPath("/nonexistent/path/deployah.yaml"),
+			WithKubeconfig(path),
+		)
 		cluster, err := sess.Target(t.Context(), "prod")
 		assert.NoError(t, err)
-		assert.NotNil(t, cluster)
-		assert.Equal(t, "", cluster.kubeContext)
+		assert.Equal(t, "test-context", cluster.Context())
+		assert.Equal(t, target.ContextSourceKubeconfig, cluster.ContextSource())
 	})
 
 	t.Run("platform file context is applied when no --context flag", func(t *testing.T) {
-		platformDir := t.TempDir()
-		platformPath := platformDir + "/deployah.platform.yaml"
+		t.Parallel()
 
-		platformYAML := `apiVersion: platform/v1-alpha.3
-environments:
-  production:
-    context: prod-eks
-    domains:
-      main:
-        baseDomain: example.com
-`
-		require.NoError(t, writeFile(platformPath, platformYAML))
+		platformPath := filepath.Join(t.TempDir(), "deployah.platform.yaml")
+		require.NoError(t, writeFile(platformPath, platformContextYAML("prod-eks")))
 
 		sess := New(WithPlatformFile(platformPath))
 		cluster, err := sess.Target(t.Context(), "production")
 		assert.NoError(t, err)
-		assert.Equal(t, "prod-eks", cluster.kubeContext)
+		assert.Equal(t, "prod-eks", cluster.Context())
+		assert.Equal(t, target.ContextSourcePlatform, cluster.ContextSource())
 	})
 
 	t.Run("--context flag overrides platform file context", func(t *testing.T) {
-		platformDir := t.TempDir()
-		platformPath := platformDir + "/deployah.platform.yaml"
+		t.Parallel()
 
-		platformYAML := `apiVersion: platform/v1-alpha.3
-environments:
-  production:
-    context: prod-eks
-    domains:
-      main:
-        baseDomain: example.com
-`
-		require.NoError(t, writeFile(platformPath, platformYAML))
+		platformPath := filepath.Join(t.TempDir(), "deployah.platform.yaml")
+		require.NoError(t, writeFile(platformPath, platformContextYAML("prod-eks")))
 
 		sess := New(
 			WithPlatformFile(platformPath),
@@ -391,22 +380,86 @@ environments:
 		)
 		cluster, err := sess.Target(t.Context(), "production")
 		assert.NoError(t, err)
-		assert.Equal(t, "my-override", cluster.kubeContext)
+		assert.Equal(t, "my-override", cluster.Context())
+		assert.Equal(t, target.ContextSourceExplicit, cluster.ContextSource())
 	})
 
-	t.Run("cluster namespace falls back to default", func(t *testing.T) {
-		sess := New()
+	t.Run("cluster namespace uses kubeconfig context namespace", func(t *testing.T) {
+		t.Parallel()
+
+		path := filepath.Join(t.TempDir(), "kubeconfig")
+		require.NoError(t, writeFile(path, kubeconfigWithNamespace("payments")))
+		sess := New(WithKubeconfig(path))
 		cluster, err := sess.Target(t.Context(), "")
 		require.NoError(t, err)
-		assert.Equal(t, DefaultNamespace, cluster.Namespace())
+		assert.Equal(t, "payments", cluster.Namespace())
 	})
 
-	t.Run("cluster namespace uses session value", func(t *testing.T) {
-		sess := New(WithNamespace("my-ns"))
+	t.Run("explicit namespace wins over kubeconfig context namespace", func(t *testing.T) {
+		t.Parallel()
+
+		path := filepath.Join(t.TempDir(), "kubeconfig")
+		require.NoError(t, writeFile(path, kubeconfigWithNamespace("payments")))
+		sess := New(WithKubeconfig(path), WithNamespace("custom"))
 		cluster, err := sess.Target(t.Context(), "")
 		require.NoError(t, err)
-		assert.Equal(t, "my-ns", cluster.Namespace())
+		assert.Equal(t, "custom", cluster.Namespace())
 	})
+}
+
+func TestClusterHelmUsesResolvedTarget(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "kubeconfig")
+	require.NoError(t, writeFile(path, kubeconfigWithNamespace("payments")))
+
+	var gotNS, gotCtx string
+	sess := New(
+		WithKubeconfig(path),
+		WithHelmFactory(func(s *Session) (HelmClient, error) {
+			gotNS = s.namespace
+			gotCtx = s.kubeContext
+			return &MockHelmClient{}, nil
+		}),
+	)
+	cluster, err := sess.Target(t.Context(), "")
+	require.NoError(t, err)
+	_, err = cluster.Helm()
+	require.NoError(t, err)
+	assert.Equal(t, "payments", gotNS)
+	assert.Equal(t, "production", gotCtx)
+}
+
+func platformContextYAML(contextName string) string {
+	return `apiVersion: platform/v1-alpha.3
+environments:
+  production:
+    context: ` + contextName + `
+    domains:
+      main:
+        baseDomain: example.com
+`
+}
+
+func kubeconfigWithNamespace(ns string) string {
+	return `apiVersion: v1
+kind: Config
+current-context: production
+clusters:
+- name: production-cluster
+  cluster:
+    server: https://example.com:6443
+contexts:
+- name: production
+  context:
+    cluster: production-cluster
+    user: test-user
+    namespace: ` + ns + `
+users:
+- name: test-user
+  user:
+    token: fake-token
+`
 }
 
 func writeFile(path, content string) error {
