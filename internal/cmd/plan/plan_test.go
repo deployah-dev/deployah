@@ -36,6 +36,7 @@ import (
 	"deployah.dev/deployah/internal/render"
 	"deployah.dev/deployah/internal/session"
 	"deployah.dev/deployah/internal/spec"
+	"deployah.dev/deployah/internal/target"
 
 	planengine "deployah.dev/deployah/internal/plan"
 	v1 "helm.sh/helm/v4/pkg/release/v1"
@@ -126,7 +127,7 @@ func sessionWithStubAndK8s(stub *stubHelmClient, k8sClient kubernetes.Interface)
 		session.WithHelmFactory(func(*session.Session) (session.HelmClient, error) {
 			return stub, nil
 		}),
-		session.WithKubernetesFactory(func(*session.Session) (kubernetes.Interface, error) {
+		session.WithKubernetesFactory(func(*target.Target) (kubernetes.Interface, error) {
 			return k8sClient, nil
 		}),
 	)

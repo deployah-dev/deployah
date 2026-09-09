@@ -161,9 +161,6 @@ func runDelete(c *nabat.Context) error {
 	}
 
 	targetCtx := cluster.Context()
-	if fallback, current := cluster.ContextFallback(); fallback {
-		targetCtx = current
-	}
 	prompt := deleteConfirmPrompt(opts.Project, opts.Environment, targetCtx, release, jobs)
 	confirmed, confirmErr := c.Confirm(
 		prompt,

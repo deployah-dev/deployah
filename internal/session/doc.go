@@ -19,9 +19,9 @@
 // configured environment per invocation. Construct one with [New], attach it
 // via [WithContext], and retrieve it in handlers through [FromContext].
 //
-// To access cluster resources, call [Session.Target] with the target
-// environment name. It eagerly resolves the Kubernetes context from the spec's
-// environment field and returns a [Cluster] that lazily constructs the Helm
-// and Kubernetes clients. This two-phase model makes it a compile-time error
-// to request a cluster client without first resolving which cluster to use.
+// Kubernetes destination resolution is delegated to [target.Resolver]. Call
+// [Session.Target] with the environment name to obtain a [Cluster] that wraps
+// the resolved [target.Target] and lazily constructs Helm and Kubernetes
+// clients. Cluster REST and Kubernetes construction still prefer in-cluster
+// config when present.
 package session

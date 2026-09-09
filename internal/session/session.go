@@ -10,10 +10,10 @@ import (
 
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
 
 	"deployah.dev/deployah/internal/helm"
 	"deployah.dev/deployah/internal/spec"
+	"deployah.dev/deployah/internal/target"
 )
 
 // sessionKey is a private context key for storing the Session in context.
@@ -54,7 +54,7 @@ type Session struct {
 	mu       sync.Mutex
 
 	helmFactory func(*Session) (HelmClient, error)
-	k8sFactory  func(*Session) (kubernetes.Interface, error)
+	k8sFactory  func(*target.Target) (kubernetes.Interface, error)
 }
 
 // Option is a functional option for configuring a [Session].
@@ -130,7 +130,7 @@ func WithHelmFactory(factory func(*Session) (HelmClient, error)) Option {
 
 // WithKubernetesFactory sets a custom Kubernetes client factory,
 // primarily for testing.
-func WithKubernetesFactory(factory func(*Session) (kubernetes.Interface, error)) Option {
+func WithKubernetesFactory(factory func(*target.Target) (kubernetes.Interface, error)) Option {
 	return func(s *Session) { s.k8sFactory = factory }
 }
 
@@ -227,36 +227,30 @@ func (s *Session) Spec(ctx context.Context, environment string) (*spec.Spec, err
 	return m, nil
 }
 
-// Target resolves the Kubernetes context for env and returns a [Cluster] from
-// which Helm and Kubernetes clients can be obtained.
+// Target resolves the Kubernetes destination for env and returns a [Cluster]
+// from which Helm and Kubernetes clients can be obtained.
 //
-// Precedence for the kubeContext used by the returned Cluster:
-//  1. The global --context flag (already stored in s.kubeContext).
-//  2. The platform file's context for env (via [PlatformEnvContext]).
-//  3. The default context from the active kubeconfig (empty string).
+// Destination resolution is delegated to [target.Resolver]. The platform
+// file, when present, supplies only a context name via
+// [spec.PlatformEnvContext]. ctx is unused.
 func (s *Session) Target(ctx context.Context, env string) (*Cluster, error) {
-	kubeCtx := s.kubeContext
-
-	// When no --context override, try the platform file.
-	if kubeCtx == "" && env != "" {
+	platformContext := ""
+	if env != "" {
 		if p, err := s.Platform(); err == nil && p != nil {
-			if pCtx := spec.PlatformEnvContext(p, env); pCtx != "" {
-				kubeCtx = pCtx
-			}
+			platformContext = spec.PlatformEnvContext(p, env)
 		}
 	}
+	t := target.NewResolver(s.targetConfig()).Resolve(platformContext)
+	return &Cluster{Session: s, target: t}, nil
+}
 
-	cluster := &Cluster{
-		Session:     s,
-		kubeContext: kubeCtx,
+func (s *Session) targetConfig() target.Config {
+	return target.Config{
+		KubeconfigPath:       s.kubeconfig,
+		ContextOverride:      s.kubeContext,
+		NamespaceOverride:    s.namespace,
+		ExtraKubeconfigPaths: s.extraKubeconfigPaths,
 	}
-	if kubeCtx == "" {
-		// Record the fallback where it happens so every command can warn
-		// about it consistently.
-		cluster.fallbackContext = s.CurrentKubeContext()
-		cluster.usedFallback = true
-	}
-	return cluster, nil
 }
 
 // SpecPath returns the spec file path. When unset, it returns
@@ -354,14 +348,15 @@ func defaultHelmFactory(s *Session) (HelmClient, error) {
 	return helm.NewClient(opts...)
 }
 
-// defaultKubernetesFactory creates a Kubernetes clientset from session
-// configuration, preferring in-cluster config when available.
-func defaultKubernetesFactory(s *Session) (kubernetes.Interface, error) {
+// defaultKubernetesFactory creates a Kubernetes clientset from the resolved
+// target, preferring in-cluster config when available. That in-cluster-first
+// preference is transitional; destination metadata still comes from Target.
+func defaultKubernetesFactory(t *target.Target) (kubernetes.Interface, error) {
 	cfg, err := rest.InClusterConfig()
 	if err != nil {
-		cfg, err = s.kubeconfigRESTConfig()
+		cfg, err = t.RESTConfig()
 		if err != nil {
-			return nil, fmt.Errorf("failed to build kubernetes config: %w (provide --kubeconfig or ensure KUBECONFIG/~/.kube/config is set)", err)
+			return nil, fmt.Errorf("%w (provide --kubeconfig or ensure KUBECONFIG/~/.kube/config is set)", err)
 		}
 	}
 	cs, err := kubernetes.NewForConfig(cfg)
@@ -371,89 +366,50 @@ func defaultKubernetesFactory(s *Session) (kubernetes.Interface, error) {
 	return cs, nil
 }
 
-// CurrentKubeContext returns the current-context name from the active
-// kubeconfig resolution (explicit --kubeconfig path, deployah-managed extra
-// paths, then KUBECONFIG/~/.kube/config), ignoring any --context override.
+// CurrentKubeContext returns the current-context name from kubeconfig
+// resolution (explicit --kubeconfig path, deployah-managed extra paths,
+// then KUBECONFIG/~/.kube/config), ignoring any --context override.
 // Returns an empty string when no kubeconfig is readable.
 func (s *Session) CurrentKubeContext() string {
-	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
-	if s.kubeconfig != "" {
-		loadingRules.ExplicitPath = s.kubeconfig
-	} else if len(s.extraKubeconfigPaths) > 0 {
-		loadingRules.Precedence = append(s.extraKubeconfigPaths, loadingRules.Precedence...)
-	}
-	cfg, err := loadingRules.Load()
-	if err != nil {
-		return ""
-	}
-	return cfg.CurrentContext
+	return target.NewResolver(target.Config{
+		KubeconfigPath:       s.kubeconfig,
+		ExtraKubeconfigPaths: s.extraKubeconfigPaths,
+	}).Resolve("").Context()
 }
 
-// kubeconfigRESTConfig builds a REST config from kubeconfig resolution rules,
-// honoring an explicit kubeconfig path (s.kubeconfig) and/or a context
-// override (s.kubeContext). When neither is set it uses the default
-// KUBECONFIG/~/.kube/config resolution with the current context.
-func (s *Session) kubeconfigRESTConfig() (*rest.Config, error) {
-	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
-	if s.kubeconfig != "" {
-		loadingRules.ExplicitPath = s.kubeconfig
-	} else if len(s.extraKubeconfigPaths) > 0 {
-		// Prepend deployah-managed kubeconfig files so they take priority
-		// over ~/.kube/config when both define the same context name (e.g.
-		// a recreated Kind cluster on a new port). ExplicitPath takes full
-		// precedence when --kubeconfig is given, so we only extend
-		// Precedence when no explicit path was provided.
-		loadingRules.Precedence = append(s.extraKubeconfigPaths, loadingRules.Precedence...)
-	}
-	overrides := &clientcmd.ConfigOverrides{}
-	if s.kubeContext != "" {
-		overrides.CurrentContext = s.kubeContext
-	}
-	return clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, overrides).ClientConfig()
-}
-
-// Cluster is a resolved target: it embeds the base [Session] and adds a
-// confirmed Kubernetes context plus lazily-initialized Helm and Kubernetes
-// clients. Obtain one via [Session.Target].
+// Cluster is a resolved destination plus lazily-initialized Helm and
+// Kubernetes clients. Obtain one via [Session.Target].
+//
+// Destination metadata is owned by [target.Target]. RESTConfig and the
+// default Kubernetes factory still prefer in-cluster config when present;
+// that mismatch with Target metadata is transitional.
 type Cluster struct {
 	*Session
-	kubeContext string
-
-	// usedFallback is true when neither --context nor a platform context
-	// resolved, so clients follow the kubeconfig current-context
-	// (fallbackContext, empty when no kubeconfig is readable).
-	usedFallback    bool
-	fallbackContext string
+	target *target.Target
 
 	helm HelmClient
 	k8s  kubernetes.Interface
 	mu   sync.Mutex
 }
 
-// ContextFallback reports whether the target follows the kubeconfig
-// current-context, and that context's name.
-func (cl *Cluster) ContextFallback() (bool, string) {
-	return cl.usedFallback, cl.fallbackContext
+// Context returns the effective Kubernetes context for this destination.
+func (cl *Cluster) Context() string { return cl.target.Context() }
+
+// ContextSource returns which rule selected [Cluster.Context].
+func (cl *Cluster) ContextSource() target.ContextSource {
+	return cl.target.ContextSource()
 }
 
-// Context returns the resolved Kubernetes context for this cluster target.
-// An empty string means the default context from the active kubeconfig is used.
-func (cl *Cluster) Context() string { return cl.kubeContext }
-
-// Namespace returns the configured namespace, or "default" if none is set.
-func (cl *Cluster) Namespace() string {
-	if cl.namespace != "" {
-		return cl.namespace
-	}
-	return DefaultNamespace
-}
+// Namespace returns the effective namespace for this destination.
+func (cl *Cluster) Namespace() string { return cl.target.Namespace() }
 
 // sessionForContext returns a shallow Session copy targeted at this
-// cluster's resolved kube context, with cached clients cleared. Used by
-// Helm, Kubernetes, and RESTConfig so the three paths share one clone
-// helper.
+// cluster's resolved destination, with cached clients cleared. Used by
+// Helm so the factory still receives Session-owned settings.
 func (cl *Cluster) sessionForContext() *Session {
-	return cl.cloneWithContext(cl.kubeContext)
+	tmp := cl.cloneWithContext(cl.target.Context())
+	tmp.namespace = cl.target.Namespace()
+	return tmp
 }
 
 // Helm returns a memoized Helm client targeted at the resolved cluster.
@@ -467,7 +423,7 @@ func (cl *Cluster) Helm() (HelmClient, error) {
 	c, err := tmp.helmFactory(tmp)
 	if err != nil {
 		return nil, fmt.Errorf("helm client (namespace=%q, kubeconfig=%q): %w",
-			cl.namespace, cl.kubeconfig, err)
+			cl.target.Namespace(), cl.kubeconfig, err)
 	}
 	cl.helm = c
 	return cl.helm, nil
@@ -481,8 +437,7 @@ func (cl *Cluster) Kubernetes() (kubernetes.Interface, error) {
 	if cl.k8s != nil {
 		return cl.k8s, nil
 	}
-	tmp := cl.sessionForContext()
-	cs, err := tmp.k8sFactory(tmp)
+	cs, err := cl.k8sFactory(cl.target)
 	if err != nil {
 		return nil, fmt.Errorf("kubernetes client: %w", err)
 	}
@@ -491,14 +446,18 @@ func (cl *Cluster) Kubernetes() (kubernetes.Interface, error) {
 }
 
 // RESTConfig returns a Kubernetes REST config for the resolved cluster.
+//
+// In-cluster config is tried first, matching historical Deployah behavior.
+// When that is unavailable, the kubeconfig destination from [target.Target]
+// is used.
 func (cl *Cluster) RESTConfig() (*rest.Config, error) {
 	cfg, err := rest.InClusterConfig()
+	if err == nil {
+		return cfg, nil
+	}
+	cfg, err = cl.target.RESTConfig()
 	if err != nil {
-		tmp := cl.sessionForContext()
-		cfg, err = tmp.kubeconfigRESTConfig()
-		if err != nil {
-			return nil, fmt.Errorf("failed to build kubernetes config: %w (provide --kubeconfig or ensure KUBECONFIG/~/.kube/config is set)", err)
-		}
+		return nil, fmt.Errorf("%w (provide --kubeconfig or ensure KUBECONFIG/~/.kube/config is set)", err)
 	}
 	return cfg, nil
 }
