@@ -90,7 +90,7 @@ func (t *Target) RESTConfig() (*rest.Config, error) {
 		overrides.CurrentContext = t.contextName
 	}
 	cfg, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
-		t.loading.rules(),
+		t.loading.clientConfigLoadingRules(),
 		overrides,
 	).ClientConfig()
 	if err != nil {

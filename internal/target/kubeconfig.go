@@ -15,6 +15,7 @@
 package target
 
 import (
+	"maps"
 	"slices"
 
 	"k8s.io/client-go/tools/clientcmd"
@@ -26,34 +27,33 @@ import (
 // Resolve time. RESTConfig rebuilds rules from this snapshot so a later
 // KUBECONFIG or HOME change cannot retarget an already-resolved Target.
 type loadingSnapshot struct {
-	explicitPath string
-	precedence   []string
+	rules clientcmd.ClientConfigLoadingRules
 }
 
 func snapshotLoading(cfg Config) loadingSnapshot {
-	if cfg.KubeconfigPath != "" {
-		return loadingSnapshot{explicitPath: cfg.KubeconfigPath}
-	}
 	rules := clientcmd.NewDefaultClientConfigLoadingRules()
-	extra := slices.Clone(cfg.ExtraKubeconfigPaths)
-	prec := make([]string, 0, len(extra)+len(rules.Precedence))
-	prec = append(prec, extra...)
-	prec = append(prec, rules.Precedence...)
-	return loadingSnapshot{precedence: prec}
+	if cfg.KubeconfigPath != "" {
+		rules.ExplicitPath = cfg.KubeconfigPath
+	} else if len(cfg.ExtraKubeconfigPaths) > 0 {
+		rules.Precedence = append(slices.Clone(cfg.ExtraKubeconfigPaths), rules.Precedence...)
+	}
+	return loadingSnapshot{rules: cloneLoadingRules(rules)}
 }
 
-func (s loadingSnapshot) rules() *clientcmd.ClientConfigLoadingRules {
-	rules := &clientcmd.ClientConfigLoadingRules{}
-	if s.explicitPath != "" {
-		rules.ExplicitPath = s.explicitPath
-		return rules
-	}
-	rules.Precedence = slices.Clone(s.precedence)
-	return rules
+func (s loadingSnapshot) clientConfigLoadingRules() *clientcmd.ClientConfigLoadingRules {
+	cloned := cloneLoadingRules(&s.rules)
+	return &cloned
+}
+
+func cloneLoadingRules(rules *clientcmd.ClientConfigLoadingRules) clientcmd.ClientConfigLoadingRules {
+	cloned := *rules
+	cloned.Precedence = slices.Clone(rules.Precedence)
+	cloned.MigrationRules = maps.Clone(rules.MigrationRules)
+	return cloned
 }
 
 func loadKubeconfig(s loadingSnapshot) *clientcmdapi.Config {
-	cfg, err := s.rules().Load()
+	cfg, err := s.clientConfigLoadingRules().Load()
 	if err != nil {
 		return nil
 	}
