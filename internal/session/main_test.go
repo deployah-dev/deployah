@@ -18,9 +18,9 @@ import (
 	"os"
 	"testing"
 
-	"deployah.dev/deployah/internal/testenv"
+	"deployah.dev/deployah/internal/testing/testenv"
 )
 
 func TestMain(m *testing.M) {
-	os.Exit(testenv.IsolatedKubeconfig(m))
+	os.Exit(testenv.RunWithIsolatedKubeconfig(m))
 }

@@ -12,15 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package cmdopts
+package testenv
 
 import (
 	"os"
 	"testing"
-
-	"deployah.dev/deployah/internal/testing/testenv"
 )
 
 func TestMain(m *testing.M) {
-	os.Exit(testenv.RunWithIsolatedKubeconfig(m))
+	os.Exit(RunWithIsolatedKubeconfig(m))
 }
