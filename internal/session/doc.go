@@ -19,6 +19,7 @@
 // configured environment per invocation. Construct one with [New], attach it
 // via [WithContext], and retrieve it in handlers through [FromContext].
 //
+// Spec and platform source loading is delegated to [workspace.Workspace].
 // Kubernetes destination resolution is delegated to [target.Resolver]. Call
 // [Session.Target] with the environment name to obtain a [Cluster] that wraps
 // the resolved [target.Target] and lazily constructs Helm and Kubernetes

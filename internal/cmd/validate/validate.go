@@ -89,7 +89,7 @@ func runManifestOnly(c *nabat.Context, rt *session.Session) error {
 	// Cross-field and platform checks are best-effort here: they need the
 	// raw (pre-substitution) spec, so a manifest that only unmarshals after
 	// ${VAR} substitution skips them with a warning.
-	rawSpec, _, parseErr := spec.ParseManifest(specPath)
+	rawSpec, parseErr := rt.ParseManifest()
 	if parseErr != nil {
 		c.Warn(fmt.Sprintf("skipping cross-field checks: %v", parseErr))
 	} else {
@@ -124,7 +124,7 @@ func runManifestOnly(c *nabat.Context, rt *session.Session) error {
 // the named environment. A missing platform file is allowed when the spec
 // does not use platform-owned features.
 func runCrossFile(c *nabat.Context, rt *session.Session, environment string) error {
-	rawSpec, _, err := spec.ParseManifest(rt.SpecPath())
+	rawSpec, err := rt.ParseManifest()
 	if err != nil {
 		return fmt.Errorf("manifest invalid: %w", err)
 	}
