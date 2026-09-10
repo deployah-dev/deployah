@@ -50,11 +50,12 @@ type Session struct {
 // [Session.Target] snapshots these values onto [Cluster]. Session accessors
 // such as [Session.Timeout] keep reading the Session fields.
 type HelmConfig struct {
-	// KubeconfigPath is an explicit kubeconfig file. Empty means Helm uses
-	// extra paths, then process KUBECONFIG / the default kubeconfig.
+	// KubeconfigPath is the explicit kubeconfig path snapshotted from
+	// Session. Destination selection uses [target.Target], not this field.
 	KubeconfigPath string
-	// ExtraKubeconfigPaths are prepended to Helm's default kubeconfig when
-	// KubeconfigPath is empty. Missing files are tolerated by Helm.
+	// ExtraKubeconfigPaths is the extra kubeconfig path list snapshotted
+	// from Session. Destination selection uses [target.Target], not this
+	// field.
 	ExtraKubeconfigPaths []string
 	// StorageDriver is the Helm storage driver (secret, configmap, or memory).
 	// Empty lets [helm.NewClient] use its default ("secret").
@@ -227,21 +228,12 @@ func (s *Session) KubeContext() string { return s.kubeContext }
 func (s *Session) Timeout() time.Duration { return s.timeout }
 
 // defaultHelmFactory creates a Helm client from the resolved destination and
-// Helm runtime configuration. Context and namespace come from t; kubeconfig
-// paths, storage driver, timeout, and debug come from cfg.
+// Helm runtime configuration. Destination comes from t.ClientConfig();
+// storage driver, timeout, and debug come from cfg.
 func defaultHelmFactory(t *target.Target, cfg HelmConfig) (HelmClient, error) {
-	var opts []helm.Option
-	if ns := t.Namespace(); ns != "" {
-		opts = append(opts, helm.WithNamespace(ns))
-	}
-	if cfg.KubeconfigPath != "" {
-		opts = append(opts, helm.WithKubeconfig(cfg.KubeconfigPath))
-	}
-	if kubeContext := t.Context(); kubeContext != "" {
-		opts = append(opts, helm.WithKubeContext(kubeContext))
-	}
-	if len(cfg.ExtraKubeconfigPaths) > 0 {
-		opts = append(opts, helm.WithExtraKubeconfigPaths(cfg.ExtraKubeconfigPaths...))
+	opts := []helm.Option{
+		helm.WithRESTClientGetter(helm.NewRESTClientGetter(t.ClientConfig())),
+		helm.WithNamespace(t.Namespace()),
 	}
 	if cfg.StorageDriver != "" {
 		opts = append(opts, helm.WithStorageDriver(cfg.StorageDriver))
@@ -284,8 +276,9 @@ func (s *Session) CurrentKubeContext() string {
 // Kubernetes clients. Obtain one via [Session.Target].
 //
 // Destination metadata is owned by [target.Target]. Helm construction uses
-// [HelmConfig] and [HelmFactory]. Kubernetes construction and
-// [Cluster.RESTConfig] use [target.Target.RESTConfig].
+// [target.Target.ClientConfig], [HelmConfig], and [HelmFactory].
+// Kubernetes construction and [Cluster.RESTConfig] use
+// [target.Target.RESTConfig].
 //
 // Cluster does not embed or depend on [Session]. Concurrent [Cluster.Helm]
 // and [Cluster.Kubernetes] calls are safe.

@@ -25,7 +25,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"helm.sh/helm/v4/pkg/action"
-	"helm.sh/helm/v4/pkg/cli"
 	"helm.sh/helm/v4/pkg/release/common"
 	"helm.sh/helm/v4/pkg/storage"
 	"helm.sh/helm/v4/pkg/storage/driver"
@@ -212,12 +211,10 @@ func TestInstallApp_PendingReleaseRejects(t *testing.T) {
 		Releases:   storage.Init(driver.NewMemory()),
 		KubeClient: &kubefake.PrintingKubeClient{Out: io.Discard},
 	}
-	settings := cli.New()
-	settings.SetNamespace("default")
 
 	c := &Client{
 		config:     cfg,
-		settings:   settings,
+		namespace:  "default",
 		timeout:    time.Minute,
 		chartCache: NewChartCache(time.Hour),
 	}

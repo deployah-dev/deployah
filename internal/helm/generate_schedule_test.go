@@ -396,7 +396,7 @@ func renderScheduled(t *testing.T, manifest *spec.Spec, env, releaseName, kubeVe
 
 	install := action.NewInstall(client.config)
 	install.ReleaseName = releaseName
-	install.Namespace = client.settings.Namespace()
+	install.Namespace = client.Namespace()
 	install.CreateNamespace = true
 	install.DryRunStrategy = action.DryRunClient
 	install.DisableOpenAPIValidation = true

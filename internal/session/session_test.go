@@ -33,6 +33,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
 
+	"deployah.dev/deployah/internal/helm"
 	"deployah.dev/deployah/internal/render"
 	"deployah.dev/deployah/internal/spec"
 	"deployah.dev/deployah/internal/target"
@@ -1095,7 +1096,30 @@ func TestClusterClientsShareTargetDestination(t *testing.T) {
 	assert.Equal(t, path, gotHelm.KubeconfigPath)
 }
 
-// TestIntegrationWithMocks covers the named case.
+func TestDefaultHelmFactory_MissingExtraUsesDefaultKubeconfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "kubeconfig")
+	require.NoError(t, writeFile(path, twoClusterKubeconfig))
+	t.Setenv("KUBECONFIG", path)
+	t.Setenv("HOME", t.TempDir())
+
+	sess := New(WithExtraKubeconfigPaths(filepath.Join(t.TempDir(), "missing-local")))
+	cluster, err := sess.Target(t.Context(), "")
+	require.NoError(t, err)
+
+	want, err := cluster.RESTConfig()
+	require.NoError(t, err)
+	assert.Equal(t, "https://dev.example.test", want.Host)
+
+	helmClient, err := cluster.Helm()
+	require.NoError(t, err)
+	require.NotNil(t, helmClient)
+
+	err = helmClient.IsReachable()
+	require.Error(t, err)
+	assert.ErrorIs(t, err, helm.ErrClusterUnreachable)
+	assert.NotErrorIs(t, err, helm.ErrDestinationNotConfigured)
+}
+
 func TestIntegrationWithMocks(t *testing.T) {
 	t.Run("full workflow with mock helm client", func(t *testing.T) {
 		mockHelm := &MockHelmClient{}

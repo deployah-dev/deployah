@@ -18,4 +18,6 @@
 // [PrepareChart] renders templates and values for an environment into a
 // caller-supplied [ChartCache]. [Client] wraps Helm v4 actions with
 // Deployah-specific release naming, labels, and a per-client [ChartCache].
+// Kubernetes destination comes from a caller-supplied REST client getter
+// via [NewRESTClientGetter]; [Client] does not select a kubeconfig itself.
 package helm

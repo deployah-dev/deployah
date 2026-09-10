@@ -165,7 +165,7 @@ func (c *Client) renderInstall(ctx context.Context, releaseName string, ch *char
 
 	install := action.NewInstall(c.config)
 	install.ReleaseName = releaseName
-	install.Namespace = c.settings.Namespace()
+	install.Namespace = c.Namespace()
 	install.CreateNamespace = true
 	install.DryRunStrategy = action.DryRunClient
 	install.DisableOpenAPIValidation = true
@@ -203,7 +203,7 @@ func (c *Client) renderUpgrade(ctx context.Context, releaseName string, ch *char
 	defer restoreConfigForDryRun(c.config)()
 
 	upgrade := action.NewUpgrade(c.config)
-	upgrade.Namespace = c.settings.Namespace()
+	upgrade.Namespace = c.Namespace()
 	upgrade.DryRunStrategy = action.DryRunClient
 	upgrade.DisableOpenAPIValidation = true
 	upgrade.Labels = labels
