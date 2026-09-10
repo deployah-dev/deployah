@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -191,7 +192,7 @@ func (m *MockHelmClient) RollbackRelease(ctx context.Context, releaseName string
 func TestSessionWithDependencyInjection(t *testing.T) {
 	t.Run("should use injected helm factory via Target", func(t *testing.T) {
 		mockHelm := &MockHelmClient{}
-		sess := New(WithHelmFactory(func(s *Session) (HelmClient, error) {
+		sess := New(WithHelmFactory(func(*target.Target, HelmConfig) (HelmClient, error) {
 			return mockHelm, nil
 		}))
 
@@ -242,7 +243,7 @@ func TestSessionWithDependencyInjection(t *testing.T) {
 		mockHelm := &MockHelmClient{}
 		callCount := 0
 
-		sess := New(WithHelmFactory(func(s *Session) (HelmClient, error) {
+		sess := New(WithHelmFactory(func(*target.Target, HelmConfig) (HelmClient, error) {
 			callCount++
 			return mockHelm, nil
 		}))
@@ -260,8 +261,13 @@ func TestSessionWithDependencyInjection(t *testing.T) {
 
 	t.Run("should handle helm factory errors", func(t *testing.T) {
 		expectedError := errors.New("helm factory error")
-		sess := New(WithHelmFactory(func(s *Session) (HelmClient, error) {
-			return nil, expectedError
+		calls := 0
+		sess := New(WithHelmFactory(func(*target.Target, HelmConfig) (HelmClient, error) {
+			calls++
+			if calls == 1 {
+				return nil, expectedError
+			}
+			return &MockHelmClient{}, nil
 		}))
 
 		cluster, err := sess.Target(t.Context(), "")
@@ -270,7 +276,58 @@ func TestSessionWithDependencyInjection(t *testing.T) {
 
 		assert.Error(t, err)
 		assert.Nil(t, client)
-		assert.Contains(t, err.Error(), "helm client")
+		assert.ErrorIs(t, err, expectedError)
+		assert.ErrorContains(t, err, `helm client (namespace="default", kubeconfig="")`)
+
+		client, err = cluster.Helm()
+		require.NoError(t, err)
+		require.NotNil(t, client)
+		assert.Equal(t, 2, calls)
+	})
+
+	t.Run("should memoize kubernetes client within a cluster", func(t *testing.T) {
+		fakeCS := fake.NewSimpleClientset()
+		callCount := 0
+		sess := New(WithKubernetesFactory(func(*target.Target) (kubernetes.Interface, error) {
+			callCount++
+			return fakeCS, nil
+		}))
+
+		cluster, err := sess.Target(t.Context(), "")
+		require.NoError(t, err)
+		c1, err1 := cluster.Kubernetes()
+		c2, err2 := cluster.Kubernetes()
+
+		assert.NoError(t, err1)
+		assert.NoError(t, err2)
+		assert.Equal(t, c1, c2)
+		assert.Equal(t, 1, callCount, "factory should be called only once")
+	})
+
+	t.Run("should handle kubernetes factory errors", func(t *testing.T) {
+		expectedError := errors.New("kubernetes factory error")
+		calls := 0
+		sess := New(WithKubernetesFactory(func(*target.Target) (kubernetes.Interface, error) {
+			calls++
+			if calls == 1 {
+				return nil, expectedError
+			}
+			return fake.NewSimpleClientset(), nil
+		}))
+
+		cluster, err := sess.Target(t.Context(), "")
+		require.NoError(t, err)
+		client, err := cluster.Kubernetes()
+
+		assert.Error(t, err)
+		assert.Nil(t, client)
+		assert.ErrorIs(t, err, expectedError)
+		assert.ErrorContains(t, err, "kubernetes client:")
+
+		client, err = cluster.Kubernetes()
+		require.NoError(t, err)
+		require.NotNil(t, client)
+		assert.Equal(t, 2, calls)
 	})
 }
 
@@ -416,9 +473,9 @@ func TestClusterHelmUsesResolvedTarget(t *testing.T) {
 	var gotNS, gotCtx string
 	sess := New(
 		WithKubeconfig(path),
-		WithHelmFactory(func(s *Session) (HelmClient, error) {
-			gotNS = s.namespace
-			gotCtx = s.kubeContext
+		WithHelmFactory(func(tgt *target.Target, _ HelmConfig) (HelmClient, error) {
+			gotNS = tgt.Namespace()
+			gotCtx = tgt.Context()
 			return &MockHelmClient{}, nil
 		}),
 	)
@@ -428,6 +485,263 @@ func TestClusterHelmUsesResolvedTarget(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "payments", gotNS)
 	assert.Equal(t, "production", gotCtx)
+}
+
+func TestClusterHelmFactoryReceivesResolvedDestination(t *testing.T) {
+	t.Parallel()
+
+	t.Run("explicit context", func(t *testing.T) {
+		t.Parallel()
+		var got *target.Target
+		sess := New(
+			WithKubeContext("my-context"),
+			WithHelmFactory(func(tgt *target.Target, _ HelmConfig) (HelmClient, error) {
+				got = tgt
+				return &MockHelmClient{}, nil
+			}),
+		)
+		cluster, err := sess.Target(t.Context(), "")
+		require.NoError(t, err)
+		_, err = cluster.Helm()
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Equal(t, "my-context", cluster.Context())
+		assert.Equal(t, "my-context", got.Context())
+		assert.Equal(t, target.ContextSourceExplicit, cluster.ContextSource())
+		assert.Equal(t, target.ContextSourceExplicit, got.ContextSource())
+	})
+
+	t.Run("platform-selected context", func(t *testing.T) {
+		t.Parallel()
+		platformPath := filepath.Join(t.TempDir(), "deployah.platform.yaml")
+		require.NoError(t, writeFile(platformPath, platformContextYAML("prod-eks")))
+		var got *target.Target
+		sess := New(
+			WithPlatformFile(platformPath),
+			WithHelmFactory(func(tgt *target.Target, _ HelmConfig) (HelmClient, error) {
+				got = tgt
+				return &MockHelmClient{}, nil
+			}),
+		)
+		cluster, err := sess.Target(t.Context(), "production")
+		require.NoError(t, err)
+		_, err = cluster.Helm()
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Equal(t, "prod-eks", cluster.Context())
+		assert.Equal(t, "prod-eks", got.Context())
+		assert.Equal(t, target.ContextSourcePlatform, cluster.ContextSource())
+		assert.Equal(t, target.ContextSourcePlatform, got.ContextSource())
+	})
+
+	t.Run("kubeconfig current-context", func(t *testing.T) {
+		t.Parallel()
+		path := filepath.Join(t.TempDir(), "kubeconfig")
+		require.NoError(t, writeFile(path, minimalKubeconfig))
+		var got *target.Target
+		sess := New(
+			WithKubeconfig(path),
+			WithHelmFactory(func(tgt *target.Target, _ HelmConfig) (HelmClient, error) {
+				got = tgt
+				return &MockHelmClient{}, nil
+			}),
+		)
+		cluster, err := sess.Target(t.Context(), "")
+		require.NoError(t, err)
+		_, err = cluster.Helm()
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Equal(t, "test-context", cluster.Context())
+		assert.Equal(t, "test-context", got.Context())
+		assert.Equal(t, target.ContextSourceKubeconfig, cluster.ContextSource())
+		assert.Equal(t, target.ContextSourceKubeconfig, got.ContextSource())
+	})
+
+	t.Run("explicit namespace", func(t *testing.T) {
+		t.Parallel()
+		path := filepath.Join(t.TempDir(), "kubeconfig")
+		require.NoError(t, writeFile(path, kubeconfigWithNamespace("payments")))
+		var got *target.Target
+		sess := New(
+			WithKubeconfig(path),
+			WithNamespace("custom"),
+			WithHelmFactory(func(tgt *target.Target, _ HelmConfig) (HelmClient, error) {
+				got = tgt
+				return &MockHelmClient{}, nil
+			}),
+		)
+		cluster, err := sess.Target(t.Context(), "")
+		require.NoError(t, err)
+		_, err = cluster.Helm()
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Equal(t, "custom", cluster.Namespace())
+		assert.Equal(t, "custom", got.Namespace())
+	})
+
+	t.Run("kubeconfig context namespace", func(t *testing.T) {
+		t.Parallel()
+		path := filepath.Join(t.TempDir(), "kubeconfig")
+		require.NoError(t, writeFile(path, kubeconfigWithNamespace("payments")))
+		var got *target.Target
+		sess := New(
+			WithKubeconfig(path),
+			WithHelmFactory(func(tgt *target.Target, _ HelmConfig) (HelmClient, error) {
+				got = tgt
+				return &MockHelmClient{}, nil
+			}),
+		)
+		cluster, err := sess.Target(t.Context(), "")
+		require.NoError(t, err)
+		_, err = cluster.Helm()
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Equal(t, "payments", cluster.Namespace())
+		assert.Equal(t, "payments", got.Namespace())
+	})
+}
+
+func TestClusterHelmFactoryDefaultNamespaceFallback(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "kubeconfig")
+	require.NoError(t, writeFile(path, minimalKubeconfig))
+	var got *target.Target
+	sess := New(
+		WithKubeconfig(path),
+		WithHelmFactory(func(tgt *target.Target, _ HelmConfig) (HelmClient, error) {
+			got = tgt
+			return &MockHelmClient{}, nil
+		}),
+	)
+	cluster, err := sess.Target(t.Context(), "")
+	require.NoError(t, err)
+	assert.Equal(t, "default", cluster.Namespace())
+	_, err = cluster.Helm()
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, "default", got.Namespace())
+}
+
+func TestClusterHelmConfigSnapshot(t *testing.T) {
+	t.Parallel()
+
+	kubePath := filepath.Join(t.TempDir(), "kubeconfig")
+	require.NoError(t, writeFile(kubePath, minimalKubeconfig))
+	extraPath := filepath.Join(t.TempDir(), "extra-kubeconfig")
+	timeout := 90 * time.Second
+	var got HelmConfig
+	sess := New(
+		WithKubeconfig(kubePath),
+		WithExtraKubeconfigPaths(extraPath),
+		WithStorageDriver(HelmStorageDriverConfigMap),
+		WithDebug(true),
+		WithTimeout(timeout),
+		WithHelmFactory(func(_ *target.Target, cfg HelmConfig) (HelmClient, error) {
+			got = cfg
+			return &MockHelmClient{}, nil
+		}),
+	)
+	cluster, err := sess.Target(t.Context(), "")
+	require.NoError(t, err)
+	assert.Equal(t, timeout, sess.Timeout())
+	assert.Equal(t, HelmConfig{
+		KubeconfigPath:       kubePath,
+		ExtraKubeconfigPaths: []string{extraPath},
+		StorageDriver:        HelmStorageDriverConfigMap,
+		Debug:                true,
+		Timeout:              timeout,
+	}, cluster.helmConfig)
+
+	require.NotEmpty(t, sess.extraKubeconfigPaths)
+	sess.extraKubeconfigPaths[0] = "mutated"
+	assert.Equal(t, []string{extraPath}, cluster.helmConfig.ExtraKubeconfigPaths)
+
+	_, err = cluster.Helm()
+	require.NoError(t, err)
+	assert.Equal(t, kubePath, got.KubeconfigPath)
+	assert.Equal(t, []string{extraPath}, got.ExtraKubeconfigPaths)
+	assert.Equal(t, HelmStorageDriverConfigMap, got.StorageDriver)
+	assert.True(t, got.Debug)
+	assert.Equal(t, timeout, got.Timeout)
+}
+
+func TestSessionTargetConstructsCluster(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "kubeconfig")
+	require.NoError(t, writeFile(path, minimalKubeconfig))
+	helmCalls := 0
+	k8sCalls := 0
+	sess := New(
+		WithKubeconfig(path),
+		WithHelmFactory(func(*target.Target, HelmConfig) (HelmClient, error) {
+			helmCalls++
+			return &MockHelmClient{}, nil
+		}),
+		WithKubernetesFactory(func(*target.Target) (kubernetes.Interface, error) {
+			k8sCalls++
+			return fake.NewSimpleClientset(), nil
+		}),
+	)
+	cluster, err := sess.Target(t.Context(), "")
+	require.NoError(t, err)
+	require.NotNil(t, cluster.target)
+	assert.Equal(t, "test-context", cluster.Context())
+	assert.Equal(t, path, cluster.helmConfig.KubeconfigPath)
+	assert.NotNil(t, cluster.helmFactory)
+	assert.NotNil(t, cluster.k8sFactory)
+	assert.Nil(t, cluster.helm)
+	assert.Nil(t, cluster.k8s)
+
+	_, err = cluster.Helm()
+	require.NoError(t, err)
+	_, err = cluster.Kubernetes()
+	require.NoError(t, err)
+	assert.Equal(t, 1, helmCalls)
+	assert.Equal(t, 1, k8sCalls)
+}
+
+func TestClusterClientsConcurrent(t *testing.T) {
+	t.Parallel()
+
+	mockHelm := &MockHelmClient{}
+	fakeCS := fake.NewSimpleClientset()
+	sess := New(
+		WithHelmFactory(func(*target.Target, HelmConfig) (HelmClient, error) {
+			return mockHelm, nil
+		}),
+		WithKubernetesFactory(func(*target.Target) (kubernetes.Interface, error) {
+			return fakeCS, nil
+		}),
+	)
+	cluster, err := sess.Target(t.Context(), "")
+	require.NoError(t, err)
+
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Go(func() {
+			c, herr := cluster.Helm()
+			if herr != nil {
+				t.Errorf("Helm() error: %v", herr)
+				return
+			}
+			if c != mockHelm {
+				t.Errorf("Helm() client mismatch")
+			}
+		})
+		wg.Go(func() {
+			cs, kerr := cluster.Kubernetes()
+			if kerr != nil {
+				t.Errorf("Kubernetes() error: %v", kerr)
+				return
+			}
+			if cs != fakeCS {
+				t.Errorf("Kubernetes() client mismatch")
+			}
+		})
+	}
+	wg.Wait()
 }
 
 func platformContextYAML(contextName string) string {
@@ -615,24 +929,6 @@ func TestSessionPlatformMemoized(t *testing.T) {
 	second, err := sess.Platform()
 	require.NoError(t, err)
 	assert.Same(t, first, second)
-}
-
-func TestCloneWithContextSharesWorkspace(t *testing.T) {
-	pathA := filepath.Join(t.TempDir(), "a.platform.yaml")
-	pathB := filepath.Join(t.TempDir(), "b.platform.yaml")
-	require.NoError(t, writeFile(pathA, platformContextYAML("context-a")))
-	require.NoError(t, writeFile(pathB, platformContextYAML("context-b")))
-
-	t.Setenv(spec.PlatformEnvVar, pathA)
-	sess := New()
-	clone := sess.cloneWithContext("other")
-	assert.Same(t, sess.workspace, clone.workspace)
-
-	t.Setenv(spec.PlatformEnvVar, pathB)
-	assert.Equal(t, pathA, clone.PlatformPath())
-	p, err := clone.Platform()
-	require.NoError(t, err)
-	assert.Equal(t, "context-a", spec.PlatformEnvContext(p, "production"))
 }
 
 // TestKubeContextAccessor verifies KubeContext returns the explicit
@@ -877,7 +1173,7 @@ func TestIntegrationWithMocks(t *testing.T) {
 		mockHelm := &MockHelmClient{}
 		mockHelm.On("InstallApp", mock.Anything, false, mock.Anything, mock.Anything).Return(nil)
 
-		sess := New(WithHelmFactory(func(s *Session) (HelmClient, error) {
+		sess := New(WithHelmFactory(func(*target.Target, HelmConfig) (HelmClient, error) {
 			return mockHelm, nil
 		}))
 

@@ -37,13 +37,13 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
-// newClusterWithStub builds a [session.Cluster] whose Kubernetes client is
+// newClusterWithStub builds a Session and Cluster whose Kubernetes client is
 // k8sClient (or errors if k8sClient is nil) and whose Helm client is stub.
-func newClusterWithStub(t *testing.T, stub *stubHelmClient, k8sClient kubernetes.Interface) *session.Cluster {
+func newClusterWithStub(t *testing.T, stub *stubHelmClient, k8sClient kubernetes.Interface) (*session.Session, *session.Cluster) {
 	t.Helper()
 
 	sess := session.New(
-		session.WithHelmFactory(func(*session.Session) (session.HelmClient, error) {
+		session.WithHelmFactory(func(*target.Target, session.HelmConfig) (session.HelmClient, error) {
 			return stub, nil
 		}),
 		session.WithKubernetesFactory(func(*target.Target) (kubernetes.Interface, error) {
@@ -55,7 +55,7 @@ func newClusterWithStub(t *testing.T, stub *stubHelmClient, k8sClient kubernetes
 	)
 	cluster, err := sess.Target(t.Context(), "production")
 	require.NoError(t, err)
-	return cluster
+	return sess, cluster
 }
 
 // assertNever is a placeholder error used by newClusterWithStub when a test
@@ -149,8 +149,7 @@ func TestApplyDeploy_RenderMismatch_AbortsBeforeApply(t *testing.T) {
 		},
 		installErr: nil, // would only matter if InstallApp were (wrongly) called
 	}
-	cluster := newClusterWithStub(t, stub, nil)
-	sess := cluster.Session
+	sess, cluster := newClusterWithStub(t, stub, nil)
 
 	planned := &deployPlan{
 		diff:    &planengine.Plan{},
@@ -317,8 +316,7 @@ func TestApplyCRDsOnly_ReportsSuccessAndReadiness(t *testing.T) {
 		},
 	)
 	stub := &stubHelmClient{}
-	cluster := newClusterWithStub(t, stub, k8sClient)
-	sess := cluster.Session
+	sess, cluster := newClusterWithStub(t, stub, k8sClient)
 	c, _, stdout, stderr := nabatContextWithIO(t)
 	plan := &deployPlan{
 		diff: &planengine.Plan{
@@ -365,7 +363,7 @@ func TestApplyBundleCRDs_RESTConfigError(t *testing.T) {
 	stub := &stubHelmClient{}
 	sess := session.New(
 		session.WithKubeconfig(filepath.Join(t.TempDir(), "missing-kubeconfig")),
-		session.WithHelmFactory(func(*session.Session) (session.HelmClient, error) {
+		session.WithHelmFactory(func(*target.Target, session.HelmConfig) (session.HelmClient, error) {
 			return stub, nil
 		}),
 	)
@@ -387,8 +385,7 @@ func TestApplyDeploy_CallsInstallAfterEmptyCRDs(t *testing.T) {
 	stub := &stubHelmClient{
 		renderResults: []*render.RenderResult{testRenderResult(manifest)},
 	}
-	cluster := newClusterWithStub(t, stub, nil)
-	sess := cluster.Session
+	sess, cluster := newClusterWithStub(t, stub, nil)
 	planned := &deployPlan{
 		diff:    &planengine.Plan{Header: planengine.Header{Release: "web-production", Revision: 1}},
 		result:  testRenderResult(manifest),
@@ -415,8 +412,7 @@ func TestApplyDeploy_PropagatesInstallErrorAfterCRDStep(t *testing.T) {
 		renderResults: []*render.RenderResult{testRenderResult(manifest)},
 		installErr:    errors.New("helm boom"),
 	}
-	cluster := newClusterWithStub(t, stub, nil)
-	sess := cluster.Session
+	sess, cluster := newClusterWithStub(t, stub, nil)
 	planned := &deployPlan{
 		diff:    &planengine.Plan{Header: planengine.Header{Release: "web-production", Revision: 1}},
 		result:  testRenderResult(manifest),
@@ -442,7 +438,7 @@ func TestApplyDeploy_PropagatesCRDApplyError(t *testing.T) {
 	}
 	sess := session.New(
 		session.WithKubeconfig(filepath.Join(t.TempDir(), "missing-kubeconfig")),
-		session.WithHelmFactory(func(*session.Session) (session.HelmClient, error) {
+		session.WithHelmFactory(func(*target.Target, session.HelmConfig) (session.HelmClient, error) {
 			return stub, nil
 		}),
 	)
