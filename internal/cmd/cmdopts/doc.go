@@ -17,4 +17,5 @@
 // [GlobalOptions] captures persistent CLI flags such as namespace, kubeconfig,
 // spec path, debug mode, and operation timeout. The root command reads
 // these values in its pre-run hook and builds a [session.Session] from them.
+// Commands load spec and platform sources through [session.Session.Workspace].
 package cmdopts

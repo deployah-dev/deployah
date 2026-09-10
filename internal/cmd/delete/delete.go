@@ -113,7 +113,7 @@ func runDelete(c *nabat.Context) error {
 	// active. Without the platform file the delete targets the kubeconfig's
 	// default context, which may be the wrong cluster.
 	if !opts.AllowMissingPlatform {
-		platform, platformErr := rt.Platform()
+		platform, platformErr := rt.Workspace().Platform()
 		if platformErr != nil {
 			return fmt.Errorf("load platform file: %w", platformErr)
 		}

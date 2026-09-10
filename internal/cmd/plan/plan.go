@@ -114,22 +114,23 @@ func runPlan(c *nabat.Context) error {
 		return fmt.Errorf("binding options: %w", err)
 	}
 	sess := session.FromContext(c)
+	ws := sess.Workspace()
 
 	// Prescan the raw (pre-envsubst) manifest for ${VAR} tokens so the
 	// resolver can distinguish static from dynamic subdomains, matching
 	// deploy's resolution behavior.
-	rawSpec, rawErr := sess.ParseManifest()
+	rawSpec, rawErr := ws.ParseManifest()
 	if rawErr != nil {
 		return fmt.Errorf("parse manifest: %w", rawErr)
 	}
 	substReport := spec.PrescanSubstitutionReport(rawSpec)
 
-	platform, platformErr := sess.Platform()
+	platform, platformErr := ws.Platform()
 	if platformErr != nil {
 		return fmt.Errorf("load platform file: %w", platformErr)
 	}
 
-	manifest, err := spec.Load(c, sess.SpecPath(), opts.Environment, platform)
+	manifest, err := spec.Load(c, ws.SpecPath(), opts.Environment, platform)
 	if err != nil {
 		return fmt.Errorf("load spec: %w", err)
 	}
@@ -180,7 +181,7 @@ func runOffline(c *nabat.Context, sess *session.Session, platform *spec.Platform
 		}
 	}
 
-	bundle, err := extras.LoadFromSpec(sess.SpecPath(), manifest, platform, opts.Environment, cluster.Namespace(), nil)
+	bundle, err := extras.LoadFromSpec(sess.Workspace().SpecPath(), manifest, platform, opts.Environment, cluster.Namespace(), nil)
 	if err != nil {
 		return fmt.Errorf("load extras: %w", err)
 	}
@@ -243,7 +244,7 @@ func runOnline(c *nabat.Context, sess *session.Session, platform *spec.PlatformC
 	if restErr != nil {
 		c.Logger().Debug("rest config unavailable for extras scope discovery", "err", restErr)
 	}
-	bundle, err := extras.LoadFromSpec(sess.SpecPath(), manifest, platform, opts.Environment, cluster.Namespace(), restCfg)
+	bundle, err := extras.LoadFromSpec(sess.Workspace().SpecPath(), manifest, platform, opts.Environment, cluster.Namespace(), restCfg)
 	if err != nil {
 		return fmt.Errorf("load extras: %w", err)
 	}
