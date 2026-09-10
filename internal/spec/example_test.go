@@ -70,7 +70,7 @@ components:
 		log.Fatal(err)
 	}
 
-	m, err := spec.Load(context.Background(), path, "", nil)
+	m, _, err := spec.Load(context.Background(), path, "", nil)
 	if err != nil {
 		if rmErr := os.Remove(path); rmErr != nil {
 			log.Print(rmErr)

@@ -116,21 +116,12 @@ func runPlan(c *nabat.Context) error {
 	sess := session.FromContext(c)
 	ws := sess.Workspace()
 
-	// Prescan the raw (pre-envsubst) manifest for ${VAR} tokens so the
-	// resolver can distinguish static from dynamic subdomains, matching
-	// deploy's resolution behavior.
-	rawSpec, rawErr := ws.ParseManifest()
-	if rawErr != nil {
-		return fmt.Errorf("parse manifest: %w", rawErr)
-	}
-	substReport := spec.PrescanSubstitutionReport(rawSpec)
-
 	platform, platformErr := ws.Platform()
 	if platformErr != nil {
 		return fmt.Errorf("load platform file: %w", platformErr)
 	}
 
-	manifest, err := spec.Load(c, ws.SpecPath(), opts.Environment, platform)
+	manifest, substReport, err := spec.Load(c, ws.SpecPath(), opts.Environment, platform)
 	if err != nil {
 		return fmt.Errorf("load spec: %w", err)
 	}

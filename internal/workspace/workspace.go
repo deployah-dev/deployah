@@ -76,15 +76,16 @@ func (w *Workspace) ParseManifest() (*spec.Spec, error) {
 
 // LoadSpec loads the spec for environment from [Workspace.SpecPath] using
 // the Workspace platform and opts. Each call reads the spec from disk
-// because envsubst depends on environment.
-func (w *Workspace) LoadSpec(ctx context.Context, environment string, opts ...spec.LoadOption) (*spec.Spec, error) {
+// because envsubst depends on environment. The [spec.SubstitutionReport]
+// is the report produced by that [spec.Load] call.
+func (w *Workspace) LoadSpec(ctx context.Context, environment string, opts ...spec.LoadOption) (*spec.Spec, spec.SubstitutionReport, error) {
 	platform, err := w.Platform()
 	if err != nil {
-		return nil, fmt.Errorf("failed to load platform file: %w", err)
+		return nil, spec.SubstitutionReport{}, fmt.Errorf("failed to load platform file: %w", err)
 	}
-	manifest, err := spec.Load(ctx, w.specPath, environment, platform, opts...)
+	manifest, report, err := spec.Load(ctx, w.specPath, environment, platform, opts...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load spec: %w", err)
+		return nil, spec.SubstitutionReport{}, fmt.Errorf("failed to load spec: %w", err)
 	}
-	return manifest, nil
+	return manifest, report, nil
 }

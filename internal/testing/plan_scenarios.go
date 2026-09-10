@@ -230,14 +230,14 @@ func renderManifestFile(t *testing.T, dir, filename string) manifestSide {
 		platform = loaded
 	}
 
-	manifest, err := spec.Load(ctx, specPath, "", platform)
+	manifest, substReport, err := spec.Load(ctx, specPath, "", platform)
 	require.NoError(t, err)
 	envName, _, err := spec.ResolveEnvironment(manifest.Environments, platform, "")
 	require.NoError(t, err)
 
 	// Resolve even when platform is nil so runtime env reaches the chart.
 	envIdentity := spec.NormalizeEnv(envName)
-	resolved, _, resolveErr := spec.Resolve(manifest, platform, envIdentity, spec.SubstitutionReport{})
+	resolved, _, resolveErr := spec.Resolve(manifest, platform, envIdentity, substReport)
 	require.NoError(t, resolveErr)
 	require.NoError(t, k8s.MaterializeSelfSignedTLS(ctx, nil, "", resolved))
 

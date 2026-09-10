@@ -125,19 +125,12 @@ func runManifestOnly(c *nabat.Context, ws *workspace.Workspace) error {
 // the named environment. A missing platform file is allowed when the spec
 // does not use platform-owned features.
 func runCrossFile(c *nabat.Context, ws *workspace.Workspace, environment string) error {
-	rawSpec, err := ws.ParseManifest()
-	if err != nil {
-		return fmt.Errorf("manifest invalid: %w", err)
-	}
-
 	platform, platformErr := ws.Platform()
 	if platformErr != nil {
 		return fmt.Errorf("platform file error: %w", platformErr)
 	}
 
-	substReport := spec.PrescanSubstitutionReport(rawSpec)
-
-	loaded, err := spec.Load(c, ws.SpecPath(), environment, platform)
+	loaded, substReport, err := spec.Load(c, ws.SpecPath(), environment, platform)
 	if err != nil {
 		return fmt.Errorf("load spec: %w", err)
 	}

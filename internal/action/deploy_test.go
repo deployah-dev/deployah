@@ -28,11 +28,11 @@ type mockSpecLoader struct {
 	err error
 }
 
-func (m *mockSpecLoader) Spec(_ context.Context, _ string) (*spec.Spec, error) {
+func (m *mockSpecLoader) Spec(_ context.Context, _ string) (*spec.Spec, spec.SubstitutionReport, error) {
 	if m.err != nil {
-		return nil, m.err
+		return nil, spec.SubstitutionReport{}, m.err
 	}
-	return m.m, nil
+	return m.m, spec.SubstitutionReport{}, nil
 }
 
 var testManifest = &spec.Spec{

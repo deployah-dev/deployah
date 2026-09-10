@@ -86,12 +86,12 @@ func runTask(c *nabat.Context) error {
 		return fmt.Errorf("load platform file: %w", platformErr)
 	}
 
-	manifest, err := spec.Load(c, ws.SpecPath(), opts.Environment, platform)
+	manifest, substReport, err := spec.Load(c, ws.SpecPath(), opts.Environment, platform)
 	if err != nil {
 		return fmt.Errorf("load spec: %w", err)
 	}
 
-	rt, err := resolveRunTask(manifest, platform, opts.Environment, opts.Task)
+	rt, err := resolveRunTask(manifest, platform, opts.Environment, opts.Task, substReport)
 	if err != nil {
 		return err
 	}
@@ -167,13 +167,13 @@ func executeRun(c *nabat.Context, cs kubernetes.Interface, timeout time.Duration
 	return nil
 }
 
-func resolveRunTask(manifest *spec.Spec, platform *spec.PlatformConfig, environment, name string) (spec.ResolvedTask, error) {
+func resolveRunTask(manifest *spec.Spec, platform *spec.PlatformConfig, environment, name string, substReport spec.SubstitutionReport) (spec.ResolvedTask, error) {
 	envIdentity := spec.NormalizeEnv(environment)
 	// Run needs the task's resolved runtime/profile data, not component FQDNs.
 	// Display resolution allows runtime-only tasks to resolve when no platform
 	// file exists; spec.Load above still performs strict task-graph validation
 	// for run.
-	resolved, _, err := spec.ResolveForDisplay(manifest, platform, envIdentity, spec.SubstitutionReport{})
+	resolved, _, err := spec.ResolveForDisplay(manifest, platform, envIdentity, substReport)
 	if err != nil {
 		return spec.ResolvedTask{}, fmt.Errorf("resolve spec: %w", err)
 	}
