@@ -65,14 +65,14 @@ func testManifest() *spec.Spec {
 	}
 }
 
-func TestResolveRunTask(t *testing.T) {
+func TestResolveTask(t *testing.T) {
 	t.Parallel()
 
 	m := testManifest()
 
 	t.Run("merges from parent", func(t *testing.T) {
 		t.Parallel()
-		rt, err := resolveRunTask(m, nil, "dev", "migrate", spec.SubstitutionReport{})
+		rt, err := spec.ResolveTask(m, nil, spec.NormalizeEnv("dev"), "migrate")
 		require.NoError(t, err)
 		assert.Equal(t, "ghcr.io/acme/shop:1.2.3", rt.Task.Image)
 		assert.Equal(t, "postgres://db", rt.Runtime.ExplicitValues["DATABASE_URL"])
@@ -81,7 +81,7 @@ func TestResolveRunTask(t *testing.T) {
 
 	t.Run("scheduled task is runnable", func(t *testing.T) {
 		t.Parallel()
-		rt, err := resolveRunTask(m, nil, "dev", "cleanup", spec.SubstitutionReport{})
+		rt, err := spec.ResolveTask(m, nil, spec.NormalizeEnv("dev"), "cleanup")
 		require.NoError(t, err)
 		assert.Equal(t, spec.TaskOnSchedule, rt.Task.On)
 		assert.Equal(t, "0 3 * * *", rt.Task.Schedule)
@@ -94,7 +94,7 @@ func TestResolveRunTask(t *testing.T) {
 		api := local.Components["api"]
 		api.Profiles = []string{}
 		local.Components["api"] = api
-		rt, err := resolveRunTask(local, nil, "dev", "migrate", spec.SubstitutionReport{})
+		rt, err := spec.ResolveTask(local, nil, spec.NormalizeEnv("dev"), "migrate")
 		require.NoError(t, err)
 		assert.Equal(t, "ghcr.io/acme/shop:1.2.3", rt.Task.Image)
 	})
@@ -108,7 +108,7 @@ func TestResolveRunTask(t *testing.T) {
 		api := local.Components["api"]
 		api.Expose = &spec.Expose{Domain: "public"}
 		local.Components["api"] = api
-		rt, err := resolveRunTask(local, nil, "dev", "migrate", spec.SubstitutionReport{})
+		rt, err := spec.ResolveTask(local, nil, spec.NormalizeEnv("dev"), "migrate")
 		require.NoError(t, err)
 		assert.Equal(t, "postgres://db", rt.Runtime.ExplicitValues["DATABASE_URL"])
 		assert.Equal(t, "eu", rt.Runtime.FileValues["REGION"])
@@ -123,15 +123,15 @@ func TestResolveRunTask(t *testing.T) {
 				"prod": {Context: "kind"},
 			},
 		}
-		rt, err := resolveRunTask(m, platform, "dev", "migrate", spec.SubstitutionReport{})
+		rt, err := spec.ResolveTask(m, platform, spec.NormalizeEnv("dev"), "migrate")
 		require.NoError(t, err)
 		assert.Equal(t, "ghcr.io/acme/shop:1.2.3", rt.Task.Image)
 
-		_, err = resolveRunTask(m, platform, "dev", "backfill", spec.SubstitutionReport{})
+		_, err = spec.ResolveTask(m, platform, spec.NormalizeEnv("dev"), "backfill")
 		require.Error(t, err)
 		assert.ErrorContains(t, err, "skipped")
 
-		_, err = resolveRunTask(m, platform, "dev", "missing", spec.SubstitutionReport{})
+		_, err = spec.ResolveTask(m, platform, spec.NormalizeEnv("dev"), "missing")
 		require.Error(t, err)
 		assert.ErrorContains(t, err, "unknown task")
 	})
@@ -152,7 +152,7 @@ func TestResolveRunTask(t *testing.T) {
 				},
 			},
 		}
-		rt, err := resolveRunTask(local, nil, "dev", "migrate", spec.SubstitutionReport{})
+		rt, err := spec.ResolveTask(local, nil, spec.NormalizeEnv("dev"), "migrate")
 		require.NoError(t, err)
 		assert.Equal(t, "busybox", rt.Task.Image)
 		assert.Equal(t, []string{"echo", "ok"}, rt.Task.Command)
@@ -169,7 +169,7 @@ func TestResolveRunTask(t *testing.T) {
 	})
 }
 
-func TestResolveRunTask_Error(t *testing.T) {
+func TestResolveTask_Error(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -190,7 +190,7 @@ func TestResolveRunTask_Error(t *testing.T) {
 			api := m.Components["api"]
 			api.Profiles = tt.profiles
 			m.Components["api"] = api
-			_, err := resolveRunTask(m, nil, "dev", tt.task, spec.SubstitutionReport{})
+			_, err := spec.ResolveTask(m, nil, spec.NormalizeEnv("dev"), tt.task)
 			require.Error(t, err)
 			assert.ErrorContains(t, err, tt.want)
 		})
