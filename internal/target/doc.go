@@ -27,10 +27,9 @@
 //
 // [Target.Context] is the effective context name. [Target.ContextSource]
 // records which rule selected it. When Context is non-empty,
-// [Target.ClientConfig] and [Target.RESTConfig] pin that name so the
-// destination cannot change after Resolve. Both use the snapshotted
-// kubeconfig loading rules, pin [Target.Namespace], and do not select
-// in-cluster configuration.
+// [Target.ClientConfig] and [Target.RESTConfig] pin that name. Both
+// use the snapshotted kubeconfig loading rules, pin [Target.Namespace],
+// and do not select in-cluster configuration.
 //
 // # Namespace precedence
 //
@@ -38,6 +37,7 @@
 //  2. namespace of the selected kubeconfig context
 //  3. "default"
 //
-// A resolved Target is immutable. Kubeconfig loading rules are snapshotted
-// at Resolve time so later KUBECONFIG or HOME changes do not retarget it.
+// Resolve pins context, source selection, and loading rules against
+// later KUBECONFIG or HOME changes. Kubeconfig file contents stay live
+// until configuration is loaded.
 package target
