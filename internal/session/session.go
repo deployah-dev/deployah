@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -52,9 +53,36 @@ type Session struct {
 	debug         bool
 	timeout       time.Duration
 
-	helmFactory func(*Session) (HelmClient, error)
+	helmFactory HelmFactory
 	k8sFactory  func(*target.Target) (kubernetes.Interface, error)
 }
+
+// HelmConfig holds Helm client-construction inputs that are not destination
+// metadata. Context and namespace come from [target.Target].
+//
+// [Session.Target] snapshots these values onto [Cluster]. Session accessors
+// such as [Session.Timeout] keep reading the Session fields.
+type HelmConfig struct {
+	// KubeconfigPath is an explicit kubeconfig file. Empty means Helm uses
+	// extra paths, then process KUBECONFIG / the default kubeconfig.
+	KubeconfigPath string
+	// ExtraKubeconfigPaths are prepended to Helm's default kubeconfig when
+	// KubeconfigPath is empty. Missing files are tolerated by Helm.
+	ExtraKubeconfigPaths []string
+	// StorageDriver is the Helm storage driver (secret, configmap, or memory).
+	// Empty lets [helm.NewClient] use its default ("secret").
+	StorageDriver string
+	// Debug reports whether temporary chart directories should be kept.
+	Debug bool
+	// Timeout is the Helm operation timeout. Zero lets [helm.NewClient] use
+	// its default (5 minutes). [Session.New] sets [DefaultTimeout] (10
+	// minutes) unless [WithTimeout] overrides it.
+	Timeout time.Duration
+}
+
+// HelmFactory constructs a Helm client for a resolved destination.
+// It must not depend on [Session].
+type HelmFactory func(*target.Target, HelmConfig) (HelmClient, error)
 
 // Option is a functional option for configuring a [Session].
 type Option func(*Session)
@@ -123,7 +151,7 @@ func WithTimeout(timeout time.Duration) Option {
 }
 
 // WithHelmFactory sets a custom Helm client factory, primarily for testing.
-func WithHelmFactory(factory func(*Session) (HelmClient, error)) Option {
+func WithHelmFactory(factory HelmFactory) Option {
 	return func(s *Session) { s.helmFactory = factory }
 }
 
@@ -193,7 +221,22 @@ func (s *Session) Target(ctx context.Context, env string) (*Cluster, error) {
 		}
 	}
 	t := target.NewResolver(s.targetConfig()).Resolve(platformContext)
-	return &Cluster{Session: s, target: t}, nil
+	return &Cluster{
+		target:      t,
+		helmConfig:  s.snapshotHelmConfig(),
+		helmFactory: s.helmFactory,
+		k8sFactory:  s.k8sFactory,
+	}, nil
+}
+
+func (s *Session) snapshotHelmConfig() HelmConfig {
+	return HelmConfig{
+		KubeconfigPath:       s.kubeconfig,
+		ExtraKubeconfigPaths: slices.Clone(s.extraKubeconfigPaths),
+		StorageDriver:        s.storageDriver,
+		Debug:                s.debug,
+		Timeout:              s.timeout,
+	}
 }
 
 func (s *Session) targetConfig() target.Config {
@@ -236,48 +279,31 @@ func (s *Session) DebugKeepTempChart() bool { return s.debug }
 // Timeout returns the configured timeout for Helm operations.
 func (s *Session) Timeout() time.Duration { return s.timeout }
 
-// cloneWithContext returns a shallow copy of s with the given kubeContext
-// applied, clearing any cached clients. Used by Cluster to build clients
-// with the resolved context without mutating the original session.
-// The clone shares the same [workspace.Workspace].
-func (s *Session) cloneWithContext(kubeContext string) *Session {
-	return &Session{
-		workspace:            s.workspace,
-		namespace:            s.namespace,
-		kubeconfig:           s.kubeconfig,
-		kubeContext:          kubeContext,
-		extraKubeconfigPaths: s.extraKubeconfigPaths,
-		storageDriver:        s.storageDriver,
-		debug:                s.debug,
-		timeout:              s.timeout,
-		helmFactory:          s.helmFactory,
-		k8sFactory:           s.k8sFactory,
-	}
-}
-
-// defaultHelmFactory creates a Helm client from session configuration.
-func defaultHelmFactory(s *Session) (HelmClient, error) {
+// defaultHelmFactory creates a Helm client from the resolved destination and
+// Helm runtime configuration. Context and namespace come from t; kubeconfig
+// paths, storage driver, timeout, and debug come from cfg.
+func defaultHelmFactory(t *target.Target, cfg HelmConfig) (HelmClient, error) {
 	var opts []helm.Option
-	if s.namespace != "" {
-		opts = append(opts, helm.WithNamespace(s.namespace))
+	if ns := t.Namespace(); ns != "" {
+		opts = append(opts, helm.WithNamespace(ns))
 	}
-	if s.kubeconfig != "" {
-		opts = append(opts, helm.WithKubeconfig(s.kubeconfig))
+	if cfg.KubeconfigPath != "" {
+		opts = append(opts, helm.WithKubeconfig(cfg.KubeconfigPath))
 	}
-	if s.kubeContext != "" {
-		opts = append(opts, helm.WithKubeContext(s.kubeContext))
+	if kubeContext := t.Context(); kubeContext != "" {
+		opts = append(opts, helm.WithKubeContext(kubeContext))
 	}
-	if len(s.extraKubeconfigPaths) > 0 {
-		opts = append(opts, helm.WithExtraKubeconfigPaths(s.extraKubeconfigPaths...))
+	if len(cfg.ExtraKubeconfigPaths) > 0 {
+		opts = append(opts, helm.WithExtraKubeconfigPaths(cfg.ExtraKubeconfigPaths...))
 	}
-	if s.storageDriver != "" {
-		opts = append(opts, helm.WithStorageDriver(s.storageDriver))
+	if cfg.StorageDriver != "" {
+		opts = append(opts, helm.WithStorageDriver(cfg.StorageDriver))
 	}
-	if s.timeout > 0 {
-		opts = append(opts, helm.WithTimeout(s.timeout))
+	if cfg.Timeout > 0 {
+		opts = append(opts, helm.WithTimeout(cfg.Timeout))
 	}
-	if s.debug {
-		opts = append(opts, helm.WithDebug(s.debug))
+	if cfg.Debug {
+		opts = append(opts, helm.WithDebug(cfg.Debug))
 	}
 	return helm.NewClient(opts...)
 }
@@ -314,12 +340,20 @@ func (s *Session) CurrentKubeContext() string {
 // Cluster is a resolved destination plus lazily-initialized Helm and
 // Kubernetes clients. Obtain one via [Session.Target].
 //
-// Destination metadata is owned by [target.Target]. RESTConfig and the
-// default Kubernetes factory still prefer in-cluster config when present;
-// that mismatch with Target metadata is transitional.
+// Destination metadata is owned by [target.Target]. Helm construction uses
+// [HelmConfig] and [HelmFactory]. Kubernetes construction uses a
+// Target-oriented factory. RESTConfig and the default Kubernetes factory
+// still prefer in-cluster config when present; that mismatch with Target
+// metadata is transitional.
+//
+// Cluster does not embed or depend on [Session]. Concurrent [Cluster.Helm]
+// and [Cluster.Kubernetes] calls are safe.
 type Cluster struct {
-	*Session
-	target *target.Target
+	target     *target.Target
+	helmConfig HelmConfig
+
+	helmFactory HelmFactory
+	k8sFactory  func(*target.Target) (kubernetes.Interface, error)
 
 	helm HelmClient
 	k8s  kubernetes.Interface
@@ -337,15 +371,6 @@ func (cl *Cluster) ContextSource() target.ContextSource {
 // Namespace returns the effective namespace for this destination.
 func (cl *Cluster) Namespace() string { return cl.target.Namespace() }
 
-// sessionForContext returns a shallow Session copy targeted at this
-// cluster's resolved destination, with cached clients cleared. Used by
-// Helm so the factory still receives Session-owned settings.
-func (cl *Cluster) sessionForContext() *Session {
-	tmp := cl.cloneWithContext(cl.target.Context())
-	tmp.namespace = cl.target.Namespace()
-	return tmp
-}
-
 // Helm returns a memoized Helm client targeted at the resolved cluster.
 func (cl *Cluster) Helm() (HelmClient, error) {
 	cl.mu.Lock()
@@ -353,11 +378,10 @@ func (cl *Cluster) Helm() (HelmClient, error) {
 	if cl.helm != nil {
 		return cl.helm, nil
 	}
-	tmp := cl.sessionForContext()
-	c, err := tmp.helmFactory(tmp)
+	c, err := cl.helmFactory(cl.target, cl.helmConfig)
 	if err != nil {
 		return nil, fmt.Errorf("helm client (namespace=%q, kubeconfig=%q): %w",
-			cl.target.Namespace(), cl.kubeconfig, err)
+			cl.target.Namespace(), cl.helmConfig.KubeconfigPath, err)
 	}
 	cl.helm = c
 	return cl.helm, nil

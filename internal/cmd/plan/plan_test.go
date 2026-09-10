@@ -115,7 +115,7 @@ func nabatContext(t *testing.T) (*nabat.Context, *bytes.Buffer) {
 
 // sessionWithStub builds a [session.Session] whose Helm client is stub.
 func sessionWithStub(stub *stubHelmClient) *session.Session {
-	return session.New(session.WithHelmFactory(func(*session.Session) (session.HelmClient, error) {
+	return session.New(session.WithHelmFactory(func(*target.Target, session.HelmConfig) (session.HelmClient, error) {
 		return stub, nil
 	}))
 }
@@ -124,7 +124,7 @@ func sessionWithStub(stub *stubHelmClient) *session.Session {
 // runOnline can exercise API capability checks.
 func sessionWithStubAndK8s(stub *stubHelmClient, k8sClient kubernetes.Interface) *session.Session {
 	return session.New(
-		session.WithHelmFactory(func(*session.Session) (session.HelmClient, error) {
+		session.WithHelmFactory(func(*target.Target, session.HelmConfig) (session.HelmClient, error) {
 			return stub, nil
 		}),
 		session.WithKubernetesFactory(func(*target.Target) (kubernetes.Interface, error) {
@@ -438,7 +438,7 @@ spec:
 	stub := &stubHelmClient{offlineResult: renderResult(deploymentV1)}
 	sess := session.New(
 		session.WithSpecPath(specPath),
-		session.WithHelmFactory(func(*session.Session) (session.HelmClient, error) {
+		session.WithHelmFactory(func(*target.Target, session.HelmConfig) (session.HelmClient, error) {
 			return stub, nil
 		}),
 	)
@@ -461,7 +461,7 @@ func TestRunOffline_LoadExtrasError(t *testing.T) {
 	stub := &stubHelmClient{offlineResult: renderResult(deploymentV1)}
 	sess := session.New(
 		session.WithSpecPath(specPath),
-		session.WithHelmFactory(func(*session.Session) (session.HelmClient, error) {
+		session.WithHelmFactory(func(*target.Target, session.HelmConfig) (session.HelmClient, error) {
 			return stub, nil
 		}),
 	)
@@ -505,7 +505,7 @@ spec:
 	}
 	sess := session.New(
 		session.WithSpecPath(specPath),
-		session.WithHelmFactory(func(*session.Session) (session.HelmClient, error) {
+		session.WithHelmFactory(func(*target.Target, session.HelmConfig) (session.HelmClient, error) {
 			return stub, nil
 		}),
 	)

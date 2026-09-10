@@ -21,8 +21,9 @@
 //
 // Spec and platform source loading is delegated to [workspace.Workspace].
 // Kubernetes destination resolution is delegated to [target.Resolver]. Call
-// [Session.Target] with the environment name to obtain a [Cluster] that wraps
-// the resolved [target.Target] and lazily constructs Helm and Kubernetes
-// clients. Cluster REST and Kubernetes construction still prefer in-cluster
-// config when present.
+// [Session.Target] with the environment name to obtain a [Cluster] that holds
+// the resolved [target.Target], a [HelmConfig] snapshot, client factories,
+// and lazily constructed Helm and Kubernetes clients. Cluster does not
+// embed [Session]. Cluster REST and Kubernetes construction still prefer
+// in-cluster config when present.
 package session
