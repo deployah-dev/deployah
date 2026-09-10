@@ -451,6 +451,9 @@ func TestTarget(t *testing.T) {
 		cluster, err := sess.Target(t.Context(), "")
 		require.NoError(t, err)
 		assert.Equal(t, "custom", cluster.Namespace())
+		cfg, err := cluster.RESTConfig()
+		require.NoError(t, err)
+		assert.Equal(t, "https://example.com:6443", cfg.Host)
 	})
 }
 
@@ -904,10 +907,38 @@ func TestCurrentKubeContext(t *testing.T) {
 	}
 }
 
-// TestClusterRESTConfig verifies Cluster.RESTConfig falls back to
-// kubeconfig resolution when no in-cluster config is available (always the
-// case in this test environment), and that it surfaces a clear error when
-// the kubeconfig cannot be resolved either.
+// twoClusterKubeconfig is a fixture with distinct API servers for dest
+// consistency tests.
+const twoClusterKubeconfig = `apiVersion: v1
+kind: Config
+current-context: dev
+clusters:
+- name: dev-cluster
+  cluster:
+    server: https://dev.example.test
+- name: prod-cluster
+  cluster:
+    server: https://prod.example.test
+contexts:
+- name: dev
+  context:
+    cluster: dev-cluster
+    user: test-user
+    namespace: sandbox
+- name: prod
+  context:
+    cluster: prod-cluster
+    user: test-user
+    namespace: payments
+users:
+- name: test-user
+  user:
+    token: fake-token
+`
+
+// TestClusterRESTConfig verifies Cluster.RESTConfig uses the Target
+// kubeconfig destination and surfaces a clear error when that dest cannot
+// be resolved.
 func TestClusterRESTConfig(t *testing.T) {
 	t.Parallel()
 
@@ -954,12 +985,114 @@ func TestClusterRESTConfig(t *testing.T) {
 			if tt.wantErr {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tt.errContains)
+				assert.Contains(t, err.Error(), "provide --kubeconfig")
 				return
 			}
 			require.NoError(t, err)
 			tt.check(t, cfg)
 		})
 	}
+}
+
+func TestClusterRESTConfig_NoKubeconfig(t *testing.T) {
+	t.Setenv("KUBECONFIG", filepath.Join(t.TempDir(), "does-not-exist"))
+	t.Setenv("HOME", t.TempDir())
+
+	cluster, err := New().Target(t.Context(), "")
+	require.NoError(t, err)
+	cfg, err := cluster.RESTConfig()
+	require.Error(t, err)
+	assert.Nil(t, cfg)
+	assert.Contains(t, err.Error(), "failed to build kubernetes config")
+	assert.Contains(t, err.Error(), "provide --kubeconfig")
+}
+
+func TestClusterRESTConfigMatchesTarget(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "kubeconfig")
+	require.NoError(t, writeFile(path, twoClusterKubeconfig))
+
+	cluster, err := New(WithKubeconfig(path), WithKubeContext("prod")).Target(t.Context(), "")
+	require.NoError(t, err)
+	got, err := cluster.RESTConfig()
+	require.NoError(t, err)
+
+	want, err := target.NewResolver(target.Config{
+		KubeconfigPath:  path,
+		ContextOverride: "prod",
+	}).Resolve("").RESTConfig()
+	require.NoError(t, err)
+	assert.Equal(t, want.Host, got.Host)
+}
+
+func TestDefaultKubernetesFactoryUsesTargetRESTConfig(t *testing.T) {
+	t.Parallel()
+
+	t.Run("valid kubeconfig", func(t *testing.T) {
+		t.Parallel()
+
+		path := filepath.Join(t.TempDir(), "kubeconfig")
+		require.NoError(t, writeFile(path, minimalKubeconfig))
+		cluster, err := New(WithKubeconfig(path)).Target(t.Context(), "")
+		require.NoError(t, err)
+		cs, err := cluster.Kubernetes()
+		require.NoError(t, err)
+		require.NotNil(t, cs)
+	})
+
+	t.Run("missing kubeconfig", func(t *testing.T) {
+		t.Parallel()
+
+		cluster, err := New(WithKubeconfig(filepath.Join(t.TempDir(), "missing-kubeconfig"))).Target(t.Context(), "")
+		require.NoError(t, err)
+		cs, err := cluster.Kubernetes()
+		require.Error(t, err)
+		assert.Nil(t, cs)
+		assert.Contains(t, err.Error(), "failed to build kubernetes config")
+		assert.Contains(t, err.Error(), "provide --kubeconfig")
+	})
+}
+
+func TestClusterClientsShareTargetDestination(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "kubeconfig")
+	require.NoError(t, writeFile(path, twoClusterKubeconfig))
+
+	var gotTarget *target.Target
+	var gotHelm HelmConfig
+	sess := New(
+		WithKubeconfig(path),
+		WithKubeContext("prod"),
+		WithHelmFactory(func(tgt *target.Target, cfg HelmConfig) (HelmClient, error) {
+			gotTarget = tgt
+			gotHelm = cfg
+			return &MockHelmClient{}, nil
+		}),
+	)
+	cluster, err := sess.Target(t.Context(), "")
+	require.NoError(t, err)
+
+	assert.Equal(t, "prod", cluster.Context())
+	assert.Equal(t, target.ContextSourceExplicit, cluster.ContextSource())
+	assert.Equal(t, "payments", cluster.Namespace())
+
+	cfg, err := cluster.RESTConfig()
+	require.NoError(t, err)
+	assert.Equal(t, "https://prod.example.test", cfg.Host)
+
+	cs, err := cluster.Kubernetes()
+	require.NoError(t, err)
+	require.NotNil(t, cs)
+
+	_, err = cluster.Helm()
+	require.NoError(t, err)
+	require.NotNil(t, gotTarget)
+	assert.Equal(t, "prod", gotTarget.Context())
+	assert.Equal(t, target.ContextSourceExplicit, gotTarget.ContextSource())
+	assert.Equal(t, "payments", gotTarget.Namespace())
+	assert.Equal(t, path, gotHelm.KubeconfigPath)
 }
 
 // TestIntegrationWithMocks covers the named case.

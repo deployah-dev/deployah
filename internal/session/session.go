@@ -256,15 +256,11 @@ func defaultHelmFactory(t *target.Target, cfg HelmConfig) (HelmClient, error) {
 }
 
 // defaultKubernetesFactory creates a Kubernetes clientset from the resolved
-// target, preferring in-cluster config when available. That in-cluster-first
-// preference is transitional; destination metadata still comes from Target.
+// target's kubeconfig destination.
 func defaultKubernetesFactory(t *target.Target) (kubernetes.Interface, error) {
-	cfg, err := rest.InClusterConfig()
+	cfg, err := t.RESTConfig()
 	if err != nil {
-		cfg, err = t.RESTConfig()
-		if err != nil {
-			return nil, fmt.Errorf("%w (provide --kubeconfig or ensure KUBECONFIG/~/.kube/config is set)", err)
-		}
+		return nil, fmt.Errorf("%w (provide --kubeconfig or ensure KUBECONFIG/~/.kube/config is set)", err)
 	}
 	cs, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
@@ -288,10 +284,8 @@ func (s *Session) CurrentKubeContext() string {
 // Kubernetes clients. Obtain one via [Session.Target].
 //
 // Destination metadata is owned by [target.Target]. Helm construction uses
-// [HelmConfig] and [HelmFactory]. Kubernetes construction uses a
-// Target-oriented factory. RESTConfig and the default Kubernetes factory
-// still prefer in-cluster config when present; that mismatch with Target
-// metadata is transitional.
+// [HelmConfig] and [HelmFactory]. Kubernetes construction and
+// [Cluster.RESTConfig] use [target.Target.RESTConfig].
 //
 // Cluster does not embed or depend on [Session]. Concurrent [Cluster.Helm]
 // and [Cluster.Kubernetes] calls are safe.
@@ -350,17 +344,10 @@ func (cl *Cluster) Kubernetes() (kubernetes.Interface, error) {
 	return cl.k8s, nil
 }
 
-// RESTConfig returns a Kubernetes REST config for the resolved cluster.
-//
-// In-cluster config is tried first, matching historical Deployah behavior.
-// When that is unavailable, the kubeconfig destination from [target.Target]
-// is used.
+// RESTConfig returns a Kubernetes REST config for the resolved
+// [target.Target] kubeconfig destination.
 func (cl *Cluster) RESTConfig() (*rest.Config, error) {
-	cfg, err := rest.InClusterConfig()
-	if err == nil {
-		return cfg, nil
-	}
-	cfg, err = cl.target.RESTConfig()
+	cfg, err := cl.target.RESTConfig()
 	if err != nil {
 		return nil, fmt.Errorf("%w (provide --kubeconfig or ensure KUBECONFIG/~/.kube/config is set)", err)
 	}

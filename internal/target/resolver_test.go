@@ -104,26 +104,31 @@ func TestResolve_NamespacePrecedence(t *testing.T) {
 		ns       string
 		platform string
 		want     string
+		wantHost string
 	}{
 		{
 			name:     "explicit namespace wins",
 			override: "prod",
 			ns:       "custom",
 			want:     "custom",
+			wantHost: "https://prod.example.test",
 		},
 		{
 			name:     "namespace from explicit selected context",
 			override: "prod",
 			want:     "payments",
+			wantHost: "https://prod.example.test",
 		},
 		{
 			name:     "namespace from platform-selected context",
 			platform: "prod",
 			want:     "payments",
+			wantHost: "https://prod.example.test",
 		},
 		{
-			name: "namespace from kubeconfig current-context",
-			want: "sandbox",
+			name:     "namespace from kubeconfig current-context",
+			want:     "sandbox",
+			wantHost: "https://dev.example.test",
 		},
 	}
 
@@ -137,6 +142,9 @@ func TestResolve_NamespacePrecedence(t *testing.T) {
 				NamespaceOverride: tt.ns,
 			}).Resolve(tt.platform)
 			assert.Equal(t, tt.want, got.Namespace())
+			cfg, err := got.RESTConfig()
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantHost, cfg.Host)
 		})
 	}
 }
