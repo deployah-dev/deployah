@@ -146,9 +146,8 @@ func fileExists(path string) bool {
 
 // PrescanSubstitutionReport inspects the raw (pre-envsubst) spec for
 // ${VAR} tokens in expose.subdomain fields and returns a SubstitutionReport.
-// Call it after [ParseManifest] and before envsubst so the resolver can
-// distinguish static from dynamic subdomains (the wildcard static-subdomain
-// warning does not fire for dynamically expanded values).
+// [Load] computes the same report from the raw YAML map. Call this after
+// [ParseManifest] when a typed pre-substitution spec is already in hand.
 func PrescanSubstitutionReport(rawSpec *Spec) SubstitutionReport {
 	report := SubstitutionReport{DynamicSubdomains: make(map[string]bool)}
 	for name, comp := range rawSpec.Components {
@@ -159,6 +158,44 @@ func PrescanSubstitutionReport(rawSpec *Spec) SubstitutionReport {
 		}
 	}
 	return report
+}
+
+// prescanSubstitutionReportFromRaw records ${VAR} tokens in
+// components.*.expose.subdomain from the pre-substitution YAML map.
+// It is observational: malformed entries are skipped, not rejected.
+// expose: false and expose: true are skipped, matching
+// [normalizeComponents] / [PrescanSubstitutionReport].
+func prescanSubstitutionReportFromRaw(specObj map[string]any) SubstitutionReport {
+	report := SubstitutionReport{DynamicSubdomains: make(map[string]bool)}
+	if specObj == nil {
+		return report
+	}
+	components, ok := specObj["components"].(map[string]any)
+	if !ok {
+		return report
+	}
+	for name, raw := range components {
+		comp, isComp := raw.(map[string]any)
+		if !isComp {
+			continue
+		}
+		expose, isExpose := comp["expose"].(map[string]any)
+		if !isExpose {
+			continue
+		}
+		subdomain, isString := expose["subdomain"].(string)
+		if !isString {
+			continue
+		}
+		if varPattern.MatchString(subdomain) {
+			report.DynamicSubdomains[name] = true
+		}
+	}
+	return report
+}
+
+func loadFail(err error) (*Spec, SubstitutionReport, error) {
+	return nil, SubstitutionReport{}, err
 }
 
 // Save writes the spec to a YAML file at the specified path.
@@ -209,12 +246,18 @@ func AllowHookCycleForDisplay() LoadOption {
 // environment (using desiredEnv or default resolution rules), substitutes
 // variables according to precedence, validates the spec, and applies defaults.
 //
+// The returned [SubstitutionReport] is computed from the same
+// pre-substitution YAML map that Load already read. On success,
+// DynamicSubdomains is an initialized map (empty when no component used a
+// ${VAR} token in expose.subdomain). On any failure, Load returns a nil
+// spec, a zero [SubstitutionReport], and the error.
+//
 // platform supplies the environment registry for [ResolveEnvironment]; pass
 // nil when no platform file exists. This function performs the load pipeline
 // without platform resolution; for [ResolvedSpec] see [Resolve].
 //
 // opts may include [AllowHookCycleForDisplay] for inspect-only commands.
-func Load(ctx context.Context, path, desiredEnv string, platform *PlatformConfig, opts ...LoadOption) (*Spec, error) {
+func Load(ctx context.Context, path, desiredEnv string, platform *PlatformConfig, opts ...LoadOption) (*Spec, SubstitutionReport, error) {
 	options := loadOptions{}
 	for _, opt := range opts {
 		if opt != nil {
@@ -228,21 +271,23 @@ func Load(ctx context.Context, path, desiredEnv string, platform *PlatformConfig
 
 	data, err := os.ReadFile(path) // #nosec G304 -- spec path from CLI or default
 	if err != nil {
-		return nil, fmt.Errorf("failed to read spec: %w", err)
+		return loadFail(fmt.Errorf("failed to read spec: %w", err))
 	}
 
 	var specObj map[string]any
 	if err = yaml.Unmarshal(data, &specObj); err != nil {
-		return nil, fmt.Errorf("failed to parse spec YAML: %w", err)
+		return loadFail(fmt.Errorf("failed to parse spec YAML: %w", err))
 	}
+
+	substReport := prescanSubstitutionReportFromRaw(specObj)
 
 	version, err := ValidateAPIVersion(specObj)
 	if err != nil {
-		return nil, fmt.Errorf("failed to validate API version: %w", err)
+		return loadFail(fmt.Errorf("failed to validate API version: %w", err))
 	}
 
 	if err = ValidateEnvironments(specObj, version); err != nil {
-		return nil, fmt.Errorf("environments validation failed: %w", err)
+		return loadFail(fmt.Errorf("environments validation failed: %w", err))
 	}
 
 	// Parse the environments section to resolve the target environment.
@@ -250,56 +295,55 @@ func Load(ctx context.Context, path, desiredEnv string, platform *PlatformConfig
 		Environments map[string]Environment `yaml:"environments"`
 	}
 	if err = yaml.Unmarshal(data, &tmp); err != nil {
-		return nil, fmt.Errorf("failed to parse spec YAML: %w", err)
+		return loadFail(fmt.Errorf("failed to parse spec YAML: %w", err))
 	}
 
 	envName, env, err := ResolveEnvironment(tmp.Environments, platform, desiredEnv)
 	if err != nil {
-		return nil, fmt.Errorf("failed to select environment: %w", err)
+		return loadFail(fmt.Errorf("failed to select environment: %w", err))
 	}
 
 	slog.InfoContext(ctx, "selected environment", "environment", envName)
 
 	substituted, err := SubstituteVariables(data, env)
 	if err != nil {
-		return nil, fmt.Errorf("failed to substitute variables: %w", err)
+		return loadFail(fmt.Errorf("failed to substitute variables: %w", err))
 	}
 
 	var substitutedObj map[string]any
 	if err = yaml.Unmarshal(substituted, &substitutedObj); err != nil {
-		return nil, fmt.Errorf("failed to parse substituted spec YAML: %w", err)
+		return loadFail(fmt.Errorf("failed to parse substituted spec YAML: %w", err))
 	}
 
 	if err = ValidateSpec(substitutedObj, version); err != nil {
-		return nil, fmt.Errorf("spec validation failed: %w", err)
+		return loadFail(fmt.Errorf("spec validation failed: %w", err))
 	}
 
 	var finalSpec Spec
 	if err = yaml.Unmarshal(substituted, &finalSpec); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal spec: %w", err)
+		return loadFail(fmt.Errorf("failed to unmarshal spec: %w", err))
 	}
 	normalizeComponents(&finalSpec)
 
 	if err = ValidateSpecComponents(&finalSpec); err != nil {
-		return nil, fmt.Errorf("validation failed: %w", err)
+		return loadFail(fmt.Errorf("validation failed: %w", err))
 	}
 
 	if err = ValidateSpecTasks(&finalSpec, options.allowHookCycleForDisplay); err != nil {
-		return nil, fmt.Errorf("validation failed: %w", err)
+		return loadFail(fmt.Errorf("validation failed: %w", err))
 	}
 
 	if err = FillSpecWithDefaults(&finalSpec, version); err != nil {
-		return nil, fmt.Errorf("failed to apply defaults: %w", err)
+		return loadFail(fmt.Errorf("failed to apply defaults: %w", err))
 	}
 
 	finalSpec.SpecDir = filepath.Dir(path)
-	return &finalSpec, nil
+	return &finalSpec, substReport, nil
 }
 
 // ParseManifest reads and partially validates the spec YAML file: validates
 // the API version and environments section, then unmarshals the raw struct
 // without applying envsubst or defaults. It returns the raw spec and version.
-// Used by [Session.ResolvedSpec] as the first step of the full pipeline.
 func ParseManifest(path string) (*Spec, string, error) {
 	if path == "" {
 		path = DefaultSpecPath

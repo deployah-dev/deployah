@@ -20,7 +20,8 @@
 //
 // # Loading and saving
 //
-//   - [Load]: read a spec, resolve an environment, substitute variables
+//   - [Load]: read a spec, resolve an environment, substitute variables,
+//     and return a [SubstitutionReport] from that same file snapshot
 //   - [Save]: write a spec to YAML
 //
 // # Validation

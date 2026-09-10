@@ -171,12 +171,14 @@ components:
 `
 	require.NoError(t, os.WriteFile(path, []byte(doc), 0o600))
 
-	m, err := Load(t.Context(), path, "", nil)
+	m, report, err := Load(t.Context(), path, "", nil)
 	require.NoError(t, err)
 	assert.Empty(t, m.Environments)
+	require.NotNil(t, report.DynamicSubdomains)
+	assert.Empty(t, report.DynamicSubdomains)
 
 	// An explicit free-form name is accepted when no registry exists.
-	m, err = Load(t.Context(), path, "qa", nil)
+	m, _, err = Load(t.Context(), path, "qa", nil)
 	require.NoError(t, err)
 	require.NotNil(t, m)
 }
@@ -265,7 +267,7 @@ environments:
 	require.NoError(t, os.WriteFile(filepath.Join(specDir, "deployah.yaml"), []byte(specYAML), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(specDir, ".env.dev"), []byte("DPY_VAR_IMAGE=ignored\n"), 0o600))
 
-	got, err := Load(t.Context(), filepath.Join(specDir, "deployah.yaml"), "dev", nil)
+	got, _, err := Load(t.Context(), filepath.Join(specDir, "deployah.yaml"), "dev", nil)
 	require.NoError(t, err)
 	require.Contains(t, got.Components, "web")
 	assert.Equal(t, "nginx:1.27", got.Components["web"].Image)
@@ -374,8 +376,10 @@ environments:
   production: {}
 `
 	require.NoError(t, os.WriteFile("deployah.yaml", []byte(content), 0o600))
-	_, err := Load(t.Context(), "deployah.yaml", "production", nil)
+	got, report, err := Load(t.Context(), "deployah.yaml", "production", nil)
 	require.Error(t, err)
+	assert.Nil(t, got)
+	assert.Equal(t, SubstitutionReport{}, report)
 	assert.Contains(t, err.Error(), "profile")
 }
 
@@ -408,8 +412,10 @@ func TestLoad_HookCycleIsHardError(t *testing.T) {
 	path := filepath.Join(dir, "deployah.yaml")
 	require.NoError(t, os.WriteFile(path, []byte(hookCycleSpecYAML), 0o600))
 
-	_, err := Load(t.Context(), path, "staging", nil)
+	got, report, err := Load(t.Context(), path, "staging", nil)
 	require.Error(t, err)
+	assert.Nil(t, got)
+	assert.Equal(t, SubstitutionReport{}, report)
 	assert.ErrorContains(t, err, "cycle")
 }
 
@@ -420,7 +426,7 @@ func TestLoad_AllowHookCycleForDisplay_DefersCycle(t *testing.T) {
 	path := filepath.Join(dir, "deployah.yaml")
 	require.NoError(t, os.WriteFile(path, []byte(hookCycleSpecYAML), 0o600))
 
-	got, err := Load(t.Context(), path, "staging", nil, AllowHookCycleForDisplay())
+	got, _, err := Load(t.Context(), path, "staging", nil, AllowHookCycleForDisplay())
 	require.NoError(t, err)
 	require.Contains(t, got.Tasks, "migrate")
 	require.Contains(t, got.Tasks, "seed")
@@ -447,7 +453,7 @@ environments:
 	path := filepath.Join(dir, "deployah.yaml")
 	require.NoError(t, os.WriteFile(path, []byte(specYAML), 0o600))
 
-	got, err := Load(t.Context(), path, "staging", nil, AllowHookCycleForDisplay())
+	got, _, err := Load(t.Context(), path, "staging", nil, AllowHookCycleForDisplay())
 	require.NoError(t, err)
 	require.Contains(t, got.Tasks, "migrate")
 }
@@ -473,8 +479,10 @@ environments:
 	path := filepath.Join(dir, "deployah.yaml")
 	require.NoError(t, os.WriteFile(path, []byte(specYAML), 0o600))
 
-	_, err := Load(t.Context(), path, "staging", nil, AllowHookCycleForDisplay())
+	got, report, err := Load(t.Context(), path, "staging", nil, AllowHookCycleForDisplay())
 	require.Error(t, err)
+	assert.Nil(t, got)
+	assert.Equal(t, SubstitutionReport{}, report)
 	assert.ErrorContains(t, err, "does not name a task")
 }
 
@@ -503,7 +511,255 @@ environments:
 	path := filepath.Join(dir, "deployah.yaml")
 	require.NoError(t, os.WriteFile(path, []byte(specYAML), 0o600))
 
-	_, err := Load(t.Context(), path, "staging", nil, AllowHookCycleForDisplay())
+	got, report, err := Load(t.Context(), path, "staging", nil, AllowHookCycleForDisplay())
 	require.Error(t, err)
+	assert.Nil(t, got)
+	assert.Equal(t, SubstitutionReport{}, report)
 	assert.ErrorContains(t, err, "not in the same on phase")
+}
+
+const loadPrescanSpecYAML = `apiVersion: v1-alpha.5
+project: demo
+environments:
+  staging:
+    variables:
+      PREVIEW: pr-42
+      SNAPSHOT: from-first-read
+components:
+  web:
+    image: nginx:1.27
+    port: 8080
+    expose:
+      subdomain: ${PREVIEW}
+  api:
+    image: nginx:1.27
+    port: 8080
+    expose:
+      subdomain: api
+  hidden:
+    image: nginx:1.27
+    port: 8080
+    expose: false
+`
+
+// TestLoad_DetectsDynamicSubdomainWithoutParseManifest verifies Load
+// records ${VAR} tokens in expose.subdomain from the raw YAML map.
+func TestLoad_DetectsDynamicSubdomainWithoutParseManifest(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "deployah.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(loadPrescanSpecYAML), 0o600))
+
+	got, report, err := Load(t.Context(), path, "staging", nil)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, "pr-42", *got.Components["web"].Expose.Subdomain)
+	assert.Equal(t, "api", *got.Components["api"].Expose.Subdomain)
+	assert.Nil(t, got.Components["hidden"].Expose)
+	assert.Equal(t, map[string]bool{"web": true}, report.DynamicSubdomains)
+}
+
+// TestLoad_PrescanMatchesTypedPrescan verifies Load and
+// [ParseManifest]+[PrescanSubstitutionReport] agree on DynamicSubdomains
+// for the same file.
+func TestLoad_PrescanMatchesTypedPrescan(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "deployah.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(loadPrescanSpecYAML), 0o600))
+
+	raw, _, err := ParseManifest(path)
+	require.NoError(t, err)
+	typed := PrescanSubstitutionReport(raw)
+
+	_, loaded, err := Load(t.Context(), path, "staging", nil)
+	require.NoError(t, err)
+	assert.Equal(t, typed.DynamicSubdomains, loaded.DynamicSubdomains)
+}
+
+// TestLoad_PrescanUsesFileSnapshot verifies the SubstitutionReport comes
+// from the same file bytes Load already read, not a later re-read.
+func TestLoad_PrescanUsesFileSnapshot(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "deployah.yaml")
+	original := `apiVersion: v1-alpha.5
+project: demo
+environments:
+  staging:
+    variables:
+      SNAPSHOT: from-first-read
+components:
+  web:
+    image: nginx:1.27
+    port: 8080
+    expose:
+      subdomain: ${SNAPSHOT}
+`
+	require.NoError(t, os.WriteFile(path, []byte(original), 0o600))
+
+	got, report, err := Load(t.Context(), path, "staging", nil)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]bool{"web": true}, report.DynamicSubdomains)
+	assert.Equal(t, "from-first-read", *got.Components["web"].Expose.Subdomain)
+
+	overwritten := `apiVersion: v1-alpha.5
+project: demo
+environments:
+  staging: {}
+components:
+  web:
+    image: nginx:1.27
+    port: 8080
+    expose:
+      subdomain: static-name
+`
+	require.NoError(t, os.WriteFile(path, []byte(overwritten), 0o600))
+	assert.Equal(t, map[string]bool{"web": true}, report.DynamicSubdomains)
+	assert.Equal(t, "from-first-read", *got.Components["web"].Expose.Subdomain)
+}
+
+// TestLoad_FailureReturnsZeroReport verifies Load failures return a nil
+// spec and a zero SubstitutionReport. Empty contents means the file is
+// not created.
+func TestLoad_FailureReturnsZeroReport(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		contents string
+	}{
+		{name: "missing file"},
+		{name: "invalid yaml", contents: ":\n  -"},
+		{name: "invalid api version", contents: "apiVersion: nope\nproject: x\ncomponents: {}\n"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), "deployah.yaml")
+			if tt.contents != "" {
+				require.NoError(t, os.WriteFile(path, []byte(tt.contents), 0o600))
+			}
+			got, report, err := Load(t.Context(), path, "staging", nil)
+			require.Error(t, err)
+			assert.Nil(t, got)
+			assert.Equal(t, SubstitutionReport{}, report)
+			assert.Nil(t, report.DynamicSubdomains)
+		})
+	}
+}
+
+// TestLoad_PrescanFeedsResolveDynamicNoWarning verifies a Load-produced
+// report skips the wildcard static-subdomain warning after substitution.
+func TestLoad_PrescanFeedsResolveDynamicNoWarning(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "deployah.yaml")
+	doc := `apiVersion: v1-alpha.5
+project: shop
+environments:
+  review:
+    variables:
+      PR: pr-123
+components:
+  api:
+    image: nginx:1.27
+    port: 8080
+    expose:
+      domain: public
+      subdomain: ${PR}
+`
+	require.NoError(t, os.WriteFile(path, []byte(doc), 0o600))
+
+	platform := &PlatformConfig{
+		APIVersion: "platform/v1-alpha.3",
+		Environments: map[string]PlatformEnvironment{
+			"review": {
+				Context: "staging-eks",
+				Domains: map[string]PlatformDomain{
+					"public": {
+						BaseDomain: "review.example.com",
+						TLS:        &PlatformTLS{Mode: TLSModeSelfSigned},
+					},
+				},
+			},
+		},
+	}
+
+	manifest, substReport, err := Load(t.Context(), path, "review/pr-123", platform)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]bool{"api": true}, substReport.DynamicSubdomains)
+
+	_, report, err := Resolve(manifest, platform, NormalizeEnv("review/pr-123"), substReport)
+	require.NoError(t, err)
+	assert.Empty(t, report.Warnings)
+}
+
+// TestPrescanSubstitutionReportFromRaw_SkipsNonMapExpose verifies the
+// raw-map prescan is observational and ignores bool or malformed expose.
+func TestPrescanSubstitutionReportFromRaw_SkipsNonMapExpose(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		obj  map[string]any
+		want map[string]bool
+	}{
+		{
+			name: "nil spec",
+			obj:  nil,
+			want: map[string]bool{},
+		},
+		{
+			name: "expose false",
+			obj: map[string]any{
+				"components": map[string]any{
+					"web": map[string]any{"expose": false},
+				},
+			},
+			want: map[string]bool{},
+		},
+		{
+			name: "expose true",
+			obj: map[string]any{
+				"components": map[string]any{
+					"web": map[string]any{"expose": true},
+				},
+			},
+			want: map[string]bool{},
+		},
+		{
+			name: "malformed component",
+			obj: map[string]any{
+				"components": map[string]any{
+					"web": "not-a-map",
+				},
+			},
+			want: map[string]bool{},
+		},
+		{
+			name: "dynamic subdomain",
+			obj: map[string]any{
+				"components": map[string]any{
+					"web": map[string]any{
+						"expose": map[string]any{"subdomain": "${PREVIEW}"},
+					},
+				},
+			},
+			want: map[string]bool{"web": true},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := prescanSubstitutionReportFromRaw(tt.obj)
+			assert.Equal(t, tt.want, got.DynamicSubdomains)
+		})
+	}
 }

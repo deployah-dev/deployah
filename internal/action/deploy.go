@@ -16,7 +16,7 @@ type Deployer interface {
 
 // SpecLoader loads and validates a spec for an environment.
 type SpecLoader interface {
-	Spec(ctx context.Context, environment string) (*spec.Spec, error)
+	Spec(ctx context.Context, environment string) (*spec.Spec, spec.SubstitutionReport, error)
 }
 
 // Deploy encapsulates the deploy business logic.
@@ -33,11 +33,11 @@ func NewDeploy(deployer Deployer, loader SpecLoader) *Deploy {
 // Run loads the spec, resolves it for environment, and installs or upgrades
 // the Helm release.
 func (d *Deploy) Run(ctx context.Context, environment string, dryRun bool) (*spec.Spec, error) {
-	m, err := d.loader.Spec(ctx, environment)
+	m, substReport, err := d.loader.Spec(ctx, environment)
 	if err != nil {
 		return nil, fmt.Errorf("load spec: %w", err)
 	}
-	resolved, _, err := spec.Resolve(m, nil, spec.NormalizeEnv(environment), spec.SubstitutionReport{})
+	resolved, _, err := spec.Resolve(m, nil, spec.NormalizeEnv(environment), substReport)
 	if err != nil {
 		return nil, fmt.Errorf("resolve spec: %w", err)
 	}

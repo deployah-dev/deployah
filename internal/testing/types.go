@@ -207,7 +207,7 @@ func (suite *IntegrationTestSuite) loadAndResolve(t *testing.T, scenario TestSce
 		platform = loaded
 	}
 
-	manifest, err := spec.Load(ctx, scenario.ManifestFile, scenario.Environment, platform)
+	manifest, substReport, err := spec.Load(ctx, scenario.ManifestFile, scenario.Environment, platform)
 	if err != nil {
 		return nil, "", nil, platform, err
 	}
@@ -218,7 +218,7 @@ func (suite *IntegrationTestSuite) loadAndResolve(t *testing.T, scenario TestSce
 
 	// Resolve even when platform is nil so runtime env reaches the chart.
 	envIdentity := spec.NormalizeEnv(envName)
-	resolved, _, err := spec.Resolve(manifest, platform, envIdentity, spec.SubstitutionReport{})
+	resolved, _, err := spec.Resolve(manifest, platform, envIdentity, substReport)
 	if err != nil {
 		return nil, "", nil, platform, err
 	}

@@ -178,10 +178,11 @@ func TestLoadSpec_UsesWorkspacePlatform(t *testing.T) {
 		SpecPath:     specPath,
 		PlatformPath: platformPath,
 	})
-	got, err := w.LoadSpec(t.Context(), "production")
+	got, report, err := w.LoadSpec(t.Context(), "production")
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.Equal(t, "demo", got.Project)
+	require.NotNil(t, report.DynamicSubdomains)
 }
 
 func TestLoadSpec_OptionalMissingPlatform(t *testing.T) {
@@ -190,7 +191,7 @@ func TestLoadSpec_OptionalMissingPlatform(t *testing.T) {
 	writeFile(t, specPath, specWithStagingYAML)
 
 	w := workspace.New(workspace.Config{SpecPath: specPath})
-	got, err := w.LoadSpec(t.Context(), "staging")
+	got, _, err := w.LoadSpec(t.Context(), "staging")
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.Equal(t, "demo", got.Project)
@@ -206,9 +207,10 @@ func TestLoadSpec_RequiredPlatformFailure(t *testing.T) {
 		PlatformPath: filepath.Join(t.TempDir(), "missing.platform.yaml"),
 	})
 
-	got, err := w.LoadSpec(t.Context(), "staging")
+	got, report, err := w.LoadSpec(t.Context(), "staging")
 	require.Error(t, err)
 	assert.Nil(t, got)
+	assert.Equal(t, spec.SubstitutionReport{}, report)
 	assert.Contains(t, err.Error(), "failed to load platform file")
 	assert.NotContains(t, err.Error(), "failed to load spec")
 }
@@ -219,11 +221,12 @@ func TestLoadSpec_ForwardsLoadOption(t *testing.T) {
 	writeFile(t, specPath, hookCycleSpecYAML)
 	w := workspace.New(workspace.Config{SpecPath: specPath})
 
-	_, err := w.LoadSpec(t.Context(), "staging")
+	_, report, err := w.LoadSpec(t.Context(), "staging")
 	require.Error(t, err)
+	assert.Equal(t, spec.SubstitutionReport{}, report)
 	assert.Contains(t, err.Error(), "cycle")
 
-	got, err := w.LoadSpec(t.Context(), "staging", spec.AllowHookCycleForDisplay())
+	got, _, err := w.LoadSpec(t.Context(), "staging", spec.AllowHookCycleForDisplay())
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	require.Contains(t, got.Tasks, "migrate")
@@ -254,7 +257,7 @@ func TestWorkspace_ConcurrentReads(t *testing.T) {
 			if _, err := w.ParseManifest(); err != nil {
 				t.Errorf("ParseManifest: %v", err)
 			}
-			if _, err := w.LoadSpec(ctx, "production"); err != nil {
+			if _, _, err := w.LoadSpec(ctx, "production"); err != nil {
 				t.Errorf("LoadSpec: %v", err)
 			}
 		})

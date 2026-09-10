@@ -87,7 +87,7 @@ func TestShowSummaryAndSave_RoleAwareComponentsProduceValidSpec(t *testing.T) {
 	assert.NotContains(t, body, "cpu:")
 	assert.NotContains(t, body, "memory:")
 
-	loaded, err := spec.Load(t.Context(), config.SpecPath, "", nil)
+	loaded, _, err := spec.Load(t.Context(), config.SpecPath, "", nil)
 	require.NoError(t, err)
 	require.NotNil(t, loaded)
 	assert.Equal(t, "shop", loaded.Project)
@@ -135,7 +135,7 @@ func TestShowSummaryAndSave_ServiceHealthCheckWithoutPortIsValid(t *testing.T) {
 	body := readSpecFile(t, config.SpecPath)
 	assert.NotContains(t, body, "port:")
 
-	loaded, err := spec.Load(t.Context(), config.SpecPath, "", nil)
+	loaded, _, err := spec.Load(t.Context(), config.SpecPath, "", nil)
 	require.NoError(t, err)
 	assert.Equal(t, spec.DefaultServicePort, loaded.Components["web"].Port)
 }
@@ -419,7 +419,7 @@ func TestSparseSpec_RoundTripLoadFillsPort(t *testing.T) {
 	sparse := sparseSpec(config)
 	require.NoError(t, writeSpecFile(&sparse, config.SpecPath))
 
-	loaded, err := spec.Load(t.Context(), config.SpecPath, "", nil)
+	loaded, _, err := spec.Load(t.Context(), config.SpecPath, "", nil)
 	require.NoError(t, err)
 	require.NoError(t, spec.ValidateSpecComponents(loaded))
 	assert.Equal(t, spec.DefaultServicePort, loaded.Components["web"].Port)
