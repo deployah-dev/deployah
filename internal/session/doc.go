@@ -25,6 +25,6 @@
 // the environment name to obtain a [Cluster] that holds the resolved
 // [target.Target], a [HelmConfig] snapshot, client factories, and lazily
 // constructed Helm and Kubernetes clients. Cluster does not embed
-// [Session]. Cluster REST and Kubernetes construction still prefer
-// in-cluster config when present.
+// [Session]. Cluster REST and Kubernetes construction use the Target
+// kubeconfig destination.
 package session

@@ -97,6 +97,21 @@ users:
 	assert.NotContains(t, err.Error(), "fake-token")
 }
 
+func TestRESTConfig_EmptyKubeconfigIsError(t *testing.T) {
+	t.Setenv("KUBECONFIG", filepath.Join(t.TempDir(), "does-not-exist"))
+	t.Setenv("HOME", t.TempDir())
+
+	got := target.NewResolver(target.Config{}).Resolve("")
+	assert.Empty(t, got.Context())
+	assert.Equal(t, target.ContextSourceKubeconfig, got.ContextSource())
+	assert.Equal(t, "default", got.Namespace())
+
+	cfg, err := got.RESTConfig()
+	require.Error(t, err)
+	assert.Nil(t, cfg)
+	assert.Contains(t, err.Error(), "failed to build kubernetes config")
+}
+
 func TestTarget_DoesNotReresolveAfterKUBECONFIGChange(t *testing.T) {
 	a := writeKubeconfig(t, twoClusterKubeconfig("dev", "", ""))
 	b := writeKubeconfig(t, twoClusterKubeconfig("prod", "", ""))

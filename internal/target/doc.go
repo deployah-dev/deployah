@@ -28,6 +28,8 @@
 // [Target.Context] is the effective context name. [Target.ContextSource]
 // records which rule selected it. When Context is non-empty, [Target.RESTConfig]
 // pins that name so the destination cannot change after Resolve.
+// [Target.RESTConfig] uses the snapshotted kubeconfig loading rules and
+// does not select in-cluster configuration.
 //
 // # Namespace precedence
 //
