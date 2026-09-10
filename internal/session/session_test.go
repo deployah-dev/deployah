@@ -578,6 +578,63 @@ func TestPlatformPathAccessor(t *testing.T) {
 	}
 }
 
+func TestSessionConstructsWorkspaceAfterOptions(t *testing.T) {
+	t.Parallel()
+
+	specPath := filepath.Join(t.TempDir(), "deployah.yaml")
+	platformPath := filepath.Join(t.TempDir(), "custom.platform.yaml")
+	sess := New(WithSpecPath(specPath), WithPlatformFile(platformPath))
+	assert.Equal(t, specPath, sess.SpecPath())
+	assert.Equal(t, platformPath, sess.PlatformPath())
+}
+
+func TestSessionPlatformDelegation(t *testing.T) {
+	t.Parallel()
+
+	platformPath := filepath.Join(t.TempDir(), "deployah.platform.yaml")
+	require.NoError(t, writeFile(platformPath, platformContextYAML("prod-eks")))
+	sess := New(WithPlatformFile(platformPath))
+	p, err := sess.Platform()
+	require.NoError(t, err)
+	require.NotNil(t, p)
+	assert.Equal(t, "prod-eks", spec.PlatformEnvContext(p, "production"))
+}
+
+func TestSessionPlatformMemoized(t *testing.T) {
+	t.Parallel()
+
+	platformPath := filepath.Join(t.TempDir(), "deployah.platform.yaml")
+	require.NoError(t, writeFile(platformPath, platformContextYAML("prod-eks")))
+	sess := New(WithPlatformFile(platformPath))
+
+	first, err := sess.Platform()
+	require.NoError(t, err)
+	require.NotNil(t, first)
+
+	require.NoError(t, os.Remove(platformPath))
+	second, err := sess.Platform()
+	require.NoError(t, err)
+	assert.Same(t, first, second)
+}
+
+func TestCloneWithContextSharesWorkspace(t *testing.T) {
+	pathA := filepath.Join(t.TempDir(), "a.platform.yaml")
+	pathB := filepath.Join(t.TempDir(), "b.platform.yaml")
+	require.NoError(t, writeFile(pathA, platformContextYAML("context-a")))
+	require.NoError(t, writeFile(pathB, platformContextYAML("context-b")))
+
+	t.Setenv(spec.PlatformEnvVar, pathA)
+	sess := New()
+	clone := sess.cloneWithContext("other")
+	assert.Same(t, sess.workspace, clone.workspace)
+
+	t.Setenv(spec.PlatformEnvVar, pathB)
+	assert.Equal(t, pathA, clone.PlatformPath())
+	p, err := clone.Platform()
+	require.NoError(t, err)
+	assert.Equal(t, "context-a", spec.PlatformEnvContext(p, "production"))
+}
+
 // TestKubeContextAccessor verifies KubeContext returns the explicit
 // override only, independent of kubeconfig resolution.
 func TestKubeContextAccessor(t *testing.T) {
@@ -599,30 +656,6 @@ func TestKubeContextAccessor(t *testing.T) {
 			assert.Equal(t, tt.want, New(tt.opts...).KubeContext())
 		})
 	}
-}
-
-// TestClose verifies Close clears the memoized platform config without
-// error, so a subsequent Platform call re-resolves rather than returning a
-// stale cached value.
-func TestClose(t *testing.T) {
-	platformPath := filepath.Join(t.TempDir(), "deployah.platform.yaml")
-	platformYAML := `apiVersion: platform/v1-alpha.3
-environments:
-  production:
-    domains:
-      main:
-        baseDomain: example.com
-`
-	require.NoError(t, writeFile(platformPath, platformYAML))
-
-	sess := New(WithPlatformFile(platformPath))
-
-	_, err := sess.Platform()
-	require.NoError(t, err)
-	require.NotNil(t, sess.platform, "platform should be memoized after first load")
-
-	require.NoError(t, sess.Close())
-	assert.Nil(t, sess.platform, "Close should clear the memoized platform config")
 }
 
 // TestSpec verifies Spec loads a real manifest from disk and wraps load

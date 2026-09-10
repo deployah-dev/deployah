@@ -92,7 +92,7 @@ func runDeploy(c *nabat.Context) error {
 
 	// Prescan the raw (pre-envsubst) manifest for ${VAR} tokens so the
 	// resolver can distinguish static from dynamic subdomains.
-	rawSpec, _, rawErr := spec.ParseManifest(sess.SpecPath())
+	rawSpec, rawErr := sess.ParseManifest()
 	if rawErr != nil {
 		return fmt.Errorf("parse manifest: %w", rawErr)
 	}

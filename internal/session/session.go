@@ -3,8 +3,6 @@ package session
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -14,6 +12,7 @@ import (
 	"deployah.dev/deployah/internal/helm"
 	"deployah.dev/deployah/internal/spec"
 	"deployah.dev/deployah/internal/target"
+	"deployah.dev/deployah/internal/workspace"
 )
 
 // sessionKey is a private context key for storing the Session in context.
@@ -36,22 +35,22 @@ const (
 // It is created once in the root pre-run hook and travels through
 // [context.Context] so every command shares one configured environment.
 //
+// Spec and platform source loading is delegated to [workspace.Workspace].
+// Kubernetes destination resolution is delegated to [target.Resolver].
 // To access Helm or Kubernetes clients, call [Session.Target] first.
 type Session struct {
+	workspaceConfig workspace.Config
+	workspace       *workspace.Workspace
+
 	namespace            string
 	kubeconfig           string
 	kubeContext          string
 	extraKubeconfigPaths []string
-	specPath             string
-	platformPath         string
 	commandPolicy        CommandPolicy
 
 	storageDriver string
 	debug         bool
 	timeout       time.Duration
-
-	platform *spec.PlatformConfig
-	mu       sync.Mutex
 
 	helmFactory func(*Session) (HelmClient, error)
 	k8sFactory  func(*target.Target) (kubernetes.Interface, error)
@@ -89,13 +88,13 @@ func WithExtraKubeconfigPaths(paths ...string) Option {
 
 // WithSpecPath sets the spec file path.
 func WithSpecPath(specPath string) Option {
-	return func(s *Session) { s.specPath = specPath }
+	return func(s *Session) { s.workspaceConfig.SpecPath = specPath }
 }
 
 // WithPlatformFile sets an explicit platform file path, overriding both the
 // DEPLOYAH_PLATFORM_FILE environment variable and the same-directory default.
 func WithPlatformFile(path string) Option {
-	return func(s *Session) { s.platformPath = path }
+	return func(s *Session) { s.workspaceConfig.PlatformPath = path }
 }
 
 // WithCommandPolicy sets the platform-missing policy for this session.
@@ -135,6 +134,7 @@ func WithKubernetesFactory(factory func(*target.Target) (kubernetes.Interface, e
 }
 
 // New constructs a Session with the given functional options.
+// The composed [workspace.Workspace] is created after all options are applied.
 func New(options ...Option) *Session {
 	s := &Session{
 		storageDriver: DefaultStorageDriver,
@@ -145,6 +145,7 @@ func New(options ...Option) *Session {
 	for _, opt := range options {
 		opt(s)
 	}
+	s.workspace = workspace.New(s.workspaceConfig)
 	return s
 }
 
@@ -163,52 +164,11 @@ func FromContext(ctx context.Context) *Session {
 	return nil
 }
 
-// Platform loads and memoizes the platform configuration. It resolves the
-// platform file path from (in order of precedence):
-//  1. An explicit path set via [WithPlatformFile].
-//  2. The DEPLOYAH_PLATFORM_FILE environment variable.
-//  3. The same directory as the spec file (deployah.platform.yaml).
-//
-// When no platform file is found, Platform returns (nil, nil). Only when a
-// path is found but fails to load does it return an error.
+// Platform loads and memoizes the platform configuration through the
+// composed [workspace.Workspace]. See [workspace.Workspace.Platform] for
+// required versus optional source semantics.
 func (s *Session) Platform() (*spec.PlatformConfig, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.platform != nil {
-		return s.platform, nil
-	}
-	explicit := s.platformPath != "" || os.Getenv(spec.PlatformEnvVar) != ""
-	path := s.resolvePlatformPath()
-	if !explicit {
-		// The default-path lookup treats an absent file as "no platform
-		// config"; only an explicitly named file must exist.
-		if _, err := os.Stat(path); err != nil {
-			return nil, nil //nolint:nilnil // absent platform file is not an error; callers check for nil config
-		}
-	}
-	p, err := spec.LoadPlatform(path)
-	if err != nil {
-		return nil, err
-	}
-	s.platform = p
-	return p, nil
-}
-
-// resolvePlatformPath returns the platform file path following the lookup
-// precedence rule. It is called with s.mu held.
-func (s *Session) resolvePlatformPath() string {
-	if s.platformPath != "" {
-		return s.platformPath
-	}
-	if envPath := os.Getenv(spec.PlatformEnvVar); envPath != "" {
-		return envPath
-	}
-	// Same directory as the spec file.
-	if s.specPath != "" {
-		dir := filepath.Dir(s.specPath)
-		return filepath.Join(dir, spec.DefaultPlatformPath)
-	}
-	return spec.DefaultPlatformPath
+	return s.workspace.Platform()
 }
 
 // Spec loads the spec for [Session.SpecPath] and environment. Each call loads
@@ -216,15 +176,7 @@ func (s *Session) resolvePlatformPath() string {
 // selects different env files per environment). The platform config, when
 // present, supplies the environment registry.
 func (s *Session) Spec(ctx context.Context, environment string) (*spec.Spec, error) {
-	platform, err := s.Platform()
-	if err != nil {
-		return nil, fmt.Errorf("failed to load platform file: %w", err)
-	}
-	m, err := spec.Load(ctx, s.SpecPath(), environment, platform)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load spec: %w", err)
-	}
-	return m, nil
+	return s.workspace.LoadSpec(ctx, environment)
 }
 
 // Target resolves the Kubernetes destination for env and returns a [Cluster]
@@ -253,22 +205,16 @@ func (s *Session) targetConfig() target.Config {
 	}
 }
 
-// SpecPath returns the spec file path. When unset, it returns
-// [spec.DefaultSpecPath].
+// SpecPath returns the effective spec file path from the composed Workspace.
+// The path is never empty; an unset option defaults to [spec.DefaultSpecPath].
 func (s *Session) SpecPath() string {
-	if s.specPath == "" {
-		return spec.DefaultSpecPath
-	}
-	return s.specPath
+	return s.workspace.SpecPath()
 }
 
-// PlatformPath returns the platform file path using the same lookup as
-// [Session.Platform]: an explicit --platform-file, then
-// DEPLOYAH_PLATFORM_FILE, then deployah.platform.yaml next to the spec.
+// PlatformPath returns the snapshotted platform file path from the
+// composed Workspace.
 func (s *Session) PlatformPath() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.resolvePlatformPath()
+	return s.workspace.PlatformPath()
 }
 
 // ParseManifest reads and partially validates the spec (apiVersion +
@@ -276,11 +222,7 @@ func (s *Session) PlatformPath() string {
 // that need the raw manifest structure without environment-specific processing
 // (e.g. validate manifest-only mode, substitution prescan).
 func (s *Session) ParseManifest() (*spec.Spec, error) {
-	rawSpec, _, err := spec.ParseManifest(s.SpecPath())
-	if err != nil {
-		return nil, err
-	}
-	return rawSpec, nil
+	return s.workspace.ParseManifest()
 }
 
 // KubeContext returns the explicit kube context override, or empty string if
@@ -294,25 +236,17 @@ func (s *Session) DebugKeepTempChart() bool { return s.debug }
 // Timeout returns the configured timeout for Helm operations.
 func (s *Session) Timeout() time.Duration { return s.timeout }
 
-// Close releases memoized resources held by the session.
-func (s *Session) Close() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.platform = nil
-	return nil
-}
-
 // cloneWithContext returns a shallow copy of s with the given kubeContext
 // applied, clearing any cached clients. Used by Cluster to build clients
 // with the resolved context without mutating the original session.
+// The clone shares the same [workspace.Workspace].
 func (s *Session) cloneWithContext(kubeContext string) *Session {
 	return &Session{
+		workspace:            s.workspace,
 		namespace:            s.namespace,
 		kubeconfig:           s.kubeconfig,
 		kubeContext:          kubeContext,
 		extraKubeconfigPaths: s.extraKubeconfigPaths,
-		specPath:             s.specPath,
-		platformPath:         s.platformPath,
 		storageDriver:        s.storageDriver,
 		debug:                s.debug,
 		timeout:              s.timeout,

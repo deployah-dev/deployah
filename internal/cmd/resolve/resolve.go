@@ -90,7 +90,7 @@ func runResolve(c *nabat.Context) error {
 
 	// Raw manifest is only for the substitution prescan. Resolution must
 	// see the substituted spec so ${...} in env and envFile match deploy.
-	rawSpec, _, err := spec.ParseManifest(sess.SpecPath())
+	rawSpec, err := sess.ParseManifest()
 	if err != nil {
 		return fmt.Errorf("load manifest: %w", err)
 	}
@@ -365,7 +365,7 @@ func buildEnvironmentOverview(rawSpec *spec.Spec, platform *spec.PlatformConfig,
 // runEnvironmentsOverview prints every environment from the spec and
 // platform files in the requested output format.
 func runEnvironmentsOverview(c *nabat.Context, sess *session.Session, output string) error {
-	rawSpec, _, err := spec.ParseManifest(sess.SpecPath())
+	rawSpec, err := sess.ParseManifest()
 	if err != nil {
 		return fmt.Errorf("load manifest: %w", err)
 	}
