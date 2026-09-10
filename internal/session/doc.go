@@ -14,16 +14,17 @@
 
 // Package session holds per-command Kubernetes and Helm client state.
 //
-// [Session] carries the global CLI options (kubeconfig, namespace, spec path,
-// etc.) and travels through [context.Context] so every command shares one
-// configured environment per invocation. Construct one with [New], attach it
-// via [WithContext], and retrieve it in handlers through [FromContext].
+// [Session] is the invocation handle for one CLI run. It carries global
+// options and travels through [context.Context] so every command shares one
+// configured environment. Construct one with [New], attach it via
+// [WithContext], and retrieve it in handlers through [FromContext].
 //
-// Spec and platform source loading is delegated to [workspace.Workspace].
-// Kubernetes destination resolution is delegated to [target.Resolver]. Call
-// [Session.Target] with the environment name to obtain a [Cluster] that holds
-// the resolved [target.Target], a [HelmConfig] snapshot, client factories,
-// and lazily constructed Helm and Kubernetes clients. Cluster does not
-// embed [Session]. Cluster REST and Kubernetes construction still prefer
+// Spec and platform source loading is owned by [workspace.Workspace].
+// Call [Session.Workspace] to load those sources. Kubernetes destination
+// resolution is delegated to [target.Resolver]. Call [Session.Target] with
+// the environment name to obtain a [Cluster] that holds the resolved
+// [target.Target], a [HelmConfig] snapshot, client factories, and lazily
+// constructed Helm and Kubernetes clients. Cluster does not embed
+// [Session]. Cluster REST and Kubernetes construction still prefer
 // in-cluster config when present.
 package session

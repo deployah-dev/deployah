@@ -19,26 +19,14 @@ import (
 // sessionKey is a private context key for storing the Session in context.
 type sessionKey struct{}
 
-// CommandPolicy controls how the session handles missing platform files.
-type CommandPolicy int
-
-const (
-	// PolicyLenient allows proceeding with a warning when the platform file
-	// is absent. Used for read-only commands (logs, status, list, shell).
-	PolicyLenient CommandPolicy = iota
-	// PolicyStrict requires a resolvable platform file for commands that
-	// modify cluster state (deploy, delete). The caller must gate on this
-	// before contacting the cluster.
-	PolicyStrict
-)
-
-// Session holds per-invocation configuration and lazily loads the spec.
+// Session holds per-invocation configuration for one CLI run.
 // It is created once in the root pre-run hook and travels through
 // [context.Context] so every command shares one configured environment.
 //
-// Spec and platform source loading is delegated to [workspace.Workspace].
-// Kubernetes destination resolution is delegated to [target.Resolver].
-// To access Helm or Kubernetes clients, call [Session.Target] first.
+// Spec and platform source loading is owned by [workspace.Workspace].
+// Call [Session.Workspace] to load sources. Kubernetes destination
+// resolution is delegated to [target.Resolver]. To access Helm or
+// Kubernetes clients, call [Session.Target] first.
 type Session struct {
 	workspaceConfig workspace.Config
 	workspace       *workspace.Workspace
@@ -47,7 +35,6 @@ type Session struct {
 	kubeconfig           string
 	kubeContext          string
 	extraKubeconfigPaths []string
-	commandPolicy        CommandPolicy
 
 	storageDriver string
 	debug         bool
@@ -125,16 +112,6 @@ func WithPlatformFile(path string) Option {
 	return func(s *Session) { s.workspaceConfig.PlatformPath = path }
 }
 
-// WithCommandPolicy sets the platform-missing policy for this session.
-// Destructive commands (deploy, delete) should use [PolicyStrict];
-// read-only commands (logs, status, list, shell) should use [PolicyLenient].
-func WithCommandPolicy(policy CommandPolicy) Option {
-	return func(s *Session) { s.commandPolicy = policy }
-}
-
-// CommandPolicy returns the configured platform-missing policy.
-func (s *Session) CommandPolicy() CommandPolicy { return s.commandPolicy }
-
 // WithStorageDriver sets the Helm storage driver (default: "secret").
 func WithStorageDriver(driver string) Option {
 	return func(s *Session) { s.storageDriver = driver }
@@ -192,19 +169,11 @@ func FromContext(ctx context.Context) *Session {
 	return nil
 }
 
-// Platform loads and memoizes the platform configuration through the
-// composed [workspace.Workspace]. See [workspace.Workspace.Platform] for
-// required versus optional source semantics.
-func (s *Session) Platform() (*spec.PlatformConfig, error) {
-	return s.workspace.Platform()
-}
-
-// Spec loads the spec for [Session.SpecPath] and environment. Each call loads
-// from disk because the result depends on the environment argument (envsubst
-// selects different env files per environment). The platform config, when
-// present, supplies the environment registry.
-func (s *Session) Spec(ctx context.Context, environment string) (*spec.Spec, error) {
-	return s.workspace.LoadSpec(ctx, environment)
+// Workspace returns the invocation [workspace.Workspace] that owns spec
+// and platform source locations. The Workspace is created in [New] and
+// does not change for the rest of the Session.
+func (s *Session) Workspace() *workspace.Workspace {
+	return s.workspace
 }
 
 // Target resolves the Kubernetes destination for env and returns a [Cluster]
@@ -212,11 +181,12 @@ func (s *Session) Spec(ctx context.Context, environment string) (*spec.Spec, err
 //
 // Destination resolution is delegated to [target.Resolver]. The platform
 // file, when present, supplies only a context name via
-// [spec.PlatformEnvContext]. ctx is unused.
+// [spec.PlatformEnvContext]. Platform load errors are ignored so Target
+// can still resolve from kubeconfig. ctx is unused.
 func (s *Session) Target(ctx context.Context, env string) (*Cluster, error) {
 	platformContext := ""
 	if env != "" {
-		if p, err := s.Platform(); err == nil && p != nil {
+		if p, err := s.workspace.Platform(); err == nil && p != nil {
 			platformContext = spec.PlatformEnvContext(p, env)
 		}
 	}
@@ -248,33 +218,10 @@ func (s *Session) targetConfig() target.Config {
 	}
 }
 
-// SpecPath returns the effective spec file path from the composed Workspace.
-// The path is never empty; an unset option defaults to [spec.DefaultSpecPath].
-func (s *Session) SpecPath() string {
-	return s.workspace.SpecPath()
-}
-
-// PlatformPath returns the snapshotted platform file path from the
-// composed Workspace.
-func (s *Session) PlatformPath() string {
-	return s.workspace.PlatformPath()
-}
-
-// ParseManifest reads and partially validates the spec (apiVersion +
-// environments only, no envsubst, no defaults). It is intended for commands
-// that need the raw manifest structure without environment-specific processing
-// (e.g. validate manifest-only mode, substitution prescan).
-func (s *Session) ParseManifest() (*spec.Spec, error) {
-	return s.workspace.ParseManifest()
-}
-
 // KubeContext returns the explicit kube context override, or empty string if
 // none was set. An empty string means the cluster context comes from the
 // platform file or kubeconfig default.
 func (s *Session) KubeContext() string { return s.kubeContext }
-
-// DebugKeepTempChart reports whether temporary chart directories should be kept.
-func (s *Session) DebugKeepTempChart() bool { return s.debug }
 
 // Timeout returns the configured timeout for Helm operations.
 func (s *Session) Timeout() time.Duration { return s.timeout }

@@ -61,16 +61,6 @@ users:
     token: fake-token
 `
 
-// minimalSpecYAML is a self-contained spec fixture with a valid apiVersion
-// and a single component, reused by Spec/ParseManifest tests.
-const minimalSpecYAML = `apiVersion: v1-alpha.5
-project: demo
-components:
-  web:
-    image: nginx:1.27
-    port: 8080
-`
-
 // MockHelmClient is a mock implementation of [HelmClient] for testing.
 type MockHelmClient struct {
 	mock.Mock
@@ -464,6 +454,25 @@ func TestTarget(t *testing.T) {
 	})
 }
 
+func TestSessionTargetIgnoresPlatformError(t *testing.T) {
+	t.Parallel()
+
+	kubePath := filepath.Join(t.TempDir(), "kubeconfig")
+	require.NoError(t, writeFile(kubePath, minimalKubeconfig))
+	missingPlatform := filepath.Join(t.TempDir(), "missing.platform.yaml")
+	sess := New(
+		WithKubeconfig(kubePath),
+		WithPlatformFile(missingPlatform),
+	)
+	_, platErr := sess.Workspace().Platform()
+	require.ErrorContains(t, platErr, "platform file not found: "+missingPlatform)
+
+	cluster, err := sess.Target(t.Context(), "production")
+	require.NoError(t, err)
+	assert.Equal(t, "test-context", cluster.Context())
+	assert.Equal(t, target.ContextSourceKubeconfig, cluster.ContextSource())
+}
+
 func TestClusterHelmUsesResolvedTarget(t *testing.T) {
 	t.Parallel()
 
@@ -780,53 +789,6 @@ func writeFile(path, content string) error {
 	return os.WriteFile(path, []byte(content), 0o600)
 }
 
-// TestCommandPolicy verifies the WithCommandPolicy option round-trips
-// through the CommandPolicy accessor, including the unset default.
-func TestCommandPolicy(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name string
-		opts []Option
-		want CommandPolicy
-	}{
-		{name: "defaults to lenient when unset", want: PolicyLenient},
-		{name: "strict policy round-trips", opts: []Option{WithCommandPolicy(PolicyStrict)}, want: PolicyStrict},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			assert.Equal(t, tt.want, New(tt.opts...).CommandPolicy())
-		})
-	}
-}
-
-// TestDebugKeepTempChart verifies the WithDebug option round-trips through
-// the DebugKeepTempChart accessor.
-func TestDebugKeepTempChart(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name string
-		opts []Option
-		want bool
-	}{
-		{name: "defaults to false when unset", want: false},
-		{name: "true round-trips", opts: []Option{WithDebug(true)}, want: true},
-		{name: "explicit false round-trips", opts: []Option{WithDebug(false)}, want: false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			assert.Equal(t, tt.want, New(tt.opts...).DebugKeepTempChart())
-		})
-	}
-}
-
 // TestTimeoutAccessor verifies the Timeout accessor returns the configured
 // value, including the package default when unset.
 func TestTimeoutAccessor(t *testing.T) {
@@ -850,85 +812,23 @@ func TestTimeoutAccessor(t *testing.T) {
 	}
 }
 
-// TestSpecPathAccessor verifies SpecPath returns the configured spec path,
-// or [spec.DefaultSpecPath] when unset.
-func TestSpecPathAccessor(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name string
-		opts []Option
-		want string
-	}{
-		{name: "default filename when unset", want: spec.DefaultSpecPath},
-		{name: "returns configured path", opts: []Option{WithSpecPath("/tmp/deployah.yaml")}, want: "/tmp/deployah.yaml"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			assert.Equal(t, tt.want, New(tt.opts...).SpecPath())
-		})
-	}
-}
-
-func TestPlatformPathAccessor(t *testing.T) {
-	tests := []struct {
-		name string
-		opts []Option
-		want string
-	}{
-		{name: "default filename when unset", want: spec.DefaultPlatformPath},
-		{name: "explicit platform file", opts: []Option{WithPlatformFile("/tmp/custom.platform.yaml")}, want: "/tmp/custom.platform.yaml"},
-		{name: "same directory as spec", opts: []Option{WithSpecPath(filepath.Join("app", "deployah.yaml"))}, want: filepath.Join("app", spec.DefaultPlatformPath)},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv(spec.PlatformEnvVar, "")
-			assert.Equal(t, tt.want, New(tt.opts...).PlatformPath())
-		})
-	}
-}
-
 func TestSessionConstructsWorkspaceAfterOptions(t *testing.T) {
 	t.Parallel()
 
 	specPath := filepath.Join(t.TempDir(), "deployah.yaml")
 	platformPath := filepath.Join(t.TempDir(), "custom.platform.yaml")
 	sess := New(WithSpecPath(specPath), WithPlatformFile(platformPath))
-	assert.Equal(t, specPath, sess.SpecPath())
-	assert.Equal(t, platformPath, sess.PlatformPath())
+	ws := sess.Workspace()
+	require.NotNil(t, ws)
+	assert.Equal(t, specPath, ws.SpecPath())
+	assert.Equal(t, platformPath, ws.PlatformPath())
 }
 
-func TestSessionPlatformDelegation(t *testing.T) {
+func TestSessionWorkspaceReturnsSameInstance(t *testing.T) {
 	t.Parallel()
 
-	platformPath := filepath.Join(t.TempDir(), "deployah.platform.yaml")
-	require.NoError(t, writeFile(platformPath, platformContextYAML("prod-eks")))
-	sess := New(WithPlatformFile(platformPath))
-	p, err := sess.Platform()
-	require.NoError(t, err)
-	require.NotNil(t, p)
-	assert.Equal(t, "prod-eks", spec.PlatformEnvContext(p, "production"))
-}
-
-func TestSessionPlatformMemoized(t *testing.T) {
-	t.Parallel()
-
-	platformPath := filepath.Join(t.TempDir(), "deployah.platform.yaml")
-	require.NoError(t, writeFile(platformPath, platformContextYAML("prod-eks")))
-	sess := New(WithPlatformFile(platformPath))
-
-	first, err := sess.Platform()
-	require.NoError(t, err)
-	require.NotNil(t, first)
-
-	require.NoError(t, os.Remove(platformPath))
-	second, err := sess.Platform()
-	require.NoError(t, err)
-	assert.Same(t, first, second)
+	sess := New()
+	assert.Same(t, sess.Workspace(), sess.Workspace())
 }
 
 // TestKubeContextAccessor verifies KubeContext returns the explicit
@@ -950,111 +850,6 @@ func TestKubeContextAccessor(t *testing.T) {
 			t.Parallel()
 
 			assert.Equal(t, tt.want, New(tt.opts...).KubeContext())
-		})
-	}
-}
-
-// TestSpec verifies Spec loads a real manifest from disk and wraps load
-// errors when the file is missing.
-func TestSpec(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name        string
-		setup       func(t *testing.T) *Session
-		wantErr     bool
-		errContains string
-		check       func(t *testing.T, m *spec.Spec)
-	}{
-		{
-			name: "loads a valid manifest from disk",
-			setup: func(t *testing.T) *Session {
-				t.Helper()
-				specPath := filepath.Join(t.TempDir(), "deployah.yaml")
-				require.NoError(t, writeFile(specPath, minimalSpecYAML))
-				return New(WithSpecPath(specPath))
-			},
-			check: func(t *testing.T, m *spec.Spec) {
-				t.Helper()
-				require.NotNil(t, m)
-				assert.Equal(t, "demo", m.Project)
-			},
-		},
-		{
-			name: "wraps the underlying load error for a missing file",
-			setup: func(t *testing.T) *Session {
-				t.Helper()
-				return New(WithSpecPath(filepath.Join(t.TempDir(), "missing.yaml")))
-			},
-			wantErr:     true,
-			errContains: "failed to load spec",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			m, err := tt.setup(t).Spec(t.Context(), "")
-			if tt.wantErr {
-				require.Error(t, err)
-				assert.Nil(t, m)
-				assert.Contains(t, err.Error(), tt.errContains)
-				return
-			}
-			require.NoError(t, err)
-			tt.check(t, m)
-		})
-	}
-}
-
-// TestParseManifest verifies ParseManifest's happy path and its behavior
-// when the underlying file cannot be read.
-func TestParseManifest(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name    string
-		setup   func(t *testing.T) *Session
-		wantErr bool
-		check   func(t *testing.T, m *spec.Spec)
-	}{
-		{
-			name: "parses a valid manifest",
-			setup: func(t *testing.T) *Session {
-				t.Helper()
-				specPath := filepath.Join(t.TempDir(), "deployah.yaml")
-				require.NoError(t, writeFile(specPath, minimalSpecYAML))
-				return New(WithSpecPath(specPath))
-			},
-			check: func(t *testing.T, m *spec.Spec) {
-				t.Helper()
-				require.NotNil(t, m)
-				assert.Equal(t, "demo", m.Project)
-			},
-		},
-		{
-			name: "errors for a missing file",
-			setup: func(t *testing.T) *Session {
-				t.Helper()
-				return New(WithSpecPath(filepath.Join(t.TempDir(), "missing.yaml")))
-			},
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			m, err := tt.setup(t).ParseManifest()
-			if tt.wantErr {
-				require.Error(t, err)
-				assert.Nil(t, m)
-				return
-			}
-			require.NoError(t, err)
-			tt.check(t, m)
 		})
 	}
 }

@@ -82,8 +82,8 @@ func runInit(c *nabat.Context) error {
 
 	c.Logger().Debug("starting project initialization")
 
-	sess := session.FromContext(c)
-	specPath, platformPath := sess.SpecPath(), sess.PlatformPath()
+	ws := session.FromContext(c).Workspace()
+	specPath, platformPath := ws.SpecPath(), ws.PlatformPath()
 
 	proceed, overwriteErr := checkOverwrite(c, specPath, opts.DryRun || opts.Force)
 	if overwriteErr != nil {

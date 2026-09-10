@@ -79,13 +79,14 @@ func runTask(c *nabat.Context) error {
 	}
 
 	sess := session.FromContext(c)
+	ws := sess.Workspace()
 
-	platform, platformErr := sess.Platform()
+	platform, platformErr := ws.Platform()
 	if platformErr != nil {
 		return fmt.Errorf("load platform file: %w", platformErr)
 	}
 
-	manifest, err := spec.Load(c, sess.SpecPath(), opts.Environment, platform)
+	manifest, err := spec.Load(c, ws.SpecPath(), opts.Environment, platform)
 	if err != nil {
 		return fmt.Errorf("load spec: %w", err)
 	}

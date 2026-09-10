@@ -89,10 +89,11 @@ func runDeploy(c *nabat.Context) error {
 	c.Logger().Debug("starting deployment process")
 
 	sess := session.FromContext(c)
+	ws := sess.Workspace()
 
 	// Prescan the raw (pre-envsubst) manifest for ${VAR} tokens so the
 	// resolver can distinguish static from dynamic subdomains.
-	rawSpec, rawErr := sess.ParseManifest()
+	rawSpec, rawErr := ws.ParseManifest()
 	if rawErr != nil {
 		return fmt.Errorf("parse manifest: %w", rawErr)
 	}
@@ -100,13 +101,13 @@ func runDeploy(c *nabat.Context) error {
 
 	// The platform file owns the environment registry --environment is
 	// validated against, so it loads before the spec.
-	platform, platformErr := sess.Platform()
+	platform, platformErr := ws.Platform()
 	if platformErr != nil {
 		return fmt.Errorf("load platform file: %w", platformErr)
 	}
 
 	// Load the fully substituted manifest (envsubst applied).
-	manifest, err := spec.Load(c, sess.SpecPath(), opts.Environment, platform)
+	manifest, err := spec.Load(c, ws.SpecPath(), opts.Environment, platform)
 	if err != nil {
 		return fmt.Errorf("load spec: %w", err)
 	}
@@ -192,7 +193,7 @@ func runDeploy(c *nabat.Context) error {
 	if restErr != nil {
 		c.Logger().Debug("rest config unavailable for extras scope discovery", "err", restErr)
 	}
-	bundle, err := extras.LoadFromSpec(sess.SpecPath(), manifest, platform, opts.Environment, cluster.Namespace(), restCfg)
+	bundle, err := extras.LoadFromSpec(ws.SpecPath(), manifest, platform, opts.Environment, cluster.Namespace(), restCfg)
 	if err != nil {
 		return fmt.Errorf("load extras: %w", err)
 	}

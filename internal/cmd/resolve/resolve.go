@@ -80,6 +80,7 @@ func runResolve(c *nabat.Context) error {
 	}
 
 	sess := session.FromContext(c)
+	ws := sess.Workspace()
 
 	if opts.Environments {
 		return runEnvironmentsOverview(c, sess, opts.Output)
@@ -90,13 +91,13 @@ func runResolve(c *nabat.Context) error {
 
 	// Raw manifest is only for the substitution prescan. Resolution must
 	// see the substituted spec so ${...} in env and envFile match deploy.
-	rawSpec, err := sess.ParseManifest()
+	rawSpec, err := ws.ParseManifest()
 	if err != nil {
 		return fmt.Errorf("load manifest: %w", err)
 	}
 
 	// Load platform (degraded when absent). It owns the environment registry.
-	platform, platformErr := sess.Platform()
+	platform, platformErr := ws.Platform()
 	if platformErr != nil {
 		// Platform file was found but failed to load: hard error.
 		return fmt.Errorf("load platform: %w", platformErr)
@@ -109,7 +110,7 @@ func runResolve(c *nabat.Context) error {
 
 	substReport := spec.PrescanSubstitutionReport(rawSpec)
 
-	manifest, err := spec.Load(c, sess.SpecPath(), opts.Environment, platform, spec.AllowHookCycleForDisplay())
+	manifest, err := spec.Load(c, ws.SpecPath(), opts.Environment, platform, spec.AllowHookCycleForDisplay())
 	if err != nil {
 		return fmt.Errorf("load spec: %w", err)
 	}
@@ -365,11 +366,12 @@ func buildEnvironmentOverview(rawSpec *spec.Spec, platform *spec.PlatformConfig,
 // runEnvironmentsOverview prints every environment from the spec and
 // platform files in the requested output format.
 func runEnvironmentsOverview(c *nabat.Context, sess *session.Session, output string) error {
-	rawSpec, err := sess.ParseManifest()
+	ws := sess.Workspace()
+	rawSpec, err := ws.ParseManifest()
 	if err != nil {
 		return fmt.Errorf("load manifest: %w", err)
 	}
-	platform, platformErr := sess.Platform()
+	platform, platformErr := ws.Platform()
 	if platformErr != nil {
 		return fmt.Errorf("load platform: %w", platformErr)
 	}

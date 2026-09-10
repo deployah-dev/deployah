@@ -10,6 +10,7 @@ import (
 
 	"deployah.dev/deployah/internal/session"
 	"deployah.dev/deployah/internal/spec"
+	"deployah.dev/deployah/internal/workspace"
 )
 
 // Options holds command-line flags for validate.
@@ -46,19 +47,19 @@ func runValidate(c *nabat.Context) error {
 		return fmt.Errorf("binding options: %w", err)
 	}
 
-	rt := session.FromContext(c)
+	ws := session.FromContext(c).Workspace()
 
 	if opts.Environment == "" {
-		return runManifestOnly(c, rt)
+		return runManifestOnly(c, ws)
 	}
-	return runCrossFile(c, rt, opts.Environment)
+	return runCrossFile(c, ws, opts.Environment)
 }
 
 // runManifestOnly validates only the manifest schema without environment
 // resolution. It applies type-aware sentinel substitution so ${VAR} tokens
 // do not cause false format-assertion failures, while literal typos still fail.
-func runManifestOnly(c *nabat.Context, rt *session.Session) error {
-	specPath := rt.SpecPath()
+func runManifestOnly(c *nabat.Context, ws *workspace.Workspace) error {
+	specPath := ws.SpecPath()
 	data, err := os.ReadFile(specPath) // #nosec G304
 	if err != nil {
 		return fmt.Errorf("failed to read manifest: %w", err)
@@ -89,7 +90,7 @@ func runManifestOnly(c *nabat.Context, rt *session.Session) error {
 	// Cross-field and platform checks are best-effort here: they need the
 	// raw (pre-substitution) spec, so a manifest that only unmarshals after
 	// ${VAR} substitution skips them with a warning.
-	rawSpec, parseErr := rt.ParseManifest()
+	rawSpec, parseErr := ws.ParseManifest()
 	if parseErr != nil {
 		c.Warn(fmt.Sprintf("skipping cross-field checks: %v", parseErr))
 	} else {
@@ -99,7 +100,7 @@ func runManifestOnly(c *nabat.Context, rt *session.Session) error {
 		if taskErr := spec.ValidateSpecTasks(rawSpec, false); taskErr != nil {
 			return taskErr
 		}
-		platform, platformErr := rt.Platform()
+		platform, platformErr := ws.Platform()
 		if platformErr != nil {
 			return fmt.Errorf("platform file error: %w", platformErr)
 		}
@@ -123,20 +124,20 @@ func runManifestOnly(c *nabat.Context, rt *session.Session) error {
 // runCrossFile validates the substituted spec and runs [spec.Resolve] for
 // the named environment. A missing platform file is allowed when the spec
 // does not use platform-owned features.
-func runCrossFile(c *nabat.Context, rt *session.Session, environment string) error {
-	rawSpec, err := rt.ParseManifest()
+func runCrossFile(c *nabat.Context, ws *workspace.Workspace, environment string) error {
+	rawSpec, err := ws.ParseManifest()
 	if err != nil {
 		return fmt.Errorf("manifest invalid: %w", err)
 	}
 
-	platform, platformErr := rt.Platform()
+	platform, platformErr := ws.Platform()
 	if platformErr != nil {
 		return fmt.Errorf("platform file error: %w", platformErr)
 	}
 
 	substReport := spec.PrescanSubstitutionReport(rawSpec)
 
-	loaded, err := spec.Load(c, rt.SpecPath(), environment, platform)
+	loaded, err := spec.Load(c, ws.SpecPath(), environment, platform)
 	if err != nil {
 		return fmt.Errorf("load spec: %w", err)
 	}
