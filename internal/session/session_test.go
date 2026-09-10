@@ -18,6 +18,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sync"
@@ -1095,7 +1097,66 @@ func TestClusterClientsShareTargetDestination(t *testing.T) {
 	assert.Equal(t, path, gotHelm.KubeconfigPath)
 }
 
-// TestIntegrationWithMocks covers the named case.
+func TestDefaultHelmFactory_MissingExtraUsesDefaultKubeconfig(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/version" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, err := w.Write([]byte(`{"major":"1","minor":"37","gitVersion":"v1.37.0"}`))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	kubeconfig := fmt.Sprintf(`apiVersion: v1
+kind: Config
+current-context: dev
+clusters:
+- name: dev-cluster
+  cluster:
+    server: %s
+- name: prod-cluster
+  cluster:
+    server: http://127.0.0.1:1
+contexts:
+- name: dev
+  context:
+    cluster: dev-cluster
+    user: test-user
+    namespace: sandbox
+- name: prod
+  context:
+    cluster: prod-cluster
+    user: test-user
+    namespace: payments
+users:
+- name: test-user
+  user:
+    token: fake-token
+`, srv.URL)
+	path := filepath.Join(t.TempDir(), "kubeconfig")
+	require.NoError(t, writeFile(path, kubeconfig))
+	t.Setenv("KUBECONFIG", path)
+	t.Setenv("HOME", t.TempDir())
+
+	sess := New(WithExtraKubeconfigPaths(filepath.Join(t.TempDir(), "missing-local")))
+	cluster, err := sess.Target(t.Context(), "")
+	require.NoError(t, err)
+
+	want, err := cluster.RESTConfig()
+	require.NoError(t, err)
+	assert.Equal(t, srv.URL, want.Host)
+
+	helmClient, err := cluster.Helm()
+	require.NoError(t, err)
+	require.NotNil(t, helmClient)
+	require.NoError(t, helmClient.IsReachable())
+}
+
 func TestIntegrationWithMocks(t *testing.T) {
 	t.Run("full workflow with mock helm client", func(t *testing.T) {
 		mockHelm := &MockHelmClient{}

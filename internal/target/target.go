@@ -15,10 +15,7 @@
 package target
 
 import (
-	"fmt"
-
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
 )
 
 // defaultNamespace is used when no override or kubeconfig context
@@ -41,7 +38,7 @@ const (
 //
 // After [Resolver.Resolve], Context, ContextSource, Namespace, and the
 // kubeconfig loading snapshot do not change. Concurrent calls to the
-// getters and [Target.RESTConfig] are safe.
+// getters, [Target.ClientConfig], and [Target.RESTConfig] are safe.
 type Target struct {
 	contextName   string
 	contextSource ContextSource
@@ -78,27 +75,12 @@ func (t *Target) Namespace() string {
 
 // RESTConfig returns a kubeconfig-based REST config for this destination.
 //
-// When Context is non-empty, the config pins that context. Loading rules
+// It uses [Target.ClientConfig]. When Context is non-empty, the config pins
+// that context. Namespace is pinned to [Target.Namespace]. Loading rules
 // come from the snapshot taken at Resolve, not from the current process
 // environment. It does not use in-cluster configuration. Load errors from
 // the snapshotted rules are returned; kubeconfig file contents are read at
 // call time.
 func (t *Target) RESTConfig() (*rest.Config, error) {
-	if t == nil {
-		return nil, fmt.Errorf("failed to build kubernetes config: target is nil")
-	}
-	rules := t.loading.clientConfigLoadingRules()
-	raw, err := rules.Load()
-	if err != nil {
-		return nil, fmt.Errorf("failed to build kubernetes config: %w", err)
-	}
-	overrides := &clientcmd.ConfigOverrides{}
-	if t.contextName != "" {
-		overrides.CurrentContext = t.contextName
-	}
-	cfg, err := clientcmd.NewNonInteractiveClientConfig(*raw, "", overrides, rules).ClientConfig()
-	if err != nil {
-		return nil, fmt.Errorf("failed to build kubernetes config: %w", err)
-	}
-	return cfg, nil
+	return t.ClientConfig().ClientConfig()
 }

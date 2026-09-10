@@ -13,13 +13,13 @@ import (
 
 	"helm.sh/helm/v4/pkg/action"
 	"helm.sh/helm/v4/pkg/chart/v2/loader"
-	"helm.sh/helm/v4/pkg/cli"
 	"helm.sh/helm/v4/pkg/kube"
 	"helm.sh/helm/v4/pkg/postrenderer"
 	"helm.sh/helm/v4/pkg/release"
 	"helm.sh/helm/v4/pkg/storage/driver"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/selection"
+	"k8s.io/cli-runtime/pkg/genericclioptions"
 
 	"deployah.dev/deployah/internal/spec"
 
@@ -50,50 +50,32 @@ var (
 
 // Client wraps Helm action configuration for Deployah operations.
 type Client struct {
-	settings             *cli.EnvSettings
-	config               *action.Configuration
-	timeout              time.Duration
-	namespace            string
-	kubeconfig           string
-	kubeContext          string
-	extraKubeconfigPaths []string
-	storageDriver        string
-	debug                bool
-	chartCache           *ChartCache
+	restGetter    genericclioptions.RESTClientGetter
+	config        *action.Configuration
+	timeout       time.Duration
+	namespace     string
+	storageDriver string
+	debug         bool
+	chartCache    *ChartCache
 }
 
 // Option is a functional option for configuring the Helm client
 type Option func(*Client)
 
-// WithNamespace sets the Kubernetes namespace for Helm operations
+// WithNamespace sets the Kubernetes namespace for Helm operations.
+// Empty falls back to "default" in [NewClient].
 func WithNamespace(namespace string) Option {
 	return func(c *Client) {
 		c.namespace = namespace
 	}
 }
 
-// WithKubeconfig sets the path to the kubeconfig file
-func WithKubeconfig(kubeconfig string) Option {
+// WithRESTClientGetter sets the Kubernetes REST client getter used by Helm
+// actions. A nil getter is treated as unset; [NewClient] then installs an
+// unconfigured getter so [action.Configuration.Init] never receives nil.
+func WithRESTClientGetter(getter genericclioptions.RESTClientGetter) Option {
 	return func(c *Client) {
-		c.kubeconfig = kubeconfig
-	}
-}
-
-// WithKubeContext sets the Kubernetes context to use, overriding the
-// kubeconfig's current context.
-func WithKubeContext(kubeContext string) Option {
-	return func(c *Client) {
-		c.kubeContext = kubeContext
-	}
-}
-
-// WithExtraKubeconfigPaths appends additional kubeconfig file paths so their
-// contexts are available alongside the default kubeconfig. This is ignored
-// when WithKubeconfig is also set, because an explicit path takes full
-// precedence and makes extra paths redundant.
-func WithExtraKubeconfigPaths(paths ...string) Option {
-	return func(c *Client) {
-		c.extraKubeconfigPaths = append(c.extraKubeconfigPaths, paths...)
+		c.restGetter = getter
 	}
 }
 
@@ -130,6 +112,8 @@ func WithChartCache(cache *ChartCache) Option {
 // Default storage driver is "secret" if not specified.
 // Default timeout is 5 minutes if not specified.
 // Each client gets its own [ChartCache] unless [WithChartCache] is set.
+// A missing [WithRESTClientGetter] (including a nil getter) uses an
+// unconfigured getter so [action.Configuration.Init] never receives nil.
 func NewClient(opts ...Option) (*Client, error) {
 	c := &Client{
 		storageDriver: "secret",
@@ -143,35 +127,11 @@ func NewClient(opts ...Option) (*Client, error) {
 	if c.chartCache == nil {
 		return nil, errors.New("chart cache is required")
 	}
-
-	settings := cli.New()
-
-	// An explicit kubeconfig takes full precedence; extra paths are ignored,
-	// matching client-go's ExplicitPath semantics. Otherwise prepend the extra
-	// paths before the default kubeconfig so deployah-managed contexts (e.g.
-	// a recreated Kind cluster) take priority over stale entries in
-	// ~/.kube/config.
-	if c.kubeconfig != "" {
-		settings.KubeConfig = c.kubeconfig
-	} else if len(c.extraKubeconfigPaths) > 0 {
-		all := make([]string, 0, len(c.extraKubeconfigPaths)+1)
-		all = append(all, c.extraKubeconfigPaths...)
-		all = append(all, settings.KubeConfig)
-		var parts []string
-		for _, p := range all {
-			if p != "" {
-				parts = append(parts, p)
-			}
-		}
-		if len(parts) > 0 {
-			settings.KubeConfig = strings.Join(parts, string(os.PathListSeparator))
-		}
+	if c.namespace == "" {
+		c.namespace = "default"
 	}
-	if c.kubeContext != "" {
-		settings.KubeContext = c.kubeContext
-	}
-	if c.namespace != "" {
-		settings.SetNamespace(c.namespace)
+	if c.restGetter == nil {
+		c.restGetter = NewRESTClientGetter(nil)
 	}
 
 	validDrivers := map[string]bool{"secret": true, "configmap": true, "memory": true}
@@ -180,23 +140,20 @@ func NewClient(opts ...Option) (*Client, error) {
 	}
 
 	c.config = new(action.Configuration)
-	if err := c.config.Init(settings.RESTClientGetter(), settings.Namespace(), c.storageDriver); err != nil {
+	if err := c.config.Init(c.restGetter, c.namespace, c.storageDriver); err != nil {
 		return nil, fmt.Errorf("failed to initialize Helm configuration: %w", err)
 	}
-
-	c.settings = settings
 
 	return c, nil
 }
 
 // Namespace returns the release namespace Helm will use for installs and
-// offline renders (from WithNamespace, HELM_NAMESPACE, or the kubeconfig
-// context default).
+// offline renders. It comes from [WithNamespace], or "default" when empty.
 func (c *Client) Namespace() string {
-	if c == nil || c.settings == nil {
-		return ""
+	if c == nil || c.namespace == "" {
+		return "default"
 	}
-	return c.settings.Namespace()
+	return c.namespace
 }
 
 // IsReachable reports whether the configured Kubernetes cluster is reachable.
@@ -277,7 +234,7 @@ func (c *Client) InstallApp(ctx context.Context, dryRun bool, resolved *spec.Res
 		// attempt as well.
 		install := action.NewInstall(c.config)
 		install.ReleaseName = releaseName
-		install.Namespace = c.settings.Namespace()
+		install.Namespace = c.Namespace()
 		install.CreateNamespace = true
 		install.Timeout = c.timeout
 		install.WaitStrategy = kube.StatusWatcherStrategy
@@ -293,7 +250,7 @@ func (c *Client) InstallApp(ctx context.Context, dryRun bool, resolved *spec.Res
 
 	// Upgrade existing release
 	upgrade := action.NewUpgrade(c.config)
-	upgrade.Namespace = c.settings.Namespace()
+	upgrade.Namespace = c.Namespace()
 	upgrade.Timeout = c.timeout
 	upgrade.RollbackOnFailure = true
 	upgrade.WaitStrategy = kube.StatusWatcherStrategy
