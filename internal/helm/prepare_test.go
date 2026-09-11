@@ -15,15 +15,25 @@
 package helm
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"helm.sh/helm/v4/pkg/release"
 	"helm.sh/helm/v4/pkg/release/common"
+	"helm.sh/helm/v4/pkg/storage/driver"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	v1 "helm.sh/helm/v4/pkg/release/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+)
+
+const (
+	applySSA = string(v1.ApplyMethodServerSideApply)
+	applyCSA = string(v1.ApplyMethodClientSideApply)
 )
 
 func prepRelease(version int, status common.Status, applyMethod string) *v1.Release {
@@ -38,12 +48,13 @@ func prepRelease(version int, status common.Status, applyMethod string) *v1.Rele
 func TestPrepareRelease(t *testing.T) {
 	t.Parallel()
 
-	deployed := prepRelease(4, common.StatusDeployed, string(ApplyMethodSSA))
-	failed := prepRelease(5, common.StatusFailed, string(ApplyMethodCSA))
-	superseded := prepRelease(5, common.StatusSuperseded, "")
-	olderDeployed := prepRelease(3, common.StatusDeployed, string(ApplyMethodSSA))
-	failedSSA := prepRelease(5, common.StatusFailed, string(ApplyMethodSSA))
-	deployedCSA := prepRelease(4, common.StatusDeployed, string(ApplyMethodCSA))
+	deployed := prepRelease(4, common.StatusDeployed, applySSA)
+	failedSSA := prepRelease(5, common.StatusFailed, applySSA)
+	failedCSA := prepRelease(5, common.StatusFailed, applyCSA)
+	supersededSSA := prepRelease(5, common.StatusSuperseded, applySSA)
+	supersededEmpty := prepRelease(5, common.StatusSuperseded, "")
+	olderDeployedSSA := prepRelease(3, common.StatusDeployed, applySSA)
+	olderDeployedCSA := prepRelease(4, common.StatusDeployed, applyCSA)
 
 	tests := []struct {
 		name    string
@@ -56,7 +67,6 @@ func TestPrepareRelease(t *testing.T) {
 			history: nil,
 			want: ReleasePrep{
 				Operation:    OperationInstall,
-				ApplyMethod:  ApplyMethodSSA,
 				NextRevision: 1,
 			},
 		},
@@ -65,29 +75,26 @@ func TestPrepareRelease(t *testing.T) {
 			history: []*v1.Release{},
 			want: ReleasePrep{
 				Operation:    OperationInstall,
-				ApplyMethod:  ApplyMethodSSA,
 				NextRevision: 1,
 			},
 		},
 		{
-			name:    "latest deployed is upgrade",
-			history: []*v1.Release{prepRelease(1, common.StatusSuperseded, ""), deployed},
+			name:    "latest deployed ssa is upgrade",
+			history: []*v1.Release{prepRelease(1, common.StatusSuperseded, applySSA), deployed},
 			want: ReleasePrep{
 				Operation:    OperationUpgrade,
 				Newest:       deployed,
 				Current:      deployed,
-				ApplyMethod:  ApplyMethodSSA,
 				NextRevision: 5,
 			},
 		},
 		{
 			name:    "unsorted history still picks highest version",
-			history: []*v1.Release{deployed, prepRelease(1, common.StatusSuperseded, ""), prepRelease(2, common.StatusSuperseded, "")},
+			history: []*v1.Release{deployed, prepRelease(1, common.StatusSuperseded, applySSA), prepRelease(2, common.StatusSuperseded, applySSA)},
 			want: ReleasePrep{
 				Operation:    OperationUpgrade,
 				Newest:       deployed,
 				Current:      deployed,
-				ApplyMethod:  ApplyMethodSSA,
 				NextRevision: 5,
 			},
 		},
@@ -98,83 +105,87 @@ func TestPrepareRelease(t *testing.T) {
 		},
 		{
 			name:    "pending-upgrade latest",
-			history: []*v1.Release{olderDeployed, prepRelease(4, common.StatusPendingUpgrade, "")},
+			history: []*v1.Release{olderDeployedSSA, prepRelease(4, common.StatusPendingUpgrade, applyCSA)},
 			wantErr: ErrReleasePending,
 		},
 		{
 			name:    "pending-rollback latest",
-			history: []*v1.Release{olderDeployed, prepRelease(4, common.StatusPendingRollback, "")},
+			history: []*v1.Release{olderDeployedSSA, prepRelease(4, common.StatusPendingRollback, applySSA)},
 			wantErr: ErrReleasePending,
 		},
 		{
-			name:    "failed newest with older deployed",
-			history: []*v1.Release{olderDeployed, failed},
-			want: ReleasePrep{
-				Operation:    OperationUpgrade,
-				Newest:       failed,
-				Current:      olderDeployed,
-				ApplyMethod:  ApplyMethodCSA,
-				NextRevision: 6,
-			},
-		},
-		{
-			name:    "superseded newest with older deployed",
-			history: []*v1.Release{olderDeployed, superseded},
-			want: ReleasePrep{
-				Operation:    OperationUpgrade,
-				Newest:       superseded,
-				Current:      olderDeployed,
-				ApplyMethod:  ApplyMethodCSA,
-				NextRevision: 6,
-			},
-		},
-		{
-			name:    "failed-only is upgrade not install",
-			history: []*v1.Release{failed},
-			want: ReleasePrep{
-				Operation:    OperationUpgrade,
-				Newest:       failed,
-				Current:      failed,
-				ApplyMethod:  ApplyMethodCSA,
-				NextRevision: 6,
-			},
-		},
-		{
-			name:    "superseded-only is upgrade",
-			history: []*v1.Release{superseded},
-			want: ReleasePrep{
-				Operation:    OperationUpgrade,
-				Newest:       superseded,
-				Current:      superseded,
-				ApplyMethod:  ApplyMethodCSA,
-				NextRevision: 6,
-			},
-		},
-		{
-			name:    "newest failed csa with deployed ssa uses newest",
-			history: []*v1.Release{deployed, failed},
-			want: ReleasePrep{
-				Operation:    OperationUpgrade,
-				Newest:       failed,
-				Current:      deployed,
-				ApplyMethod:  ApplyMethodCSA,
-				NextRevision: 6,
-			},
-		},
-		{
-			name:    "newest failed ssa with deployed csa uses newest",
-			history: []*v1.Release{deployedCSA, failedSSA},
+			name:    "failed newest ssa with older deployed ssa",
+			history: []*v1.Release{olderDeployedSSA, failedSSA},
 			want: ReleasePrep{
 				Operation:    OperationUpgrade,
 				Newest:       failedSSA,
-				Current:      deployedCSA,
-				ApplyMethod:  ApplyMethodSSA,
+				Current:      olderDeployedSSA,
 				NextRevision: 6,
 			},
 		},
 		{
+			name:    "superseded newest ssa with older deployed ssa",
+			history: []*v1.Release{olderDeployedSSA, supersededSSA},
+			want: ReleasePrep{
+				Operation:    OperationUpgrade,
+				Newest:       supersededSSA,
+				Current:      olderDeployedSSA,
+				NextRevision: 6,
+			},
+		},
+		{
+			name:    "failed-only ssa is upgrade not install",
+			history: []*v1.Release{failedSSA},
+			want: ReleasePrep{
+				Operation:    OperationUpgrade,
+				Newest:       failedSSA,
+				Current:      failedSSA,
+				NextRevision: 6,
+			},
+		},
+		{
+			name:    "superseded-only ssa is upgrade",
+			history: []*v1.Release{supersededSSA},
+			want: ReleasePrep{
+				Operation:    OperationUpgrade,
+				Newest:       supersededSSA,
+				Current:      supersededSSA,
+				NextRevision: 6,
+			},
+		},
+		{
+			name:    "superseded-only empty apply method is unsupported",
+			history: []*v1.Release{supersededEmpty},
+			wantErr: ErrUnsupportedReleaseApplyMethod,
+		},
+		{
+			name:    "newest deployed csa is unsupported",
+			history: []*v1.Release{prepRelease(1, common.StatusDeployed, applyCSA)},
+			wantErr: ErrUnsupportedReleaseApplyMethod,
+		},
+		{
+			name:    "newest deployed empty apply method is unsupported",
+			history: []*v1.Release{prepRelease(1, common.StatusDeployed, "")},
+			wantErr: ErrUnsupportedReleaseApplyMethod,
+		},
+		{
+			name:    "newest deployed unknown apply method is unsupported",
+			history: []*v1.Release{prepRelease(1, common.StatusDeployed, "json-merge")},
+			wantErr: ErrUnsupportedReleaseApplyMethod,
+		},
+		{
+			name:    "newest ssa with different current csa is unsupported",
+			history: []*v1.Release{olderDeployedCSA, failedSSA},
+			wantErr: ErrUnsupportedReleaseApplyMethod,
+		},
+		{
+			name:    "newest failed csa with deployed ssa is unsupported",
+			history: []*v1.Release{deployed, failedCSA},
+			wantErr: ErrUnsupportedReleaseApplyMethod,
+		},
+		{
 			name:    "uninstalled-only is not install",
-			history: []*v1.Release{prepRelease(1, common.StatusUninstalled, "")},
+			history: []*v1.Release{prepRelease(1, common.StatusUninstalled, applySSA)},
 			wantErr: ErrNoDeployedRevision,
 		},
 	}
@@ -192,7 +203,6 @@ func TestPrepareRelease(t *testing.T) {
 			}
 			require.NoError(t, err)
 			assert.Equal(t, tt.want.Operation, got.Operation)
-			assert.Equal(t, tt.want.ApplyMethod, got.ApplyMethod)
 			assert.Equal(t, tt.want.NextRevision, got.NextRevision)
 			assert.Same(t, tt.want.Newest, got.Newest)
 			assert.Same(t, tt.want.Current, got.Current)
@@ -203,8 +213,8 @@ func TestPrepareRelease(t *testing.T) {
 func TestPrepareRelease_DoesNotMutateHistory(t *testing.T) {
 	t.Parallel()
 
-	first := prepRelease(1, common.StatusDeployed, "")
-	second := prepRelease(2, common.StatusFailed, "")
+	first := prepRelease(1, common.StatusDeployed, applySSA)
+	second := prepRelease(2, common.StatusFailed, applySSA)
 	history := []*v1.Release{first, second}
 	original := slices.Clone(history)
 
@@ -219,42 +229,83 @@ func TestPrepareRelease_PendingIsWrappable(t *testing.T) {
 	t.Parallel()
 
 	_, err := PrepareRelease([]*v1.Release{
-		prepRelease(1, common.StatusPendingUpgrade, ""),
+		prepRelease(1, common.StatusPendingUpgrade, applyCSA),
 	})
 	require.Error(t, err)
 	wrapped := fmt.Errorf("history: %w", err)
 	assert.ErrorIs(t, wrapped, ErrReleasePending)
 }
 
-func TestApplyMethodFor(t *testing.T) {
+func TestPrepareReleaseFromHistory(t *testing.T) {
 	t.Parallel()
 
+	deployed := prepRelease(1, common.StatusDeployed, applySSA)
+	storageErr := errors.New("secret storage unavailable")
+	stringNotFound := errors.New("release: not found")
+	k8sNotFound := apierrors.NewNotFound(schema.GroupResource{Resource: "secrets"}, "rel.v1")
+
 	tests := []struct {
-		name   string
-		op     Operation
-		newest string
-		want   ApplyMethod
+		name    string
+		rels    []*v1.Release
+		histErr error
+		wantOp  Operation
+		wantErr error
 	}{
-		{name: "install ignores ssa", op: OperationInstall, newest: "ssa", want: ApplyMethodSSA},
-		{name: "install ignores csa", op: OperationInstall, newest: "csa", want: ApplyMethodSSA},
-		{name: "install ignores empty", op: OperationInstall, newest: "", want: ApplyMethodSSA},
-		{name: "upgrade ssa", op: OperationUpgrade, newest: "ssa", want: ApplyMethodSSA},
-		{name: "upgrade csa", op: OperationUpgrade, newest: "csa", want: ApplyMethodCSA},
-		{name: "upgrade empty is csa", op: OperationUpgrade, newest: "", want: ApplyMethodCSA},
+		{
+			name:    "driver not found is install",
+			histErr: driver.ErrReleaseNotFound,
+			wantOp:  OperationInstall,
+		},
+		{
+			name:    "wrapped driver not found is install",
+			histErr: fmt.Errorf("history: %w", driver.ErrReleaseNotFound),
+			wantOp:  OperationInstall,
+		},
+		{
+			name:    "k8s not found is not install",
+			histErr: k8sNotFound,
+			wantErr: k8sNotFound,
+		},
+		{
+			name:    "not found string is not install",
+			histErr: stringNotFound,
+			wantErr: stringNotFound,
+		},
+		{
+			name:    "storage error is not install",
+			histErr: storageErr,
+			wantErr: storageErr,
+		},
+		{
+			name:   "ssa history is upgrade",
+			rels:   []*v1.Release{deployed},
+			wantOp: OperationUpgrade,
+		},
+		{
+			name:    "csa history is unsupported",
+			rels:    []*v1.Release{prepRelease(1, common.StatusDeployed, applyCSA)},
+			wantErr: ErrUnsupportedReleaseApplyMethod,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, tt.want, applyMethodFor(tt.op, tt.newest))
+
+			var histRels []release.Releaser
+			for _, rel := range tt.rels {
+				histRels = append(histRels, rel)
+			}
+
+			got, err := prepareReleaseFromHistory(histRels, tt.histErr)
+			if tt.wantErr != nil {
+				require.Error(t, err)
+				assert.ErrorIs(t, err, tt.wantErr)
+				assert.Equal(t, ReleasePrep{}, got)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantOp, got.Operation)
 		})
 	}
-}
-
-func TestApplyMethodFor_InvalidOperationPanics(t *testing.T) {
-	t.Parallel()
-
-	assert.Panics(t, func() {
-		applyMethodFor(0, "ssa")
-	})
 }
