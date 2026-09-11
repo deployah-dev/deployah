@@ -29,6 +29,8 @@ import (
 var ErrNoDeployedRevision = errors.New("no deployed revision to upgrade from")
 
 // Operation is whether Helm would install or upgrade given release history.
+// The zero value is invalid; only [OperationInstall] and [OperationUpgrade]
+// are legal.
 type Operation int
 
 const (
@@ -99,22 +101,27 @@ func PrepareRelease(history []*v1.Release) (ReleasePrep, error) {
 		Operation:    OperationUpgrade,
 		Newest:       newest,
 		Current:      current,
-		ApplyMethod:  ApplyMethodFor(OperationUpgrade, newest.ApplyMethod),
+		ApplyMethod:  applyMethodFor(OperationUpgrade, newest.ApplyMethod),
 		NextRevision: newest.Version + 1,
 	}, nil
 }
 
-// ApplyMethodFor returns the apply method Helm would use. Install is always
+// applyMethodFor returns the apply method Helm would use. Install is always
 // SSA. Upgrade with Helm's "auto" ServerSideApply is SSA only when
 // newestApplyMethod is "ssa"; empty, "csa", and any other value are CSA.
-func ApplyMethodFor(op Operation, newestApplyMethod string) ApplyMethod {
-	if op == OperationInstall {
+// It panics if op is not [OperationInstall] or [OperationUpgrade].
+func applyMethodFor(op Operation, newestApplyMethod string) ApplyMethod {
+	switch op {
+	case OperationInstall:
 		return ApplyMethodSSA
+	case OperationUpgrade:
+		if newestApplyMethod == string(ApplyMethodSSA) {
+			return ApplyMethodSSA
+		}
+		return ApplyMethodCSA
+	default:
+		panic(fmt.Sprintf("invalid helm operation %d", op))
 	}
-	if newestApplyMethod == string(ApplyMethodSSA) {
-		return ApplyMethodSSA
-	}
-	return ApplyMethodCSA
 }
 
 // currentUpgradeBaseline returns Helm's current release for an upgrade:

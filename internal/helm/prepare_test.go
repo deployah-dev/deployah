@@ -246,7 +246,15 @@ func TestApplyMethodFor(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, tt.want, ApplyMethodFor(tt.op, tt.newest))
+			assert.Equal(t, tt.want, applyMethodFor(tt.op, tt.newest))
 		})
 	}
+}
+
+func TestApplyMethodFor_InvalidOperationPanics(t *testing.T) {
+	t.Parallel()
+
+	assert.Panics(t, func() {
+		applyMethodFor(0, "ssa")
+	})
 }
