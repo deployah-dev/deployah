@@ -21,4 +21,8 @@
 // Kubernetes destination comes from a caller-supplied REST client getter
 // via [NewRESTClientGetter]; [Client] does not select a kubeconfig itself.
 // Package init pins Helm's kube.ManagedFieldsManager to "deployah".
+//
+// Deployah is alpha. The first supported Helm apply semantics are
+// server-side apply (SSA). Client-side apply and legacy empty apply
+// methods are unsupported.
 package helm

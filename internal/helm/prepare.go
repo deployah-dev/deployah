@@ -18,7 +18,9 @@ import (
 	"errors"
 	"fmt"
 
+	"helm.sh/helm/v4/pkg/release"
 	"helm.sh/helm/v4/pkg/release/common"
+	"helm.sh/helm/v4/pkg/storage/driver"
 
 	v1 "helm.sh/helm/v4/pkg/release/v1"
 )
@@ -27,6 +29,11 @@ import (
 // but Helm would not upgrade: the newest revision is not pending, no
 // revision is deployed, and the newest status is not failed or superseded.
 var ErrNoDeployedRevision = errors.New("no deployed revision to upgrade from")
+
+// ErrUnsupportedReleaseApplyMethod is returned by [PrepareRelease] when an
+// upgrade history revision is not Helm server-side apply ("ssa").
+// Empty, "csa", and unknown apply methods are unsupported.
+var ErrUnsupportedReleaseApplyMethod = errors.New("unsupported release apply method")
 
 // Operation is whether Helm would install or upgrade given release history.
 // The zero value is invalid; only [OperationInstall] and [OperationUpgrade]
@@ -41,16 +48,6 @@ const (
 	OperationUpgrade
 )
 
-// ApplyMethod is how Helm would apply Kubernetes resources.
-type ApplyMethod string
-
-const (
-	// ApplyMethodSSA is Helm server-side apply ("ssa").
-	ApplyMethodSSA ApplyMethod = "ssa"
-	// ApplyMethodCSA is Helm client-side apply ("csa").
-	ApplyMethodCSA ApplyMethod = "csa"
-)
-
 // ReleasePrep is the install-or-upgrade decision Helm's prepareUpgrade
 // would make from release history. Newest and Current can differ; callers
 // must use those releases' Version fields, not a generic revision.
@@ -61,27 +58,28 @@ type ReleasePrep struct {
 	Newest *v1.Release
 	// Current is the upgrade manifest baseline, or nil on install.
 	Current *v1.Release
-	// ApplyMethod is SSA on install, otherwise derived from Newest.
-	ApplyMethod ApplyMethod
 	// NextRevision is 1 on install, otherwise Newest.Version+1.
 	NextRevision int
 }
 
-// PrepareRelease decides install vs upgrade from history, matching Helm
-// v4.3.0 prepareUpgrade. It does not mutate history.
+// PrepareRelease decides install vs upgrade from history. Newest,
+// Current, pending, failed or superseded, and NextRevision match Helm
+// v4.3.0 prepareUpgrade. Deployah also requires Helm server-side apply
+// on the checked revisions. It does not mutate history.
 //
 // An empty or nil slice is an install. History-fetch errors such as
-// [ErrReleaseNotFound] stay at the caller: treat not-found as empty
-// history, then call PrepareRelease.
+// [driver.ErrReleaseNotFound] stay at the caller: treat only that
+// sentinel as empty history, then call PrepareRelease.
 //
-// It returns [ErrReleasePending] when the newest revision is pending, and
-// [ErrNoDeployedRevision] when Helm would refuse the upgrade.
+// It returns [ErrReleasePending] when the newest revision is pending,
+// [ErrNoDeployedRevision] when Helm would refuse the upgrade, and
+// [ErrUnsupportedReleaseApplyMethod] when Newest, or Current when it is
+// a different revision, is not Helm server-side apply.
 func PrepareRelease(history []*v1.Release) (ReleasePrep, error) {
 	newest := newestRelease(history)
 	if newest == nil {
 		return ReleasePrep{
 			Operation:    OperationInstall,
-			ApplyMethod:  ApplyMethodSSA,
 			NextRevision: 1,
 		}, nil
 	}
@@ -96,32 +94,48 @@ func PrepareRelease(history []*v1.Release) (ReleasePrep, error) {
 	if err != nil {
 		return ReleasePrep{}, err
 	}
+	if applyErr := requireSupportedApplyMethod(newest); applyErr != nil {
+		return ReleasePrep{}, applyErr
+	}
+	if current != nil && current.Version != newest.Version {
+		if applyErr := requireSupportedApplyMethod(current); applyErr != nil {
+			return ReleasePrep{}, applyErr
+		}
+	}
 
 	return ReleasePrep{
 		Operation:    OperationUpgrade,
 		Newest:       newest,
 		Current:      current,
-		ApplyMethod:  applyMethodFor(OperationUpgrade, newest.ApplyMethod),
 		NextRevision: newest.Version + 1,
 	}, nil
 }
 
-// applyMethodFor returns the apply method Helm would use. Install is always
-// SSA. Upgrade with Helm's "auto" ServerSideApply is SSA only when
-// newestApplyMethod is "ssa"; empty, "csa", and any other value are CSA.
-// It panics if op is not [OperationInstall] or [OperationUpgrade].
-func applyMethodFor(op Operation, newestApplyMethod string) ApplyMethod {
-	switch op {
-	case OperationInstall:
-		return ApplyMethodSSA
-	case OperationUpgrade:
-		if newestApplyMethod == string(ApplyMethodSSA) {
-			return ApplyMethodSSA
-		}
-		return ApplyMethodCSA
-	default:
-		panic(fmt.Sprintf("invalid helm operation %d", op))
+// requireSupportedApplyMethod reports [ErrUnsupportedReleaseApplyMethod]
+// unless rel was applied with Helm server-side apply.
+func requireSupportedApplyMethod(rel *v1.Release) error {
+	if rel.ApplyMethod == string(v1.ApplyMethodServerSideApply) {
+		return nil
 	}
+	return fmt.Errorf("revision %d apply method %q: %w", rel.Version, rel.ApplyMethod, ErrUnsupportedReleaseApplyMethod)
+}
+
+// prepareReleaseFromHistory decides install vs upgrade from a Helm
+// History.Run result. Only [driver.ErrReleaseNotFound] is a fresh
+// install. Other errors are returned as-is. It does not call
+// [Client.wrapHelmError].
+func prepareReleaseFromHistory(histRels []release.Releaser, histErr error) (ReleasePrep, error) {
+	if errors.Is(histErr, driver.ErrReleaseNotFound) {
+		return PrepareRelease(nil)
+	}
+	if histErr != nil {
+		return ReleasePrep{}, histErr
+	}
+	rels, err := releaserListToV1(histRels)
+	if err != nil {
+		return ReleasePrep{}, fmt.Errorf("failed to convert release history: %w", err)
+	}
+	return PrepareRelease(rels)
 }
 
 // currentUpgradeBaseline returns Helm's current release for an upgrade:

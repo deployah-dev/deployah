@@ -40,8 +40,9 @@ var (
 	ErrReleaseAlreadyExists = errors.New("release already exists")
 	// ErrReleasePending is returned when a Helm release has an operation in progress.
 	//
-	// [PrepareRelease] and [Client.InstallApp] produce this sentinel via a typed
-	// check of the newest revision's pending status (Status.IsPending).
+	// [PrepareRelease] produces this sentinel via a typed check of the newest
+	// revision's pending status (Status.IsPending). [Client.InstallApp] and
+	// [Client.RenderManifests] both go through [PrepareRelease].
 	// [Client.wrapHelmError] does not classify Helm's plain pending messages, so
 	// other action paths (and a rare race after the pre-check) surface those as
 	// generic helm failures. Callers may match with [errors.Is].
@@ -189,21 +190,11 @@ func (c *Client) InstallApp(ctx context.Context, dryRun bool, resolved *spec.Res
 		return err
 	}
 
-	// Decide install vs upgrade (and reject pending) before preparing the
-	// chart so a stuck pending release fails without chart work.
-	// History.Max is ignored by Helm (see [Client.GetReleaseHistory]), so
-	// sort by Version after a successful lookup rather than trusting order.
-	history := action.NewHistory(c.config)
-	histRels, histErr := history.Run(releaseName)
-	upgradeExisting := histErr == nil
-	if upgradeExisting {
-		rels, convErr := releaserListToV1(histRels)
-		if convErr != nil {
-			return fmt.Errorf("failed to convert release history: %w", convErr)
-		}
-		if newest := newestRelease(rels); newest != nil && newest.Info != nil && newest.Info.Status.IsPending() {
-			return fmt.Errorf("release '%s': %w", releaseName, ErrReleasePending)
-		}
+	// Decide install vs upgrade (and reject pending or unsupported
+	// history) before preparing the chart so those failures skip chart work.
+	prep, err := c.lookupReleasePrep(releaseName)
+	if err != nil {
+		return err
 	}
 
 	chartPath, err := PrepareChart(ctx, resolved, c.chartCache)
@@ -229,26 +220,61 @@ func (c *Client) InstallApp(ctx context.Context, dryRun bool, resolved *spec.Res
 		return fmt.Errorf("failed to load chart: %w", err)
 	}
 
-	if !upgradeExisting {
-		// Not found -> install. For other history errors, proceed with install
-		// attempt as well.
-		install := action.NewInstall(c.config)
-		install.ReleaseName = releaseName
-		install.Namespace = c.Namespace()
-		install.CreateNamespace = true
-		install.Timeout = c.timeout
-		install.WaitStrategy = kube.StatusWatcherStrategy
-		install.RollbackOnFailure = true
-		install.Labels = labels
-		install.PostRenderer = postRenderer
-
+	switch prep.Operation {
+	case OperationInstall:
+		install := c.newInstallAction(releaseName, labels, postRenderer)
 		if _, runErr := install.RunWithContext(ctx, ch, values); runErr != nil {
 			return c.wrapHelmError("install", releaseName, runErr)
 		}
 		return nil
+	case OperationUpgrade:
+		upgrade := c.newUpgradeAction(labels, postRenderer)
+		if _, runErr := upgrade.RunWithContext(ctx, releaseName, ch, values); runErr != nil {
+			return c.wrapHelmError("upgrade", releaseName, runErr)
+		}
+		return nil
+	default:
+		return fmt.Errorf("invalid helm operation %d", prep.Operation)
 	}
+}
 
-	// Upgrade existing release
+// lookupReleasePrep loads complete Helm history and decides install
+// vs upgrade. Only [driver.ErrReleaseNotFound] is a fresh install.
+// Other history errors are wrapped with [Client.wrapHelmError] after that
+// decision. [PrepareRelease] errors keep the release name in the wrap.
+func (c *Client) lookupReleasePrep(releaseName string) (ReleasePrep, error) {
+	history := action.NewHistory(c.config)
+	histRels, histErr := history.Run(releaseName)
+	if histErr != nil && !errors.Is(histErr, driver.ErrReleaseNotFound) {
+		return ReleasePrep{}, c.wrapHelmError("history", releaseName, histErr)
+	}
+	prep, err := prepareReleaseFromHistory(histRels, histErr)
+	if err != nil {
+		return ReleasePrep{}, fmt.Errorf("release '%s': %w", releaseName, err)
+	}
+	return prep, nil
+}
+
+// newInstallAction returns an install action with Deployah SSA defaults.
+// ForceConflicts and TakeOwnership stay false (Helm zeros).
+func (c *Client) newInstallAction(releaseName string, labels map[string]string, postRenderer postrenderer.PostRenderer) *action.Install {
+	install := action.NewInstall(c.config)
+	install.ReleaseName = releaseName
+	install.Namespace = c.Namespace()
+	install.CreateNamespace = true
+	install.Timeout = c.timeout
+	install.WaitStrategy = kube.StatusWatcherStrategy
+	install.RollbackOnFailure = true
+	install.Labels = labels
+	install.PostRenderer = postRenderer
+	install.ServerSideApply = true
+	return install
+}
+
+// newUpgradeAction returns an upgrade action with Deployah SSA defaults.
+// ServerSideApply is "true", not Helm's "auto". ForceConflicts and
+// TakeOwnership stay false (Helm zeros).
+func (c *Client) newUpgradeAction(labels map[string]string, postRenderer postrenderer.PostRenderer) *action.Upgrade {
 	upgrade := action.NewUpgrade(c.config)
 	upgrade.Namespace = c.Namespace()
 	upgrade.Timeout = c.timeout
@@ -256,11 +282,8 @@ func (c *Client) InstallApp(ctx context.Context, dryRun bool, resolved *spec.Res
 	upgrade.WaitStrategy = kube.StatusWatcherStrategy
 	upgrade.Labels = labels
 	upgrade.PostRenderer = postRenderer
-	_, err = upgrade.RunWithContext(ctx, releaseName, ch, values)
-	if err != nil {
-		return c.wrapHelmError("upgrade", releaseName, err)
-	}
-	return nil
+	upgrade.ServerSideApply = "true"
+	return upgrade
 }
 
 // newestRelease returns the release with the highest Version, or nil when
@@ -441,7 +464,9 @@ func releaserListToV1(rs []release.Releaser) ([]*v1.Release, error) {
 // Typed Kubernetes and Helm storage errors are classified first. String
 // matching remains for Helm messages that still lack stable sentinels
 // (not-found, already-exists, connection failures). Pending releases are
-// rejected earlier by [Client.InstallApp] via Status.IsPending, not here.
+// rejected earlier by [PrepareRelease], which both [Client.InstallApp]
+// and [Client.RenderManifests] run before Helm actions. This wrapper
+// does not decide install vs upgrade.
 func (c *Client) wrapHelmError(operation, releaseName string, err error) error {
 	if errors.Is(err, driver.ErrReleaseNotFound) {
 		return fmt.Errorf("release '%s': %w: %w", releaseName, ErrReleaseNotFound, err)
@@ -468,7 +493,7 @@ func (c *Client) wrapHelmError(operation, releaseName string, err error) error {
 	// Helm still surfaces some conditions as plain strings only.
 	// Timeout/forbidden/unauthorized string arms are omitted because the
 	// typed checks above cover those Kubernetes cases. Pending is omitted
-	// because InstallApp rejects it with a typed Status.IsPending check.
+	// because PrepareRelease rejects it with a typed Status.IsPending check.
 	errMsg := err.Error()
 	switch {
 	case strings.Contains(errMsg, "not found"):

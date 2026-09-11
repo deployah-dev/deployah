@@ -118,7 +118,7 @@ func TestWrapHelmError_TypedClassification(t *testing.T) {
 			wantIs: ErrReleaseAlreadyExists,
 		},
 		{
-			// Pending is handled by InstallApp's typed Status.IsPending
+			// Pending is handled by PrepareRelease's typed Status.IsPending
 			// pre-check, not by string matching in wrapHelmError.
 			name:    "helm pending string falls through",
 			err:     errors.New("another operation (install/upgrade/rollback) is in progress"),

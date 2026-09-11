@@ -36,11 +36,18 @@ import (
 const offlineMonitorAPIVersion = "monitoring.coreos.com/v1"
 
 // RenderManifests renders the chart from [spec.ResolvedSpec] client-side,
-// matching [Client.InstallApp]. Upgrade dry-runs still check cluster
-// reachability. A nil or unresolved spec is an error. Callers must run
-// the returned cleanup func.
+// matching [Client.InstallApp]. It looks up complete release history
+// first, so the cluster must be reachable for both install and upgrade.
+// Use [Client.RenderOffline] when there is no Kubernetes API access. A
+// nil or unresolved spec is an error. Callers must run the returned
+// cleanup func.
 func (c *Client) RenderManifests(ctx context.Context, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) (result *render.RenderResult, cleanup func(), err error) {
 	releaseName, labels, err := releaseIdentity(resolved)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	prep, err := c.lookupReleasePrep(releaseName)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -52,15 +59,14 @@ func (c *Client) RenderManifests(ctx context.Context, resolved *spec.ResolvedSpe
 
 	values := map[string]any{}
 
-	history := action.NewHistory(c.config)
-	history.Max = 1
-	if _, histErr := history.Run(releaseName); histErr != nil {
-		// Not found -> fresh install. Any other history error is treated
-		// the same way InstallApp does: fall through to an install attempt,
-		// which will surface a clearer error if something else is wrong.
+	switch prep.Operation {
+	case OperationInstall:
 		result, err = c.renderInstall(ctx, releaseName, ch, values, labels, postRenderer)
-	} else {
+	case OperationUpgrade:
 		result, err = c.renderUpgrade(ctx, releaseName, ch, values, labels, postRenderer)
+	default:
+		cleanup()
+		return nil, nil, fmt.Errorf("invalid helm operation %d", prep.Operation)
 	}
 	if err != nil {
 		cleanup()
@@ -163,14 +169,9 @@ func (c *Client) renderInstall(ctx context.Context, releaseName string, ch *char
 	// this render is done so only this call is affected.
 	defer restoreCapabilitiesForDryRun(c.config)()
 
-	install := action.NewInstall(c.config)
-	install.ReleaseName = releaseName
-	install.Namespace = c.Namespace()
-	install.CreateNamespace = true
+	install := c.newInstallAction(releaseName, labels, postRenderer)
 	install.DryRunStrategy = action.DryRunClient
 	install.DisableOpenAPIValidation = true
-	install.Labels = labels
-	install.PostRenderer = postRenderer
 	// DryRunClient resets Capabilities to DefaultCapabilities (built-in
 	// APIs only). Append the Prometheus Operator GV so chart templates
 	// gated on .Capabilities.APIVersions.Has still render offline.
@@ -202,12 +203,9 @@ func (c *Client) renderUpgrade(ctx context.Context, releaseName string, ch *char
 	// is a legitimate cache other calls should reuse.
 	defer restoreConfigForDryRun(c.config)()
 
-	upgrade := action.NewUpgrade(c.config)
-	upgrade.Namespace = c.Namespace()
+	upgrade := c.newUpgradeAction(labels, postRenderer)
 	upgrade.DryRunStrategy = action.DryRunClient
 	upgrade.DisableOpenAPIValidation = true
-	upgrade.Labels = labels
-	upgrade.PostRenderer = postRenderer
 
 	rel, runErr := upgrade.RunWithContext(ctx, releaseName, ch, values)
 	if runErr != nil {
