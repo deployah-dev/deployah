@@ -776,43 +776,20 @@ func resolveTasks(appSpec *Spec, env EnvIdentity, platform *PlatformConfig, plat
 			return err
 		}
 	}
-	var platformProfiles map[string]PlatformProfile
-	if platform != nil {
-		platformProfiles = platform.Profiles
-	}
 	for _, name := range appSpec.TaskNames() {
 		task, ok := appSpec.MergedTask(name)
 		if !ok || !task.activeInEnvironment(env.Original) {
 			continue
 		}
-		if len(task.Profiles) > 0 && platform == nil {
-			return &ResolutionError{
-				Code: ErrCodePlatformNotFound,
-				Message: fmt.Sprintf(
-					"task %q sets profiles but no platform file was found; "+
-						"pass --platform-file or create %s",
-					name, DefaultPlatformPath,
-				),
-			}
+		rt, taskErr := resolveTaskDeclaration(name, task, platform, platformEnv, weights[name])
+		if taskErr != nil {
+			return taskErr
 		}
-		profileNames, profErr := ResolveProfileNames(task.Profiles, platformProfiles)
-		if profErr != nil {
-			return fmt.Errorf("task %q: %w", name, profErr)
-		}
-		rt := ResolvedTask{Task: task, HookWeight: weights[name], Profiles: profileNames}
-		if len(profileNames) > 0 {
-			merged, mergeErr := MergeProfiles(profileNames, platformProfiles)
-			if mergeErr != nil {
-				return fmt.Errorf("task %q: %w", name, mergeErr)
-			}
-			rt.MergedProfile = &merged
-			if profileErr := ValidateProfile(taskProfileTarget(name, task), merged, platformEnv, ""); profileErr != nil {
-				return profileErr
-			}
+		if len(rt.Profiles) > 0 {
 			report.Fields = append(report.Fields, ResolvedField{
 				Component: name,
 				Path:      "profiles",
-				Value:     strings.Join(profileNames, ", "),
+				Value:     strings.Join(rt.Profiles, ", "),
 				Source:    "platform profiles (merged left to right)",
 			})
 		}
@@ -825,4 +802,46 @@ func resolveTasks(appSpec *Spec, env EnvIdentity, platform *PlatformConfig, plat
 		})
 	}
 	return nil
+}
+
+// resolveTaskDeclaration fills merged task fields, hook weight, and profiles.
+// It does not attach runtime or write [ResolutionReport] fields.
+func resolveTaskDeclaration(
+	name string,
+	task Task,
+	platform *PlatformConfig,
+	platformEnv *PlatformEnvironment,
+	hookWeight int,
+) (ResolvedTask, error) {
+	if len(task.Profiles) > 0 && platform == nil {
+		return ResolvedTask{}, &ResolutionError{
+			Code: ErrCodePlatformNotFound,
+			Message: fmt.Sprintf(
+				"task %q sets profiles but no platform file was found; "+
+					"pass --platform-file or create %s",
+				name, DefaultPlatformPath,
+			),
+		}
+	}
+	var platformProfiles map[string]PlatformProfile
+	if platform != nil {
+		platformProfiles = platform.Profiles
+	}
+	profileNames, err := ResolveProfileNames(task.Profiles, platformProfiles)
+	if err != nil {
+		return ResolvedTask{}, fmt.Errorf("task %q: %w", name, err)
+	}
+	rt := ResolvedTask{Task: task, HookWeight: hookWeight, Profiles: profileNames}
+	if len(profileNames) == 0 {
+		return rt, nil
+	}
+	merged, err := MergeProfiles(profileNames, platformProfiles)
+	if err != nil {
+		return ResolvedTask{}, fmt.Errorf("task %q: %w", name, err)
+	}
+	rt.MergedProfile = &merged
+	if profileErr := ValidateProfile(taskProfileTarget(name, task), merged, platformEnv, ""); profileErr != nil {
+		return ResolvedTask{}, profileErr
+	}
+	return rt, nil
 }

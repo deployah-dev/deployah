@@ -31,6 +31,13 @@
 //   - [ValidateSpecComponents]: check component resources and autoscaling
 //   - [ValidateSpecTasks]: check task names, from, on, after, schedule, and fanout
 //
+// # Resolution
+//
+//   - [Resolve]: join the loaded spec with platform policy for one environment
+//   - [ResolveForDisplay]: inspect-only resolve; missing platform and
+//     hook-cycle are warnings
+//   - [ResolveTask]: one named task for deployah run
+//
 // # Tasks
 //
 //   - [EffectiveTasks]: environment-scoped tasks from a spec or resolved result
