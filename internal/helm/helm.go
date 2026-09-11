@@ -40,8 +40,8 @@ var (
 	ErrReleaseAlreadyExists = errors.New("release already exists")
 	// ErrReleasePending is returned when a Helm release has an operation in progress.
 	//
-	// Only [Client.InstallApp] produces this sentinel, via a typed check of the
-	// newest revision's pending status (Status.IsPending) before upgrade.
+	// [PrepareRelease] and [Client.InstallApp] produce this sentinel via a typed
+	// check of the newest revision's pending status (Status.IsPending).
 	// [Client.wrapHelmError] does not classify Helm's plain pending messages, so
 	// other action paths (and a rare race after the pre-check) surface those as
 	// generic helm failures. Callers may match with [errors.Is].

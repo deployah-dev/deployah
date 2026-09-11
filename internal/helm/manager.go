@@ -12,13 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package helm generates Helm charts from Deployah specs and drives
-// install, upgrade, list, and delete operations against a cluster.
-//
-// [PrepareChart] renders templates and values for an environment into a
-// caller-supplied [ChartCache]. [Client] wraps Helm v4 actions with
-// Deployah-specific release naming, labels, and a per-client [ChartCache].
-// Kubernetes destination comes from a caller-supplied REST client getter
-// via [NewRESTClientGetter]; [Client] does not select a kubeconfig itself.
-// Package init pins Helm's kube.ManagedFieldsManager to "deployah".
 package helm
+
+import "helm.sh/helm/v4/pkg/kube"
+
+// Pin Helm's SSA field manager once per process. Helm reads
+// kube.ManagedFieldsManager on apply; if it is empty it uses the
+// process basename, which differs between the CLI and tests. init
+// runs before NewClient, so parallel constructors only read the
+// global.
+func init() {
+	kube.ManagedFieldsManager = "deployah" //nolint:reassign // Helm field manager is process-global.
+}

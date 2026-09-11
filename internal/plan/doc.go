@@ -21,6 +21,8 @@
 // runs [github.com/homeport/dyff] field-by-field on resources present on
 // both sides. [Plan] is the resulting domain model, consumed by a text
 // renderer ([RenderText]) and a JSON renderer ([NewJSONDocument]).
+// [DeploymentIntent] holds the mutation and executability flags a deploy
+// would use.
 //
 // Rendering the chart itself lives on [deployah.dev/deployah/internal/helm.Client]
 // instead, since `deployah plan` and `deployah deploy` share that one
