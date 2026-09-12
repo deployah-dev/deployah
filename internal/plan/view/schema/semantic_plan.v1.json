@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://deployah.dev/schemas/semantic_plan.v1.json",
+  "$id": "https://deployah.dev/schemas/plan/v1/schema.json",
   "title": "Deployah semantic plan v1",
   "description": "Machine-readable document produced by view.WriteJSON.",
   "type": "object",
@@ -17,7 +17,7 @@
   "properties": {
     "schema": {
       "type": "string",
-      "const": "deployah.semantic_plan.v1"
+      "const": "https://deployah.dev/schemas/plan/v1/schema.json"
     },
     "header": {
       "$ref": "#/$defs/Header"

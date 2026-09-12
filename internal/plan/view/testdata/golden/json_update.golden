@@ -1,5 +1,5 @@
 {
-  "schema": "deployah.semantic_plan.v1",
+  "schema": "https://deployah.dev/schemas/plan/v1/schema.json",
   "header": {
     "project": "web",
     "environment": "prod",

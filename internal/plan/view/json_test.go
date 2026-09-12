@@ -34,7 +34,7 @@ func TestWriteJSON_SchemaAndExecutions(t *testing.T) {
 	var buf bytes.Buffer
 	require.NoError(t, view.WriteJSON(&buf, p, view.Options{}))
 	assert.JSONEq(t, `{
-		"schema": "deployah.semantic_plan.v1",
+		"schema": "https://deployah.dev/schemas/plan/v1/schema.json",
 		"header": {
 			"project": "web",
 			"environment": "prod",

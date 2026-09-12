@@ -1,6 +1,6 @@
 {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://deployah.dev/schemas/platform/v1-alpha.3/platform.json",
+    "$id": "https://deployah.dev/schemas/platform/v1-alpha.3/schema.json",
     "title": "Deployah Platform Config",
     "description": "Platform-owned configuration file (deployah.platform.yaml). Defines Kubernetes contexts, domain bindings, storage classes per environment, and org-wide deployment profiles including Prometheus monitor settings. Not subject to envsubst.",
     "type": "object",

@@ -14,7 +14,10 @@
 
 package spec
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // File and Path Constants
 const (
@@ -28,6 +31,10 @@ const (
 
 	// schemaDocsBase is the URL prefix for published JSON Schema $id values.
 	schemaDocsBase = "https://deployah.dev/schemas/"
+
+	schemaDocumentSpec     = "spec"
+	schemaDocumentPlatform = "platform"
+	schemaRootResource     = "schema.json"
 
 	// DefaultEnvFile is the default environment file name
 	DefaultEnvFile = ".env"
@@ -52,20 +59,33 @@ const (
 // During alpha this is only [CurrentManifestVersion].
 var SupportedManifestVersions = []string{CurrentManifestVersion}
 
-// ManifestSchemaURL is the JSON Schema $id for the current manifest, used
-// as a `# $schema` modeline so editors can autocomplete omitted fields.
-func ManifestSchemaURL() string {
-	return schemaDocsBase + CurrentManifestVersion + "/manifest.json"
+// schemaURL builds a Deployah public schema URI:
+// https://deployah.dev/schemas/<document>/<version>/<resource>.
+// version may already include a document prefix (for example
+// platform/v1-alpha.3); that prefix is stripped so the document
+// segment is not doubled.
+func schemaURL(document, version, resource string) string {
+	version = strings.TrimPrefix(version, document+"/")
+	return schemaDocsBase + document + "/" + version + "/" + resource
 }
 
-// PlatformSchemaURL is the JSON Schema $id for the current platform file.
+// SpecSchemaURL is the JSON Schema $id for the current Spec
+// (deployah.yaml), used as a `# $schema` modeline so editors can
+// autocomplete omitted fields.
+func SpecSchemaURL() string {
+	return schemaURL(schemaDocumentSpec, CurrentManifestVersion, schemaRootResource)
+}
+
+// PlatformSchemaURL is the JSON Schema $id for the current platform
+// file, used as a `# $schema` modeline so editors can autocomplete
+// omitted fields.
 func PlatformSchemaURL() string {
-	return schemaDocsBase + CurrentPlatformVersion + "/platform.json"
+	return schemaURL(schemaDocumentPlatform, CurrentPlatformVersion, schemaRootResource)
 }
 
-// SchemaModeline returns an IntelliJ/Red Hat YAML modeline for schemaURL.
-func SchemaModeline(schemaURL string) string {
-	return "# $schema: " + schemaURL + "\n"
+// SchemaModeline returns an IntelliJ/Red Hat YAML modeline for url.
+func SchemaModeline(url string) string {
+	return "# $schema: " + url + "\n"
 }
 
 // Environment Variables

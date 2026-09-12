@@ -23,9 +23,10 @@ import (
 //go:embed schema/semantic_plan.v1.json
 var schemaV1 []byte
 
-// SchemaV1ID is the $id of the Draft 2020-12 schema for [WriteJSON]
-// documents.
-const SchemaV1ID = "https://deployah.dev/schemas/semantic_plan.v1.json"
+// SchemaV1ID is the canonical $id of the Draft 2020-12 schema for
+// [WriteJSON] documents. WriteJSON stores it in the instance schema
+// field.
+const SchemaV1ID = "https://deployah.dev/schemas/plan/v1/schema.json"
 
 // SchemaV1 returns the Draft 2020-12 JSON Schema that describes documents
 // written by [WriteJSON]. WriteJSON does not validate against this

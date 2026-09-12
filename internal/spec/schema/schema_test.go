@@ -1,12 +1,20 @@
 package schema
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+)
+
+const (
+	jsonSchemaDialect = "https://json-schema.org/draft/2020-12/schema"
+	specSchemaPrefix  = "https://deployah.dev/schemas/spec/v1-alpha.5/"
 )
 
 // SchemaTestSuite is a test suite for the schema package
@@ -162,7 +170,41 @@ func (s *SchemaTestSuite) TestGetLatestManifestVersion() {
 	assert.NotEmpty(s.T(), latest)
 }
 
+func TestCurrentSpecSchemaIDs(t *testing.T) {
+	t.Parallel()
+	entries, err := fs.ReadDir("v1-alpha.5")
+	require.NoError(t, err)
+
+	var jsonFiles int
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		jsonFiles++
+		raw, readErr := fs.ReadFile("v1-alpha.5/" + e.Name())
+		require.NoError(t, readErr)
+		id, dialect := mustSchemaMeta(t, raw)
+		assert.True(t, strings.HasPrefix(id, specSchemaPrefix), "%s $id = %s", e.Name(), id)
+		assert.Equal(t, jsonSchemaDialect, dialect, e.Name())
+		if e.Name() == SchemaTypeManifest.String()+".json" {
+			assert.Equal(t, specSchemaPrefix+"schema.json", id)
+		}
+	}
+	require.Greater(t, jsonFiles, 0)
+}
+
 // TestSchemaTestSuite runs the schema test suite
 func TestSchemaTestSuite(t *testing.T) {
 	suite.Run(t, new(SchemaTestSuite))
+}
+
+func mustSchemaMeta(t *testing.T, raw []byte) (id, dialect string) {
+	t.Helper()
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal(raw, &doc))
+	id, ok := doc["$id"].(string)
+	require.True(t, ok, "$id must be a string")
+	dialect, ok = doc["$schema"].(string)
+	require.True(t, ok, "$schema must be a string")
+	return id, dialect
 }

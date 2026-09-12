@@ -22,8 +22,6 @@ import (
 	"deployah.dev/deployah/internal/plan/semantic"
 )
 
-const jsonSchema = "deployah.semantic_plan.v1"
-
 type document struct {
 	Schema       string         `json:"schema"`
 	Header       headerDTO      `json:"header"`
@@ -141,7 +139,7 @@ func newDocument(p semantic.Plan, opts Options) (document, error) {
 		diags = append(diags, toDiagDTO(d))
 	}
 	return document{
-		Schema:       jsonSchema,
+		Schema:       SchemaV1ID,
 		Header:       toHeaderDTO(prepared.Header),
 		Changes:      changes,
 		Executions:   []executionDTO{},

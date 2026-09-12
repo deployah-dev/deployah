@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://deployah.dev/schemas/v1-alpha.5/manifest.json",
+  "$id": "https://deployah.dev/schemas/spec/v1-alpha.5/schema.json",
   "title": "Deployah Spec v1-alpha.5",
   "description": "Deployah developer manifest (deployah.yaml). Environments are a map, context is platform-owned, expose replaces ingress. Components are service or worker. Run-to-completion work lives under tasks.",
   "type": "object",

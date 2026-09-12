@@ -75,7 +75,7 @@ func TestShowSummaryAndSave_RoleAwareComponentsProduceValidSpec(t *testing.T) {
 	assert.NotContains(t, combined, "deployah validate")
 
 	body := readSpecFile(t, config.SpecPath)
-	assert.Contains(t, body, spec.SchemaModeline(spec.ManifestSchemaURL()))
+	assert.Contains(t, body, spec.SchemaModeline(spec.SpecSchemaURL()))
 	assert.Contains(t, body, "image: nginx:1.28.0-alpine")
 	assert.Contains(t, body, "resourcePreset: small")
 	assert.Contains(t, body, "role: worker")
@@ -318,7 +318,7 @@ func TestSparseSpec_Table(t *testing.T) {
 				Expose:         &spec.Expose{},
 			},
 			contains: []string{
-				spec.SchemaModeline(spec.ManifestSchemaURL()),
+				spec.SchemaModeline(spec.SpecSchemaURL()),
 				"image: nginx:latest",
 				"resourcePreset: small",
 				"expose: true",

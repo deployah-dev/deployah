@@ -19,11 +19,25 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"deployah.dev/deployah/internal/plan/semantic"
 	"deployah.dev/deployah/internal/plan/view"
 )
+
+func TestSchemaV1ID_MatchesEmbeddedAndRendered(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, "https://deployah.dev/schemas/plan/v1/schema.json", view.SchemaV1ID)
+
+	var sch map[string]any
+	require.NoError(t, json.Unmarshal(view.SchemaV1(), &sch))
+	assert.Equal(t, view.SchemaV1ID, sch["$id"])
+	assert.Equal(t, "https://json-schema.org/draft/2020-12/schema", sch["$schema"])
+
+	doc := mustPlanDoc(t, mustPlan(t, nil, nil))
+	assert.Equal(t, view.SchemaV1ID, doc["schema"])
+}
 
 func TestSchemaV1_RejectsMalformedDocuments(t *testing.T) {
 	t.Parallel()
