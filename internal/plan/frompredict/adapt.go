@@ -23,8 +23,6 @@ import (
 
 	"deployah.dev/deployah/internal/plan/semantic"
 	"deployah.dev/deployah/internal/predict"
-
-	_ "deployah.dev/deployah/internal/helm" // pins kube.ManagedFieldsManager
 )
 
 // FromResults maps predictor results onto a semantic [semantic.Plan].

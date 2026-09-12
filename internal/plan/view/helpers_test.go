@@ -138,6 +138,16 @@ func mustPlan(tb testing.TB, changes []semantic.ResourceChange, diags []semantic
 
 func assertGolden(t *testing.T, name, got string) {
 	t.Helper()
+	assert.Equal(t, string(readGolden(t, name, got)), got)
+}
+
+func assertJSONGolden(t *testing.T, name, got string) {
+	t.Helper()
+	assert.JSONEq(t, string(readGolden(t, name, got)), got)
+}
+
+func readGolden(t *testing.T, name, got string) []byte {
+	t.Helper()
 	path := filepath.Clean(filepath.Join("testdata", "golden", name+".golden"))
 	if *update {
 		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o750))
@@ -147,5 +157,5 @@ func assertGolden(t *testing.T, name, got string) {
 	if err != nil {
 		t.Fatalf("golden %s missing or unreadable: %v\n--- got ---\n%s", path, err, got)
 	}
-	assert.Equal(t, string(want), got)
+	return want
 }

@@ -25,6 +25,8 @@ import (
 	"deployah.dev/deployah/internal/plan/frompredict"
 	"deployah.dev/deployah/internal/plan/semantic"
 	"deployah.dev/deployah/internal/predict"
+
+	_ "deployah.dev/deployah/internal/helm"
 )
 
 func TestFromResults_ActionMapping(t *testing.T) {

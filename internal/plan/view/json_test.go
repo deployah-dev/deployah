@@ -33,21 +33,27 @@ func TestWriteJSON_SchemaAndExecutions(t *testing.T) {
 	p := mustPlan(t, nil, nil)
 	var buf bytes.Buffer
 	require.NoError(t, view.WriteJSON(&buf, p, view.Options{}))
-	assert.True(t, json.Valid(buf.Bytes()))
-	var doc map[string]any
-	require.NoError(t, json.Unmarshal(buf.Bytes(), &doc))
-	assert.Equal(t, "deployah.semantic_plan.v1", doc["schema"])
-	assert.Equal(t, "complete", doc["completeness"])
-	execs, ok := doc["executions"].([]any)
-	require.True(t, ok)
-	assert.Empty(t, execs)
-	summary, ok := doc["summary"].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, float64(0), summary["create"])
-	assert.Equal(t, float64(0), summary["total"])
-	assert.NotContains(t, doc, "Object")
-	assert.NotContains(t, doc, "TypeMeta")
-	assertNoSnakeCaseKeys(t, doc)
+	assert.JSONEq(t, `{
+		"schema": "deployah.semantic_plan.v1",
+		"header": {
+			"project": "web",
+			"environment": "prod",
+			"release": "web",
+			"namespace": "prod"
+		},
+		"changes": [],
+		"executions": [],
+		"diagnostics": [],
+		"summary": {
+			"create": 0,
+			"update": 0,
+			"delete": 0,
+			"recreate": 0,
+			"total": 0
+		},
+		"completeness": "complete"
+	}`, buf.String())
+	assertNoSnakeCaseKeysFromBytes(t, buf.Bytes())
 	validatePlanSchema(t, buf.Bytes())
 }
 
@@ -65,7 +71,7 @@ func TestWriteJSON_Deterministic(t *testing.T) {
 	require.NoError(t, view.WriteJSON(&b1, p, view.Options{}))
 	require.NoError(t, view.WriteJSON(&b2, p, view.Options{}))
 	assert.Equal(t, b1.String(), b2.String())
-	assertGolden(t, "json_update", b1.String())
+	assertJSONGolden(t, "json_update", b1.String())
 	assertNoSnakeCaseKeysFromBytes(t, b1.Bytes())
 	validatePlanSchema(t, b1.Bytes())
 }
@@ -172,83 +178,59 @@ func TestWriteJSON_ExplicitNullFields(t *testing.T) {
 	}}, nil)
 	var buf bytes.Buffer
 	require.NoError(t, view.WriteJSON(&buf, p, view.Options{}))
-	var doc map[string]any
-	require.NoError(t, json.Unmarshal(buf.Bytes(), &doc))
-	changes, ok := doc["changes"].([]any)
-	require.True(t, ok)
-	require.Len(t, changes, 1)
-	change, ok := changes[0].(map[string]any)
-	require.True(t, ok)
-	fields, ok := change["fields"].([]any)
-	require.True(t, ok)
-
-	byPath := map[string]map[string]any{}
-	for _, raw := range fields {
-		f, isField := raw.(map[string]any)
-		require.True(t, isField)
-		path, isPath := f["path"].(string)
-		require.True(t, isPath)
-		byPath[path] = f
+	var doc struct {
+		Changes []struct {
+			Fields json.RawMessage `json:"fields"`
+		} `json:"changes"`
 	}
-
-	require.Contains(t, byPath, "/added")
-	_, hasBefore := byPath["/added"]["before"]
-	assert.False(t, hasBefore)
-	assert.Contains(t, byPath["/added"], "after")
-	assert.Nil(t, byPath["/added"]["after"])
-	assert.Equal(t, "add", byPath["/added"]["op"])
-
-	require.Contains(t, byPath, "/gone")
-	_, hasAfter := byPath["/gone"]["after"]
-	assert.False(t, hasAfter)
-	assert.Contains(t, byPath["/gone"], "before")
-	assert.Nil(t, byPath["/gone"]["before"])
-	assert.Equal(t, "remove", byPath["/gone"]["op"])
-
-	require.Contains(t, byPath, "/stays")
-	assert.Equal(t, "y", byPath["/stays"]["before"])
-	assert.Nil(t, byPath["/stays"]["after"])
-	assert.Equal(t, "replace", byPath["/stays"]["op"])
-
-	require.Contains(t, byPath, "/swap")
-	assert.Nil(t, byPath["/swap"]["before"])
-	assert.Equal(t, true, byPath["/swap"]["after"])
-	assert.Equal(t, "replace", byPath["/swap"]["op"])
-
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &doc))
+	require.Len(t, doc.Changes, 1)
+	assert.JSONEq(t, `[
+		{"path":"/added","op":"add","after":null},
+		{"path":"/gone","op":"remove","before":null},
+		{"path":"/stays","op":"replace","before":"y","after":null},
+		{"path":"/swap","op":"replace","before":null,"after":true}
+	]`, string(doc.Changes[0].Fields))
 	validatePlanSchema(t, buf.Bytes())
 }
 
 func TestWriteJSON_MatchesSchemaForRepresentativePlans(t *testing.T) {
 	t.Parallel()
 	res := ref("ConfigMap", "app")
-	plans := []semantic.Plan{
-		mustPlan(t, nil, nil),
-		mustPlan(t, []semantic.ResourceChange{{
+	tests := []struct {
+		name string
+		plan semantic.Plan
+	}{
+		{name: "empty", plan: mustPlan(t, nil, nil)},
+		{name: "create", plan: mustPlan(t, []semantic.ResourceChange{{
 			Resource: res,
 			Origin:   helmOrigin(),
 			Action:   semantic.Create,
 			After:    snap(cm("app", "v1")),
 			Apply:    writeApply(),
-		}}, nil),
-		mustPlan(t, []semantic.ResourceChange{{
+		}}, nil)},
+		{name: "delete", plan: mustPlan(t, []semantic.ResourceChange{{
 			Resource: res,
 			Origin:   helmOrigin(),
 			Action:   semantic.Delete,
 			Before:   snap(cm("app", "v1")),
 			Apply:    deleteApply(),
-		}}, nil),
-		mustPlan(t, []semantic.ResourceChange{{
+		}}, nil)},
+		{name: "partial update", plan: mustPlan(t, []semantic.ResourceChange{{
 			Resource: res,
 			Origin:   helmOrigin(),
 			Action:   semantic.Update,
 			Before:   snap(cm("app", "v1")),
 			Apply:    writeApply(),
-		}}, []semantic.Diagnostic{limitationFor(res)}),
+		}}, []semantic.Diagnostic{limitationFor(res)})},
 	}
-	for _, p := range plans {
-		var buf bytes.Buffer
-		require.NoError(t, view.WriteJSON(&buf, p, view.Options{}))
-		validatePlanSchema(t, buf.Bytes())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var buf bytes.Buffer
+			require.NoError(t, view.WriteJSON(&buf, tt.plan, view.Options{}))
+			validatePlanSchema(t, buf.Bytes())
+		})
 	}
 }
 
