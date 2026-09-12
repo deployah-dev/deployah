@@ -156,34 +156,17 @@ func numbersEquivalent(a, b any) bool {
 	return leftOK && rightOK && left.Cmp(right) == 0
 }
 
+// asRat converts a jsondiff patch operand to an exact rational.
+// DiffFields encodes snapshots as JSON and compares them with
+// UseNumber, so operands arrive as [json.Number], not native Go
+// integer types.
 func asRat(v any) (*big.Rat, bool) {
-	switch n := v.(type) {
-	case json.Number:
-		r, ok := new(big.Rat).SetString(string(n))
-		return r, ok
-	case int:
-		return new(big.Rat).SetInt64(int64(n)), true
-	case int8:
-		return new(big.Rat).SetInt64(int64(n)), true
-	case int16:
-		return new(big.Rat).SetInt64(int64(n)), true
-	case int32:
-		return new(big.Rat).SetInt64(int64(n)), true
-	case int64:
-		return new(big.Rat).SetInt64(n), true
-	case uint:
-		return new(big.Rat).SetUint64(uint64(n)), true
-	case uint8:
-		return new(big.Rat).SetUint64(uint64(n)), true
-	case uint16:
-		return new(big.Rat).SetUint64(uint64(n)), true
-	case uint32:
-		return new(big.Rat).SetUint64(uint64(n)), true
-	case uint64:
-		return new(big.Rat).SetUint64(n), true
-	default:
+	n, ok := v.(json.Number)
+	if !ok {
 		return nil, false
 	}
+	r, ok := new(big.Rat).SetString(string(n))
+	return r, ok
 }
 
 func rewriteAppendPath(path string, before map[string]any, appendCounts map[string]int) string {

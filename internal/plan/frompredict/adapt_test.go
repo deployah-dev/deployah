@@ -244,6 +244,57 @@ func TestFromResults_GenerateName(t *testing.T) {
 	assert.Equal(t, "app-", p.Changes[0].Resource.GenerateName)
 }
 
+func TestFromResults_NoOpWithLimitation(t *testing.T) {
+	t.Parallel()
+	p, err := frompredict.FromResults(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
+		Identity:   id("app"),
+		Action:     predict.ActionNoOp,
+		Predicted:  configMap("app", "prod", "same"),
+		Limitation: predict.LimitationManagedFieldsMigration,
+	}})
+	require.NoError(t, err)
+	assert.Empty(t, p.Changes)
+	assert.Equal(t, semantic.CompletenessPartial, p.Completeness)
+	require.Len(t, p.Diagnostics, 1)
+	assert.Equal(t, semantic.CategoryPredictionLimitation, p.Diagnostics[0].Category)
+	assert.Contains(t, p.Diagnostics[0].Message, predict.LimitationManagedFieldsMigration)
+	assert.Equal(t, "app", p.Diagnostics[0].Resource.Name)
+}
+
+func TestFromResults_UpdateRequiresLive(t *testing.T) {
+	t.Parallel()
+	_, err := frompredict.FromResults(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
+		Identity:  id("app"),
+		Action:    predict.ActionUpdate,
+		Predicted: configMap("app", "prod", "new"),
+	}})
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "update requires a live object")
+}
+
+func TestFromResults_DeleteRequiresLive(t *testing.T) {
+	t.Parallel()
+	_, err := frompredict.FromResults(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
+		Identity: id("app"),
+		Action:   predict.ActionDelete,
+	}})
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "delete requires a live object")
+}
+
+func TestFromResults_NilObjectSnapshot(t *testing.T) {
+	t.Parallel()
+	p, err := frompredict.FromResults(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
+		Identity:  id("app"),
+		Action:    predict.ActionCreate,
+		Predicted: &unstructured.Unstructured{},
+	}})
+	require.NoError(t, err)
+	require.Len(t, p.Changes, 1)
+	require.NotNil(t, p.Changes[0].After)
+	assert.Nil(t, p.Changes[0].After.Object)
+}
+
 func TestFromResults_NeverEmitsRecreate(t *testing.T) {
 	t.Parallel()
 	p, err := frompredict.FromResults(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{

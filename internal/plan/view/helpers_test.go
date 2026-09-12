@@ -161,6 +161,24 @@ func mustPlan(tb testing.TB, changes []semantic.ResourceChange, diags []semantic
 	return p
 }
 
+func assertNoBookkeeping(t *testing.T, text string) {
+	t.Helper()
+	assert.NotContains(t, text, "resourceVersion")
+	assert.NotContains(t, text, "managedFields")
+	assert.NotContains(t, text, "creationTimestamp")
+	assert.NotContains(t, text, "observedGeneration")
+	assert.NotContains(t, text, "uid:")
+	assert.NotContains(t, text, "generation:")
+	assert.NotContains(t, text, "status:")
+}
+
+func assertKeepsUserMeta(t *testing.T, text string) {
+	t.Helper()
+	assert.Contains(t, text, "example.com/keep")
+	assert.Contains(t, text, "cert-manager.io/issue-temporary-certificate")
+	assert.Contains(t, text, "app: web")
+}
+
 func assertGolden(t *testing.T, name, got string) {
 	t.Helper()
 	assert.Equal(t, string(readGolden(t, name, got)), got)

@@ -25,91 +25,139 @@ import (
 	"deployah.dev/deployah/internal/plan/view"
 )
 
-func TestWriteHuman_SecretReplaceShowsRedactedMarkers(t *testing.T) {
+func TestWriteHuman_SecretDiffs(t *testing.T) {
 	t.Parallel()
-	p := mustPlan(t, []semantic.ResourceChange{{
-		Resource: ref("Secret", "s"),
-		Origin:   helmOrigin(),
-		Action:   semantic.Update,
-		Before:   snap(secretObj("s", "old-pass", "same-tok")),
-		After:    snap(secretObj("s", "new-pass", "same-tok")),
-		Apply:    writeApply(),
-	}}, nil)
+	addAfter := secretObj("s", "same-pass", "same-tok")
+	secretData(t, addAfter)["extra"] = "added-secret"
+	removeBefore := secretObj("s", "same-pass", "same-tok")
+	secretData(t, removeBefore)["extra"] = "removed-secret"
+	emptySecret := map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Secret",
+		"metadata":   map[string]any{"name": "s", "namespace": "prod"},
+	}
+	withData := secretObj("s", "added-pass", "added-tok")
+	escaped := func(slash, tilde, keep string) map[string]any {
+		return map[string]any{
+			"apiVersion": "v1",
+			"kind":       "Secret",
+			"metadata":   map[string]any{"name": "s", "namespace": "prod"},
+			"data":       map[string]any{"foo/bar": slash, "tilde~x": tilde, "keep": keep},
+		}
+	}
 
-	var hidden bytes.Buffer
-	require.NoError(t, view.WriteHuman(&hidden, p, view.Options{}))
-	text := hidden.String()
-	assert.Contains(t, text, "-   password: (redacted)")
-	assert.Contains(t, text, "+   password: (redacted)")
-	assert.NotContains(t, text, "-   token: (redacted)")
-	assert.NotContains(t, text, "+   token: (redacted)")
-	assert.Contains(t, text, "    token: (redacted)")
-	assert.NotContains(t, text, "old-pass")
-	assert.NotContains(t, text, "new-pass")
-	assert.NotContains(t, text, "same-tok")
-	assert.NotContains(t, text, "deployah-secret-")
-
-	var shown bytes.Buffer
-	require.NoError(t, view.WriteHuman(&shown, p, view.Options{ShowSecrets: true}))
-	shownText := shown.String()
-	assert.Contains(t, shownText, "-   password: old-pass")
-	assert.Contains(t, shownText, "+   password: new-pass")
-	assert.NotContains(t, shownText, "-   token:")
-	assert.NotContains(t, shownText, "+   token:")
-	assert.Contains(t, shownText, "    token: same-tok")
-}
-
-func TestWriteHuman_SecretKeyAdd(t *testing.T) {
-	t.Parallel()
-	before := secretObj("s", "same-pass", "same-tok")
-	after := secretObj("s", "same-pass", "same-tok")
-	secretData(t, after)["extra"] = "added-secret"
-	p := mustPlan(t, []semantic.ResourceChange{{
-		Resource: ref("Secret", "s"),
-		Origin:   helmOrigin(),
-		Action:   semantic.Update,
-		Before:   snap(before),
-		After:    snap(after),
-		Apply:    writeApply(),
-	}}, nil)
-
-	var buf bytes.Buffer
-	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
-	text := buf.String()
-	assert.Contains(t, text, "+   extra: (redacted)")
-	assert.NotContains(t, text, "-   extra:")
-	assert.NotContains(t, text, "-   password:")
-	assert.NotContains(t, text, "+   password:")
-	assert.NotContains(t, text, "-   token:")
-	assert.NotContains(t, text, "+   token:")
-	assert.NotContains(t, text, "added-secret")
-	assert.NotContains(t, text, "same-pass")
-	assert.NotContains(t, text, "deployah-secret-")
-}
-
-func TestWriteHuman_SecretKeyRemove(t *testing.T) {
-	t.Parallel()
-	before := secretObj("s", "same-pass", "same-tok")
-	secretData(t, before)["extra"] = "removed-secret"
-	after := secretObj("s", "same-pass", "same-tok")
-	p := mustPlan(t, []semantic.ResourceChange{{
-		Resource: ref("Secret", "s"),
-		Origin:   helmOrigin(),
-		Action:   semantic.Update,
-		Before:   snap(before),
-		After:    snap(after),
-		Apply:    writeApply(),
-	}}, nil)
-
-	var buf bytes.Buffer
-	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
-	text := buf.String()
-	assert.Contains(t, text, "-   extra: (redacted)")
-	assert.NotContains(t, text, "+   extra:")
-	assert.NotContains(t, text, "-   password:")
-	assert.NotContains(t, text, "+   password:")
-	assert.NotContains(t, text, "removed-secret")
-	assert.NotContains(t, text, "deployah-secret-")
+	tests := []struct {
+		name        string
+		before      map[string]any
+		after       map[string]any
+		showSecrets bool
+		contains    []string
+		omits       []string
+	}{
+		{
+			name:   "replace hides secrets",
+			before: secretObj("s", "old-pass", "same-tok"),
+			after:  secretObj("s", "new-pass", "same-tok"),
+			contains: []string{
+				"-   password: (redacted)",
+				"+   password: (redacted)",
+				"    token: (redacted)",
+			},
+			omits: []string{
+				"-   token: (redacted)",
+				"+   token: (redacted)",
+				"old-pass", "new-pass", "same-tok", "deployah-secret-",
+			},
+		},
+		{
+			name:        "replace shows secrets",
+			before:      secretObj("s", "old-pass", "same-tok"),
+			after:       secretObj("s", "new-pass", "same-tok"),
+			showSecrets: true,
+			contains: []string{
+				"-   password: old-pass",
+				"+   password: new-pass",
+				"    token: same-tok",
+			},
+			omits: []string{"-   token:", "+   token:"},
+		},
+		{
+			name:   "add key",
+			before: secretObj("s", "same-pass", "same-tok"),
+			after:  addAfter,
+			contains: []string{
+				"+   extra: (redacted)",
+			},
+			omits: []string{
+				"-   extra:", "-   password:", "+   password:",
+				"-   token:", "+   token:",
+				"added-secret", "same-pass", "deployah-secret-",
+			},
+		},
+		{
+			name:   "remove key",
+			before: removeBefore,
+			after:  secretObj("s", "same-pass", "same-tok"),
+			contains: []string{
+				"-   extra: (redacted)",
+			},
+			omits: []string{
+				"+   extra:", "-   password:", "+   password:",
+				"removed-secret", "deployah-secret-",
+			},
+		},
+		{
+			name:   "escaped keys",
+			before: escaped("old-slash", "old-tilde", "same"),
+			after:  escaped("new-slash", "new-tilde", "same"),
+			contains: []string{
+				"-   foo/bar: (redacted)",
+				"+   foo/bar: (redacted)",
+				"-   tilde~x: (redacted)",
+				"+   tilde~x: (redacted)",
+				"    keep: (redacted)",
+			},
+			omits: []string{
+				"old-slash", "new-slash", "old-tilde", "new-tilde", "deployah-secret-",
+			},
+		},
+		{
+			name:     "add whole data map",
+			before:   emptySecret,
+			after:    withData,
+			contains: []string{"+ data:", "(redacted)"},
+			omits:    []string{"added-pass", "added-tok"},
+		},
+		{
+			name:     "remove whole data map",
+			before:   withData,
+			after:    emptySecret,
+			contains: []string{"- data:", "(redacted)"},
+			omits:    []string{"added-pass"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			p := mustPlan(t, []semantic.ResourceChange{{
+				Resource: ref("Secret", "s"),
+				Origin:   helmOrigin(),
+				Action:   semantic.Update,
+				Before:   snap(tt.before),
+				After:    snap(tt.after),
+				Apply:    writeApply(),
+			}}, nil)
+			var buf bytes.Buffer
+			require.NoError(t, view.WriteHuman(&buf, p, view.Options{ShowSecrets: tt.showSecrets}))
+			text := buf.String()
+			for _, want := range tt.contains {
+				assert.Contains(t, text, want)
+			}
+			for _, omit := range tt.omits {
+				assert.NotContains(t, text, omit)
+			}
+		})
+	}
 }
 
 func TestWriteHuman_OmitsBookkeepingFields(t *testing.T) {
@@ -199,27 +247,7 @@ func TestWriteHuman_OmitsBookkeepingOnCreateDeleteRecreate(t *testing.T) {
 
 func secretData(t *testing.T, obj map[string]any) map[string]any {
 	t.Helper()
-	raw, ok := obj["data"]
-	require.True(t, ok)
-	m, ok := raw.(map[string]any)
+	m, ok := obj["data"].(map[string]any)
 	require.True(t, ok)
 	return m
-}
-
-func assertNoBookkeeping(t *testing.T, text string) {
-	t.Helper()
-	assert.NotContains(t, text, "resourceVersion")
-	assert.NotContains(t, text, "managedFields")
-	assert.NotContains(t, text, "creationTimestamp")
-	assert.NotContains(t, text, "observedGeneration")
-	assert.NotContains(t, text, "uid:")
-	assert.NotContains(t, text, "generation:")
-	assert.NotContains(t, text, "status:")
-}
-
-func assertKeepsUserMeta(t *testing.T, text string) {
-	t.Helper()
-	assert.Contains(t, text, "example.com/keep")
-	assert.Contains(t, text, "cert-manager.io/issue-temporary-certificate")
-	assert.Contains(t, text, "app: web")
 }

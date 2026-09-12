@@ -29,10 +29,8 @@ const (
 )
 
 func humanObject(s *semantic.ResourceSnapshot) map[string]any {
+	// snapshotMap never returns nil, and copyJSONMap preserves that.
 	obj := copyJSONMap(snapshotMap(s))
-	if obj == nil {
-		obj = map[string]any{}
-	}
 	stripBookkeeping(obj)
 	return obj
 }

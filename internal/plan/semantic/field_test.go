@@ -16,6 +16,7 @@ package semantic_test
 
 import (
 	"encoding/json"
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -200,6 +201,86 @@ func TestDiffFields(t *testing.T) {
 				Path: "/metadata/annotations/foo~1bar", Op: semantic.FieldReplace, Before: "1", After: "2",
 			}},
 		},
+		{
+			name:   "nil before is empty object",
+			before: nil,
+			after:  map[string]any{"a": json.Number("1")},
+			want: []semantic.FieldChange{{
+				Path: "/a", Op: semantic.FieldAdd, After: json.Number("1"),
+			}},
+		},
+		{
+			name:   "nil after is empty object",
+			before: map[string]any{"a": json.Number("1")},
+			after:  nil,
+			want: []semantic.FieldChange{{
+				Path: "/a", Op: semantic.FieldRemove, Before: json.Number("1"),
+			}},
+		},
+		{
+			name:   "array append one item",
+			before: map[string]any{"items": []any{"a"}},
+			after:  map[string]any{"items": []any{"a", "b"}},
+			want: []semantic.FieldChange{{
+				Path: "/items/1", Op: semantic.FieldAdd, After: "b",
+			}},
+		},
+		{
+			name:   "array append multiple items",
+			before: map[string]any{"items": []any{"a"}},
+			after:  map[string]any{"items": []any{"a", "b", "c"}},
+			want: []semantic.FieldChange{
+				{Path: "/items/1", Op: semantic.FieldAdd, After: "b"},
+				{Path: "/items/2", Op: semantic.FieldAdd, After: "c"},
+			},
+		},
+		{
+			name:   "string slice append",
+			before: map[string]any{"items": []string{"a"}},
+			after:  map[string]any{"items": []string{"a", "b"}},
+			want: []semantic.FieldChange{{
+				Path: "/items/1", Op: semantic.FieldAdd, After: "b",
+			}},
+		},
+		{
+			name: "nested array index is stable",
+			before: map[string]any{
+				"spec": map[string]any{
+					"containers": []any{
+						map[string]any{"args": []any{"a", "b"}},
+					},
+				},
+			},
+			after: map[string]any{
+				"spec": map[string]any{
+					"containers": []any{
+						map[string]any{"args": []any{"a", "c"}},
+					},
+				},
+			},
+			want: []semantic.FieldChange{{
+				Path: "/spec/containers/0/args/1", Op: semantic.FieldReplace, Before: "b", After: "c",
+			}},
+		},
+		{
+			name: "escaped secret key",
+			before: map[string]any{
+				"data": map[string]any{"foo/bar": "old", "tilde~x": "old"},
+			},
+			after: map[string]any{
+				"data": map[string]any{"foo/bar": "new", "tilde~x": "new"},
+			},
+			want: []semantic.FieldChange{
+				{Path: "/data/foo~1bar", Op: semantic.FieldReplace, Before: "old", After: "new"},
+				{Path: "/data/tilde~0x", Op: semantic.FieldReplace, Before: "old", After: "new"},
+			},
+		},
+		{
+			name:   "2 equals 2.0",
+			before: map[string]any{"n": 2},
+			after:  map[string]any{"n": 2.0},
+			want:   nil,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -275,4 +356,54 @@ func TestDiffFields_NoMutation(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "old", got2[0].Before)
 	assert.Equal(t, "new", got2[0].After)
+}
+
+func TestDiffFields_EncodeErrors(t *testing.T) {
+	t.Parallel()
+	t.Run("before", func(t *testing.T) {
+		t.Parallel()
+		_, err := semantic.DiffFields(map[string]any{"n": math.NaN()}, map[string]any{"n": 1})
+		require.Error(t, err)
+		assert.ErrorContains(t, err, "encode before snapshot")
+	})
+	t.Run("after", func(t *testing.T) {
+		t.Parallel()
+		_, err := semantic.DiffFields(map[string]any{"n": 1}, map[string]any{"n": math.Inf(1)})
+		require.Error(t, err)
+		assert.ErrorContains(t, err, "encode after snapshot")
+	})
+}
+
+func TestDiffFields_NestedCopyIsolation(t *testing.T) {
+	t.Parallel()
+	labels := map[string]string{"app": "web"}
+	args := []string{"a", "b"}
+	nested := []any{map[string]any{"k": "v"}}
+	inner := map[string]any{"x": "1"}
+	before := map[string]any{
+		"labels": labels,
+		"args":   args,
+		"nested": nested,
+		"inner":  inner,
+	}
+	after := map[string]any{
+		"labels": map[string]string{"app": "api"},
+		"args":   []string{"a", "c"},
+		"nested": []any{map[string]any{"k": "w"}},
+		"inner":  map[string]any{"x": "2"},
+	}
+	got, err := semantic.DiffFields(before, after)
+	require.NoError(t, err)
+	require.NotEmpty(t, got)
+	for i := range got {
+		got[i].Before = "mutated"
+		got[i].After = "mutated"
+	}
+
+	assert.Equal(t, "web", labels["app"])
+	assert.Equal(t, []string{"a", "b"}, args)
+	nestedMap, ok := nested[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "v", nestedMap["k"])
+	assert.Equal(t, "1", inner["x"])
 }

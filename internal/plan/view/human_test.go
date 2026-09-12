@@ -16,6 +16,7 @@ package view_test
 
 import (
 	"bytes"
+	"errors"
 	"strings"
 	"testing"
 
@@ -273,6 +274,91 @@ func TestWriteHuman_ArrayOrderPreserved(t *testing.T) {
 	require.Greater(t, zeta, -1)
 	assert.Greater(t, alpha, zeta)
 	assert.Greater(t, mu, alpha)
+}
+
+func TestWriteHuman_HeaderOptionalFields(t *testing.T) {
+	t.Parallel()
+	p, err := semantic.New(semantic.Header{
+		Project:      "web",
+		Environment:  "prod",
+		Release:      "web",
+		Namespace:    "prod",
+		Context:      "kind-dev",
+		Revision:     7,
+		FreshInstall: true,
+	}, nil, nil)
+	require.NoError(t, err)
+	var buf bytes.Buffer
+	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
+	text := buf.String()
+	assert.Contains(t, text, "context: kind-dev")
+	assert.Contains(t, text, "revision: 7")
+	assert.Contains(t, text, "fresh_install: true")
+	assert.Contains(t, text, "completeness: complete")
+	assert.Contains(t, text, "Executions: none")
+}
+
+func TestWriteHuman_DiagnosticWithoutResource(t *testing.T) {
+	t.Parallel()
+	p, err := semantic.New(semantic.Header{Release: "web"}, nil, []semantic.Diagnostic{{
+		Severity: semantic.DiagnosticWarning,
+		Category: semantic.CategoryPredictionLimitation,
+		Message:  "prediction is not exact: cluster-scoped",
+	}})
+	require.NoError(t, err)
+	var buf bytes.Buffer
+	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
+	text := buf.String()
+	assert.Contains(t, text, "warning prediction_limitation: prediction is not exact: cluster-scoped")
+	assert.NotContains(t, text, "ConfigMap/")
+}
+
+func TestWriteHuman_BookkeepingOnlyUpdateKeepsResource(t *testing.T) {
+	t.Parallel()
+	before := noisyCM("web", "same", "11", "u-live")
+	after := noisyCM("web", "same", "22", "u-pred")
+	p := mustPlan(t, []semantic.ResourceChange{{
+		Resource: ref("ConfigMap", "web"),
+		Origin:   helmOrigin(),
+		Action:   semantic.Update,
+		Before:   snap(before),
+		After:    snap(after),
+		Apply:    writeApply(),
+	}}, nil)
+	var buf bytes.Buffer
+	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
+	text := buf.String()
+	assert.Contains(t, text, "ConfigMap/prod/web update helm")
+	assert.Contains(t, text, "  key: same")
+	assert.NotContains(t, text, "-   key:")
+	assert.NotContains(t, text, "+   key:")
+	assertNoBookkeeping(t, text)
+}
+
+func TestWriteHuman_EmptyPlan(t *testing.T) {
+	t.Parallel()
+	p := mustPlan(t, nil, nil)
+	var buf bytes.Buffer
+	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
+	text := buf.String()
+	assert.Contains(t, text, "completeness: complete")
+	assert.Contains(t, text, "Executions: none")
+	assert.Contains(t, text, "create: 0")
+	assert.NotContains(t, text, "create helm")
+}
+
+func TestWriteHuman_WriterError(t *testing.T) {
+	t.Parallel()
+	p := mustPlan(t, []semantic.ResourceChange{createChangeForHuman()}, nil)
+	err := view.WriteHuman(errWriter{}, p, view.Options{})
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "write failed")
+}
+
+type errWriter struct{}
+
+func (errWriter) Write([]byte) (int, error) {
+	return 0, errors.New("write failed")
 }
 
 func TestWriteHuman_ZeroThemeIsPlainText(t *testing.T) {
