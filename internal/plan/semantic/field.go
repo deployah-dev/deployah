@@ -346,7 +346,7 @@ func snapshotObject(s *ResourceSnapshot) map[string]any {
 func filterBookkeeping(in []FieldChange) []FieldChange {
 	out := make([]FieldChange, 0, len(in))
 	for _, f := range in {
-		if isBookkeepingPath(f.Path) {
+		if IsBookkeepingPath(f.Path) {
 			continue
 		}
 		out = append(out, f)
@@ -354,16 +354,28 @@ func filterBookkeeping(in []FieldChange) []FieldChange {
 	return out
 }
 
-func isBookkeepingPath(path string) bool {
-	prefixes := []string{
-		"/status",
-		"/metadata/resourceVersion",
-		"/metadata/uid",
-		"/metadata/generation",
-		"/metadata/creationTimestamp",
-		"/metadata/managedFields",
-	}
-	for _, p := range prefixes {
+// bookkeepingPointers are RFC 6901 JSON Pointer prefixes that are not
+// semantic field changes. [DiffFields] omits them. Human YAML strips the
+// same keys from render copies. Snapshots keep the original fields.
+var bookkeepingPointers = []string{
+	"/status",
+	"/metadata/resourceVersion",
+	"/metadata/uid",
+	"/metadata/generation",
+	"/metadata/creationTimestamp",
+	"/metadata/managedFields",
+}
+
+// BookkeepingPointers returns the JSON Pointer prefixes omitted from
+// [FieldChange] results and from human YAML. The returned slice is a copy.
+func BookkeepingPointers() []string {
+	return slices.Clone(bookkeepingPointers)
+}
+
+// IsBookkeepingPath reports whether path is a [BookkeepingPointers]
+// prefix or a descendant of one.
+func IsBookkeepingPath(path string) bool {
+	for _, p := range bookkeepingPointers {
 		if path == p || strings.HasPrefix(path, p+"/") {
 			return true
 		}

@@ -73,6 +73,31 @@ func cm(name, value string) map[string]any {
 	}
 }
 
+func noisyCM(name, value, rv, uid string) map[string]any {
+	return map[string]any{
+		"apiVersion": "v1",
+		"kind":       "ConfigMap",
+		"metadata": map[string]any{
+			"name":              name,
+			"namespace":         "prod",
+			"uid":               uid,
+			"resourceVersion":   rv,
+			"generation":        3,
+			"creationTimestamp": "2020-01-01T00:00:00Z",
+			"managedFields": []any{
+				map[string]any{"manager": "helm"},
+			},
+			"annotations": map[string]any{
+				"example.com/keep": "yes",
+				"cert-manager.io/issue-temporary-certificate": "true",
+			},
+			"labels": map[string]any{"app": "web"},
+		},
+		"data":   map[string]any{"key": value},
+		"status": map[string]any{"observedGeneration": 3},
+	}
+}
+
 func secretObj(name, password, token string) map[string]any {
 	return map[string]any{
 		"apiVersion": "v1",

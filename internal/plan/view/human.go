@@ -88,21 +88,23 @@ func writeHumanHeader(w io.Writer, h semantic.Header, completeness semantic.Comp
 
 func writeHumanChange(w io.Writer, c semantic.ResourceChange, opts Options) error {
 	line := c.Resource.String() + " " + c.Action.String() + " " + c.Origin.Kind.String()
-	if apply := humanApply(c.Apply); apply != "" {
-		line += " " + apply
-	}
 	if err := writeln(w, opts, actionHeadingToken(c.Action), line); err != nil {
 		return err
 	}
+	before := humanObject(c.Before)
+	after := humanObject(c.After)
+	if !opts.ShowSecrets && isCoreSecret(c.Resource) {
+		markSecretDiffs(before, after, c.Fields)
+	}
 	switch c.Action {
 	case semantic.Create:
-		text, err := marshalOrderedYAML(snapshotMap(c.After))
+		text, err := marshalOrderedYAML(after)
 		if err != nil {
 			return err
 		}
 		return writePrefixedYAML(w, text, "+ ", theme.StatusSuccess, opts)
 	case semantic.Delete:
-		text, err := marshalOrderedYAML(snapshotMap(c.Before))
+		text, err := marshalOrderedYAML(before)
 		if err != nil {
 			return err
 		}
@@ -111,11 +113,11 @@ func writeHumanChange(w io.Writer, c semantic.ResourceChange, opts Options) erro
 		if c.After == nil {
 			return nil
 		}
-		beforeYAML, err := marshalOrderedYAML(snapshotMap(c.Before))
+		beforeYAML, err := marshalOrderedYAML(before)
 		if err != nil {
 			return err
 		}
-		afterYAML, err := marshalOrderedYAML(snapshotMap(c.After))
+		afterYAML, err := marshalOrderedYAML(after)
 		if err != nil {
 			return err
 		}
@@ -125,20 +127,8 @@ func writeHumanChange(w io.Writer, c semantic.ResourceChange, opts Options) erro
 	}
 }
 
-func humanApply(a semantic.ApplySemantics) string {
-	var parts []string
-	if a.Write != nil {
-		parts = append(parts, fmt.Sprintf("write=%s field_manager=%s force_conflicts=%t",
-			a.Write.Method.String(), a.Write.FieldManager, a.Write.ForceConflicts))
-	}
-	if a.Delete != nil {
-		parts = append(parts, "delete="+a.Delete.Propagation.String())
-	}
-	return strings.Join(parts, " ")
-}
-
 func writePrefixedYAML(w io.Writer, text, prefix string, token theme.Token, opts Options) error {
-	for line := range strings.SplitSeq(strings.TrimRight(text, "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.TrimRight(revealSecretSentinels(text), "\n"), "\n") {
 		if err := writeln(w, opts, token, prefix+line); err != nil {
 			return err
 		}
@@ -153,13 +143,13 @@ func writeYAMLDiff(w io.Writer, beforeYAML, afterYAML string, opts Options) erro
 		return fmt.Errorf("diff yaml: %w", err)
 	}
 	if len(diff.Hunks) == 0 {
-		// Redacted Secret values can make Before and After YAML identical
-		// while the change still exists. Keep the resource shape visible.
+		// Bookkeeping-only updates can leave Before and After YAML identical
+		// after strip. Keep the resource shape visible.
 		return writePrefixedYAML(w, afterYAML, "  ", theme.TextMuted, opts)
 	}
 	for _, hunk := range diff.Hunks {
 		for _, line := range hunk.Lines {
-			content := strings.TrimRight(line.Content, "\n")
+			content := revealSecretSentinels(strings.TrimRight(line.Content, "\n"))
 			prefix, token := "  ", theme.TextMuted
 			switch line.Kind {
 			case udiff.Delete:

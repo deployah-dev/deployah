@@ -112,7 +112,113 @@
         "apply": {
           "$ref": "#/$defs/Apply"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "create"
+              }
+            },
+            "required": ["action"]
+          },
+          "then": {
+            "properties": {
+              "before": {
+                "type": "null"
+              },
+              "after": {
+                "type": "object"
+              },
+              "fields": {
+                "maxItems": 0
+              },
+              "apply": {
+                "required": ["write"],
+                "not": {
+                  "required": ["delete"]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "update"
+              }
+            },
+            "required": ["action"]
+          },
+          "then": {
+            "properties": {
+              "before": {
+                "type": "object"
+              },
+              "apply": {
+                "required": ["write"],
+                "not": {
+                  "required": ["delete"]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "delete"
+              }
+            },
+            "required": ["action"]
+          },
+          "then": {
+            "properties": {
+              "before": {
+                "type": "object"
+              },
+              "after": {
+                "type": "null"
+              },
+              "fields": {
+                "maxItems": 0
+              },
+              "apply": {
+                "required": ["delete"],
+                "not": {
+                  "required": ["write"]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "recreate"
+              }
+            },
+            "required": ["action"]
+          },
+          "then": {
+            "properties": {
+              "before": {
+                "type": "object"
+              },
+              "after": {
+                "type": "object"
+              },
+              "apply": {
+                "required": ["write", "delete"]
+              }
+            }
+          }
+        }
+      ]
     },
     "Resource": {
       "type": "object",
@@ -148,7 +254,22 @@
         "helm": {
           "$ref": "#/$defs/HelmOrigin"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "helm"
+              }
+            },
+            "required": ["kind"]
+          },
+          "then": {
+            "required": ["helm"]
+          }
+        }
+      ]
     },
     "HelmOrigin": {
       "type": "object",
@@ -178,19 +299,41 @@
     "WriteSemantics": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["method", "fieldManager", "forceConflicts"],
+      "required": ["method", "forceConflicts"],
       "properties": {
         "method": {
           "type": "string",
           "enum": ["server_side_apply"]
         },
         "fieldManager": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "forceConflicts": {
           "type": "boolean"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "method": {
+                "const": "server_side_apply"
+              }
+            },
+            "required": ["method"]
+          },
+          "then": {
+            "required": ["fieldManager"],
+            "properties": {
+              "fieldManager": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      ]
     },
     "DeleteSemantics": {
       "type": "object",
@@ -217,7 +360,54 @@
         },
         "before": true,
         "after": true
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "op": {
+                "const": "add"
+              }
+            },
+            "required": ["op"]
+          },
+          "then": {
+            "required": ["after"],
+            "not": {
+              "required": ["before"]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "op": {
+                "const": "remove"
+              }
+            },
+            "required": ["op"]
+          },
+          "then": {
+            "required": ["before"],
+            "not": {
+              "required": ["after"]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "op": {
+                "const": "replace"
+              }
+            },
+            "required": ["op"]
+          },
+          "then": {
+            "required": ["before", "after"]
+          }
+        }
+      ]
     },
     "Diagnostic": {
       "type": "object",

@@ -243,7 +243,7 @@ func limitationFor(res semantic.ResourceRef) semantic.Diagnostic {
 	}
 }
 
-func validatePlanSchema(t *testing.T, raw []byte) {
+func compilePlanSchema(t *testing.T) *jsonschema.Schema {
 	t.Helper()
 	compiler := jsonschema.NewCompiler()
 	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(view.SchemaV1()))
@@ -251,9 +251,21 @@ func validatePlanSchema(t *testing.T, raw []byte) {
 	require.NoError(t, compiler.AddResource(view.SchemaV1ID, doc))
 	sch, err := compiler.Compile(view.SchemaV1ID)
 	require.NoError(t, err)
+	return sch
+}
+
+func validatePlanSchema(t *testing.T, raw []byte) {
+	t.Helper()
 	var v any
 	require.NoError(t, json.Unmarshal(raw, &v))
-	require.NoError(t, sch.Validate(v))
+	require.NoError(t, compilePlanSchema(t).Validate(v))
+}
+
+func assertSchemaRejects(t *testing.T, raw []byte) {
+	t.Helper()
+	var v any
+	require.NoError(t, json.Unmarshal(raw, &v))
+	require.Error(t, compilePlanSchema(t).Validate(v))
 }
 
 func assertNoSnakeCaseKeysFromBytes(t *testing.T, raw []byte) {

@@ -215,6 +215,51 @@ func TestDiffFields(t *testing.T) {
 	}
 }
 
+func TestIsBookkeepingPath(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, []string{
+		"/status",
+		"/metadata/resourceVersion",
+		"/metadata/uid",
+		"/metadata/generation",
+		"/metadata/creationTimestamp",
+		"/metadata/managedFields",
+	}, semantic.BookkeepingPointers())
+
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{path: "/status", want: true},
+		{path: "/status/ready", want: true},
+		{path: "/metadata/resourceVersion", want: true},
+		{path: "/metadata/uid", want: true},
+		{path: "/metadata/generation", want: true},
+		{path: "/metadata/creationTimestamp", want: true},
+		{path: "/metadata/managedFields", want: true},
+		{path: "/metadata/managedFields/0", want: true},
+		{path: "/metadata/annotations", want: false},
+		{path: "/metadata/labels", want: false},
+		{path: "/spec/replicas", want: false},
+		{path: "/statusFoo", want: false},
+		{path: "/metadata/uidSuffix", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, semantic.IsBookkeepingPath(tt.path))
+		})
+	}
+}
+
+func TestBookkeepingPointers_IsCopy(t *testing.T) {
+	t.Parallel()
+	got := semantic.BookkeepingPointers()
+	got[0] = "/mutated"
+	assert.True(t, semantic.IsBookkeepingPath("/status"))
+	assert.Equal(t, "/status", semantic.BookkeepingPointers()[0])
+}
+
 func TestDiffFields_NoMutation(t *testing.T) {
 	t.Parallel()
 	before := map[string]any{"data": map[string]any{"key": "old"}}
