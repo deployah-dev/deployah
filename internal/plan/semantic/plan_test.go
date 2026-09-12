@@ -65,9 +65,9 @@ func TestNew_SnapshotInvariants(t *testing.T) {
 			delete: true,
 		},
 		{
-			name:      "recreate",
-			change:    recreateChange("app", "v1", "v2"),
-			action:    semantic.Recreate,
+			name:      "replace",
+			change:    replaceChange("app", "v1", "v2"),
+			action:    semantic.Replace,
 			before:    true,
 			after:     true,
 			fields:    true,
@@ -142,10 +142,10 @@ func TestNew_SummaryDerived(t *testing.T) {
 		createChange("a", "1"),
 		updateChange("b", "1", "2"),
 		deleteChange("c", "1"),
-		recreateChange("d", "1", "2"),
+		replaceChange("d", "1", "2"),
 	}, nil)
 	require.NoError(t, err)
-	assert.Equal(t, semantic.Summary{Create: 1, Update: 1, Delete: 1, Recreate: 1}, p.Summary)
+	assert.Equal(t, semantic.Summary{Create: 1, Update: 1, Delete: 1, Replace: 1}, p.Summary)
 	assert.Equal(t, 4, p.Summary.Total())
 }
 
@@ -219,7 +219,7 @@ func TestNew_DoesNotAliasCallerInputs(t *testing.T) {
 	p, err := semantic.New(semantic.Header{}, []semantic.ResourceChange{{
 		Resource: res,
 		Origin:   semantic.ResourceOrigin{Kind: semantic.OriginHelm, Helm: helm},
-		Action:   semantic.Recreate,
+		Action:   semantic.Replace,
 		Before:   snap(cm("app", "v1")),
 		After:    snap(cm("app", "v2")),
 		Apply:    semantic.ApplySemantics{Write: write, Delete: del},
@@ -246,9 +246,9 @@ func TestSummarize(t *testing.T) {
 		{Action: semantic.Create},
 		{Action: semantic.Update},
 		{Action: semantic.Delete},
-		{Action: semantic.Recreate},
+		{Action: semantic.Replace},
 	})
-	assert.Equal(t, semantic.Summary{Create: 2, Update: 1, Delete: 1, Recreate: 1}, got)
+	assert.Equal(t, semantic.Summary{Create: 2, Update: 1, Delete: 1, Replace: 1}, got)
 	assert.Equal(t, 5, got.Total())
 }
 
@@ -348,33 +348,33 @@ func TestNew_RejectsInvalid(t *testing.T) {
 			wantErr: "delete must not have an after snapshot",
 		},
 		{
-			name: "recreate missing before",
+			name: "replace missing before",
 			change: semantic.ResourceChange{
 				Resource: res,
 				Origin:   helmOrigin(),
-				Action:   semantic.Recreate,
+				Action:   semantic.Replace,
 				After:    snap(cm("app", "v2")),
 				Apply:    bothApply(),
 			},
-			wantErr: "recreate requires a before snapshot",
+			wantErr: "replace requires a before snapshot",
 		},
 		{
-			name: "recreate missing after",
+			name: "replace missing after",
 			change: semantic.ResourceChange{
 				Resource: res,
 				Origin:   helmOrigin(),
-				Action:   semantic.Recreate,
+				Action:   semantic.Replace,
 				Before:   snap(cm("app", "v1")),
 				Apply:    bothApply(),
 			},
-			wantErr: "recreate requires an after snapshot",
+			wantErr: "replace requires an after snapshot",
 		},
 		{
-			name: "recreate invalid write",
+			name: "replace invalid write",
 			change: semantic.ResourceChange{
 				Resource: res,
 				Origin:   helmOrigin(),
-				Action:   semantic.Recreate,
+				Action:   semantic.Replace,
 				Before:   snap(cm("app", "v1")),
 				After:    snap(cm("app", "v2")),
 				Apply: semantic.ApplySemantics{
@@ -385,11 +385,11 @@ func TestNew_RejectsInvalid(t *testing.T) {
 			wantErr: "field manager",
 		},
 		{
-			name: "recreate invalid delete",
+			name: "replace invalid delete",
 			change: semantic.ResourceChange{
 				Resource: res,
 				Origin:   helmOrigin(),
-				Action:   semantic.Recreate,
+				Action:   semantic.Replace,
 				Before:   snap(cm("app", "v1")),
 				After:    snap(cm("app", "v2")),
 				Apply: semantic.ApplySemantics{
@@ -454,11 +454,11 @@ func TestNew_RejectsInvalid(t *testing.T) {
 			wantErr: "requires delete semantics",
 		},
 		{
-			name: "recreate rejects write only",
+			name: "replace rejects write only",
 			change: semantic.ResourceChange{
 				Resource: res,
 				Origin:   helmOrigin(),
-				Action:   semantic.Recreate,
+				Action:   semantic.Replace,
 				Before:   snap(cm("app", "v1")),
 				After:    snap(cm("app", "v2")),
 				Apply:    writeApply(),
@@ -466,11 +466,11 @@ func TestNew_RejectsInvalid(t *testing.T) {
 			wantErr: "requires delete semantics",
 		},
 		{
-			name: "recreate rejects delete only",
+			name: "replace rejects delete only",
 			change: semantic.ResourceChange{
 				Resource: res,
 				Origin:   helmOrigin(),
-				Action:   semantic.Recreate,
+				Action:   semantic.Replace,
 				Before:   snap(cm("app", "v1")),
 				After:    snap(cm("app", "v2")),
 				Apply:    deleteApply(),
@@ -478,11 +478,11 @@ func TestNew_RejectsInvalid(t *testing.T) {
 			wantErr: "requires write semantics",
 		},
 		{
-			name: "recreate rejects nil apply",
+			name: "replace rejects nil apply",
 			change: semantic.ResourceChange{
 				Resource: res,
 				Origin:   helmOrigin(),
-				Action:   semantic.Recreate,
+				Action:   semantic.Replace,
 				Before:   snap(cm("app", "v1")),
 				After:    snap(cm("app", "v2")),
 			},

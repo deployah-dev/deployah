@@ -95,7 +95,7 @@
         },
         "action": {
           "type": "string",
-          "enum": ["create", "update", "delete", "recreate"]
+          "enum": ["create", "update", "delete", "replace"]
         },
         "before": {
           "$ref": "#/$defs/Snapshot"
@@ -199,7 +199,7 @@
           "if": {
             "properties": {
               "action": {
-                "const": "recreate"
+                "const": "replace"
               }
             },
             "required": ["action"]
@@ -433,7 +433,7 @@
     "Summary": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["create", "update", "delete", "recreate", "total"],
+      "required": ["create", "update", "delete", "replace", "total"],
       "properties": {
         "create": {
           "type": "integer",
@@ -447,7 +447,7 @@
           "type": "integer",
           "minimum": 0
         },
-        "recreate": {
+        "replace": {
           "type": "integer",
           "minimum": 0
         },

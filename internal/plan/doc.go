@@ -16,13 +16,18 @@
 // make, comparing the rendered manifest for an environment against the
 // manifest stored in the last successful Helm release.
 //
-// [ComputeDiff] is the diff engine: it parses two rendered Kubernetes
-// manifests, matches resources by (apiVersion, kind, namespace, name), and
-// runs [github.com/homeport/dyff] field-by-field on resources present on
-// both sides. [Plan] is the resulting domain model, consumed by a text
-// renderer ([RenderText]) and a JSON renderer ([NewJSONDocument]).
+// [ComputeDiff] is the legacy diff engine: it parses two rendered
+// Kubernetes manifests, matches resources by (apiVersion, kind, namespace,
+// name), and runs [github.com/homeport/dyff] field-by-field on resources
+// present on both sides. [Plan] is the resulting domain model, consumed by
+// a text renderer ([RenderText]) and a JSON renderer ([NewJSONDocument]).
 // [DeploymentIntent] holds the mutation and executability flags a deploy
-// would use.
+// would use. [BuildPlan] and [ComputeDiff] remain during migration to the
+// semantic plan model.
+//
+// [BuildSemanticPlan] assembles Stage B predictor results into a
+// [deployah.dev/deployah/internal/plan/semantic.Plan]. Semantic types
+// live in plan/semantic. New rendering lives in plan/view.
 //
 // Rendering the chart itself lives on [deployah.dev/deployah/internal/helm.Client]
 // instead, since `deployah plan` and `deployah deploy` share that one

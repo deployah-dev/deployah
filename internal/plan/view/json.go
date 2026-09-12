@@ -100,11 +100,11 @@ type diagDTO struct {
 }
 
 type summaryDTO struct {
-	Create   int `json:"create"`
-	Update   int `json:"update"`
-	Delete   int `json:"delete"`
-	Recreate int `json:"recreate"`
-	Total    int `json:"total"`
+	Create  int `json:"create"`
+	Update  int `json:"update"`
+	Delete  int `json:"delete"`
+	Replace int `json:"replace"`
+	Total   int `json:"total"`
 }
 
 type executionDTO struct{}
@@ -234,11 +234,11 @@ func toDiagDTO(d semantic.Diagnostic) diagDTO {
 
 func toSummaryDTO(s semantic.Summary) summaryDTO {
 	return summaryDTO{
-		Create:   s.Create,
-		Update:   s.Update,
-		Delete:   s.Delete,
-		Recreate: s.Recreate,
-		Total:    s.Total(),
+		Create:  s.Create,
+		Update:  s.Update,
+		Delete:  s.Delete,
+		Replace: s.Replace,
+		Total:   s.Total(),
 	}
 }
 

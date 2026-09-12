@@ -48,7 +48,7 @@ func TestWriteJSON_SchemaAndExecutions(t *testing.T) {
 			"create": 0,
 			"update": 0,
 			"delete": 0,
-			"recreate": 0,
+			"replace": 0,
 			"total": 0
 		},
 		"completeness": "complete"
@@ -223,6 +223,14 @@ func TestWriteJSON_MatchesSchemaForRepresentativePlans(t *testing.T) {
 			Before:   snap(cm("app", "v1")),
 			Apply:    writeApply(),
 		}}, []semantic.Diagnostic{limitationFor(res)})},
+		{name: "replace", plan: mustPlan(t, []semantic.ResourceChange{{
+			Resource: res,
+			Origin:   helmOrigin(),
+			Action:   semantic.Replace,
+			Before:   snap(cm("app", "v1")),
+			After:    snap(cm("app", "v2")),
+			Apply:    bothApply(),
+		}}, nil)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -230,6 +238,8 @@ func TestWriteJSON_MatchesSchemaForRepresentativePlans(t *testing.T) {
 			var buf bytes.Buffer
 			require.NoError(t, view.WriteJSON(&buf, tt.plan, view.Options{}))
 			validatePlanSchema(t, buf.Bytes())
+			assert.NotContains(t, buf.String(), `"marker"`)
+			assert.NotContains(t, buf.String(), `"displayAction"`)
 		})
 	}
 }

@@ -249,7 +249,7 @@ func TestWriteRenderers_CopyIsolation(t *testing.T) {
 	p, err := semantic.New(semantic.Header{Release: "web", Namespace: "prod"}, []semantic.ResourceChange{{
 		Resource: res,
 		Origin:   semantic.ResourceOrigin{Kind: semantic.OriginHelm, Helm: helm},
-		Action:   semantic.Recreate,
+		Action:   semantic.Replace,
 		Before:   snap(beforeObj),
 		After:    snap(secretObj("s", "new", "tok2")),
 		Apply:    semantic.ApplySemantics{Write: write, Delete: del},

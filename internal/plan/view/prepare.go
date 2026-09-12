@@ -40,7 +40,7 @@ func validateRenderable(p semantic.Plan) error {
 	for i, c := range p.Changes {
 		if err := requireEnum(fmt.Sprintf("change %d action", i), c.Action.String(),
 			semantic.Create.String(), semantic.Update.String(),
-			semantic.Delete.String(), semantic.Recreate.String()); err != nil {
+			semantic.Delete.String(), semantic.Replace.String()); err != nil {
 			return err
 		}
 		if err := requireEnum(fmt.Sprintf("change %d origin", i), c.Origin.Kind.String(),

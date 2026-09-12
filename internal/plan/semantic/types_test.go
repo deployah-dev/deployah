@@ -25,34 +25,35 @@ import (
 func TestEnumString(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
+		name string
 		got  string
 		want string
 	}{
-		{got: semantic.Create.String(), want: "create"},
-		{got: semantic.Update.String(), want: "update"},
-		{got: semantic.Delete.String(), want: "delete"},
-		{got: semantic.Recreate.String(), want: "recreate"},
-		{got: semantic.Action(0).String(), want: "Action(0)"},
-		{got: semantic.CompletenessComplete.String(), want: "complete"},
-		{got: semantic.CompletenessPartial.String(), want: "partial"},
-		{got: semantic.Completeness(0).String(), want: "Completeness(0)"},
-		{got: semantic.OriginHelm.String(), want: "helm"},
-		{got: semantic.OriginKind(0).String(), want: "OriginKind(0)"},
-		{got: semantic.WriteServerSide.String(), want: "server_side_apply"},
-		{got: semantic.WriteMethod(0).String(), want: "WriteMethod(0)"},
-		{got: semantic.PropagationBackground.String(), want: "background"},
-		{got: semantic.DeletePropagation(0).String(), want: "DeletePropagation(0)"},
-		{got: semantic.FieldAdd.String(), want: "add"},
-		{got: semantic.FieldRemove.String(), want: "remove"},
-		{got: semantic.FieldReplace.String(), want: "replace"},
-		{got: semantic.FieldOp(0).String(), want: "FieldOp(0)"},
-		{got: semantic.DiagnosticWarning.String(), want: "warning"},
-		{got: semantic.DiagnosticSeverity(0).String(), want: "DiagnosticSeverity(0)"},
-		{got: semantic.CategoryPredictionLimitation.String(), want: "prediction_limitation"},
-		{got: semantic.DiagnosticCategory(0).String(), want: "DiagnosticCategory(0)"},
+		{name: "create", got: semantic.Create.String(), want: "create"},
+		{name: "update", got: semantic.Update.String(), want: "update"},
+		{name: "delete", got: semantic.Delete.String(), want: "delete"},
+		{name: "action replace", got: semantic.Replace.String(), want: "replace"},
+		{name: "unknown action", got: semantic.Action(0).String(), want: "Action(0)"},
+		{name: "complete", got: semantic.CompletenessComplete.String(), want: "complete"},
+		{name: "partial", got: semantic.CompletenessPartial.String(), want: "partial"},
+		{name: "unknown completeness", got: semantic.Completeness(0).String(), want: "Completeness(0)"},
+		{name: "helm", got: semantic.OriginHelm.String(), want: "helm"},
+		{name: "unknown origin", got: semantic.OriginKind(0).String(), want: "OriginKind(0)"},
+		{name: "server_side_apply", got: semantic.WriteServerSide.String(), want: "server_side_apply"},
+		{name: "unknown write method", got: semantic.WriteMethod(0).String(), want: "WriteMethod(0)"},
+		{name: "background", got: semantic.PropagationBackground.String(), want: "background"},
+		{name: "unknown delete propagation", got: semantic.DeletePropagation(0).String(), want: "DeletePropagation(0)"},
+		{name: "field add", got: semantic.FieldAdd.String(), want: "add"},
+		{name: "field remove", got: semantic.FieldRemove.String(), want: "remove"},
+		{name: "field replace", got: semantic.FieldReplace.String(), want: "replace"},
+		{name: "unknown field op", got: semantic.FieldOp(0).String(), want: "FieldOp(0)"},
+		{name: "warning", got: semantic.DiagnosticWarning.String(), want: "warning"},
+		{name: "unknown severity", got: semantic.DiagnosticSeverity(0).String(), want: "DiagnosticSeverity(0)"},
+		{name: "prediction_limitation", got: semantic.CategoryPredictionLimitation.String(), want: "prediction_limitation"},
+		{name: "unknown category", got: semantic.DiagnosticCategory(0).String(), want: "DiagnosticCategory(0)"},
 	}
 	for _, tt := range tests {
-		t.Run(tt.want, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, tt.want, tt.got)
 		})

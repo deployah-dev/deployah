@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package frompredict
+package plan
 
 import (
 	"fmt"
@@ -25,9 +25,15 @@ import (
 	"deployah.dev/deployah/internal/predict"
 )
 
-// FromResults maps predictor results onto a semantic [semantic.Plan].
-// It does not mutate results or the unstructured objects they hold.
-func FromResults(header semantic.Header, results []predict.Result) (semantic.Plan, error) {
+// BuildSemanticPlan maps Stage B predictor results onto a semantic
+// [semantic.Plan]. It does not mutate results or the unstructured objects
+// they hold. Current predictor actions never produce [semantic.Replace].
+//
+// Write FieldManager values come from [kube.ManagedFieldsManager].
+// [semantic.New] rejects an empty field manager, so callers must import
+// [deployah.dev/deployah/internal/helm] (or otherwise pin that global)
+// before calling this function.
+func BuildSemanticPlan(header semantic.Header, results []predict.Result) (semantic.Plan, error) {
 	origin := semantic.ResourceOrigin{
 		Kind: semantic.OriginHelm,
 		Helm: &semantic.HelmOrigin{

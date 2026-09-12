@@ -187,7 +187,7 @@ func TestWriteHuman_OmitsBookkeepingFields(t *testing.T) {
 	assert.Equal(t, "11", objectString(t, p.Changes[0].Before.Object, "metadata", "resourceVersion"))
 }
 
-func TestWriteHuman_OmitsBookkeepingOnCreateDeleteRecreate(t *testing.T) {
+func TestWriteHuman_OmitsBookkeepingOnCreateDeleteReplace(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name    string
@@ -217,11 +217,11 @@ func TestWriteHuman_OmitsBookkeepingOnCreateDeleteRecreate(t *testing.T) {
 			want: []string{"-   key: v1"},
 		},
 		{
-			name: "recreate",
+			name: "replace",
 			changes: []semantic.ResourceChange{{
 				Resource: ref("ConfigMap", "web"),
 				Origin:   helmOrigin(),
-				Action:   semantic.Recreate,
+				Action:   semantic.Replace,
 				Before:   snap(noisyCM("web", "v1", "11", "u-live")),
 				After:    snap(noisyCM("web", "v2", "22", "u-pred")),
 				Apply:    bothApply(),

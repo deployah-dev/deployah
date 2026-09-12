@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package frompredict_test
+package plan_test
 
 import (
 	"testing"
@@ -22,41 +22,42 @@ import (
 	"helm.sh/helm/v4/pkg/kube"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	"deployah.dev/deployah/internal/plan/frompredict"
+	"deployah.dev/deployah/internal/plan"
 	"deployah.dev/deployah/internal/plan/semantic"
 	"deployah.dev/deployah/internal/predict"
 
+	// Pin Helm's kube.ManagedFieldsManager to "deployah".
 	_ "deployah.dev/deployah/internal/helm"
 )
 
-func TestFromResults_ActionMapping(t *testing.T) {
+func TestBuildSemanticPlan_ActionMapping(t *testing.T) {
 	t.Parallel()
 	header := semantic.Header{Release: "web", Namespace: "prod"}
-	live := configMap("app", "prod", "old")
-	predicted := configMap("app", "prod", "new")
+	live := predictionConfigMap("app", "prod", "old")
+	predicted := predictionConfigMap("app", "prod", "new")
 
-	p, err := frompredict.FromResults(header, []predict.Result{
+	p, err := plan.BuildSemanticPlan(header, []predict.Result{
 		{
-			Identity:  id("app"),
+			Identity:  predictionIdentity("app"),
 			Action:    predict.ActionCreate,
 			Predicted: predicted,
 		},
 		{
-			Identity:  id("keep"),
+			Identity:  predictionIdentity("keep"),
 			Action:    predict.ActionNoOp,
-			Live:      configMap("keep", "prod", "same"),
-			Predicted: configMap("keep", "prod", "same"),
+			Live:      predictionConfigMap("keep", "prod", "same"),
+			Predicted: predictionConfigMap("keep", "prod", "same"),
 		},
 		{
-			Identity:  id("app-up"),
+			Identity:  predictionIdentity("app-up"),
 			Action:    predict.ActionUpdate,
-			Live:      configMap("app-up", "prod", "old"),
-			Predicted: configMap("app-up", "prod", "new"),
+			Live:      predictionConfigMap("app-up", "prod", "old"),
+			Predicted: predictionConfigMap("app-up", "prod", "new"),
 		},
 		{
-			Identity: id("gone"),
+			Identity: predictionIdentity("gone"),
 			Action:   predict.ActionDelete,
-			Live:     configMap("gone", "prod", "old"),
+			Live:     predictionConfigMap("gone", "prod", "old"),
 		},
 	})
 	require.NoError(t, err)
@@ -68,7 +69,7 @@ func TestFromResults_ActionMapping(t *testing.T) {
 	byName := map[string]semantic.ResourceChange{}
 	for _, c := range p.Changes {
 		byName[c.Resource.Name] = c
-		assert.NotEqual(t, semantic.Recreate, c.Action)
+		assert.NotEqual(t, semantic.Replace, c.Action)
 	}
 	require.Contains(t, byName, "app")
 	assert.Equal(t, semantic.Create, byName["app"].Action)
@@ -95,49 +96,49 @@ func TestFromResults_ActionMapping(t *testing.T) {
 	require.NotNil(t, byName["gone"].Apply.Delete)
 	assert.Equal(t, semantic.PropagationBackground, byName["gone"].Apply.Delete.Propagation)
 
-	assert.Equal(t, "old", objectString(t, live.Object, "data", "key"))
-	assert.Equal(t, "new", objectString(t, predicted.Object, "data", "key"))
+	assert.Equal(t, "old", predictionObjectString(t, live.Object, "data", "key"))
+	assert.Equal(t, "new", predictionObjectString(t, predicted.Object, "data", "key"))
 }
 
-func TestFromResults_NoOpOmitted(t *testing.T) {
+func TestBuildSemanticPlan_NoOpOmitted(t *testing.T) {
 	t.Parallel()
-	p, err := frompredict.FromResults(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
-		Identity:  id("app"),
+	p, err := plan.BuildSemanticPlan(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
+		Identity:  predictionIdentity("app"),
 		Action:    predict.ActionNoOp,
-		Live:      configMap("app", "prod", "same"),
-		Predicted: configMap("app", "prod", "same"),
+		Live:      predictionConfigMap("app", "prod", "same"),
+		Predicted: predictionConfigMap("app", "prod", "same"),
 	}})
 	require.NoError(t, err)
 	assert.Empty(t, p.Changes)
 	assert.Equal(t, semantic.CompletenessComplete, p.Completeness)
 }
 
-func TestFromResults_LimitationKeepsPredicted(t *testing.T) {
+func TestBuildSemanticPlan_LimitationKeepsPredicted(t *testing.T) {
 	t.Parallel()
-	p, err := frompredict.FromResults(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
-		Identity:   id("app"),
+	p, err := plan.BuildSemanticPlan(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
+		Identity:   predictionIdentity("app"),
 		Action:     predict.ActionUpdate,
-		Live:       configMap("app", "prod", "old"),
-		Predicted:  configMap("app", "prod", "new"),
+		Live:       predictionConfigMap("app", "prod", "old"),
+		Predicted:  predictionConfigMap("app", "prod", "new"),
 		Limitation: predict.LimitationManagedFieldsMigration,
 	}})
 	require.NoError(t, err)
 	require.Len(t, p.Changes, 1)
 	assert.Equal(t, semantic.Update, p.Changes[0].Action)
 	require.NotNil(t, p.Changes[0].After)
-	assert.Equal(t, "new", objectString(t, p.Changes[0].After.Object, "data", "key"))
+	assert.Equal(t, "new", predictionObjectString(t, p.Changes[0].After.Object, "data", "key"))
 	assert.Equal(t, semantic.CompletenessPartial, p.Completeness)
 	require.Len(t, p.Diagnostics, 1)
 	assert.Equal(t, semantic.CategoryPredictionLimitation, p.Diagnostics[0].Category)
 	assert.Contains(t, p.Diagnostics[0].Message, predict.LimitationManagedFieldsMigration)
 }
 
-func TestFromResults_LimitationDoesNotFabricateAfter(t *testing.T) {
+func TestBuildSemanticPlan_LimitationDoesNotFabricateAfter(t *testing.T) {
 	t.Parallel()
-	p, err := frompredict.FromResults(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
-		Identity:   id("app"),
+	p, err := plan.BuildSemanticPlan(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
+		Identity:   predictionIdentity("app"),
 		Action:     predict.ActionUpdate,
-		Live:       configMap("app", "prod", "old"),
+		Live:       predictionConfigMap("app", "prod", "old"),
 		Limitation: predict.LimitationManagedFieldsMigration,
 	}})
 	require.NoError(t, err)
@@ -147,48 +148,48 @@ func TestFromResults_LimitationDoesNotFabricateAfter(t *testing.T) {
 	assert.Equal(t, semantic.CompletenessPartial, p.Completeness)
 }
 
-func TestFromResults_UnknownAction(t *testing.T) {
+func TestBuildSemanticPlan_UnknownAction(t *testing.T) {
 	t.Parallel()
-	_, err := frompredict.FromResults(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
-		Identity: id("app"),
+	_, err := plan.BuildSemanticPlan(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
+		Identity: predictionIdentity("app"),
 	}})
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "invalid predict action")
 }
 
-func TestFromResults_CreateRequiresPredicted(t *testing.T) {
+func TestBuildSemanticPlan_CreateRequiresPredicted(t *testing.T) {
 	t.Parallel()
-	_, err := frompredict.FromResults(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
-		Identity: id("app"),
+	_, err := plan.BuildSemanticPlan(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
+		Identity: predictionIdentity("app"),
 		Action:   predict.ActionCreate,
 	}})
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "create requires a predicted object")
 }
 
-func TestFromResults_DoesNotMutateResults(t *testing.T) {
+func TestBuildSemanticPlan_DoesNotMutateResults(t *testing.T) {
 	t.Parallel()
-	live := configMap("app", "prod", "old")
-	predicted := configMap("app", "prod", "new")
+	live := predictionConfigMap("app", "prod", "old")
+	predicted := predictionConfigMap("app", "prod", "new")
 	results := []predict.Result{{
-		Identity:  id("app"),
+		Identity:  predictionIdentity("app"),
 		Action:    predict.ActionUpdate,
 		Live:      live,
 		Predicted: predicted,
 	}}
-	p, err := frompredict.FromResults(semantic.Header{Release: "web", Namespace: "prod"}, results)
+	p, err := plan.BuildSemanticPlan(semantic.Header{Release: "web", Namespace: "prod"}, results)
 	require.NoError(t, err)
 
 	results[0].Action = predict.ActionDelete
-	setObjectString(t, live.Object, "mutated", "data", "key")
-	setObjectString(t, predicted.Object, "mutated", "data", "key")
+	setPredictionObjectString(t, live.Object, "mutated", "data", "key")
+	setPredictionObjectString(t, predicted.Object, "mutated", "data", "key")
 
 	assert.Equal(t, semantic.Update, p.Changes[0].Action)
-	assert.Equal(t, "old", objectString(t, p.Changes[0].Before.Object, "data", "key"))
-	assert.Equal(t, "new", objectString(t, p.Changes[0].After.Object, "data", "key"))
+	assert.Equal(t, "old", predictionObjectString(t, p.Changes[0].Before.Object, "data", "key"))
+	assert.Equal(t, "new", predictionObjectString(t, p.Changes[0].After.Object, "data", "key"))
 }
 
-func TestFromResults_GoIntInObject(t *testing.T) {
+func TestBuildSemanticPlan_GoIntInObject(t *testing.T) {
 	t.Parallel()
 	predicted := &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "apps/v1",
@@ -199,7 +200,7 @@ func TestFromResults_GoIntInObject(t *testing.T) {
 		},
 		"spec": map[string]any{"replicas": 3},
 	}}
-	p, err := frompredict.FromResults(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
+	p, err := plan.BuildSemanticPlan(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
 		Identity:  predict.Identity{Group: "apps", Version: "v1", Kind: "Deployment", Namespace: "prod", Name: "web"},
 		Action:    predict.ActionCreate,
 		Predicted: predicted,
@@ -208,6 +209,7 @@ func TestFromResults_GoIntInObject(t *testing.T) {
 	require.Len(t, p.Changes, 1)
 	require.NotNil(t, p.Changes[0].After)
 	require.NotNil(t, p.Changes[0].Apply.Write)
+	assert.Equal(t, "apps/v1", p.Changes[0].Resource.APIVersion)
 	spec, ok := p.Changes[0].After.Object["spec"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, 3, spec["replicas"])
@@ -222,7 +224,7 @@ func TestFromResults_GoIntInObject(t *testing.T) {
 	assert.Equal(t, 3, spec["replicas"])
 }
 
-func TestFromResults_GenerateName(t *testing.T) {
+func TestBuildSemanticPlan_GenerateName(t *testing.T) {
 	t.Parallel()
 	obj := &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "v1",
@@ -233,7 +235,7 @@ func TestFromResults_GenerateName(t *testing.T) {
 		},
 		"data": map[string]any{"key": "v1"},
 	}}
-	p, err := frompredict.FromResults(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
+	p, err := plan.BuildSemanticPlan(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
 		Identity:  predict.Identity{Version: "v1", Kind: "ConfigMap", Namespace: "prod"},
 		Action:    predict.ActionCreate,
 		Predicted: obj,
@@ -244,12 +246,12 @@ func TestFromResults_GenerateName(t *testing.T) {
 	assert.Equal(t, "app-", p.Changes[0].Resource.GenerateName)
 }
 
-func TestFromResults_NoOpWithLimitation(t *testing.T) {
+func TestBuildSemanticPlan_NoOpWithLimitation(t *testing.T) {
 	t.Parallel()
-	p, err := frompredict.FromResults(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
-		Identity:   id("app"),
+	p, err := plan.BuildSemanticPlan(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
+		Identity:   predictionIdentity("app"),
 		Action:     predict.ActionNoOp,
-		Predicted:  configMap("app", "prod", "same"),
+		Predicted:  predictionConfigMap("app", "prod", "same"),
 		Limitation: predict.LimitationManagedFieldsMigration,
 	}})
 	require.NoError(t, err)
@@ -261,31 +263,31 @@ func TestFromResults_NoOpWithLimitation(t *testing.T) {
 	assert.Equal(t, "app", p.Diagnostics[0].Resource.Name)
 }
 
-func TestFromResults_UpdateRequiresLive(t *testing.T) {
+func TestBuildSemanticPlan_UpdateRequiresLive(t *testing.T) {
 	t.Parallel()
-	_, err := frompredict.FromResults(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
-		Identity:  id("app"),
+	_, err := plan.BuildSemanticPlan(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
+		Identity:  predictionIdentity("app"),
 		Action:    predict.ActionUpdate,
-		Predicted: configMap("app", "prod", "new"),
+		Predicted: predictionConfigMap("app", "prod", "new"),
 	}})
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "update requires a live object")
 }
 
-func TestFromResults_DeleteRequiresLive(t *testing.T) {
+func TestBuildSemanticPlan_DeleteRequiresLive(t *testing.T) {
 	t.Parallel()
-	_, err := frompredict.FromResults(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
-		Identity: id("app"),
+	_, err := plan.BuildSemanticPlan(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
+		Identity: predictionIdentity("app"),
 		Action:   predict.ActionDelete,
 	}})
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "delete requires a live object")
 }
 
-func TestFromResults_NilObjectSnapshot(t *testing.T) {
+func TestBuildSemanticPlan_NilObjectSnapshot(t *testing.T) {
 	t.Parallel()
-	p, err := frompredict.FromResults(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
-		Identity:  id("app"),
+	p, err := plan.BuildSemanticPlan(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
+		Identity:  predictionIdentity("app"),
 		Action:    predict.ActionCreate,
 		Predicted: &unstructured.Unstructured{},
 	}})
@@ -295,21 +297,21 @@ func TestFromResults_NilObjectSnapshot(t *testing.T) {
 	assert.Nil(t, p.Changes[0].After.Object)
 }
 
-func TestFromResults_NeverEmitsRecreate(t *testing.T) {
+func TestBuildSemanticPlan_NeverEmitsReplace(t *testing.T) {
 	t.Parallel()
-	p, err := frompredict.FromResults(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{
-		{Identity: id("a"), Action: predict.ActionCreate, Predicted: configMap("a", "prod", "1")},
-		{Identity: id("b"), Action: predict.ActionUpdate, Live: configMap("b", "prod", "1"), Predicted: configMap("b", "prod", "2")},
-		{Identity: id("c"), Action: predict.ActionDelete, Live: configMap("c", "prod", "1")},
-		{Identity: id("d"), Action: predict.ActionNoOp, Live: configMap("d", "prod", "1"), Predicted: configMap("d", "prod", "1")},
+	p, err := plan.BuildSemanticPlan(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{
+		{Identity: predictionIdentity("a"), Action: predict.ActionCreate, Predicted: predictionConfigMap("a", "prod", "1")},
+		{Identity: predictionIdentity("b"), Action: predict.ActionUpdate, Live: predictionConfigMap("b", "prod", "1"), Predicted: predictionConfigMap("b", "prod", "2")},
+		{Identity: predictionIdentity("c"), Action: predict.ActionDelete, Live: predictionConfigMap("c", "prod", "1")},
+		{Identity: predictionIdentity("d"), Action: predict.ActionNoOp, Live: predictionConfigMap("d", "prod", "1"), Predicted: predictionConfigMap("d", "prod", "1")},
 	})
 	require.NoError(t, err)
 	for _, c := range p.Changes {
-		assert.NotEqual(t, semantic.Recreate, c.Action)
+		assert.NotEqual(t, semantic.Replace, c.Action)
 	}
 }
 
-func objectString(tb testing.TB, obj map[string]any, keys ...string) string {
+func predictionObjectString(tb testing.TB, obj map[string]any, keys ...string) string {
 	tb.Helper()
 	var cur any = obj
 	for _, key := range keys {
@@ -323,7 +325,7 @@ func objectString(tb testing.TB, obj map[string]any, keys ...string) string {
 	return s
 }
 
-func setObjectString(tb testing.TB, obj map[string]any, value string, keys ...string) {
+func setPredictionObjectString(tb testing.TB, obj map[string]any, value string, keys ...string) {
 	tb.Helper()
 	require.NotEmpty(tb, keys)
 	cur := obj
@@ -335,11 +337,11 @@ func setObjectString(tb testing.TB, obj map[string]any, value string, keys ...st
 	cur[keys[len(keys)-1]] = value
 }
 
-func id(name string) predict.Identity {
+func predictionIdentity(name string) predict.Identity {
 	return predict.Identity{Version: "v1", Kind: "ConfigMap", Namespace: "prod", Name: name}
 }
 
-func configMap(name, ns, value string) *unstructured.Unstructured {
+func predictionConfigMap(name, ns, value string) *unstructured.Unstructured {
 	return &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "v1",
 		"kind":       "ConfigMap",

@@ -17,15 +17,15 @@ package semantic
 // Summary counts [ResourceChange] values by action. [New] always sets it
 // from [Summarize]; callers cannot supply an independent summary.
 type Summary struct {
-	Create   int
-	Update   int
-	Delete   int
-	Recreate int
+	Create  int
+	Update  int
+	Delete  int
+	Replace int
 }
 
 // Total returns the number of resource changes.
 func (s Summary) Total() int {
-	return s.Create + s.Update + s.Delete + s.Recreate
+	return s.Create + s.Update + s.Delete + s.Replace
 }
 
 // Summarize counts changes by action. It is the only summary calculation.
@@ -39,8 +39,8 @@ func Summarize(changes []ResourceChange) Summary {
 			s.Update++
 		case Delete:
 			s.Delete++
-		case Recreate:
-			s.Recreate++
+		case Replace:
+			s.Replace++
 		}
 	}
 	return s

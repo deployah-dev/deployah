@@ -4,7 +4,13 @@ release: web
 namespace: prod
 completeness: complete
 
-ConfigMap/prod/app create helm
+Actions:
+  + create
+  ~ update
+  - delete
+  -/+ replace
+
++ ConfigMap/prod/app create helm
 + apiVersion: v1
 + kind: ConfigMap
 + metadata:
@@ -12,7 +18,7 @@ ConfigMap/prod/app create helm
 +   namespace: prod
 + data:
 +   key: v1
-ConfigMap/prod/old delete helm
+- ConfigMap/prod/old delete helm
 - apiVersion: v1
 - kind: ConfigMap
 - metadata:
@@ -20,7 +26,7 @@ ConfigMap/prod/old delete helm
 -   namespace: prod
 - data:
 -   key: v1
-ConfigMap/prod/rs recreate helm
+-/+ ConfigMap/prod/rs replace helm
   apiVersion: v1
   kind: ConfigMap
   metadata:
@@ -29,7 +35,7 @@ ConfigMap/prod/rs recreate helm
   data:
 -   key: v1
 +   key: v2
-ConfigMap/prod/web update helm
+~ ConfigMap/prod/web update helm
   apiVersion: v1
   kind: ConfigMap
   metadata:
@@ -43,5 +49,5 @@ Summary
   create: 1
   update: 1
   delete: 1
-  recreate: 1
+  replace: 1
   total: 4

@@ -30,7 +30,8 @@ import (
 const yamlDiffContextLines = 8
 
 // WriteHuman writes a deterministic YAML-oriented rendering of p. It
-// does not mutate p.
+// does not mutate p. Resource headings use +, ~, -, and -/+ markers,
+// and an Actions legend is written when p has at least one change.
 func WriteHuman(w io.Writer, p semantic.Plan, opts Options) error {
 	prepared, err := prepareRender(p, opts)
 	if err != nil {
@@ -38,6 +39,11 @@ func WriteHuman(w io.Writer, p semantic.Plan, opts Options) error {
 	}
 	if herr := writeHumanHeader(w, prepared.Header, prepared.Completeness, opts); herr != nil {
 		return herr
+	}
+	if len(prepared.Changes) > 0 {
+		if lerr := writeHumanLegend(w, opts); lerr != nil {
+			return lerr
+		}
 	}
 	for i := range prepared.Changes {
 		if cerr := writeHumanChange(w, prepared.Changes[i], opts); cerr != nil {
@@ -86,8 +92,41 @@ func writeHumanHeader(w io.Writer, h semantic.Header, completeness semantic.Comp
 	return err
 }
 
+func writeHumanLegend(w io.Writer, opts Options) error {
+	if err := writeln(w, opts, theme.TextTitle, "Actions:"); err != nil {
+		return err
+	}
+	for _, line := range []string{
+		"  + create",
+		"  ~ update",
+		"  - delete",
+		"  -/+ replace",
+	} {
+		if err := writeln(w, opts, theme.TextPrimary, line); err != nil {
+			return err
+		}
+	}
+	_, err := fmt.Fprintln(w)
+	return err
+}
+
+func actionMarker(action semantic.Action) string {
+	switch action {
+	case semantic.Create:
+		return "+"
+	case semantic.Update:
+		return "~"
+	case semantic.Delete:
+		return "-"
+	case semantic.Replace:
+		return "-/+"
+	default:
+		return ""
+	}
+}
+
 func writeHumanChange(w io.Writer, c semantic.ResourceChange, opts Options) error {
-	line := c.Resource.String() + " " + c.Action.String() + " " + c.Origin.Kind.String()
+	line := actionMarker(c.Action) + " " + c.Resource.String() + " " + c.Action.String() + " " + c.Origin.Kind.String()
 	if err := writeln(w, opts, actionHeadingToken(c.Action), line); err != nil {
 		return err
 	}
@@ -109,7 +148,7 @@ func writeHumanChange(w io.Writer, c semantic.ResourceChange, opts Options) erro
 			return err
 		}
 		return writePrefixedYAML(w, text, "- ", theme.StatusError, opts)
-	case semantic.Update, semantic.Recreate:
+	case semantic.Update, semantic.Replace:
 		if c.After == nil {
 			return nil
 		}
@@ -193,7 +232,7 @@ func writeHumanSummary(w io.Writer, s semantic.Summary, opts Options) error {
 		fmt.Sprintf("  create: %d", s.Create),
 		fmt.Sprintf("  update: %d", s.Update),
 		fmt.Sprintf("  delete: %d", s.Delete),
-		fmt.Sprintf("  recreate: %d", s.Recreate),
+		fmt.Sprintf("  replace: %d", s.Replace),
 		fmt.Sprintf("  total: %d", s.Total()),
 	} {
 		if err := writeln(w, opts, theme.TextPrimary, line); err != nil {
@@ -216,6 +255,8 @@ func actionHeadingToken(action semantic.Action) theme.Token {
 		return theme.StatusSuccess
 	case semantic.Delete:
 		return theme.StatusError
+	case semantic.Update, semantic.Replace:
+		return theme.StatusWarning
 	default:
 		return theme.StatusWarning
 	}

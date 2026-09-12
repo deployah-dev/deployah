@@ -59,7 +59,7 @@
     "create": 0,
     "update": 1,
     "delete": 0,
-    "recreate": 0,
+    "replace": 0,
     "total": 1
   },
   "completeness": "complete"

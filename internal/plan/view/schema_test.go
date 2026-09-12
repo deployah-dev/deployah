@@ -64,10 +64,10 @@ func TestSchemaV1_RejectsMalformedDocuments(t *testing.T) {
 		Before:   snap(cm("app", "v1")),
 		Apply:    deleteApply(),
 	}}, nil))
-	recreate := mustPlanDoc(t, mustPlan(t, []semantic.ResourceChange{{
+	replace := mustPlanDoc(t, mustPlan(t, []semantic.ResourceChange{{
 		Resource: res,
 		Origin:   helmOrigin(),
-		Action:   semantic.Recreate,
+		Action:   semantic.Replace,
 		Before:   snap(cm("app", "v1")),
 		After:    snap(cm("app", "v2")),
 		Apply:    bothApply(),
@@ -156,16 +156,16 @@ func TestSchemaV1_RejectsMalformedDocuments(t *testing.T) {
 		{name: "delete missing delete", raw: patched(t, deleteDoc, func(d map[string]any) {
 			delete(applyOf(t, d), "delete")
 		})},
-		{name: "recreate with after null", raw: patched(t, recreate, func(d map[string]any) {
+		{name: "replace with after null", raw: patched(t, replace, func(d map[string]any) {
 			firstChange(t, d)["after"] = nil
 		})},
-		{name: "recreate with before null", raw: patched(t, recreate, func(d map[string]any) {
+		{name: "replace with before null", raw: patched(t, replace, func(d map[string]any) {
 			firstChange(t, d)["before"] = nil
 		})},
-		{name: "recreate missing write", raw: patched(t, recreate, func(d map[string]any) {
+		{name: "replace missing write", raw: patched(t, replace, func(d map[string]any) {
 			delete(applyOf(t, d), "write")
 		})},
-		{name: "recreate missing delete", raw: patched(t, recreate, func(d map[string]any) {
+		{name: "replace missing delete", raw: patched(t, replace, func(d map[string]any) {
 			delete(applyOf(t, d), "delete")
 		})},
 	}

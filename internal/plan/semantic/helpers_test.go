@@ -142,11 +142,11 @@ func deleteChange(name, value string) semantic.ResourceChange {
 	}
 }
 
-func recreateChange(name, before, after string) semantic.ResourceChange {
+func replaceChange(name, before, after string) semantic.ResourceChange {
 	return semantic.ResourceChange{
 		Resource: ref("ConfigMap", name),
 		Origin:   helmOrigin(),
-		Action:   semantic.Recreate,
+		Action:   semantic.Replace,
 		Before:   snap(cm(name, before)),
 		After:    snap(cm(name, after)),
 		Apply:    bothApply(),

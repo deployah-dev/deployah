@@ -28,9 +28,9 @@ const (
 	Update
 	// Delete is a prune of a live resource.
 	Delete
-	// Recreate is a delete of the live object plus a write of a
+	// Replace is a delete of the live object plus a write of a
 	// replacement. Stage C stores the action; it does not generate it.
-	Recreate
+	Replace
 )
 
 func (a Action) String() string {
@@ -41,8 +41,8 @@ func (a Action) String() string {
 		return "update"
 	case Delete:
 		return "delete"
-	case Recreate:
-		return "recreate"
+	case Replace:
+		return "replace"
 	default:
 		return fmt.Sprintf("Action(%d)", int(a))
 	}
@@ -50,7 +50,7 @@ func (a Action) String() string {
 
 func (a Action) valid() bool {
 	switch a {
-	case Create, Update, Delete, Recreate:
+	case Create, Update, Delete, Replace:
 		return true
 	default:
 		return false
@@ -63,7 +63,7 @@ func actionRank(a Action) int {
 		return 0
 	case Update:
 		return 1
-	case Recreate:
+	case Replace:
 		return 2
 	case Delete:
 		return 3
@@ -222,7 +222,7 @@ type DeleteSemantics struct {
 }
 
 // ApplySemantics is the mutation semantics that produced a prediction.
-// Create and Update set Write only. Delete sets Delete only. Recreate
+// Create and Update set Write only. Delete sets Delete only. Replace
 // sets both.
 type ApplySemantics struct {
 	Write  *WriteSemantics

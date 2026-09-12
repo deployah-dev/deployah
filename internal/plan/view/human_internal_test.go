@@ -12,10 +12,32 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package frompredict maps Stage B predict.Result values onto the
-// semantic Plan domain model.
-//
-// This package is not the deployah plan command. It does not mutate
-// predictor results. Serialization and secret redaction belong to
-// deployah.dev/deployah/internal/plan/view.
-package frompredict
+package view
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+
+	"deployah.dev/deployah/internal/plan/semantic"
+)
+
+func TestActionMarker(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		action semantic.Action
+		want   string
+	}{
+		{action: semantic.Create, want: "+"},
+		{action: semantic.Update, want: "~"},
+		{action: semantic.Delete, want: "-"},
+		{action: semantic.Replace, want: "-/+"},
+		{action: 0, want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.action.String(), func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, actionMarker(tt.action))
+		})
+	}
+}

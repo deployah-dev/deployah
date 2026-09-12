@@ -115,7 +115,7 @@ func TestNew_ActionRank(t *testing.T) {
 		{
 			Resource: res,
 			Origin:   helmOrigin(),
-			Action:   semantic.Recreate,
+			Action:   semantic.Replace,
 			Before:   snap(cm("app", "v1")),
 			After:    snap(cm("app", "v2")),
 			Apply:    bothApply(),
@@ -139,7 +139,7 @@ func TestNew_ActionRank(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, p.Changes, 4)
 	assert.Equal(t, []semantic.Action{
-		semantic.Create, semantic.Update, semantic.Recreate, semantic.Delete,
+		semantic.Create, semantic.Update, semantic.Replace, semantic.Delete,
 	}, []semantic.Action{
 		p.Changes[0].Action, p.Changes[1].Action, p.Changes[2].Action, p.Changes[3].Action,
 	})

@@ -27,7 +27,7 @@ import (
 	"deployah.dev/deployah/internal/plan/view"
 )
 
-func TestWriteHuman_CreateUpdateDeleteRecreate(t *testing.T) {
+func TestWriteHuman_CreateUpdateDeleteReplace(t *testing.T) {
 	t.Parallel()
 	p := mustPlan(t, []semantic.ResourceChange{
 		{
@@ -55,7 +55,7 @@ func TestWriteHuman_CreateUpdateDeleteRecreate(t *testing.T) {
 		{
 			Resource: ref("ConfigMap", "rs"),
 			Origin:   helmOrigin(),
-			Action:   semantic.Recreate,
+			Action:   semantic.Replace,
 			Before:   snap(cm("rs", "v1")),
 			After:    snap(cm("rs", "v2")),
 			Apply:    bothApply(),
@@ -65,10 +65,19 @@ func TestWriteHuman_CreateUpdateDeleteRecreate(t *testing.T) {
 	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
 	text := buf.String()
 	assertGolden(t, "human_all_actions", text)
-	assert.Contains(t, text, "ConfigMap/prod/app create helm")
-	assert.Contains(t, text, "ConfigMap/prod/web update helm")
-	assert.Contains(t, text, "ConfigMap/prod/old delete helm")
-	assert.Contains(t, text, "ConfigMap/prod/rs recreate helm")
+	assert.Contains(t, text, "+ ConfigMap/prod/app create helm")
+	assert.Contains(t, text, "~ ConfigMap/prod/web update helm")
+	assert.Contains(t, text, "- ConfigMap/prod/old delete helm")
+	assert.Contains(t, text, "-/+ ConfigMap/prod/rs replace helm")
+	assert.NotContains(t, text, "~ ConfigMap/prod/rs")
+	assert.NotContains(t, text, "-/+ ConfigMap/prod/web")
+	assert.NotContains(t, strings.ToLower(text), "recreate")
+	assert.NotContains(t, text, "-/+ apiVersion")
+	assert.Contains(t, text, "Actions:")
+	assert.Contains(t, text, "  + create")
+	assert.Contains(t, text, "  ~ update")
+	assert.Contains(t, text, "  - delete")
+	assert.Contains(t, text, "  -/+ replace")
 	assert.NotContains(t, text, "write=")
 	assert.NotContains(t, text, "field_manager=")
 	assert.NotContains(t, text, "force_conflicts=")
@@ -328,7 +337,7 @@ func TestWriteHuman_BookkeepingOnlyUpdateKeepsResource(t *testing.T) {
 	var buf bytes.Buffer
 	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
 	text := buf.String()
-	assert.Contains(t, text, "ConfigMap/prod/web update helm")
+	assert.Contains(t, text, "~ ConfigMap/prod/web update helm")
 	assert.Contains(t, text, "  key: same")
 	assert.NotContains(t, text, "-   key:")
 	assert.NotContains(t, text, "+   key:")
@@ -345,6 +354,7 @@ func TestWriteHuman_EmptyPlan(t *testing.T) {
 	assert.Contains(t, text, "Executions: none")
 	assert.Contains(t, text, "create: 0")
 	assert.NotContains(t, text, "create helm")
+	assert.NotContains(t, text, "Actions:")
 }
 
 func TestWriteHuman_WriterError(t *testing.T) {

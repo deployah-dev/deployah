@@ -74,7 +74,7 @@ func normalizeChange(c ResourceChange) (ResourceChange, error) {
 	c.Apply = copyApply(c.Apply)
 	c.Fields = copyFields(c.Fields)
 	switch {
-	case (c.Action == Update || c.Action == Recreate) && c.After != nil:
+	case (c.Action == Update || c.Action == Replace) && c.After != nil:
 		fields, err := DiffFields(snapshotObject(c.Before), snapshotObject(c.After))
 		if err != nil {
 			return ResourceChange{}, err
@@ -141,12 +141,12 @@ func validateApply(action Action, apply ApplySemantics) error {
 			return fmt.Errorf("delete requires delete semantics")
 		}
 		return validateDelete(*apply.Delete)
-	case Recreate:
+	case Replace:
 		if apply.Write == nil {
-			return fmt.Errorf("recreate requires write semantics")
+			return fmt.Errorf("replace requires write semantics")
 		}
 		if apply.Delete == nil {
-			return fmt.Errorf("recreate requires delete semantics")
+			return fmt.Errorf("replace requires delete semantics")
 		}
 		if err := validateWrite(*apply.Write); err != nil {
 			return err
@@ -197,12 +197,12 @@ func validateSnapshots(c ResourceChange, diags []Diagnostic) error {
 		if c.After != nil {
 			return fmt.Errorf("delete must not have an after snapshot")
 		}
-	case Recreate:
+	case Replace:
 		if c.Before == nil {
-			return fmt.Errorf("recreate requires a before snapshot")
+			return fmt.Errorf("replace requires a before snapshot")
 		}
 		if c.After == nil {
-			return fmt.Errorf("recreate requires an after snapshot")
+			return fmt.Errorf("replace requires an after snapshot")
 		}
 	}
 	return nil

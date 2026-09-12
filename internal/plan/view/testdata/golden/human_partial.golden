@@ -4,7 +4,13 @@ release: web
 namespace: prod
 completeness: partial
 
-ConfigMap/prod/app update helm
+Actions:
+  + create
+  ~ update
+  - delete
+  -/+ replace
+
+~ ConfigMap/prod/app update helm
 Diagnostics
   warning prediction_limitation ConfigMap/prod/app: prediction is not exact: managed-fields-migration
 Executions: none
@@ -12,5 +18,5 @@ Summary
   create: 0
   update: 1
   delete: 0
-  recreate: 0
+  replace: 0
   total: 1
