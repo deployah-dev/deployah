@@ -1,0 +1,43 @@
+project: web
+environment: prod
+release: web
+namespace: prod
+completeness: complete
+
+ConfigMap/prod/app create helm write=server_side_apply field_manager=deployah force_conflicts=false
+  after:
+  {
+    "apiVersion": "v1",
+    "data": {
+      "key": "v1"
+    },
+    "kind": "ConfigMap",
+    "metadata": {
+      "name": "app",
+      "namespace": "prod"
+    }
+  }
+ConfigMap/prod/old delete helm delete=background
+  before:
+  {
+    "apiVersion": "v1",
+    "data": {
+      "key": "v1"
+    },
+    "kind": "ConfigMap",
+    "metadata": {
+      "name": "old",
+      "namespace": "prod"
+    }
+  }
+ConfigMap/prod/rs recreate helm write=server_side_apply field_manager=deployah force_conflicts=false delete=background
+  /data/key: v1 -> v2
+ConfigMap/prod/web update helm write=server_side_apply field_manager=deployah force_conflicts=false
+  /data/key: v1 -> v2
+Executions: none
+Summary
+  create: 1
+  update: 1
+  delete: 1
+  recreate: 1
+  total: 4

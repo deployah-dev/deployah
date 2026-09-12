@@ -1,0 +1,16 @@
+project: web
+environment: prod
+release: web
+namespace: prod
+completeness: partial
+
+ConfigMap/prod/app update helm write=server_side_apply field_manager=deployah force_conflicts=false
+Diagnostics
+  warning prediction_limitation ConfigMap/prod/app: prediction is not exact: managed-fields-migration
+Executions: none
+Summary
+  create: 0
+  update: 1
+  delete: 0
+  recreate: 0
+  total: 1
