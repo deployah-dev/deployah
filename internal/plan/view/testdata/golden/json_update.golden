@@ -1,0 +1,66 @@
+{
+  "schema": "https://deployah.dev/schemas/plan/v1/schema.json",
+  "header": {
+    "project": "web",
+    "environment": "prod",
+    "release": "web",
+    "namespace": "prod"
+  },
+  "changes": [
+    {
+      "resource": {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "namespace": "prod",
+        "name": "app"
+      },
+      "origin": {
+        "kind": "helm",
+        "helm": {
+          "release": "web",
+          "namespace": "prod"
+        }
+      },
+      "action": "update",
+      "before": {
+        "a": "1",
+        "z": "1"
+      },
+      "after": {
+        "a": "2",
+        "z": "2"
+      },
+      "fields": [
+        {
+          "path": "/a",
+          "op": "replace",
+          "before": "1",
+          "after": "2"
+        },
+        {
+          "path": "/z",
+          "op": "replace",
+          "before": "1",
+          "after": "2"
+        }
+      ],
+      "apply": {
+        "write": {
+          "method": "server_side_apply",
+          "fieldManager": "deployah",
+          "forceConflicts": false
+        }
+      }
+    }
+  ],
+  "executions": [],
+  "diagnostics": [],
+  "summary": {
+    "create": 0,
+    "update": 1,
+    "delete": 0,
+    "replace": 0,
+    "total": 1
+  },
+  "completeness": "complete"
+}

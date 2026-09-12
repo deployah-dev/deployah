@@ -155,8 +155,8 @@ func TestLockedInitCopy(t *testing.T) {
 		{name: "image prompt", got: promptImageFmt, want: "Container image for %s (registry/name:tag), e.g. nginx:latest"},
 		{name: "advanced prompt", got: promptAdvancedFmt, want: "Configure advanced options for %s? (kind, health, env vars, scaling). You can edit YAML later."},
 		{name: "expose prompt", got: promptExposeFmt, want: "Give %s a public URL (%s.%s.nip.io) with HTTPS?"},
-		{name: "manifest schema URL", got: spec.ManifestSchemaURL(), want: "https://deployah.dev/schemas/v1-alpha.5/manifest.json"},
-		{name: "platform schema URL", got: spec.PlatformSchemaURL(), want: "https://deployah.dev/schemas/platform/v1-alpha.3/platform.json"},
+		{name: "spec schema URL", got: spec.SpecSchemaURL(), want: "https://deployah.dev/schemas/spec/v1-alpha.5/schema.json"},
+		{name: "platform schema URL", got: spec.PlatformSchemaURL(), want: "https://deployah.dev/schemas/platform/v1-alpha.3/schema.json"},
 	}
 
 	for _, tt := range tests {

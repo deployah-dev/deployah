@@ -314,7 +314,7 @@ func marshalSpecYAML(specData *spec.Spec) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal spec to YAML: %w", err)
 	}
-	return append([]byte(spec.SchemaModeline(spec.ManifestSchemaURL())), data...), nil
+	return append([]byte(spec.SchemaModeline(spec.SpecSchemaURL())), data...), nil
 }
 
 func writeSpecFile(specData *spec.Spec, path string) error {

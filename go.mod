@@ -6,6 +6,7 @@ require (
 	dario.cat/mergo v1.0.2
 	github.com/Masterminds/sprig/v3 v3.3.0
 	github.com/adrg/xdg v0.5.3
+	github.com/aymanbagabas/go-udiff v0.4.1
 	github.com/distribution/reference v0.6.0
 	github.com/dustin/go-humanize v1.0.1
 	github.com/fatih/color v1.19.0
@@ -22,6 +23,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/stern/stern v1.34.0
 	github.com/stretchr/testify v1.12.1
+	github.com/wI2L/jsondiff v0.7.1
 	go.yaml.in/yaml/v3 v3.0.5
 	golang.org/x/sync v0.23.0
 	golang.org/x/term v0.46.0
@@ -196,6 +198,10 @@ require (
 	github.com/tetratelabs/wabin v0.0.0-20230304001439-f6f874872834 // indirect
 	github.com/tetratelabs/wazero v1.12.0 // indirect
 	github.com/texttheater/golang-levenshtein v1.0.1 // indirect
+	github.com/tidwall/gjson v1.18.0 // indirect
+	github.com/tidwall/match v1.1.1 // indirect
+	github.com/tidwall/pretty v1.2.1 // indirect
+	github.com/tidwall/sjson v1.2.5 // indirect
 	github.com/virtuald/go-ordered-json v0.0.0-20170621173500-b18e6e673d74 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xlab/treeprint v1.2.0 // indirect
