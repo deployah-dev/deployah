@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"deployah.dev/deployah/internal/helm"
 
@@ -96,6 +97,9 @@ func validateInput(in Input) error {
 	}
 	if in.Namespace == "" {
 		return errors.New("release namespace is required")
+	}
+	if in.Operation == helm.OperationInstall && strings.TrimSpace(in.Previous) != "" {
+		return errors.New("previous manifest is not allowed on install")
 	}
 	return nil
 }

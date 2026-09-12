@@ -100,6 +100,68 @@ func TestPredict_PruneGetErrorFailsClosed(t *testing.T) {
 	assert.Empty(t, cluster.deletes)
 }
 
+func TestPredict_PruneDelete(t *testing.T) {
+	t.Parallel()
+
+	t.Run("retries conflict then succeeds", func(t *testing.T) {
+		t.Parallel()
+		cluster := newFakeCluster()
+		cluster.store(ownedConfigMap("old", "prod", "web"))
+		cluster.deleteConflict = 1
+		results, err := predict.Predict(t.Context(), cluster, predict.Input{
+			Operation:   helm.OperationUpgrade,
+			ReleaseName: "web",
+			Namespace:   "prod",
+			Previous:    configMapYAML("old", "prod", "prev"),
+			Desired:     configMapYAML("app", "prod", "next"),
+		})
+		require.NoError(t, err)
+		got, ok := findResult(results, "old")
+		require.True(t, ok)
+		assert.Equal(t, predict.ActionDelete, got.Action)
+		assert.GreaterOrEqual(t, len(cluster.deletes), 2)
+	})
+
+	t.Run("delete not found after get is not an error", func(t *testing.T) {
+		t.Parallel()
+		cluster := newFakeCluster()
+		cluster.store(ownedConfigMap("old", "prod", "web"))
+		cluster.deleteErr = apierrors.NewNotFound(
+			schema.GroupResource{Resource: "configmaps"}, "old")
+		results, err := predict.Predict(t.Context(), cluster, predict.Input{
+			Operation:   helm.OperationUpgrade,
+			ReleaseName: "web",
+			Namespace:   "prod",
+			Previous:    configMapYAML("old", "prod", "prev"),
+			Desired:     configMapYAML("app", "prod", "next"),
+		})
+		require.NoError(t, err)
+		got, ok := findResult(results, "old")
+		require.True(t, ok)
+		assert.Equal(t, predict.ActionDelete, got.Action)
+		assert.NotNil(t, got.Live)
+		assert.Nil(t, got.Predicted)
+		require.NotEmpty(t, cluster.deletes)
+	})
+
+	t.Run("non-not-found delete failure is an error", func(t *testing.T) {
+		t.Parallel()
+		cluster := newFakeCluster()
+		cluster.store(ownedConfigMap("old", "prod", "web"))
+		cluster.deleteErr = apierrors.NewForbidden(
+			schema.GroupResource{Resource: "configmaps"}, "old", errors.New("denied"))
+		_, err := predict.Predict(t.Context(), cluster, predict.Input{
+			Operation:   helm.OperationUpgrade,
+			ReleaseName: "web",
+			Namespace:   "prod",
+			Previous:    configMapYAML("old", "prod", "prev"),
+			Desired:     configMapYAML("app", "prod", "next"),
+		})
+		require.Error(t, err)
+		assert.True(t, apierrors.IsForbidden(err), "Predict() delete = %v, want forbidden", err)
+	})
+}
+
 func TestPredict_DeleteDryRunFailure(t *testing.T) {
 	t.Parallel()
 	cluster := newFakeCluster()

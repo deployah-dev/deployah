@@ -317,6 +317,71 @@ items:
 	})
 }
 
+func TestPredict_ClusterScopedClearsNamespace(t *testing.T) {
+	t.Parallel()
+	gvk := clusterWidgetGVK()
+
+	t.Run("desired clears supplied namespace", func(t *testing.T) {
+		t.Parallel()
+		cluster := newFakeCluster()
+		cluster.clusterScoped[gvk] = true
+		results, err := predict.Predict(t.Context(), cluster, predict.Input{
+			Operation:   helm.OperationInstall,
+			ReleaseName: "web",
+			Namespace:   "prod",
+			Desired:     clusterWidgetYAML("app", "prod"),
+		})
+		require.NoError(t, err)
+		got, ok := findResult(results, "app")
+		require.True(t, ok)
+		assert.Empty(t, got.Identity.Namespace)
+		require.Len(t, cluster.applies, 1)
+		assert.Empty(t, cluster.applies[0].Namespace)
+		assert.Empty(t, cluster.applies[0].Obj.GetNamespace())
+	})
+
+	t.Run("previous matching uses cleared namespace", func(t *testing.T) {
+		t.Parallel()
+		cluster := newFakeCluster()
+		cluster.clusterScoped[gvk] = true
+		results, err := predict.Predict(t.Context(), cluster, predict.Input{
+			Operation:   helm.OperationUpgrade,
+			ReleaseName: "web",
+			Namespace:   "prod",
+			Previous:    clusterWidgetYAML("app", "prod"),
+			Desired:     clusterWidgetYAML("app", "staging"),
+		})
+		require.NoError(t, err)
+		require.Len(t, results, 1)
+		assert.Equal(t, predict.ActionCreate, results[0].Action)
+		assert.Empty(t, results[0].Identity.Namespace)
+		assert.Empty(t, cluster.deletes)
+		require.Len(t, cluster.applies, 1)
+		assert.Empty(t, cluster.applies[0].Namespace)
+	})
+
+	t.Run("previous prune uses cleared namespace", func(t *testing.T) {
+		t.Parallel()
+		cluster := newFakeCluster()
+		cluster.clusterScoped[gvk] = true
+		cluster.store(clusterWidget("old", ""))
+		results, err := predict.Predict(t.Context(), cluster, predict.Input{
+			Operation:   helm.OperationUpgrade,
+			ReleaseName: "web",
+			Namespace:   "prod",
+			Previous:    clusterWidgetYAML("old", "prod"),
+			Desired:     clusterWidgetYAML("app", "prod"),
+		})
+		require.NoError(t, err)
+		got, ok := findResult(results, "old")
+		require.True(t, ok)
+		assert.Equal(t, predict.ActionDelete, got.Action)
+		assert.Empty(t, got.Identity.Namespace)
+		require.Len(t, cluster.deletes, 1)
+		assert.Empty(t, cluster.deletes[0].ID.Namespace)
+	})
+}
+
 func TestPredict_PrerequisiteErrors(t *testing.T) {
 	t.Parallel()
 

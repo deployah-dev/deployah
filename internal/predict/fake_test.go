@@ -56,6 +56,7 @@ type fakeCluster struct {
 	jsonPatchCalls    int
 	jsonPatchConflict int
 	deleteErr         error
+	deleteConflict    int
 	gets              []predict.Identity
 	applies           []recordedApply
 	jsonPatches       []recordedJSONPatch
@@ -138,6 +139,14 @@ func (f *fakeCluster) JSONPatch(_ context.Context, id predict.Identity, patch []
 
 func (f *fakeCluster) Delete(_ context.Context, id predict.Identity) error {
 	f.deletes = append(f.deletes, recordedDelete{ID: id})
+	if f.deleteConflict > 0 {
+		f.deleteConflict--
+		return apierrors.NewConflict(
+			schema.GroupResource{Resource: strings.ToLower(id.Kind) + "s"},
+			id.Name,
+			fmt.Errorf("the object has been modified"),
+		)
+	}
 	return f.deleteErr
 }
 
@@ -201,6 +210,34 @@ func ownedConfigMap(name, namespace, release string) *unstructured.Unstructured 
 			},
 		},
 		"data": map[string]any{"key": "live"},
+	}}
+}
+
+func clusterWidgetGVK() schema.GroupVersionKind {
+	return schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "ClusterWidget"}
+}
+
+func clusterWidgetYAML(name, namespace string) string {
+	nsLine := ""
+	if namespace != "" {
+		nsLine = "\n  namespace: " + namespace
+	}
+	return fmt.Sprintf(`apiVersion: example.com/v1
+kind: ClusterWidget
+metadata:
+  name: %s%s
+`, name, nsLine)
+}
+
+func clusterWidget(name, namespace string) *unstructured.Unstructured {
+	meta := map[string]any{"name": name}
+	if namespace != "" {
+		meta["namespace"] = namespace
+	}
+	return &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "example.com/v1",
+		"kind":       "ClusterWidget",
+		"metadata":   meta,
 	}}
 }
 

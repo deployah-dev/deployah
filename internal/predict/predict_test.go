@@ -484,3 +484,21 @@ func TestPredict_RejectsInvalidInput(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "release namespace is required")
 }
+
+func TestPredict_RejectsInstallPrevious(t *testing.T) {
+	t.Parallel()
+	cluster := newFakeCluster()
+	_, err := predict.Predict(t.Context(), cluster, predict.Input{
+		Operation:   helm.OperationInstall,
+		ReleaseName: "web",
+		Namespace:   "prod",
+		Previous:    configMapYAML("old", "prod", "prev"),
+		Desired:     configMapYAML("app", "prod", "next"),
+	})
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "previous manifest is not allowed on install")
+	assert.Empty(t, cluster.gets)
+	assert.Empty(t, cluster.applies)
+	assert.Empty(t, cluster.jsonPatches)
+	assert.Empty(t, cluster.deletes)
+}

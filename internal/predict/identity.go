@@ -109,8 +109,12 @@ func loadResources(cluster Cluster, manifest, defaultNamespace string) ([]resour
 			return nil, fmt.Errorf("resolve resource mapping for %s %s: %w",
 				obj.GroupVersionKind(), obj.GetName(), mapErr)
 		}
-		if mapping.Scope.Name() == meta.RESTScopeNameNamespace && obj.GetNamespace() == "" {
-			obj.SetNamespace(defaultNamespace)
+		if mapping.Scope.Name() == meta.RESTScopeNameNamespace {
+			if obj.GetNamespace() == "" {
+				obj.SetNamespace(defaultNamespace)
+			}
+		} else {
+			obj.SetNamespace("")
 		}
 		out = append(out, resourceObj{id: identityOf(obj), obj: obj})
 	}

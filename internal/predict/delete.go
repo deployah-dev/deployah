@@ -19,6 +19,7 @@ import (
 	"fmt"
 
 	"helm.sh/helm/v4/pkg/kube"
+	"k8s.io/client-go/util/retry"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
@@ -42,7 +43,10 @@ func predictPrune(ctx context.Context, cluster Cluster, previous resourceObj) (R
 			Predicted: live.DeepCopy(),
 		}, nil
 	}
-	if delErr := cluster.Delete(ctx, previous.id); delErr != nil {
+	delErr := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		return cluster.Delete(ctx, previous.id)
+	})
+	if delErr != nil && !apierrors.IsNotFound(delErr) {
 		return Result{}, fmt.Errorf(
 			"failed to delete resource namespace=%s, name=%s, kind=%s: %w",
 			previous.id.Namespace, previous.id.Name, previous.id.Kind, delErr)
