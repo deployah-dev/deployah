@@ -43,9 +43,10 @@ func TestSecretRedaction_DefaultAndShowSecrets(t *testing.T) {
 	assert.NotContains(t, text, "new-pass")
 	assert.NotContains(t, text, "old-tok")
 	assert.NotContains(t, text, "new-tok")
-	assert.Contains(t, text, "/data/token")
-	assert.Contains(t, text, "/stringData/password")
-	assert.Contains(t, text, "(redacted)")
+	assert.Contains(t, text, "token: (redacted)")
+	assert.Contains(t, text, "password: (redacted)")
+	assert.Contains(t, text, "data:")
+	assert.Contains(t, text, "stringData:")
 	assert.Contains(t, text, "s")
 
 	var shown bytes.Buffer
@@ -94,7 +95,36 @@ func TestSecretRedaction_FieldChangeComputedBeforeRedaction(t *testing.T) {
 
 	var buf bytes.Buffer
 	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
-	assert.Contains(t, buf.String(), "/stringData/password")
+	assert.Contains(t, buf.String(), "password: (redacted)")
+	assert.Contains(t, buf.String(), "stringData:")
 	assert.NotContains(t, buf.String(), "old-pass")
 	assert.Equal(t, "old-pass", objectString(t, p.Changes[0].Before.Object, "stringData", "password"))
+}
+
+func TestSecretRedaction_WholeMapKeepsKeys(t *testing.T) {
+	t.Parallel()
+	before := map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Secret",
+		"metadata":   map[string]any{"name": "s", "namespace": "prod"},
+		"type":       "Opaque",
+	}
+	after := secretObj("s", "new-pass", "new-tok")
+	p := mustPlan(t, []semantic.ResourceChange{{
+		Resource: ref("Secret", "s"),
+		Origin:   helmOrigin(),
+		Action:   semantic.Update,
+		Before:   snap(before),
+		After:    snap(after),
+		Apply:    writeApply(),
+	}}, nil)
+	var hidden, jsonBuf bytes.Buffer
+	require.NoError(t, view.WriteHuman(&hidden, p, view.Options{}))
+	require.NoError(t, view.WriteJSON(&jsonBuf, p, view.Options{}))
+	assert.Contains(t, hidden.String(), "token: (redacted)")
+	assert.Contains(t, hidden.String(), "password: (redacted)")
+	assert.NotContains(t, hidden.String(), "new-pass")
+	assert.NotContains(t, jsonBuf.String(), `"after": "(redacted)"`)
+	assert.Contains(t, jsonBuf.String(), `"token": "(redacted)"`)
+	assert.Contains(t, jsonBuf.String(), `"password": "(redacted)"`)
 }

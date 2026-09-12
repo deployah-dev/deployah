@@ -41,7 +41,7 @@ type headerDTO struct {
 	Namespace    string `json:"namespace,omitempty"`
 	Context      string `json:"context,omitempty"`
 	Revision     int    `json:"revision,omitempty"`
-	FreshInstall bool   `json:"fresh_install,omitempty"`
+	FreshInstall bool   `json:"freshInstall,omitempty"`
 }
 
 type changeDTO struct {
@@ -55,11 +55,11 @@ type changeDTO struct {
 }
 
 type resourceDTO struct {
-	APIVersion   string `json:"api_version"`
+	APIVersion   string `json:"apiVersion"`
 	Kind         string `json:"kind"`
 	Namespace    string `json:"namespace"`
 	Name         string `json:"name"`
-	GenerateName string `json:"generate_name,omitempty"`
+	GenerateName string `json:"generateName,omitempty"`
 }
 
 type originDTO struct {
@@ -79,8 +79,8 @@ type applyDTO struct {
 
 type writeDTO struct {
 	Method         string `json:"method"`
-	FieldManager   string `json:"field_manager"`
-	ForceConflicts bool   `json:"force_conflicts"`
+	FieldManager   string `json:"fieldManager"`
+	ForceConflicts bool   `json:"forceConflicts"`
 }
 
 type deleteDTO struct {
@@ -90,8 +90,8 @@ type deleteDTO struct {
 type fieldDTO struct {
 	Path   string `json:"path"`
 	Op     string `json:"op"`
-	Before any    `json:"before,omitempty"`
-	After  any    `json:"after,omitempty"`
+	Before *any   `json:"before,omitempty"`
+	After  *any   `json:"after,omitempty"`
 }
 
 type diagDTO struct {
@@ -166,12 +166,7 @@ func toHeaderDTO(h semantic.Header) headerDTO {
 func toChangeDTO(c semantic.ResourceChange) changeDTO {
 	fields := make([]fieldDTO, 0, len(c.Fields))
 	for _, f := range c.Fields {
-		fields = append(fields, fieldDTO{
-			Path:   f.Path,
-			Op:     f.Op.String(),
-			Before: f.Before,
-			After:  f.After,
-		})
+		fields = append(fields, toFieldDTO(f))
 	}
 	origin := originDTO{Kind: c.Origin.Kind.String()}
 	if c.Origin.Helm != nil {
@@ -200,6 +195,20 @@ func toChangeDTO(c semantic.ResourceChange) changeDTO {
 		Fields:   fields,
 		Apply:    apply,
 	}
+}
+
+func toFieldDTO(f semantic.FieldChange) fieldDTO {
+	dto := fieldDTO{Path: f.Path, Op: f.Op.String()}
+	switch f.Op {
+	case semantic.FieldAdd:
+		dto.After = new(f.After)
+	case semantic.FieldRemove:
+		dto.Before = new(f.Before)
+	case semantic.FieldReplace:
+		dto.Before = new(f.Before)
+		dto.After = new(f.After)
+	}
+	return dto
 }
 
 func toResourceDTO(r semantic.ResourceRef) resourceDTO {

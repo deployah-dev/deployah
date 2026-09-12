@@ -15,40 +15,45 @@
 package view
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
 
+	"github.com/aymanbagabas/go-udiff"
+	"nabat.dev/theme"
+
 	"deployah.dev/deployah/internal/plan/semantic"
 )
 
-// WriteHuman writes a deterministic structural rendering of p. It does
-// not mutate p.
+// yamlDiffContextLines is large enough that small Kubernetes objects stay
+// visible around a field change without printing unified-diff headers.
+const yamlDiffContextLines = 8
+
+// WriteHuman writes a deterministic YAML-oriented rendering of p. It
+// does not mutate p.
 func WriteHuman(w io.Writer, p semantic.Plan, opts Options) error {
 	prepared, err := prepareRender(p, opts)
 	if err != nil {
 		return err
 	}
-	if herr := writeHumanHeader(w, prepared.Header, prepared.Completeness); herr != nil {
+	if herr := writeHumanHeader(w, prepared.Header, prepared.Completeness, opts); herr != nil {
 		return herr
 	}
 	for i := range prepared.Changes {
-		if cerr := writeHumanChange(w, prepared.Changes[i]); cerr != nil {
+		if cerr := writeHumanChange(w, prepared.Changes[i], opts); cerr != nil {
 			return cerr
 		}
 	}
-	if derr := writeHumanDiagnostics(w, prepared.Diagnostics); derr != nil {
+	if derr := writeHumanDiagnostics(w, prepared.Diagnostics, opts); derr != nil {
 		return derr
 	}
-	if _, werr := fmt.Fprintln(w, "Executions: none"); werr != nil {
+	if _, werr := fmt.Fprintln(w, style(opts, theme.TextTitle, "Executions: none")); werr != nil {
 		return werr
 	}
-	return writeHumanSummary(w, prepared.Summary)
+	return writeHumanSummary(w, prepared.Summary, opts)
 }
 
-func writeHumanHeader(w io.Writer, h semantic.Header, completeness semantic.Completeness) error {
+func writeHumanHeader(w io.Writer, h semantic.Header, completeness semantic.Completeness, opts Options) error {
 	pairs := [][2]string{
 		{"project", h.Project},
 		{"environment", h.Environment},
@@ -60,54 +65,64 @@ func writeHumanHeader(w io.Writer, h semantic.Header, completeness semantic.Comp
 		if pair[1] == "" {
 			continue
 		}
-		if _, err := fmt.Fprintf(w, "%s: %s\n", pair[0], pair[1]); err != nil {
+		if err := writeln(w, opts, theme.TextPrimary, pair[0]+": "+pair[1]); err != nil {
 			return err
 		}
 	}
 	if h.Revision > 0 {
-		if _, err := fmt.Fprintf(w, "revision: %d\n", h.Revision); err != nil {
+		if err := writeln(w, opts, theme.TextPrimary, fmt.Sprintf("revision: %d", h.Revision)); err != nil {
 			return err
 		}
 	}
 	if h.FreshInstall {
-		if _, err := fmt.Fprintln(w, "fresh_install: true"); err != nil {
+		if err := writeln(w, opts, theme.TextPrimary, "fresh_install: true"); err != nil {
 			return err
 		}
 	}
-	if _, err := fmt.Fprintf(w, "completeness: %s\n", completeness.String()); err != nil {
+	if err := writeln(w, opts, theme.TextPrimary, "completeness: "+completeness.String()); err != nil {
 		return err
 	}
 	_, err := fmt.Fprintln(w)
 	return err
 }
 
-func writeHumanChange(w io.Writer, c semantic.ResourceChange) error {
+func writeHumanChange(w io.Writer, c semantic.ResourceChange, opts Options) error {
 	line := c.Resource.String() + " " + c.Action.String() + " " + c.Origin.Kind.String()
 	if apply := humanApply(c.Apply); apply != "" {
 		line += " " + apply
 	}
-	if _, err := fmt.Fprintln(w, line); err != nil {
+	if err := writeln(w, opts, actionHeadingToken(c.Action), line); err != nil {
 		return err
 	}
 	switch c.Action {
-	case semantic.Update, semantic.Recreate:
-		for _, f := range c.Fields {
-			if err := writeHumanField(w, f); err != nil {
-				return err
-			}
-		}
 	case semantic.Create:
-		if _, err := fmt.Fprintln(w, "  after:"); err != nil {
+		text, err := marshalOrderedYAML(snapshotMap(c.After))
+		if err != nil {
 			return err
 		}
-		return writeIndentedJSON(w, snapshotMap(c.After))
+		return writePrefixedYAML(w, text, "+ ", theme.StatusSuccess, opts)
 	case semantic.Delete:
-		if _, err := fmt.Fprintln(w, "  before:"); err != nil {
+		text, err := marshalOrderedYAML(snapshotMap(c.Before))
+		if err != nil {
 			return err
 		}
-		return writeIndentedJSON(w, snapshotMap(c.Before))
+		return writePrefixedYAML(w, text, "- ", theme.StatusError, opts)
+	case semantic.Update, semantic.Recreate:
+		if c.After == nil {
+			return nil
+		}
+		beforeYAML, err := marshalOrderedYAML(snapshotMap(c.Before))
+		if err != nil {
+			return err
+		}
+		afterYAML, err := marshalOrderedYAML(snapshotMap(c.After))
+		if err != nil {
+			return err
+		}
+		return writeYAMLDiff(w, beforeYAML, afterYAML, opts)
+	default:
+		return nil
 	}
-	return nil
 }
 
 func humanApply(a semantic.ApplySemantics) string {
@@ -122,47 +137,49 @@ func humanApply(a semantic.ApplySemantics) string {
 	return strings.Join(parts, " ")
 }
 
-func writeHumanField(w io.Writer, f semantic.FieldChange) error {
-	switch f.Op {
-	case semantic.FieldAdd:
-		_, err := fmt.Fprintf(w, "  %s: (added) %s\n", f.Path, formatValue(f.After))
-		return err
-	case semantic.FieldRemove:
-		_, err := fmt.Fprintf(w, "  %s: (removed) %s\n", f.Path, formatValue(f.Before))
-		return err
-	default:
-		_, err := fmt.Fprintf(w, "  %s: %s -> %s\n", f.Path, formatValue(f.Before), formatValue(f.After))
-		return err
-	}
-}
-
-func formatValue(v any) string {
-	if v == nil {
-		return "null"
-	}
-	switch x := v.(type) {
-	case string:
-		return x
-	case bool:
-		return fmt.Sprintf("%t", x)
-	case json.Number:
-		return x.String()
-	case int, int32, int64, float32, float64:
-		return fmt.Sprint(x)
-	default:
-		s, err := encodeJSON(x, "")
-		if err != nil {
-			return fmt.Sprint(x)
+func writePrefixedYAML(w io.Writer, text, prefix string, token theme.Token, opts Options) error {
+	for line := range strings.SplitSeq(strings.TrimRight(text, "\n"), "\n") {
+		if err := writeln(w, opts, token, prefix+line); err != nil {
+			return err
 		}
-		return s
 	}
+	return nil
 }
 
-func writeHumanDiagnostics(w io.Writer, diags []semantic.Diagnostic) error {
+func writeYAMLDiff(w io.Writer, beforeYAML, afterYAML string, opts Options) error {
+	edits := udiff.Strings(beforeYAML, afterYAML)
+	diff, err := udiff.ToUnifiedDiff("before", "after", beforeYAML, edits, yamlDiffContextLines)
+	if err != nil {
+		return fmt.Errorf("diff yaml: %w", err)
+	}
+	if len(diff.Hunks) == 0 {
+		// Redacted Secret values can make Before and After YAML identical
+		// while the change still exists. Keep the resource shape visible.
+		return writePrefixedYAML(w, afterYAML, "  ", theme.TextMuted, opts)
+	}
+	for _, hunk := range diff.Hunks {
+		for _, line := range hunk.Lines {
+			content := strings.TrimRight(line.Content, "\n")
+			prefix, token := "  ", theme.TextMuted
+			switch line.Kind {
+			case udiff.Delete:
+				prefix, token = "- ", theme.StatusError
+			case udiff.Insert:
+				prefix, token = "+ ", theme.StatusSuccess
+			}
+			if werr := writeln(w, opts, token, prefix+content); werr != nil {
+				return werr
+			}
+		}
+	}
+	return nil
+}
+
+func writeHumanDiagnostics(w io.Writer, diags []semantic.Diagnostic, opts Options) error {
 	if len(diags) == 0 {
 		return nil
 	}
-	if _, err := fmt.Fprintln(w, "Diagnostics"); err != nil {
+	if err := writeln(w, opts, theme.TextTitle, "Diagnostics"); err != nil {
 		return err
 	}
 	for _, d := range diags {
@@ -170,52 +187,55 @@ func writeHumanDiagnostics(w io.Writer, diags []semantic.Diagnostic) error {
 		if d.Resource != nil {
 			ref = " " + d.Resource.String()
 		}
-		if _, err := fmt.Fprintf(w, "  %s %s%s: %s\n",
-			d.Severity.String(), d.Category.String(), ref, d.Message); err != nil {
+		line := fmt.Sprintf("  %s %s%s: %s", d.Severity.String(), d.Category.String(), ref, d.Message)
+		if err := writeln(w, opts, theme.StatusWarning, line); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func writeHumanSummary(w io.Writer, s semantic.Summary) error {
-	_, err := fmt.Fprintf(w, "Summary\n  create: %d\n  update: %d\n  delete: %d\n  recreate: %d\n  total: %d\n",
-		s.Create, s.Update, s.Delete, s.Recreate, s.Total())
-	return err
-}
-
-func snapshotMap(s *semantic.ResourceSnapshot) map[string]any {
-	if s == nil {
-		return map[string]any{}
+func writeHumanSummary(w io.Writer, s semantic.Summary, opts Options) error {
+	if err := writeln(w, opts, theme.TextTitle, "Summary"); err != nil {
+		return err
 	}
-	if s.Object == nil {
-		return map[string]any{}
-	}
-	return s.Object
-}
-
-func writeIndentedJSON(w io.Writer, obj map[string]any) error {
-	text, err := encodeJSON(obj, "  ")
-	if err != nil {
-		return fmt.Errorf("encode snapshot: %w", err)
-	}
-	for line := range strings.SplitSeq(text, "\n") {
-		if _, werr := fmt.Fprintf(w, "  %s\n", line); werr != nil {
-			return werr
+	for _, line := range []string{
+		fmt.Sprintf("  create: %d", s.Create),
+		fmt.Sprintf("  update: %d", s.Update),
+		fmt.Sprintf("  delete: %d", s.Delete),
+		fmt.Sprintf("  recreate: %d", s.Recreate),
+		fmt.Sprintf("  total: %d", s.Total()),
+	} {
+		if err := writeln(w, opts, theme.TextPrimary, line); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
-func encodeJSON(v any, indent string) (string, error) {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if indent != "" {
-		enc.SetIndent("", indent)
+func snapshotMap(s *semantic.ResourceSnapshot) map[string]any {
+	if s == nil || s.Object == nil {
+		return map[string]any{}
 	}
-	if err := enc.Encode(v); err != nil {
-		return "", err
+	return s.Object
+}
+
+func actionHeadingToken(action semantic.Action) theme.Token {
+	switch action {
+	case semantic.Create:
+		return theme.StatusSuccess
+	case semantic.Delete:
+		return theme.StatusError
+	default:
+		return theme.StatusWarning
 	}
-	return strings.TrimRight(buf.String(), "\n"), nil
+}
+
+func style(opts Options, token theme.Token, s string) string {
+	return opts.Theme.Style(token).Render(s)
+}
+
+func writeln(w io.Writer, opts Options, token theme.Token, s string) error {
+	_, err := fmt.Fprintln(w, style(opts, token, s))
+	return err
 }

@@ -1,0 +1,281 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://deployah.dev/schemas/semantic_plan.v1.json",
+  "title": "Deployah semantic plan v1",
+  "description": "Machine-readable document produced by view.WriteJSON.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "header",
+    "changes",
+    "executions",
+    "diagnostics",
+    "summary",
+    "completeness"
+  ],
+  "properties": {
+    "schema": {
+      "type": "string",
+      "const": "deployah.semantic_plan.v1"
+    },
+    "header": {
+      "$ref": "#/$defs/Header"
+    },
+    "changes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ResourceChange"
+      }
+    },
+    "executions": {
+      "type": "array",
+      "maxItems": 0
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Diagnostic"
+      }
+    },
+    "summary": {
+      "$ref": "#/$defs/Summary"
+    },
+    "completeness": {
+      "type": "string",
+      "enum": ["complete", "partial"]
+    }
+  },
+  "$defs": {
+    "Header": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project": {
+          "type": "string"
+        },
+        "environment": {
+          "type": "string"
+        },
+        "release": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "context": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "integer"
+        },
+        "freshInstall": {
+          "type": "boolean"
+        }
+      }
+    },
+    "ResourceChange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "resource",
+        "origin",
+        "action",
+        "before",
+        "after",
+        "fields",
+        "apply"
+      ],
+      "properties": {
+        "resource": {
+          "$ref": "#/$defs/Resource"
+        },
+        "origin": {
+          "$ref": "#/$defs/Origin"
+        },
+        "action": {
+          "type": "string",
+          "enum": ["create", "update", "delete", "recreate"]
+        },
+        "before": {
+          "$ref": "#/$defs/Snapshot"
+        },
+        "after": {
+          "$ref": "#/$defs/Snapshot"
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FieldChange"
+          }
+        },
+        "apply": {
+          "$ref": "#/$defs/Apply"
+        }
+      }
+    },
+    "Resource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["apiVersion", "kind", "namespace", "name"],
+      "properties": {
+        "apiVersion": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "generateName": {
+          "type": "string"
+        }
+      }
+    },
+    "Origin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["helm"]
+        },
+        "helm": {
+          "$ref": "#/$defs/HelmOrigin"
+        }
+      }
+    },
+    "HelmOrigin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["release", "namespace"],
+      "properties": {
+        "release": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        }
+      }
+    },
+    "Apply": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "write": {
+          "$ref": "#/$defs/WriteSemantics"
+        },
+        "delete": {
+          "$ref": "#/$defs/DeleteSemantics"
+        }
+      }
+    },
+    "WriteSemantics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method", "fieldManager", "forceConflicts"],
+      "properties": {
+        "method": {
+          "type": "string",
+          "enum": ["server_side_apply"]
+        },
+        "fieldManager": {
+          "type": "string"
+        },
+        "forceConflicts": {
+          "type": "boolean"
+        }
+      }
+    },
+    "DeleteSemantics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["propagation"],
+      "properties": {
+        "propagation": {
+          "type": "string",
+          "enum": ["background"]
+        }
+      }
+    },
+    "FieldChange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "op"],
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "op": {
+          "type": "string",
+          "enum": ["add", "remove", "replace"]
+        },
+        "before": true,
+        "after": true
+      }
+    },
+    "Diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["severity", "category", "message"],
+      "properties": {
+        "severity": {
+          "type": "string",
+          "enum": ["warning"]
+        },
+        "category": {
+          "type": "string",
+          "enum": ["prediction_limitation"]
+        },
+        "message": {
+          "type": "string"
+        },
+        "resource": {
+          "$ref": "#/$defs/Resource"
+        }
+      }
+    },
+    "Summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["create", "update", "delete", "recreate", "total"],
+      "properties": {
+        "create": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "update": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "delete": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "recreate": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "Snapshot": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object"
+        }
+      ]
+    }
+  }
+}

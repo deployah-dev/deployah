@@ -9,7 +9,7 @@
   "changes": [
     {
       "resource": {
-        "api_version": "v1",
+        "apiVersion": "v1",
         "kind": "ConfigMap",
         "namespace": "prod",
         "name": "app"
@@ -47,8 +47,8 @@
       "apply": {
         "write": {
           "method": "server_side_apply",
-          "field_manager": "deployah",
-          "force_conflicts": false
+          "fieldManager": "deployah",
+          "forceConflicts": false
         }
       }
     }

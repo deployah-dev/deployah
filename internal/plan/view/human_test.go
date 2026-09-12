@@ -16,6 +16,7 @@ package view_test
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -61,7 +62,23 @@ func TestWriteHuman_CreateUpdateDeleteRecreate(t *testing.T) {
 	}, nil)
 	var buf bytes.Buffer
 	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
-	assertGolden(t, "human_all_actions", buf.String())
+	text := buf.String()
+	assertGolden(t, "human_all_actions", text)
+	assert.Contains(t, text, "ConfigMap/prod/app create")
+	assert.Contains(t, text, "ConfigMap/prod/web update")
+	assert.Contains(t, text, "ConfigMap/prod/old delete")
+	assert.Contains(t, text, "ConfigMap/prod/rs recreate")
+	assert.Contains(t, text, "+ apiVersion: v1")
+	assert.Contains(t, text, "- apiVersion: v1")
+	assert.Contains(t, text, "-   key: v1")
+	assert.Contains(t, text, "+   key: v2")
+	assert.Contains(t, text, "  kind: ConfigMap")
+	assert.Contains(t, text, "  apiVersion: v1")
+	assert.NotContains(t, text, "before:")
+	assert.NotContains(t, text, "after:")
+	assert.NotContains(t, text, "--- before")
+	assert.NotContains(t, text, "+++ after")
+	assert.NotContains(t, text, "@@")
 }
 
 func TestWriteHuman_DiagnosticPartial(t *testing.T) {
@@ -149,4 +166,118 @@ func TestWriteHuman_DoesNotMutatePlan(t *testing.T) {
 	before := objectString(t, p.Changes[0].Before.Object, "stringData", "password")
 	require.NoError(t, view.WriteHuman(&bytes.Buffer{}, p, view.Options{}))
 	assert.Equal(t, before, objectString(t, p.Changes[0].Before.Object, "stringData", "password"))
+}
+
+func TestWriteHuman_KubernetesKeyOrder(t *testing.T) {
+	t.Parallel()
+	obj := map[string]any{
+		"spec":       map[string]any{"replicas": 1, "paused": false},
+		"kind":       "Deployment",
+		"apiVersion": "apps/v1",
+		"metadata": map[string]any{
+			"labels":    map[string]any{"z": "1", "a": "1"},
+			"namespace": "prod",
+			"name":      "web",
+			"uid":       "u1",
+		},
+	}
+	p := mustPlan(t, []semantic.ResourceChange{{
+		Resource: ref("Deployment", "web"),
+		Origin:   helmOrigin(),
+		Action:   semantic.Create,
+		After:    snap(obj),
+		Apply:    writeApply(),
+	}}, nil)
+	var buf bytes.Buffer
+	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
+	text := buf.String()
+	api := strings.Index(text, "+ apiVersion: apps/v1")
+	kind := strings.Index(text, "+ kind: Deployment")
+	meta := strings.Index(text, "+ metadata:")
+	spec := strings.Index(text, "+ spec:")
+	require.Greater(t, api, -1)
+	assert.Greater(t, kind, api)
+	assert.Greater(t, meta, kind)
+	assert.Greater(t, spec, meta)
+	name := strings.Index(text, "+   name: web")
+	ns := strings.Index(text, "+   namespace: prod")
+	labels := strings.Index(text, "+   labels:")
+	uid := strings.Index(text, "+   uid: u1")
+	assert.Greater(t, ns, name)
+	assert.Greater(t, labels, ns)
+	assert.Greater(t, uid, labels)
+	a := strings.Index(text, "a: \"1\"")
+	if a < 0 {
+		a = strings.Index(text, "+     a: 1")
+	}
+	z := strings.Index(text, "z: \"1\"")
+	if z < 0 {
+		z = strings.Index(text, "+     z: 1")
+	}
+	require.Greater(t, a, -1)
+	require.Greater(t, z, -1)
+	assert.Greater(t, z, a)
+}
+
+func TestWriteHuman_GenerateNameBeforeNamespace(t *testing.T) {
+	t.Parallel()
+	obj := map[string]any{
+		"kind":       "ConfigMap",
+		"apiVersion": "v1",
+		"metadata": map[string]any{
+			"namespace":    "prod",
+			"generateName": "app-",
+		},
+	}
+	p := mustPlan(t, []semantic.ResourceChange{{
+		Resource: semantic.ResourceRef{APIVersion: "v1", Kind: "ConfigMap", Namespace: "prod", GenerateName: "app-"},
+		Origin:   helmOrigin(),
+		Action:   semantic.Create,
+		After:    snap(obj),
+		Apply:    writeApply(),
+	}}, nil)
+	var buf bytes.Buffer
+	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
+	text := buf.String()
+	gen := strings.Index(text, "+   generateName: app-")
+	ns := strings.Index(text, "+   namespace: prod")
+	require.Greater(t, gen, -1)
+	assert.Greater(t, ns, gen)
+	assert.NotContains(t, text, "+   name:")
+}
+
+func TestWriteHuman_ArrayOrderPreserved(t *testing.T) {
+	t.Parallel()
+	obj := map[string]any{
+		"apiVersion": "v1",
+		"kind":       "ConfigMap",
+		"metadata":   map[string]any{"name": "app", "namespace": "prod"},
+		"data":       map[string]any{"items": []any{"zeta", "alpha", "mu"}},
+	}
+	p := mustPlan(t, []semantic.ResourceChange{{
+		Resource: ref("ConfigMap", "app"),
+		Origin:   helmOrigin(),
+		Action:   semantic.Create,
+		After:    snap(obj),
+		Apply:    writeApply(),
+	}}, nil)
+	var buf bytes.Buffer
+	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
+	text := buf.String()
+	zeta := strings.Index(text, "zeta")
+	alpha := strings.Index(text, "alpha")
+	mu := strings.Index(text, "mu")
+	require.Greater(t, zeta, -1)
+	assert.Greater(t, alpha, zeta)
+	assert.Greater(t, mu, alpha)
+}
+
+func TestWriteHuman_ZeroThemeIsPlainText(t *testing.T) {
+	t.Parallel()
+	p := mustPlan(t, []semantic.ResourceChange{createChangeForHuman()}, nil)
+	var buf bytes.Buffer
+	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
+	assert.NotContains(t, buf.String(), "\x1b[")
+	assert.Contains(t, buf.String(), "+ apiVersion: v1")
+	assert.Contains(t, buf.String(), "+ kind: ConfigMap")
 }

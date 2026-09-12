@@ -24,6 +24,8 @@ import (
 
 	"deployah.dev/deployah/internal/plan/semantic"
 	"deployah.dev/deployah/internal/plan/view"
+
+	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
 )
 
 func TestWriteJSON_SchemaAndExecutions(t *testing.T) {
@@ -45,6 +47,8 @@ func TestWriteJSON_SchemaAndExecutions(t *testing.T) {
 	assert.Equal(t, float64(0), summary["total"])
 	assert.NotContains(t, doc, "Object")
 	assert.NotContains(t, doc, "TypeMeta")
+	assertNoSnakeCaseKeys(t, doc)
+	validatePlanSchema(t, buf.Bytes())
 }
 
 func TestWriteJSON_Deterministic(t *testing.T) {
@@ -62,6 +66,40 @@ func TestWriteJSON_Deterministic(t *testing.T) {
 	require.NoError(t, view.WriteJSON(&b2, p, view.Options{}))
 	assert.Equal(t, b1.String(), b2.String())
 	assertGolden(t, "json_update", b1.String())
+	assertNoSnakeCaseKeysFromBytes(t, b1.Bytes())
+	validatePlanSchema(t, b1.Bytes())
+}
+
+func TestWriteJSON_CamelCasePropertyNames(t *testing.T) {
+	t.Parallel()
+	p := mustPlan(t, []semantic.ResourceChange{{
+		Resource: semantic.ResourceRef{
+			APIVersion:   "v1",
+			Kind:         "ConfigMap",
+			Namespace:    "prod",
+			GenerateName: "app-",
+		},
+		Origin: helmOrigin(),
+		Action: semantic.Create,
+		After:  snap(cm("app", "v1")),
+		Apply:  writeApply(),
+	}}, nil)
+	p.Header.FreshInstall = true
+	var buf bytes.Buffer
+	require.NoError(t, view.WriteJSON(&buf, p, view.Options{}))
+	text := buf.String()
+	assert.Contains(t, text, `"freshInstall"`)
+	assert.Contains(t, text, `"apiVersion"`)
+	assert.Contains(t, text, `"generateName"`)
+	assert.Contains(t, text, `"fieldManager"`)
+	assert.Contains(t, text, `"forceConflicts"`)
+	assert.Contains(t, text, `"method": "server_side_apply"`)
+	assert.NotContains(t, text, `"fresh_install"`)
+	assert.NotContains(t, text, `"api_version"`)
+	assert.NotContains(t, text, `"generate_name"`)
+	assert.NotContains(t, text, `"field_manager"`)
+	assert.NotContains(t, text, `"force_conflicts"`)
+	validatePlanSchema(t, buf.Bytes())
 }
 
 func TestWriteJSON_InvalidZero(t *testing.T) {
@@ -94,6 +132,8 @@ func TestWriteJSON_ShowSecrets(t *testing.T) {
 	assert.Contains(t, shown.String(), "new-pass")
 	assert.Contains(t, hidden.String(), `"name"`)
 	assert.Contains(t, hidden.String(), `"s"`)
+	validatePlanSchema(t, hidden.Bytes())
+	validatePlanSchema(t, shown.Bytes())
 }
 
 func TestWriteJSON_DoesNotMutatePlan(t *testing.T) {
@@ -108,4 +148,157 @@ func TestWriteJSON_DoesNotMutatePlan(t *testing.T) {
 	}}, nil)
 	require.NoError(t, view.WriteJSON(&bytes.Buffer{}, p, view.Options{}))
 	assert.Equal(t, "old-pass", objectString(t, p.Changes[0].Before.Object, "stringData", "password"))
+}
+
+func TestWriteJSON_ExplicitNullFields(t *testing.T) {
+	t.Parallel()
+	p := mustPlan(t, []semantic.ResourceChange{{
+		Resource: ref("ConfigMap", "app"),
+		Origin:   helmOrigin(),
+		Action:   semantic.Update,
+		Before: snap(map[string]any{
+			"keep":  "x",
+			"gone":  nil,
+			"swap":  nil,
+			"stays": "y",
+		}),
+		After: snap(map[string]any{
+			"keep":  "x",
+			"added": nil,
+			"swap":  true,
+			"stays": nil,
+		}),
+		Apply: writeApply(),
+	}}, nil)
+	var buf bytes.Buffer
+	require.NoError(t, view.WriteJSON(&buf, p, view.Options{}))
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &doc))
+	changes, ok := doc["changes"].([]any)
+	require.True(t, ok)
+	require.Len(t, changes, 1)
+	change, ok := changes[0].(map[string]any)
+	require.True(t, ok)
+	fields, ok := change["fields"].([]any)
+	require.True(t, ok)
+
+	byPath := map[string]map[string]any{}
+	for _, raw := range fields {
+		f, isField := raw.(map[string]any)
+		require.True(t, isField)
+		path, isPath := f["path"].(string)
+		require.True(t, isPath)
+		byPath[path] = f
+	}
+
+	require.Contains(t, byPath, "/added")
+	_, hasBefore := byPath["/added"]["before"]
+	assert.False(t, hasBefore)
+	assert.Contains(t, byPath["/added"], "after")
+	assert.Nil(t, byPath["/added"]["after"])
+	assert.Equal(t, "add", byPath["/added"]["op"])
+
+	require.Contains(t, byPath, "/gone")
+	_, hasAfter := byPath["/gone"]["after"]
+	assert.False(t, hasAfter)
+	assert.Contains(t, byPath["/gone"], "before")
+	assert.Nil(t, byPath["/gone"]["before"])
+	assert.Equal(t, "remove", byPath["/gone"]["op"])
+
+	require.Contains(t, byPath, "/stays")
+	assert.Equal(t, "y", byPath["/stays"]["before"])
+	assert.Nil(t, byPath["/stays"]["after"])
+	assert.Equal(t, "replace", byPath["/stays"]["op"])
+
+	require.Contains(t, byPath, "/swap")
+	assert.Nil(t, byPath["/swap"]["before"])
+	assert.Equal(t, true, byPath["/swap"]["after"])
+	assert.Equal(t, "replace", byPath["/swap"]["op"])
+
+	validatePlanSchema(t, buf.Bytes())
+}
+
+func TestWriteJSON_MatchesSchemaForRepresentativePlans(t *testing.T) {
+	t.Parallel()
+	res := ref("ConfigMap", "app")
+	plans := []semantic.Plan{
+		mustPlan(t, nil, nil),
+		mustPlan(t, []semantic.ResourceChange{{
+			Resource: res,
+			Origin:   helmOrigin(),
+			Action:   semantic.Create,
+			After:    snap(cm("app", "v1")),
+			Apply:    writeApply(),
+		}}, nil),
+		mustPlan(t, []semantic.ResourceChange{{
+			Resource: res,
+			Origin:   helmOrigin(),
+			Action:   semantic.Delete,
+			Before:   snap(cm("app", "v1")),
+			Apply:    deleteApply(),
+		}}, nil),
+		mustPlan(t, []semantic.ResourceChange{{
+			Resource: res,
+			Origin:   helmOrigin(),
+			Action:   semantic.Update,
+			Before:   snap(cm("app", "v1")),
+			Apply:    writeApply(),
+		}}, []semantic.Diagnostic{limitationFor(res)}),
+	}
+	for _, p := range plans {
+		var buf bytes.Buffer
+		require.NoError(t, view.WriteJSON(&buf, p, view.Options{}))
+		validatePlanSchema(t, buf.Bytes())
+	}
+}
+
+func limitationFor(res semantic.ResourceRef) semantic.Diagnostic {
+	return semantic.Diagnostic{
+		Severity: semantic.DiagnosticWarning,
+		Category: semantic.CategoryPredictionLimitation,
+		Message:  "prediction is not exact: managed-fields-migration",
+		Resource: &res,
+	}
+}
+
+func validatePlanSchema(t *testing.T, raw []byte) {
+	t.Helper()
+	compiler := jsonschema.NewCompiler()
+	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(view.SchemaV1()))
+	require.NoError(t, err)
+	require.NoError(t, compiler.AddResource(view.SchemaV1ID, doc))
+	sch, err := compiler.Compile(view.SchemaV1ID)
+	require.NoError(t, err)
+	var v any
+	require.NoError(t, json.Unmarshal(raw, &v))
+	require.NoError(t, sch.Validate(v))
+}
+
+func assertNoSnakeCaseKeysFromBytes(t *testing.T, raw []byte) {
+	t.Helper()
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal(raw, &doc))
+	assertNoSnakeCaseKeys(t, doc)
+}
+
+func assertNoSnakeCaseKeys(t *testing.T, v any) {
+	t.Helper()
+	forbidden := []string{"fresh_install", "api_version", "generate_name", "field_manager", "force_conflicts"}
+	var walk func(any)
+	walk = func(cur any) {
+		switch x := cur.(type) {
+		case map[string]any:
+			for key, child := range x {
+				for _, name := range forbidden {
+					assert.NotEqual(t, name, key)
+				}
+				walk(child)
+			}
+		case []any:
+			for _, child := range x {
+				walk(child)
+			}
+		}
+	}
+	walk(v)
 }

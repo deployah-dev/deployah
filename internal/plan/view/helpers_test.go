@@ -114,6 +114,16 @@ func objectString(tb testing.TB, obj map[string]any, keys ...string) string {
 	return s
 }
 
+func createChangeForHuman() semantic.ResourceChange {
+	return semantic.ResourceChange{
+		Resource: ref("ConfigMap", "app"),
+		Origin:   helmOrigin(),
+		Action:   semantic.Create,
+		After:    snap(cm("app", "v1")),
+		Apply:    writeApply(),
+	}
+}
+
 func mustPlan(tb testing.TB, changes []semantic.ResourceChange, diags []semantic.Diagnostic) semantic.Plan {
 	tb.Helper()
 	p, err := semantic.New(semantic.Header{

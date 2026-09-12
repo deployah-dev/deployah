@@ -15,13 +15,16 @@
 package semantic
 
 import (
+	"bytes"
 	"cmp"
 	"encoding/json"
 	"fmt"
-	"reflect"
+	"math/big"
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/wI2L/jsondiff"
 )
 
 // FieldOp classifies one structural field difference. The zero value is
@@ -60,178 +63,187 @@ type FieldChange struct {
 	After  any
 }
 
-// DiffFields walks two unstructured objects and returns deterministic
-// field changes. It does not mutate before or after.
-func DiffFields(before, after map[string]any) []FieldChange {
-	if before == nil {
-		before = map[string]any{}
+const jsonPointerAppend = "/-"
+
+// DiffFields compares two unstructured objects and returns deterministic
+// field changes. It encodes the snapshots, diffs them with an RFC 6902
+// engine that keeps JSON numbers exact, then maps add, remove, and
+// replace operations onto [FieldChange]. It does not mutate before or
+// after.
+func DiffFields(before, after map[string]any) ([]FieldChange, error) {
+	src, err := encodeSnapshot(before)
+	if err != nil {
+		return nil, fmt.Errorf("encode before snapshot: %w", err)
 	}
-	if after == nil {
-		after = map[string]any{}
+	tgt, err := encodeSnapshot(after)
+	if err != nil {
+		return nil, fmt.Errorf("encode after snapshot: %w", err)
 	}
-	var out []FieldChange
-	walkMaps("", before, after, &out)
+	patch, err := jsondiff.CompareJSON(src, tgt, jsondiff.UnmarshalFunc(unmarshalUseNumber))
+	if err != nil {
+		return nil, fmt.Errorf("diff snapshots: %w", err)
+	}
+
+	appendCounts := map[string]int{}
+	out := make([]FieldChange, 0, len(patch))
+	for _, op := range patch {
+		change, keep, mapErr := mapPatchOp(op, before, appendCounts)
+		if mapErr != nil {
+			return nil, mapErr
+		}
+		if keep {
+			out = append(out, change)
+		}
+	}
 	out = filterBookkeeping(out)
 	slices.SortFunc(out, func(a, b FieldChange) int {
 		return cmp.Compare(a.Path, b.Path)
 	})
-	return out
+	return out, nil
 }
 
-func walkMaps(parent string, before, after map[string]any, out *[]FieldChange) {
-	keys := make([]string, 0, len(before)+len(after))
-	seen := make(map[string]struct{}, len(before)+len(after))
-	for k := range before {
-		if _, ok := seen[k]; ok {
-			continue
-		}
-		seen[k] = struct{}{}
-		keys = append(keys, k)
-	}
-	for k := range after {
-		if _, ok := seen[k]; ok {
-			continue
-		}
-		seen[k] = struct{}{}
-		keys = append(keys, k)
-	}
-	slices.Sort(keys)
-	for _, key := range keys {
-		path := joinPointer(parent, key)
-		bv, bOk := before[key]
-		av, aOk := after[key]
-		switch {
-		case !bOk:
-			*out = append(*out, FieldChange{
-				Path:  path,
-				Op:    FieldAdd,
-				After: copyJSONValue(av),
-			})
-		case !aOk:
-			*out = append(*out, FieldChange{
-				Path:   path,
-				Op:     FieldRemove,
-				Before: copyJSONValue(bv),
-			})
-		default:
-			walkValue(path, bv, av, out)
-		}
-	}
-}
-
-func walkSlices(parent string, before, after []any, out *[]FieldChange) {
-	n := min(len(before), len(after))
-	for i := range n {
-		walkValue(joinPointer(parent, strconv.Itoa(i)), before[i], after[i], out)
-	}
-	for i := n; i < len(before); i++ {
-		*out = append(*out, FieldChange{
-			Path:   joinPointer(parent, strconv.Itoa(i)),
-			Op:     FieldRemove,
-			Before: copyJSONValue(before[i]),
-		})
-	}
-	for i := n; i < len(after); i++ {
-		*out = append(*out, FieldChange{
-			Path:  joinPointer(parent, strconv.Itoa(i)),
+func mapPatchOp(op jsondiff.Operation, before map[string]any, appendCounts map[string]int) (FieldChange, bool, error) {
+	switch op.Type {
+	case jsondiff.OperationAdd:
+		return FieldChange{
+			Path:  rewriteAppendPath(op.Path, before, appendCounts),
 			Op:    FieldAdd,
-			After: copyJSONValue(after[i]),
-		})
-	}
-}
-
-func walkValue(path string, before, after any, out *[]FieldChange) {
-	bMap, bIsMap := asMap(before)
-	aMap, aIsMap := asMap(after)
-	if bIsMap && aIsMap {
-		walkMaps(path, bMap, aMap, out)
-		return
-	}
-	bArr, bIsArr := asSlice(before)
-	aArr, aIsArr := asSlice(after)
-	if bIsArr && aIsArr {
-		walkSlices(path, bArr, aArr, out)
-		return
-	}
-	if jsonEqual(before, after) {
-		return
-	}
-	*out = append(*out, FieldChange{
-		Path:   path,
-		Op:     FieldReplace,
-		Before: copyJSONValue(before),
-		After:  copyJSONValue(after),
-	})
-}
-
-func asMap(v any) (map[string]any, bool) {
-	switch m := v.(type) {
-	case map[string]any:
-		return m, true
-	case map[string]string:
-		out := make(map[string]any, len(m))
-		for k, val := range m {
-			out[k] = val
+			After: copyJSONValue(op.Value),
+		}, true, nil
+	case jsondiff.OperationRemove:
+		return FieldChange{
+			Path:   op.Path,
+			Op:     FieldRemove,
+			Before: copyJSONValue(op.OldValue),
+		}, true, nil
+	case jsondiff.OperationReplace:
+		if numbersEquivalent(op.OldValue, op.Value) {
+			return FieldChange{}, false, nil
 		}
-		return out, true
+		return FieldChange{
+			Path:   op.Path,
+			Op:     FieldReplace,
+			Before: copyJSONValue(op.OldValue),
+			After:  copyJSONValue(op.Value),
+		}, true, nil
 	default:
-		return nil, false
+		return FieldChange{}, false, fmt.Errorf("unsupported json patch operation %s at %s", op.Type, op.Path)
 	}
 }
 
-func asSlice(v any) ([]any, bool) {
-	switch s := v.(type) {
-	case []any:
-		return s, true
-	case []string:
-		out := make([]any, 0, len(s))
-		for _, val := range s {
-			out = append(out, val)
-		}
-		return out, true
-	default:
-		return nil, false
+func encodeSnapshot(m map[string]any) ([]byte, error) {
+	if m == nil {
+		m = map[string]any{}
 	}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(m); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSpace(buf.Bytes()), nil
 }
 
-func jsonEqual(a, b any) bool {
-	if an, aNum := asNumber(a); aNum {
-		bn, bNum := asNumber(b)
-		return bNum && an == bn
-	}
-	if _, bNum := asNumber(b); bNum {
-		return false
-	}
-	return reflect.DeepEqual(a, b)
+func unmarshalUseNumber(b []byte, v any) error {
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.UseNumber()
+	return dec.Decode(v)
 }
 
-func asNumber(v any) (float64, bool) {
+func numbersEquivalent(a, b any) bool {
+	left, leftOK := asRat(a)
+	right, rightOK := asRat(b)
+	return leftOK && rightOK && left.Cmp(right) == 0
+}
+
+func asRat(v any) (*big.Rat, bool) {
 	switch n := v.(type) {
-	case int:
-		return float64(n), true
-	case int32:
-		return float64(n), true
-	case int64:
-		return float64(n), true
-	case float32:
-		return float64(n), true
-	case float64:
-		return n, true
 	case json.Number:
-		f, err := n.Float64()
-		return f, err == nil
+		r, ok := new(big.Rat).SetString(string(n))
+		return r, ok
+	case int:
+		return new(big.Rat).SetInt64(int64(n)), true
+	case int8:
+		return new(big.Rat).SetInt64(int64(n)), true
+	case int16:
+		return new(big.Rat).SetInt64(int64(n)), true
+	case int32:
+		return new(big.Rat).SetInt64(int64(n)), true
+	case int64:
+		return new(big.Rat).SetInt64(n), true
+	case uint:
+		return new(big.Rat).SetUint64(uint64(n)), true
+	case uint8:
+		return new(big.Rat).SetUint64(uint64(n)), true
+	case uint16:
+		return new(big.Rat).SetUint64(uint64(n)), true
+	case uint32:
+		return new(big.Rat).SetUint64(uint64(n)), true
+	case uint64:
+		return new(big.Rat).SetUint64(n), true
 	default:
-		return 0, false
+		return nil, false
 	}
 }
 
-func joinPointer(parent, token string) string {
-	return parent + "/" + escapePointerToken(token)
+func rewriteAppendPath(path string, before map[string]any, appendCounts map[string]int) string {
+	if !strings.HasSuffix(path, jsonPointerAppend) {
+		return path
+	}
+	parent := strings.TrimSuffix(path, jsonPointerAppend)
+	idx := arrayLenAt(before, parent) + appendCounts[parent]
+	appendCounts[parent]++
+	return parent + "/" + strconv.Itoa(idx)
 }
 
-func escapePointerToken(s string) string {
-	s = strings.ReplaceAll(s, "~", "~0")
-	return strings.ReplaceAll(s, "/", "~1")
+func arrayLenAt(obj map[string]any, pointer string) int {
+	v, ok := lookupPointer(obj, pointer)
+	if !ok {
+		return 0
+	}
+	switch a := v.(type) {
+	case []any:
+		return len(a)
+	case []string:
+		return len(a)
+	default:
+		return 0
+	}
+}
+
+func lookupPointer(obj map[string]any, pointer string) (any, bool) {
+	if pointer == "" {
+		return obj, true
+	}
+	if !strings.HasPrefix(pointer, "/") {
+		return nil, false
+	}
+	var cur any = obj
+	for token := range strings.SplitSeq(pointer[1:], "/") {
+		token = unescapePointerToken(token)
+		switch node := cur.(type) {
+		case map[string]any:
+			next, ok := node[token]
+			if !ok {
+				return nil, false
+			}
+			cur = next
+		case []any:
+			i, err := strconv.Atoi(token)
+			if err != nil || i < 0 || i >= len(node) {
+				return nil, false
+			}
+			cur = node[i]
+		default:
+			return nil, false
+		}
+	}
+	return cur, true
+}
+
+func unescapePointerToken(s string) string {
+	s = strings.ReplaceAll(s, "~1", "/")
+	return strings.ReplaceAll(s, "~0", "~")
 }
 
 func copyJSONValue(v any) any {
@@ -279,6 +291,49 @@ func copySnapshot(s *ResourceSnapshot) *ResourceSnapshot {
 		return &ResourceSnapshot{}
 	}
 	return &ResourceSnapshot{Object: copyJSONMap(s.Object)}
+}
+
+func copyFields(fields []FieldChange) []FieldChange {
+	if fields == nil {
+		return nil
+	}
+	out := slices.Clone(fields)
+	for i := range out {
+		out[i].Before = copyJSONValue(out[i].Before)
+		out[i].After = copyJSONValue(out[i].After)
+	}
+	return out
+}
+
+func copyOrigin(o ResourceOrigin) ResourceOrigin {
+	if o.Helm != nil {
+		h := *o.Helm
+		o.Helm = &h
+	}
+	return o
+}
+
+func copyApply(a ApplySemantics) ApplySemantics {
+	if a.Write != nil {
+		w := *a.Write
+		a.Write = &w
+	}
+	if a.Delete != nil {
+		d := *a.Delete
+		a.Delete = &d
+	}
+	return a
+}
+
+func copyDiagnostics(in []Diagnostic) []Diagnostic {
+	out := slices.Clone(in)
+	for i := range out {
+		if out[i].Resource != nil {
+			r := *out[i].Resource
+			out[i].Resource = &r
+		}
+	}
+	return out
 }
 
 func snapshotObject(s *ResourceSnapshot) map[string]any {

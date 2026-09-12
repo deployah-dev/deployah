@@ -130,12 +130,8 @@ func redactPlan(p *semantic.Plan) {
 			if !isSecretDataPath(c.Fields[j].Path) {
 				continue
 			}
-			if c.Fields[j].Before != nil {
-				c.Fields[j].Before = redactedToken
-			}
-			if c.Fields[j].After != nil {
-				c.Fields[j].After = redactedToken
-			}
+			c.Fields[j].Before = redactSecretValue(c.Fields[j].Before)
+			c.Fields[j].After = redactSecretValue(c.Fields[j].After)
 		}
 	}
 }
@@ -168,16 +164,33 @@ func redactSecretMap(obj map[string]any, key string) {
 	if !ok {
 		return
 	}
-	switch m := raw.(type) {
+	obj[key] = redactSecretValue(raw)
+}
+
+func redactSecretValue(v any) any {
+	if v == nil {
+		return nil
+	}
+	switch m := v.(type) {
 	case map[string]any:
-		for k := range m {
-			m[k] = redactedToken
+		out := make(map[string]any, len(m))
+		for k, x := range m {
+			out[k] = redactSecretValue(x)
 		}
+		return out
 	case map[string]string:
 		out := make(map[string]any, len(m))
-		for k := range m {
-			out[k] = redactedToken
+		for k, x := range m {
+			out[k] = redactSecretValue(x)
 		}
-		obj[key] = out
+		return out
+	case []any:
+		out := make([]any, 0, len(m))
+		for i := range m {
+			out = append(out, redactSecretValue(m[i]))
+		}
+		return out
+	default:
+		return redactedToken
 	}
 }

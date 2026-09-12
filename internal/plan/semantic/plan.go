@@ -36,7 +36,7 @@ type Plan struct {
 // non-nil and empty.
 func New(header Header, changes []ResourceChange, diagnostics []Diagnostic) (Plan, error) {
 	copiedChanges := slices.Clone(changes)
-	copiedDiags := slices.Clone(diagnostics)
+	copiedDiags := copyDiagnostics(diagnostics)
 
 	for i := range copiedDiags {
 		if err := validateDiagnostic(copiedDiags[i]); err != nil {
@@ -47,7 +47,11 @@ func New(header Header, changes []ResourceChange, diagnostics []Diagnostic) (Pla
 		if err := validateChange(copiedChanges[i], copiedDiags); err != nil {
 			return Plan{}, fmt.Errorf("resource %s: %w", copiedChanges[i].Resource, err)
 		}
-		copiedChanges[i] = normalizeChange(copiedChanges[i])
+		normalized, nerr := normalizeChange(copiedChanges[i])
+		if nerr != nil {
+			return Plan{}, fmt.Errorf("resource %s: %w", copiedChanges[i].Resource, nerr)
+		}
+		copiedChanges[i] = normalized
 	}
 
 	sortChanges(copiedChanges)
@@ -63,16 +67,23 @@ func New(header Header, changes []ResourceChange, diagnostics []Diagnostic) (Pla
 	}, nil
 }
 
-func normalizeChange(c ResourceChange) ResourceChange {
+func normalizeChange(c ResourceChange) (ResourceChange, error) {
 	c.Before = copySnapshot(c.Before)
 	c.After = copySnapshot(c.After)
+	c.Origin = copyOrigin(c.Origin)
+	c.Apply = copyApply(c.Apply)
+	c.Fields = copyFields(c.Fields)
 	switch {
 	case (c.Action == Update || c.Action == Recreate) && c.After != nil:
-		c.Fields = DiffFields(snapshotObject(c.Before), snapshotObject(c.After))
+		fields, err := DiffFields(snapshotObject(c.Before), snapshotObject(c.After))
+		if err != nil {
+			return ResourceChange{}, err
+		}
+		c.Fields = fields
 	default:
 		c.Fields = nil
 	}
-	return c
+	return c, nil
 }
 
 func deriveCompleteness(changes []ResourceChange, diags []Diagnostic) Completeness {
@@ -149,6 +160,9 @@ func validateApply(action Action, apply ApplySemantics) error {
 func validateWrite(w WriteSemantics) error {
 	if !w.Method.valid() {
 		return fmt.Errorf("invalid write method %s", w.Method)
+	}
+	if w.Method == WriteServerSide && w.FieldManager == "" {
+		return fmt.Errorf("server_side_apply requires a field manager")
 	}
 	return nil
 }

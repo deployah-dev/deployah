@@ -17,11 +17,14 @@ package frompredict
 import (
 	"fmt"
 
+	"helm.sh/helm/v4/pkg/kube"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"deployah.dev/deployah/internal/plan/semantic"
 	"deployah.dev/deployah/internal/predict"
+
+	_ "deployah.dev/deployah/internal/helm" // pins kube.ManagedFieldsManager
 )
 
 // FromResults maps predictor results onto a semantic [semantic.Plan].
@@ -162,7 +165,7 @@ func writeApply() semantic.ApplySemantics {
 	return semantic.ApplySemantics{
 		Write: &semantic.WriteSemantics{
 			Method:         semantic.WriteServerSide,
-			FieldManager:   "deployah",
+			FieldManager:   kube.ManagedFieldsManager,
 			ForceConflicts: false,
 		},
 	}

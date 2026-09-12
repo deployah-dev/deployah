@@ -19,6 +19,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"helm.sh/helm/v4/pkg/kube"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"deployah.dev/deployah/internal/plan/frompredict"
@@ -72,7 +73,8 @@ func TestFromResults_ActionMapping(t *testing.T) {
 	assert.Nil(t, byName["app"].Before)
 	require.NotNil(t, byName["app"].After)
 	assert.NotNil(t, byName["app"].Apply.Write)
-	assert.Equal(t, "deployah", byName["app"].Apply.Write.FieldManager)
+	assert.Equal(t, kube.ManagedFieldsManager, byName["app"].Apply.Write.FieldManager)
+	assert.NotEmpty(t, byName["app"].Apply.Write.FieldManager)
 	assert.False(t, byName["app"].Apply.Write.ForceConflicts)
 	assert.Nil(t, byName["app"].Apply.Delete)
 
@@ -207,7 +209,8 @@ func TestFromResults_GoIntInObject(t *testing.T) {
 	spec, ok := p.Changes[0].After.Object["spec"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, 3, spec["replicas"])
-	assert.Equal(t, "deployah", p.Changes[0].Apply.Write.FieldManager)
+	assert.Equal(t, kube.ManagedFieldsManager, p.Changes[0].Apply.Write.FieldManager)
+	assert.NotEmpty(t, p.Changes[0].Apply.Write.FieldManager)
 
 	callerSpec, ok := predicted.Object["spec"].(map[string]any)
 	require.True(t, ok)

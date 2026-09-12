@@ -201,6 +201,45 @@ func TestNew_DoesNotMutateCallerSnapshots(t *testing.T) {
 	assert.Equal(t, "v1", objectString(t, p.Changes[0].After.Object, "data", "key"))
 }
 
+func TestNew_DoesNotAliasCallerInputs(t *testing.T) {
+	t.Parallel()
+	helm := &semantic.HelmOrigin{Release: "web", Namespace: "prod"}
+	write := &semantic.WriteSemantics{Method: semantic.WriteServerSide, FieldManager: "deployah"}
+	del := &semantic.DeleteSemantics{Propagation: semantic.PropagationBackground}
+	res := ref("ConfigMap", "app")
+	diag := limitation(res)
+	p, err := semantic.New(semantic.Header{}, []semantic.ResourceChange{{
+		Resource: res,
+		Origin:   semantic.ResourceOrigin{Kind: semantic.OriginHelm, Helm: helm},
+		Action:   semantic.Recreate,
+		Before:   snap(cm("app", "v1")),
+		After:    snap(cm("app", "v2")),
+		Apply:    semantic.ApplySemantics{Write: write, Delete: del},
+	}}, []semantic.Diagnostic{diag})
+	require.NoError(t, err)
+
+	helm.Release = "mutated"
+	write.FieldManager = "mutated"
+	del.Propagation = 0
+	diag.Resource.Name = "mutated"
+
+	require.Len(t, p.Changes, 1)
+	assert.Equal(t, "web", p.Changes[0].Origin.Helm.Release)
+	assert.Equal(t, "deployah", p.Changes[0].Apply.Write.FieldManager)
+	assert.Equal(t, semantic.PropagationBackground, p.Changes[0].Apply.Delete.Propagation)
+	require.Len(t, p.Diagnostics, 1)
+	assert.Equal(t, "app", p.Diagnostics[0].Resource.Name)
+}
+
+func TestNew_ServerSideApplyRequiresFieldManager(t *testing.T) {
+	t.Parallel()
+	change := createChange("app", "v1")
+	change.Apply.Write.FieldManager = ""
+	_, err := semantic.New(semantic.Header{}, []semantic.ResourceChange{change}, nil)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "field manager")
+}
+
 func TestSummarize(t *testing.T) {
 	t.Parallel()
 	got := semantic.Summarize([]semantic.ResourceChange{

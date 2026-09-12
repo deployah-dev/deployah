@@ -14,16 +14,22 @@
 
 package view
 
-import "nabat.dev/theme"
+import (
+	"bytes"
 
-// Options controls renderer behavior. ShowSecrets is renderer-only and
-// is not a CLI flag in Stage C.
-type Options struct {
-	// ShowSecrets reveals Secret data and stringData values. The default
-	// hides those values without hiding that a field changed.
-	ShowSecrets bool
-	// Theme colors human headings, diff markers, and section titles. The
-	// zero value renders every style call as the terminal default, so
-	// golden tests stay plain text.
-	Theme theme.ResolvedTheme
+	_ "embed"
+)
+
+//go:embed schema/semantic_plan.v1.json
+var schemaV1 []byte
+
+// SchemaV1ID is the $id of the Draft 2020-12 schema for [WriteJSON]
+// documents.
+const SchemaV1ID = "https://deployah.dev/schemas/semantic_plan.v1.json"
+
+// SchemaV1 returns the Draft 2020-12 JSON Schema that describes documents
+// written by [WriteJSON]. WriteJSON does not validate against this
+// schema.
+func SchemaV1() []byte {
+	return bytes.Clone(schemaV1)
 }

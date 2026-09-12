@@ -15,6 +15,7 @@
 package semantic_test
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -36,7 +37,8 @@ func TestDiffFields(t *testing.T) {
 			before: map[string]any{"spec": map[string]any{"replicas": 1}},
 			after:  map[string]any{"spec": map[string]any{"replicas": 2}},
 			want: []semantic.FieldChange{{
-				Path: "/spec/replicas", Op: semantic.FieldReplace, Before: 1, After: 2,
+				Path: "/spec/replicas", Op: semantic.FieldReplace,
+				Before: json.Number("1"), After: json.Number("2"),
 			}},
 		},
 		{
@@ -52,7 +54,7 @@ func TestDiffFields(t *testing.T) {
 			before: map[string]any{},
 			after:  map[string]any{"spec": map[string]any{"replicas": 1}},
 			want: []semantic.FieldChange{{
-				Path: "/spec", Op: semantic.FieldAdd, After: map[string]any{"replicas": 1},
+				Path: "/spec", Op: semantic.FieldAdd, After: map[string]any{"replicas": json.Number("1")},
 			}},
 		},
 		{
@@ -109,14 +111,36 @@ func TestDiffFields(t *testing.T) {
 			before: map[string]any{"spec": map[string]any{"replicas": 1}},
 			after:  map[string]any{"spec": map[string]any{"replicas": "one"}},
 			want: []semantic.FieldChange{{
-				Path: "/spec/replicas", Op: semantic.FieldReplace, Before: 1, After: "one",
+				Path: "/spec/replicas", Op: semantic.FieldReplace, Before: json.Number("1"), After: "one",
 			}},
 		},
 		{
-			name:   "number type equivalence",
+			name:   "int and float64 are equivalent",
 			before: map[string]any{"spec": map[string]any{"replicas": int64(2)}},
 			after:  map[string]any{"spec": map[string]any{"replicas": float64(2)}},
 			want:   nil,
+		},
+		{
+			name:   "json.Number forms are equivalent",
+			before: map[string]any{"n": 2},
+			after:  map[string]any{"n": json.Number("2.00")},
+			want:   nil,
+		},
+		{
+			name:   "scientific and integer forms are equivalent",
+			before: map[string]any{"n": json.Number("2e0")},
+			after:  map[string]any{"n": json.Number("2.0")},
+			want:   nil,
+		},
+		{
+			name:   "large integers remain distinct",
+			before: map[string]any{"n": json.Number("9007199254740992")},
+			after:  map[string]any{"n": json.Number("9007199254740993")},
+			want: []semantic.FieldChange{{
+				Path: "/n", Op: semantic.FieldReplace,
+				Before: json.Number("9007199254740992"),
+				After:  json.Number("9007199254740993"),
+			}},
 		},
 		{
 			name: "bookkeeping omitted",
@@ -164,11 +188,24 @@ func TestDiffFields(t *testing.T) {
 				{Path: "/tilde~0x", Op: semantic.FieldReplace, Before: "1", After: "2"},
 			},
 		},
+		{
+			name: "annotation slash escape",
+			before: map[string]any{
+				"metadata": map[string]any{"annotations": map[string]any{"foo/bar": "1"}},
+			},
+			after: map[string]any{
+				"metadata": map[string]any{"annotations": map[string]any{"foo/bar": "2"}},
+			},
+			want: []semantic.FieldChange{{
+				Path: "/metadata/annotations/foo~1bar", Op: semantic.FieldReplace, Before: "1", After: "2",
+			}},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := semantic.DiffFields(tt.before, tt.after)
+			got, err := semantic.DiffFields(tt.before, tt.after)
+			require.NoError(t, err)
 			if tt.want == nil {
 				assert.Empty(t, got)
 				return
@@ -182,13 +219,15 @@ func TestDiffFields_NoMutation(t *testing.T) {
 	t.Parallel()
 	before := map[string]any{"data": map[string]any{"key": "old"}}
 	after := map[string]any{"data": map[string]any{"key": "new"}}
-	got := semantic.DiffFields(before, after)
+	got, err := semantic.DiffFields(before, after)
+	require.NoError(t, err)
 	require.Len(t, got, 1)
 	got[0].Before = "mutated"
 	got[0].After = "mutated"
 	assert.Equal(t, "old", objectString(t, before, "data", "key"))
 	assert.Equal(t, "new", objectString(t, after, "data", "key"))
-	got2 := semantic.DiffFields(before, after)
+	got2, err := semantic.DiffFields(before, after)
+	require.NoError(t, err)
 	assert.Equal(t, "old", got2[0].Before)
 	assert.Equal(t, "new", got2[0].After)
 }
