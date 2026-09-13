@@ -95,14 +95,16 @@ func (c Completeness) String() string {
 	}
 }
 
-// Header identifies the release a plan describes. Empty fields are valid
-// in Stage C; later stages fill them for CLI display.
+// Header identifies the release a plan describes. Empty fields are valid;
+// callers fill them for display.
 type Header struct {
-	Project      string
-	Environment  string
-	Release      string
-	Namespace    string
-	Context      string
+	Project     string
+	Environment string
+	Release     string
+	Namespace   string
+	Context     string
+	// Revision is the Helm revision this plan would create. It is 1
+	// for a fresh install and ReleasePrep.NextRevision for an upgrade.
 	Revision     int
 	FreshInstall bool
 }
