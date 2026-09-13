@@ -25,7 +25,7 @@ import (
 	"deployah.dev/deployah/internal/predict"
 )
 
-// BuildSemanticPlan maps Stage B predictor results onto a semantic
+// semanticPlanFromResults maps [predict.Result] values onto a semantic
 // [semantic.Plan]. It does not mutate results or the unstructured objects
 // they hold. Current predictor actions never produce [semantic.Replace].
 //
@@ -33,7 +33,7 @@ import (
 // [semantic.New] rejects an empty field manager, so callers must import
 // [deployah.dev/deployah/internal/helm] (or otherwise pin that global)
 // before calling this function.
-func BuildSemanticPlan(header semantic.Header, results []predict.Result) (semantic.Plan, error) {
+func semanticPlanFromResults(header semantic.Header, results []predict.Result) (semantic.Plan, error) {
 	origin := semantic.ResourceOrigin{
 		Kind: semantic.OriginHelm,
 		Helm: &semantic.HelmOrigin{

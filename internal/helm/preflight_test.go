@@ -182,6 +182,92 @@ func TestRenderManifests_MissingReleaseIsInstall(t *testing.T) {
 	assert.Equal(t, 1, result.Revision)
 }
 
+func TestRenderManifestsWithPrep_FreshInstall(t *testing.T) {
+	t.Parallel()
+
+	c, _, resolved, _ := memoryHelmApp(t, "fresh-prep")
+	result, prep, cleanup, err := c.RenderManifestsWithPrep(t.Context(), resolved, nil)
+	if cleanup != nil {
+		t.Cleanup(cleanup)
+	}
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, OperationInstall, prep.Operation)
+	assert.Nil(t, prep.Current)
+	assert.Equal(t, 1, prep.NextRevision)
+	assert.False(t, result.IsUpgrade)
+	assert.Equal(t, 1, result.Revision)
+}
+
+func TestRenderManifestsWithPrep_Upgrade(t *testing.T) {
+	t.Parallel()
+
+	c, cfg, resolved, releaseName := memoryHelmApp(t, "upgrade-prep")
+	seedRelease(t, cfg, releaseName, 2, common.StatusDeployed, applySSA)
+
+	result, prep, cleanup, err := c.RenderManifestsWithPrep(t.Context(), resolved, nil)
+	if cleanup != nil {
+		t.Cleanup(cleanup)
+	}
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotNil(t, prep.Current)
+	assert.Equal(t, OperationUpgrade, prep.Operation)
+	assert.Equal(t, 2, prep.Current.Version)
+	assert.Equal(t, 3, prep.NextRevision)
+	assert.True(t, result.IsUpgrade)
+	assert.Equal(t, 3, result.Revision)
+}
+
+func TestRenderManifestsWithPrep_NewestDiffersFromCurrent(t *testing.T) {
+	t.Parallel()
+
+	c, cfg, resolved, releaseName := memoryHelmApp(t, "newest-current")
+	seedRelease(t, cfg, releaseName, 3, common.StatusDeployed, applySSA)
+	seedRelease(t, cfg, releaseName, 4, common.StatusFailed, applySSA)
+
+	result, prep, cleanup, err := c.RenderManifestsWithPrep(t.Context(), resolved, nil)
+	if cleanup != nil {
+		t.Cleanup(cleanup)
+	}
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotNil(t, prep.Newest)
+	require.NotNil(t, prep.Current)
+	assert.Equal(t, OperationUpgrade, prep.Operation)
+	assert.Equal(t, 4, prep.Newest.Version)
+	assert.Equal(t, 3, prep.Current.Version)
+	assert.Equal(t, 5, prep.NextRevision)
+	assert.True(t, result.IsUpgrade)
+	assert.Equal(t, 5, result.Revision)
+}
+
+func TestRenderManifests_MatchesWithPrepResult(t *testing.T) {
+	t.Parallel()
+
+	c, cfg, resolved, releaseName := memoryHelmApp(t, "compat-render")
+	seedRelease(t, cfg, releaseName, 1, common.StatusDeployed, applySSA)
+
+	withPrep, prep, cleanup, err := c.RenderManifestsWithPrep(t.Context(), resolved, nil)
+	if cleanup != nil {
+		t.Cleanup(cleanup)
+	}
+	require.NoError(t, err)
+
+	wrapped, wrappedCleanup, err := c.RenderManifests(t.Context(), resolved, nil)
+	if wrappedCleanup != nil {
+		t.Cleanup(wrappedCleanup)
+	}
+	require.NoError(t, err)
+	require.NotNil(t, withPrep)
+	require.NotNil(t, wrapped)
+	assert.Equal(t, OperationUpgrade, prep.Operation)
+	assert.Equal(t, withPrep.IsUpgrade, wrapped.IsUpgrade)
+	assert.Equal(t, withPrep.Revision, wrapped.Revision)
+	assert.Equal(t, withPrep.ReleaseName, wrapped.ReleaseName)
+	assert.Equal(t, withPrep.Namespace, wrapped.Namespace)
+}
+
 func memoryHelmApp(t *testing.T, project string) (*Client, *action.Configuration, *spec.ResolvedSpec, string) {
 	t.Helper()
 

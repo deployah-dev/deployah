@@ -41,24 +41,34 @@ const offlineMonitorAPIVersion = "monitoring.coreos.com/v1"
 // Use [Client.RenderOffline] when there is no Kubernetes API access. A
 // nil or unresolved spec is an error. Callers must run the returned
 // cleanup func.
-func (c *Client) RenderManifests(ctx context.Context, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) (result *render.RenderResult, cleanup func(), err error) {
+func (c *Client) RenderManifests(ctx context.Context, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) (*render.RenderResult, func(), error) {
+	result, _, cleanup, err := c.RenderManifestsWithPrep(ctx, resolved, postRenderer)
+	return result, cleanup, err
+}
+
+// RenderManifestsWithPrep renders the chart from [spec.ResolvedSpec]
+// client-side and returns the [ReleasePrep] used to choose install or
+// upgrade. It performs one Deployah history lookup. The returned
+// [ReleasePrep] is meaningful only when err is nil. Cleanup is nil
+// when err is not nil; on success the caller must run cleanup once.
+func (c *Client) RenderManifestsWithPrep(ctx context.Context, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) (*render.RenderResult, ReleasePrep, func(), error) {
 	releaseName, labels, err := releaseIdentity(resolved)
 	if err != nil {
-		return nil, nil, err
+		return nil, ReleasePrep{}, nil, err
 	}
 
 	prep, err := c.lookupReleasePrep(releaseName)
 	if err != nil {
-		return nil, nil, err
+		return nil, ReleasePrep{}, nil, err
 	}
 
 	ch, chartPath, cleanup, err := c.prepareAndLoadChart(ctx, resolved)
 	if err != nil {
-		return nil, nil, err
+		return nil, ReleasePrep{}, nil, err
 	}
 
 	values := map[string]any{}
-
+	var result *render.RenderResult
 	switch prep.Operation {
 	case OperationInstall:
 		result, err = c.renderInstall(ctx, releaseName, ch, values, labels, postRenderer)
@@ -66,14 +76,14 @@ func (c *Client) RenderManifests(ctx context.Context, resolved *spec.ResolvedSpe
 		result, err = c.renderUpgrade(ctx, releaseName, ch, values, labels, postRenderer)
 	default:
 		cleanup()
-		return nil, nil, fmt.Errorf("invalid helm operation %d", prep.Operation)
+		return nil, ReleasePrep{}, nil, fmt.Errorf("invalid helm operation %d", prep.Operation)
 	}
 	if err != nil {
 		cleanup()
-		return nil, nil, err
+		return nil, ReleasePrep{}, nil, err
 	}
 	result.ChartPath = chartPath
-	return result, cleanup, nil
+	return result, prep, cleanup, nil
 }
 
 // RenderOffline renders the chart from [spec.ResolvedSpec] as a fresh

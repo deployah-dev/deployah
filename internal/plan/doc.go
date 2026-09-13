@@ -12,9 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package plan computes and renders a preview of the changes a deploy would
-// make, comparing the rendered manifest for an environment against the
-// manifest stored in the last successful Helm release.
+// Package plan computes and renders a preview of the changes a deploy
+// would make. [BuildPlan] diffs the rendered manifest against the last
+// successful Helm release. [BuildSemanticPlan] predicts Live to Predicted
+// resource changes from that same render.
 //
 // [ComputeDiff] is the legacy diff engine: it parses two rendered
 // Kubernetes manifests, matches resources by (apiVersion, kind, namespace,
@@ -25,7 +26,9 @@
 // would use. [BuildPlan] and [ComputeDiff] remain during migration to the
 // semantic plan model.
 //
-// [BuildSemanticPlan] assembles Stage B predictor results into a
+// [BuildSemanticPlan] is the semantic pipeline: it renders through
+// [SemanticBuildClient.RenderManifestsWithPrep], predicts with
+// [deployah.dev/deployah/internal/predict.Predict], and returns a
 // [deployah.dev/deployah/internal/plan/semantic.Plan]. Semantic types
 // live in plan/semantic. New rendering lives in plan/view.
 //

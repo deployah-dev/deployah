@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package plan_test
+package plan
 
 import (
 	"testing"
@@ -22,7 +22,6 @@ import (
 	"helm.sh/helm/v4/pkg/kube"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	"deployah.dev/deployah/internal/plan"
 	"deployah.dev/deployah/internal/plan/semantic"
 	"deployah.dev/deployah/internal/predict"
 
@@ -30,13 +29,13 @@ import (
 	_ "deployah.dev/deployah/internal/helm"
 )
 
-func TestBuildSemanticPlan_ActionMapping(t *testing.T) {
+func TestSemanticPlanFromResults_ActionMapping(t *testing.T) {
 	t.Parallel()
 	header := semantic.Header{Release: "web", Namespace: "prod"}
 	live := predictionConfigMap("app", "prod", "old")
 	predicted := predictionConfigMap("app", "prod", "new")
 
-	p, err := plan.BuildSemanticPlan(header, []predict.Result{
+	p, err := semanticPlanFromResults(header, []predict.Result{
 		{
 			Identity:  predictionIdentity("app"),
 			Action:    predict.ActionCreate,
@@ -100,9 +99,9 @@ func TestBuildSemanticPlan_ActionMapping(t *testing.T) {
 	assert.Equal(t, "new", predictionObjectString(t, predicted.Object, "data", "key"))
 }
 
-func TestBuildSemanticPlan_NoOpOmitted(t *testing.T) {
+func TestSemanticPlanFromResults_NoOpOmitted(t *testing.T) {
 	t.Parallel()
-	p, err := plan.BuildSemanticPlan(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
+	p, err := semanticPlanFromResults(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
 		Identity:  predictionIdentity("app"),
 		Action:    predict.ActionNoOp,
 		Live:      predictionConfigMap("app", "prod", "same"),
@@ -113,9 +112,9 @@ func TestBuildSemanticPlan_NoOpOmitted(t *testing.T) {
 	assert.Equal(t, semantic.CompletenessComplete, p.Completeness)
 }
 
-func TestBuildSemanticPlan_LimitationKeepsPredicted(t *testing.T) {
+func TestSemanticPlanFromResults_LimitationKeepsPredicted(t *testing.T) {
 	t.Parallel()
-	p, err := plan.BuildSemanticPlan(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
+	p, err := semanticPlanFromResults(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
 		Identity:   predictionIdentity("app"),
 		Action:     predict.ActionUpdate,
 		Live:       predictionConfigMap("app", "prod", "old"),
@@ -133,9 +132,9 @@ func TestBuildSemanticPlan_LimitationKeepsPredicted(t *testing.T) {
 	assert.Contains(t, p.Diagnostics[0].Message, predict.LimitationManagedFieldsMigration)
 }
 
-func TestBuildSemanticPlan_LimitationDoesNotFabricateAfter(t *testing.T) {
+func TestSemanticPlanFromResults_LimitationDoesNotFabricateAfter(t *testing.T) {
 	t.Parallel()
-	p, err := plan.BuildSemanticPlan(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
+	p, err := semanticPlanFromResults(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
 		Identity:   predictionIdentity("app"),
 		Action:     predict.ActionUpdate,
 		Live:       predictionConfigMap("app", "prod", "old"),
@@ -148,18 +147,18 @@ func TestBuildSemanticPlan_LimitationDoesNotFabricateAfter(t *testing.T) {
 	assert.Equal(t, semantic.CompletenessPartial, p.Completeness)
 }
 
-func TestBuildSemanticPlan_UnknownAction(t *testing.T) {
+func TestSemanticPlanFromResults_UnknownAction(t *testing.T) {
 	t.Parallel()
-	_, err := plan.BuildSemanticPlan(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
+	_, err := semanticPlanFromResults(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
 		Identity: predictionIdentity("app"),
 	}})
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "invalid predict action")
 }
 
-func TestBuildSemanticPlan_CreateRequiresPredicted(t *testing.T) {
+func TestSemanticPlanFromResults_CreateRequiresPredicted(t *testing.T) {
 	t.Parallel()
-	_, err := plan.BuildSemanticPlan(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
+	_, err := semanticPlanFromResults(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
 		Identity: predictionIdentity("app"),
 		Action:   predict.ActionCreate,
 	}})
@@ -167,7 +166,7 @@ func TestBuildSemanticPlan_CreateRequiresPredicted(t *testing.T) {
 	assert.ErrorContains(t, err, "create requires a predicted object")
 }
 
-func TestBuildSemanticPlan_DoesNotMutateResults(t *testing.T) {
+func TestSemanticPlanFromResults_DoesNotMutateResults(t *testing.T) {
 	t.Parallel()
 	live := predictionConfigMap("app", "prod", "old")
 	predicted := predictionConfigMap("app", "prod", "new")
@@ -177,7 +176,7 @@ func TestBuildSemanticPlan_DoesNotMutateResults(t *testing.T) {
 		Live:      live,
 		Predicted: predicted,
 	}}
-	p, err := plan.BuildSemanticPlan(semantic.Header{Release: "web", Namespace: "prod"}, results)
+	p, err := semanticPlanFromResults(semantic.Header{Release: "web", Namespace: "prod"}, results)
 	require.NoError(t, err)
 
 	results[0].Action = predict.ActionDelete
@@ -189,7 +188,7 @@ func TestBuildSemanticPlan_DoesNotMutateResults(t *testing.T) {
 	assert.Equal(t, "new", predictionObjectString(t, p.Changes[0].After.Object, "data", "key"))
 }
 
-func TestBuildSemanticPlan_GoIntInObject(t *testing.T) {
+func TestSemanticPlanFromResults_GoIntInObject(t *testing.T) {
 	t.Parallel()
 	predicted := &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "apps/v1",
@@ -200,7 +199,7 @@ func TestBuildSemanticPlan_GoIntInObject(t *testing.T) {
 		},
 		"spec": map[string]any{"replicas": 3},
 	}}
-	p, err := plan.BuildSemanticPlan(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
+	p, err := semanticPlanFromResults(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
 		Identity:  predict.Identity{Group: "apps", Version: "v1", Kind: "Deployment", Namespace: "prod", Name: "web"},
 		Action:    predict.ActionCreate,
 		Predicted: predicted,
@@ -224,7 +223,7 @@ func TestBuildSemanticPlan_GoIntInObject(t *testing.T) {
 	assert.Equal(t, 3, spec["replicas"])
 }
 
-func TestBuildSemanticPlan_GenerateName(t *testing.T) {
+func TestSemanticPlanFromResults_GenerateName(t *testing.T) {
 	t.Parallel()
 	obj := &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "v1",
@@ -235,7 +234,7 @@ func TestBuildSemanticPlan_GenerateName(t *testing.T) {
 		},
 		"data": map[string]any{"key": "v1"},
 	}}
-	p, err := plan.BuildSemanticPlan(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
+	p, err := semanticPlanFromResults(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
 		Identity:  predict.Identity{Version: "v1", Kind: "ConfigMap", Namespace: "prod"},
 		Action:    predict.ActionCreate,
 		Predicted: obj,
@@ -246,9 +245,9 @@ func TestBuildSemanticPlan_GenerateName(t *testing.T) {
 	assert.Equal(t, "app-", p.Changes[0].Resource.GenerateName)
 }
 
-func TestBuildSemanticPlan_NoOpWithLimitation(t *testing.T) {
+func TestSemanticPlanFromResults_NoOpWithLimitation(t *testing.T) {
 	t.Parallel()
-	p, err := plan.BuildSemanticPlan(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
+	p, err := semanticPlanFromResults(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
 		Identity:   predictionIdentity("app"),
 		Action:     predict.ActionNoOp,
 		Predicted:  predictionConfigMap("app", "prod", "same"),
@@ -263,9 +262,9 @@ func TestBuildSemanticPlan_NoOpWithLimitation(t *testing.T) {
 	assert.Equal(t, "app", p.Diagnostics[0].Resource.Name)
 }
 
-func TestBuildSemanticPlan_UpdateRequiresLive(t *testing.T) {
+func TestSemanticPlanFromResults_UpdateRequiresLive(t *testing.T) {
 	t.Parallel()
-	_, err := plan.BuildSemanticPlan(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
+	_, err := semanticPlanFromResults(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
 		Identity:  predictionIdentity("app"),
 		Action:    predict.ActionUpdate,
 		Predicted: predictionConfigMap("app", "prod", "new"),
@@ -274,9 +273,9 @@ func TestBuildSemanticPlan_UpdateRequiresLive(t *testing.T) {
 	assert.ErrorContains(t, err, "update requires a live object")
 }
 
-func TestBuildSemanticPlan_DeleteRequiresLive(t *testing.T) {
+func TestSemanticPlanFromResults_DeleteRequiresLive(t *testing.T) {
 	t.Parallel()
-	_, err := plan.BuildSemanticPlan(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
+	_, err := semanticPlanFromResults(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
 		Identity: predictionIdentity("app"),
 		Action:   predict.ActionDelete,
 	}})
@@ -284,9 +283,9 @@ func TestBuildSemanticPlan_DeleteRequiresLive(t *testing.T) {
 	assert.ErrorContains(t, err, "delete requires a live object")
 }
 
-func TestBuildSemanticPlan_NilObjectSnapshot(t *testing.T) {
+func TestSemanticPlanFromResults_NilObjectSnapshot(t *testing.T) {
 	t.Parallel()
-	p, err := plan.BuildSemanticPlan(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
+	p, err := semanticPlanFromResults(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{{
 		Identity:  predictionIdentity("app"),
 		Action:    predict.ActionCreate,
 		Predicted: &unstructured.Unstructured{},
@@ -297,9 +296,9 @@ func TestBuildSemanticPlan_NilObjectSnapshot(t *testing.T) {
 	assert.Nil(t, p.Changes[0].After.Object)
 }
 
-func TestBuildSemanticPlan_NeverEmitsReplace(t *testing.T) {
+func TestSemanticPlanFromResults_NeverEmitsReplace(t *testing.T) {
 	t.Parallel()
-	p, err := plan.BuildSemanticPlan(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{
+	p, err := semanticPlanFromResults(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{
 		{Identity: predictionIdentity("a"), Action: predict.ActionCreate, Predicted: predictionConfigMap("a", "prod", "1")},
 		{Identity: predictionIdentity("b"), Action: predict.ActionUpdate, Live: predictionConfigMap("b", "prod", "1"), Predicted: predictionConfigMap("b", "prod", "2")},
 		{Identity: predictionIdentity("c"), Action: predict.ActionDelete, Live: predictionConfigMap("c", "prod", "1")},
