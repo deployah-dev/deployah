@@ -200,7 +200,7 @@ func TestWriteHuman_OmitsBookkeepingOnCreateDeleteReplace(t *testing.T) {
 				After:    snap(noisyCM("web", "v1", "11", "u-new")),
 				Apply:    writeApply(),
 			}},
-			want: []string{"+   key: v1"},
+			want: []string{"+   key: v1", "+   labels:", "+   annotations:"},
 		},
 		{
 			name: "delete",
@@ -211,7 +211,7 @@ func TestWriteHuman_OmitsBookkeepingOnCreateDeleteReplace(t *testing.T) {
 				Before:   snap(noisyCM("web", "v1", "11", "u-old")),
 				Apply:    deleteApply(),
 			}},
-			want: []string{"-   key: v1"},
+			want: []string{"-   key: v1", "-   labels:", "-   annotations:"},
 		},
 		{
 			name: "replace",

@@ -108,7 +108,7 @@ func TestSecretRedaction_CoreAPIVersions(t *testing.T) {
 		contains   []string
 		omits      []string
 	}{
-		{name: "v1", apiVersion: "v1", contains: []string{"(redacted)"}, omits: []string{"hidden"}},
+		{name: "v1", apiVersion: "v1", contains: []string{"+ apiVersion: v1", "+ kind: Secret", "name: s", "(redacted)"}, omits: []string{"hidden"}},
 		{name: "core/v1", apiVersion: "core/v1", contains: []string{"(redacted)"}, omits: []string{"hidden"}},
 		{name: "non-core group", apiVersion: "example.com/v1", contains: []string{"hidden"}, omits: []string{"(redacted)"}},
 	}

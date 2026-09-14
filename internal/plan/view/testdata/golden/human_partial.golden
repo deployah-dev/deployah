@@ -1,13 +1,19 @@
 Plan for project "web" on environment "prod"
 
+Context:   production-eu
 Namespace: prod
 Release:   web
+Revision:  12
 
 Warning: prediction is incomplete
 
 Resources
 
   ~ update v1/ConfigMap "app"
+
 Diagnostics
+
   warning prediction_limitation v1/ConfigMap "app": prediction is not exact: managed-fields-migration
-Plan: 0 create, 1 update, 0 delete, 0 replace
+
+Summary
+  Resources: 0 create, 1 update, 0 delete, 0 replace

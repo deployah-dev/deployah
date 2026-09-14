@@ -135,6 +135,88 @@ func ref(kind, name string) semantic.ResourceRef {
 	}
 }
 
+func batchRef(kind, name string) semantic.ResourceRef {
+	return semantic.ResourceRef{
+		APIVersion: "batch/v1",
+		Kind:       kind,
+		Namespace:  "prod",
+		Name:       name,
+	}
+}
+
+func cmWithMeta(name, value string) map[string]any {
+	return map[string]any{
+		"apiVersion": "v1",
+		"kind":       "ConfigMap",
+		"metadata": map[string]any{
+			"name":      name,
+			"namespace": "prod",
+			"labels":    map[string]any{"app": "web"},
+			"annotations": map[string]any{
+				"example.com/keep": "yes",
+			},
+		},
+		"data": map[string]any{"key": value},
+	}
+}
+
+func jobObj(name, task, hook, weight string) map[string]any {
+	return map[string]any{
+		"apiVersion": "batch/v1",
+		"kind":       "Job",
+		"metadata": map[string]any{
+			"name":      name,
+			"namespace": "prod",
+			"labels": map[string]any{
+				"deployah.dev/task": task,
+			},
+			"annotations": map[string]any{
+				"helm.sh/hook":        hook,
+				"helm.sh/hook-weight": weight,
+			},
+		},
+		"spec": jobSpec(task),
+	}
+}
+
+func cronJob(name, task, schedule string) map[string]any {
+	return map[string]any{
+		"apiVersion": "batch/v1",
+		"kind":       "CronJob",
+		"metadata": map[string]any{
+			"name":      name,
+			"namespace": "prod",
+			"labels": map[string]any{
+				"deployah.dev/task": task,
+			},
+		},
+		"spec": map[string]any{
+			"schedule": schedule,
+			"jobTemplate": map[string]any{
+				"spec": jobSpec(task),
+			},
+		},
+	}
+}
+
+func jobSpec(container string) map[string]any {
+	return map[string]any{
+		"backoffLimit": 1,
+		"template": map[string]any{
+			"spec": map[string]any{
+				"restartPolicy": "OnFailure",
+				"containers": []any{
+					map[string]any{
+						"name":    container,
+						"image":   "ghcr.io/example/web:1.2.3",
+						"command": []any{"./" + container},
+					},
+				},
+			},
+		},
+	}
+}
+
 func objectString(tb testing.TB, obj map[string]any, keys ...string) string {
 	tb.Helper()
 	var cur any = obj
@@ -159,6 +241,17 @@ func createChangeForHuman() semantic.ResourceChange {
 	}
 }
 
+func humanHeader() semantic.Header {
+	return semantic.Header{
+		Project:     "web",
+		Environment: "prod",
+		Release:     "web",
+		Namespace:   "prod",
+		Context:     "production-eu",
+		Revision:    12,
+	}
+}
+
 func mustPlan(tb testing.TB, changes []semantic.ResourceChange, diags []semantic.Diagnostic) semantic.Plan {
 	tb.Helper()
 	return mustPlanWithTasks(tb, changes, nil, diags)
@@ -166,12 +259,17 @@ func mustPlan(tb testing.TB, changes []semantic.ResourceChange, diags []semantic
 
 func mustPlanWithTasks(tb testing.TB, changes []semantic.ResourceChange, tasks []semantic.TaskPlan, diags []semantic.Diagnostic) semantic.Plan {
 	tb.Helper()
-	p, err := semantic.New(semantic.Header{
+	return mustPlanWithHeader(tb, semantic.Header{
 		Project:     "web",
 		Environment: "prod",
 		Release:     "web",
 		Namespace:   "prod",
 	}, changes, tasks, diags)
+}
+
+func mustPlanWithHeader(tb testing.TB, header semantic.Header, changes []semantic.ResourceChange, tasks []semantic.TaskPlan, diags []semantic.Diagnostic) semantic.Plan {
+	tb.Helper()
+	p, err := semantic.New(header, changes, tasks, diags)
 	require.NoError(tb, err)
 	return p
 }

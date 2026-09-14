@@ -28,6 +28,16 @@ import (
 	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
 )
 
+func TestWriteJSON_HeaderContextAndRevision(t *testing.T) {
+	t.Parallel()
+	p := mustPlanWithHeader(t, humanHeader(), nil, nil, nil)
+	var buf bytes.Buffer
+	require.NoError(t, view.WriteJSON(&buf, p, view.Options{}))
+	assertJSONAt(t, buf.Bytes(), `"production-eu"`, "header", "context")
+	assertJSONAt(t, buf.Bytes(), `12`, "header", "revision")
+	validatePlanSchema(t, buf.Bytes())
+}
+
 func TestWriteJSON_SchemaAndTasks(t *testing.T) {
 	t.Parallel()
 	p := mustPlan(t, nil, nil)

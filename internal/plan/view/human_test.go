@@ -17,6 +17,7 @@ package view_test
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -29,46 +30,53 @@ import (
 
 func TestWriteHuman_CreateUpdateDeleteReplace(t *testing.T) {
 	t.Parallel()
-	p := mustPlan(t, []semantic.ResourceChange{
-		{
-			Resource: ref("ConfigMap", "app"),
-			Origin:   helmOrigin(),
-			Action:   semantic.Create,
-			After:    snap(cm("app", "v1")),
-			Apply:    writeApply(),
-		},
-		{
-			Resource: ref("ConfigMap", "web"),
-			Origin:   helmOrigin(),
-			Action:   semantic.Update,
-			Before:   snap(cm("web", "v1")),
-			After:    snap(cm("web", "v2")),
-			Apply:    writeApply(),
-		},
-		{
-			Resource: ref("ConfigMap", "old"),
-			Origin:   helmOrigin(),
-			Action:   semantic.Delete,
-			Before:   snap(cm("old", "v1")),
-			Apply:    deleteApply(),
-		},
-		{
-			Resource: ref("ConfigMap", "rs"),
-			Origin:   helmOrigin(),
-			Action:   semantic.Replace,
-			Before:   snap(cm("rs", "v1")),
-			After:    snap(cm("rs", "v2")),
-			Apply:    bothApply(),
-		},
-	}, nil)
+	p := allActionsPlan(t)
 	var buf bytes.Buffer
 	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
 	text := buf.String()
 	assertGolden(t, "human_all_actions", text)
+	assertHumanLayout(t, text)
+	assertHumanHeaderMetadata(t, text, "production-eu", 12)
+	assert.Contains(t, text, "Resources")
 	assert.Contains(t, text, `+ create v1/ConfigMap "app"`)
+	assert.Contains(t, text, "+     example.com/keep: yes")
+	assert.Contains(t, text, "+     app: web")
+	assert.Contains(t, text, "+   key: v1")
 	assert.Contains(t, text, `~ update v1/ConfigMap "web"`)
 	assert.Contains(t, text, `- delete v1/ConfigMap "old"`)
+	assert.Contains(t, text, "-     example.com/keep: yes")
+	assert.Contains(t, text, "-     app: web")
+	assert.Contains(t, text, "-   key: v1")
 	assert.Contains(t, text, `-/+ replace v1/ConfigMap "rs"`)
+	assert.Contains(t, text, "Tasks")
+	assert.Contains(t, text, "  preDeploy")
+	assert.Contains(t, text, "~ migrate  changed, will run")
+	assert.Contains(t, text, `~ update v1/ConfigMap "web-migrate-env"`)
+	assert.Contains(t, text, "    seed  will run")
+	assert.Contains(t, text, "  postDeploy")
+	assert.Contains(t, text, "+ smoke  new, will run")
+	assert.Contains(t, text, `+ create batch/v1/Job "web-smoke"`)
+	assert.Contains(t, text, "deployah.dev/task: smoke")
+	assert.Contains(t, text, "helm.sh/hook: post-install,post-upgrade")
+	assert.Contains(t, text, `helm.sh/hook-weight: "0"`)
+	assert.Contains(t, text, "backoffLimit: 1")
+	assert.Contains(t, text, "image: ghcr.io/example/web:1.2.3")
+	assert.Contains(t, text, "- ./smoke")
+	assert.Contains(t, text, "- old-check  removed")
+	assert.Contains(t, text, `- delete batch/v1/Job "web-old-check"`)
+	assert.Contains(t, text, "deployah.dev/task: old-check")
+	assert.Contains(t, text, `helm.sh/hook-weight: "1"`)
+	assert.Contains(t, text, "- ./old-check")
+	assert.Contains(t, text, "  schedule")
+	assert.Contains(t, text, "~ cleanup  changed")
+	assert.NotContains(t, text, "~ cleanup  changed, will run")
+	assert.Contains(t, text, `~ update batch/v1/CronJob "web-cleanup"`)
+	assert.Contains(t, text, "-   schedule: 0 2 * * *")
+	assert.Contains(t, text, "+   schedule: 0 3 * * *")
+	assert.NotContains(t, text, "jobTemplate:")
+	assert.Equal(t, 1, strings.Count(text, `batch/v1/CronJob "web-cleanup"`))
+	assert.Contains(t, text, "  Resources: 1 create, 2 update, 1 delete, 1 replace")
+	assert.Contains(t, text, "  Tasks: 3 to run, 1 schedule changed")
 	assert.NotContains(t, text, "~ ConfigMap/prod/rs")
 	assert.NotContains(t, text, "-/+ ConfigMap/prod/web")
 	assert.NotContains(t, strings.ToLower(text), "recreate")
@@ -96,13 +104,13 @@ func TestWriteHuman_CreateUpdateDeleteReplace(t *testing.T) {
 func TestWriteHuman_DiagnosticPartial(t *testing.T) {
 	t.Parallel()
 	res := ref("ConfigMap", "app")
-	p := mustPlan(t, []semantic.ResourceChange{{
+	p := mustPlanWithHeader(t, humanHeader(), []semantic.ResourceChange{{
 		Resource: res,
 		Origin:   helmOrigin(),
 		Action:   semantic.Update,
 		Before:   snap(cm("app", "v1")),
 		Apply:    writeApply(),
-	}}, []semantic.Diagnostic{{
+	}}, nil, []semantic.Diagnostic{{
 		Severity: semantic.DiagnosticWarning,
 		Category: semantic.CategoryPredictionLimitation,
 		Message:  "prediction is not exact: managed-fields-migration",
@@ -285,27 +293,52 @@ func TestWriteHuman_ArrayOrderPreserved(t *testing.T) {
 	assert.Greater(t, mu, alpha)
 }
 
-func TestWriteHuman_HeaderOptionalFields(t *testing.T) {
+func TestWriteHuman_HeaderMetadata(t *testing.T) {
 	t.Parallel()
-	p, err := semantic.New(semantic.Header{
-		Project:      "web",
-		Environment:  "prod",
-		Release:      "web",
-		Namespace:    "prod",
-		Context:      "kind-dev",
-		Revision:     7,
-		FreshInstall: true,
-	}, nil, nil, nil)
-	require.NoError(t, err)
-	var buf bytes.Buffer
-	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
-	text := buf.String()
-	assert.Contains(t, text, `Plan for project "web" on environment "prod"`)
-	assert.Contains(t, text, "Context:   kind-dev")
-	assert.Contains(t, text, "Revision:  7")
-	assert.NotContains(t, text, "fresh_install")
-	assert.NotContains(t, text, "completeness:")
-	assert.NotContains(t, text, "Executions:")
+	tests := []struct {
+		name     string
+		header   semantic.Header
+		context  string
+		revision int
+	}{
+		{
+			name:     "upgrade next revision",
+			header:   humanHeader(),
+			context:  "production-eu",
+			revision: 12,
+		},
+		{
+			name: "fresh install revision 1",
+			header: semantic.Header{
+				Project:      "web",
+				Environment:  "prod",
+				Release:      "web",
+				Namespace:    "prod",
+				Context:      "kind-dev",
+				Revision:     1,
+				FreshInstall: true,
+			},
+			context:  "kind-dev",
+			revision: 1,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			p := mustPlanWithHeader(t, tt.header, nil, nil, nil)
+			var buf bytes.Buffer
+			require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
+			text := buf.String()
+			assertHumanLayout(t, text)
+			assertHumanHeaderMetadata(t, text, tt.context, tt.revision)
+			assert.Equal(t, tt.context, p.Header.Context)
+			assert.Equal(t, tt.revision, p.Header.Revision)
+			assert.NotContains(t, text, "fresh_install")
+			assert.NotContains(t, text, "FreshInstall")
+			assert.NotContains(t, text, "completeness:")
+			assert.NotContains(t, text, "Executions:")
+		})
+	}
 }
 
 func TestWriteHuman_DiagnosticWithoutResource(t *testing.T) {
@@ -353,7 +386,9 @@ func TestWriteHuman_EmptyPlan(t *testing.T) {
 	assert.Contains(t, text, `Plan for project "web" on environment "prod"`)
 	assert.NotContains(t, text, "completeness:")
 	assert.NotContains(t, text, "Executions:")
-	assert.Contains(t, text, "Plan: 0 create, 0 update, 0 delete, 0 replace")
+	assertHumanLayout(t, text)
+	assert.Contains(t, text, "  Resources: 0 create, 0 update, 0 delete, 0 replace")
+	assert.NotContains(t, text, "  Tasks:")
 	assert.NotContains(t, text, "create helm")
 	assert.NotContains(t, text, "Actions:")
 }
@@ -423,7 +458,7 @@ func TestWriteHuman_UnknownGVKActions(t *testing.T) {
 				Before:   snap(widget("d", "blue")),
 				Apply:    deleteApply(),
 			},
-			contains: []string{`- delete example.com/v1/Widget "d"`, "- apiVersion: example.com/v1"},
+			contains: []string{`- delete example.com/v1/Widget "d"`, "- apiVersion: example.com/v1", "size: large"},
 		},
 		{
 			name: "replace identity then projected rest",
@@ -689,7 +724,93 @@ func TestWriteHuman_ScheduledTaskNotDuplicated(t *testing.T) {
 	tasksIdx := strings.Index(text, "Tasks")
 	require.Greater(t, tasksIdx, resourcesIdx)
 	assert.NotContains(t, text[resourcesIdx:tasksIdx], `CronJob "cleanup"`)
-	assert.Contains(t, text, "Tasks: 0 to run, 1 schedule changed")
+	assertHumanLayout(t, text)
+	assert.Contains(t, text, "  Resources: 1 create, 1 update, 0 delete, 0 replace")
+	assert.Contains(t, text, "  Tasks: 0 to run, 1 schedule changed")
+}
+
+func TestWriteHuman_ScheduleCreateDeleteRendersFullObject(t *testing.T) {
+	t.Parallel()
+	cron := batchRef("CronJob", "web-cleanup")
+	body := []string{
+		"deployah.dev/task: cleanup",
+		"jobTemplate:",
+		"backoffLimit: 1",
+		"image: ghcr.io/example/web:1.2.3",
+		"./cleanup",
+		"schedule: 0 3 * * *",
+	}
+	tests := []struct {
+		name     string
+		change   semantic.ResourceChange
+		task     semantic.TaskPlan
+		contains []string
+		omits    []string
+	}{
+		{
+			name: "create",
+			change: semantic.ResourceChange{
+				Resource: cron,
+				Origin:   helmOrigin(),
+				Action:   semantic.Create,
+				After:    snap(cronJob("web-cleanup", "cleanup", "0 3 * * *")),
+				Apply:    writeApply(),
+			},
+			task: semantic.TaskPlan{
+				Name:      "cleanup",
+				Phase:     semantic.TaskSchedule,
+				Action:    semantic.TaskCreate,
+				Resources: []semantic.ResourceRef{cron},
+			},
+			contains: append([]string{
+				"+ cleanup  new",
+				`+ create batch/v1/CronJob "web-cleanup"`,
+				"  Resources: 1 create, 0 update, 0 delete, 0 replace",
+			}, body...),
+			omits: []string{"will run", "\nResources\n"},
+		},
+		{
+			name: "delete",
+			change: semantic.ResourceChange{
+				Resource: cron,
+				Origin:   helmOrigin(),
+				Action:   semantic.Delete,
+				Before:   snap(cronJob("web-cleanup", "cleanup", "0 3 * * *")),
+				Apply:    deleteApply(),
+			},
+			task: semantic.TaskPlan{
+				Name:      "cleanup",
+				Phase:     semantic.TaskSchedule,
+				Action:    semantic.TaskDelete,
+				Resources: []semantic.ResourceRef{cron},
+			},
+			contains: append([]string{
+				"- cleanup  removed",
+				`- delete batch/v1/CronJob "web-cleanup"`,
+				"  Resources: 0 create, 0 update, 1 delete, 0 replace",
+			}, body...),
+			omits: []string{"will run", "\nResources\n"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			p := mustPlanWithTasks(t, []semantic.ResourceChange{tt.change}, []semantic.TaskPlan{tt.task}, nil)
+			var buf bytes.Buffer
+			require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
+			text := buf.String()
+			assertHumanLayout(t, text)
+			assert.Contains(t, text, "Tasks")
+			assert.Contains(t, text, "  schedule")
+			assert.Contains(t, text, "  Tasks: 0 to run, 1 schedule changed")
+			for _, want := range tt.contains {
+				assert.Contains(t, text, want)
+			}
+			for _, omit := range tt.omits {
+				assert.NotContains(t, text, omit)
+			}
+		})
+	}
 }
 
 func TestWriteHuman_UnchangedTaskWillRun(t *testing.T) {
@@ -705,7 +826,8 @@ func TestWriteHuman_UnchangedTaskWillRun(t *testing.T) {
 	text := buf.String()
 	assert.Contains(t, text, "seed  will run")
 	assert.NotContains(t, text, "apiVersion")
-	assert.Contains(t, text, "Tasks: 1 to run")
+	assertHumanLayout(t, text)
+	assert.Contains(t, text, "  Tasks: 1 to run")
 	assert.NotContains(t, text, "schedule changed")
 }
 
@@ -755,6 +877,8 @@ func TestWriteHuman_TaskFooter(t *testing.T) {
 			var buf bytes.Buffer
 			require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
 			text := buf.String()
+			assertHumanLayout(t, text)
+			assert.Contains(t, text, "  Resources: 0 create, 0 update, 0 delete, 0 replace")
 			for _, s := range tt.wantContains {
 				assert.Contains(t, text, s)
 			}
@@ -763,4 +887,244 @@ func TestWriteHuman_TaskFooter(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestWriteHuman_BlockSpacing(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name            string
+		plan            semantic.Plan
+		contains        []string
+		wantTasksFooter bool
+	}{
+		{
+			name: "resource blocks",
+			plan: mustPlan(t, []semantic.ResourceChange{
+				{
+					Resource: ref("ConfigMap", "app"),
+					Origin:   helmOrigin(),
+					Action:   semantic.Create,
+					After:    snap(cm("app", "v1")),
+					Apply:    writeApply(),
+				},
+				{
+					Resource: ref("ConfigMap", "old"),
+					Origin:   helmOrigin(),
+					Action:   semantic.Create,
+					After:    snap(cm("old", "v1")),
+					Apply:    writeApply(),
+				},
+			}, nil),
+			contains: []string{
+				"+   key: v1\n\n  + create v1/ConfigMap \"old\"",
+				"  Resources: 2 create, 0 update, 0 delete, 0 replace",
+			},
+		},
+		{
+			name: "task blocks",
+			plan: mustPlanWithTasks(t, nil, []semantic.TaskPlan{
+				{
+					Name:    "migrate",
+					Phase:   semantic.TaskPreDeploy,
+					Action:  semantic.TaskUpdate,
+					WillRun: true,
+				},
+				{
+					Name:    "seed",
+					Phase:   semantic.TaskPreDeploy,
+					Action:  semantic.TaskUnchanged,
+					WillRun: true,
+				},
+			}, nil),
+			contains:        []string{"~ migrate  changed, will run\n\n    seed  will run"},
+			wantTasksFooter: true,
+		},
+		{
+			name: "nested definition blocks",
+			plan: mustPlanWithTasks(t, nil, []semantic.TaskPlan{{
+				Name:    "migrate",
+				Phase:   semantic.TaskPreDeploy,
+				Action:  semantic.TaskUpdate,
+				WillRun: true,
+				Definitions: []semantic.HookDefinition{
+					{
+						Resource: ref("ConfigMap", "a-env"),
+						Action:   semantic.Create,
+						After:    snap(cm("a-env", "v1")),
+					},
+					{
+						Resource: ref("ConfigMap", "z-env"),
+						Action:   semantic.Create,
+						After:    snap(cm("z-env", "v1")),
+					},
+				},
+			}}, nil),
+			contains:        []string{"+   key: v1\n\n      + create v1/ConfigMap \"z-env\""},
+			wantTasksFooter: true,
+		},
+		{
+			name: "task phases",
+			plan: mustPlanWithTasks(t, nil, []semantic.TaskPlan{
+				{
+					Name:    "seed",
+					Phase:   semantic.TaskPreDeploy,
+					Action:  semantic.TaskUnchanged,
+					WillRun: true,
+				},
+				{
+					Name:    "smoke",
+					Phase:   semantic.TaskPostDeploy,
+					Action:  semantic.TaskCreate,
+					WillRun: true,
+				},
+			}, nil),
+			contains:        []string{"    seed  will run\n\n  postDeploy\n"},
+			wantTasksFooter: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var buf bytes.Buffer
+			require.NoError(t, view.WriteHuman(&buf, tt.plan, view.Options{}))
+			text := buf.String()
+			assertHumanLayout(t, text)
+			for _, want := range tt.contains {
+				assert.Contains(t, text, want)
+			}
+			assert.Equal(t, tt.wantTasksFooter, strings.Contains(text, "  Tasks:"))
+		})
+	}
+}
+
+func TestWriteHuman_SummaryOmitsTasksWhenAbsent(t *testing.T) {
+	t.Parallel()
+	p := mustPlan(t, []semantic.ResourceChange{createChangeForHuman()}, nil)
+	var buf bytes.Buffer
+	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
+	text := buf.String()
+	assertHumanLayout(t, text)
+	assert.Contains(t, text, "  Resources: 1 create, 0 update, 0 delete, 0 replace")
+	assert.NotContains(t, text, "  Tasks:")
+}
+
+// allActionsPlan is the synthetic generic renderer fixture for
+// human_all_actions.golden. It is not Deployah product output; the
+// semantic-pipeline contract is TestWriteHuman_ProductPlan.
+func allActionsPlan(tb testing.TB) semantic.Plan {
+	tb.Helper()
+	cron := batchRef("CronJob", "web-cleanup")
+	return mustPlanWithHeader(tb, humanHeader(), []semantic.ResourceChange{
+		{
+			Resource: ref("ConfigMap", "app"),
+			Origin:   helmOrigin(),
+			Action:   semantic.Create,
+			After:    snap(cmWithMeta("app", "v1")),
+			Apply:    writeApply(),
+		},
+		{
+			Resource: ref("ConfigMap", "web"),
+			Origin:   helmOrigin(),
+			Action:   semantic.Update,
+			Before:   snap(cm("web", "v1")),
+			After:    snap(cm("web", "v2")),
+			Apply:    writeApply(),
+		},
+		{
+			Resource: ref("ConfigMap", "old"),
+			Origin:   helmOrigin(),
+			Action:   semantic.Delete,
+			Before:   snap(cmWithMeta("old", "v1")),
+			Apply:    deleteApply(),
+		},
+		{
+			Resource: ref("ConfigMap", "rs"),
+			Origin:   helmOrigin(),
+			Action:   semantic.Replace,
+			Before:   snap(cm("rs", "v1")),
+			After:    snap(cm("rs", "v2")),
+			Apply:    bothApply(),
+		},
+		{
+			Resource: cron,
+			Origin:   helmOrigin(),
+			Action:   semantic.Update,
+			Before:   snap(cronJob("web-cleanup", "cleanup", "0 2 * * *")),
+			After:    snap(cronJob("web-cleanup", "cleanup", "0 3 * * *")),
+			Apply:    writeApply(),
+		},
+	}, []semantic.TaskPlan{
+		{
+			Name:    "migrate",
+			Phase:   semantic.TaskPreDeploy,
+			Action:  semantic.TaskUpdate,
+			WillRun: true,
+			Definitions: []semantic.HookDefinition{{
+				Resource: ref("ConfigMap", "web-migrate-env"),
+				Action:   semantic.Update,
+				Before:   snap(cm("web-migrate-env", "v1")),
+				After:    snap(cm("web-migrate-env", "v2")),
+			}},
+		},
+		{
+			Name:    "seed",
+			Phase:   semantic.TaskPreDeploy,
+			Action:  semantic.TaskUnchanged,
+			WillRun: true,
+		},
+		{
+			Name:       "smoke",
+			Phase:      semantic.TaskPostDeploy,
+			Action:     semantic.TaskCreate,
+			WillRun:    true,
+			HookWeight: 0,
+			Definitions: []semantic.HookDefinition{{
+				Resource: batchRef("Job", "web-smoke"),
+				Action:   semantic.Create,
+				After:    snap(jobObj("web-smoke", "smoke", "post-install,post-upgrade", "0")),
+			}},
+		},
+		{
+			Name:       "old-check",
+			Phase:      semantic.TaskPostDeploy,
+			Action:     semantic.TaskDelete,
+			HookWeight: 1,
+			Definitions: []semantic.HookDefinition{{
+				Resource: batchRef("Job", "web-old-check"),
+				Action:   semantic.Delete,
+				Before:   snap(jobObj("web-old-check", "old-check", "post-install,post-upgrade", "1")),
+			}},
+		},
+		{
+			Name:      "cleanup",
+			Phase:     semantic.TaskSchedule,
+			Action:    semantic.TaskUpdate,
+			Resources: []semantic.ResourceRef{cron},
+		},
+	}, nil)
+}
+
+func assertHumanLayout(t *testing.T, text string) {
+	t.Helper()
+	assert.NotContains(t, text, "\n\n\n")
+	assert.True(t, strings.HasSuffix(text, "\n"))
+	assert.False(t, strings.HasSuffix(text, "\n\n"))
+	assert.Contains(t, text, "\n\nSummary\n")
+	assert.NotContains(t, text, "Plan:")
+	assert.Contains(t, text, "\n  Resources:")
+}
+
+func assertHumanHeaderMetadata(t *testing.T, text, kubeContext string, revision int) {
+	t.Helper()
+	block := fmt.Sprintf("Context:   %s\nNamespace: prod\nRelease:   web\nRevision:  %d\n", kubeContext, revision)
+	assert.Contains(t, text, block)
+	assert.Contains(t, text, "\n\nContext:")
+	contextIdx := strings.Index(text, "Context:")
+	nsIdx := strings.Index(text, "Namespace:")
+	relIdx := strings.Index(text, "Release:")
+	revIdx := strings.Index(text, "Revision:")
+	require.Greater(t, contextIdx, -1)
+	assert.Greater(t, nsIdx, contextIdx)
+	assert.Greater(t, relIdx, nsIdx)
+	assert.Greater(t, revIdx, relIdx)
 }

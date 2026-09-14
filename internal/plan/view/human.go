@@ -35,6 +35,8 @@ const headerLabelWidth = 10
 
 // WriteHuman writes a deterministic YAML-oriented rendering of p. It
 // does not mutate p. Resource headings use +, ~, -, and -/+ markers.
+// The footer is a Summary of resource counts and, when tasks exist,
+// task counts.
 func WriteHuman(w io.Writer, p semantic.Plan, opts Options) error {
 	prepared, err := prepareRender(p, opts)
 	if err != nil {
@@ -53,14 +55,38 @@ func WriteHuman(w io.Writer, p semantic.Plan, opts Options) error {
 	}
 	owned := ownedResourceKeys(prepared.Tasks)
 	indexed := indexChanges(prepared.Changes)
-	if rerr := writeHumanResources(w, prepared.Changes, owned, prepared.Header.Namespace, opts); rerr != nil {
+	wroteBody := false
+	wroteResources, rerr := writeHumanResources(w, prepared.Changes, owned, prepared.Header.Namespace, opts)
+	if rerr != nil {
 		return rerr
 	}
-	if terr := writeHumanTasks(w, prepared, indexed, opts); terr != nil {
-		return terr
+	wroteBody = wroteResources
+	if len(prepared.Tasks) > 0 {
+		if wroteBody {
+			if berr := writeBlank(w); berr != nil {
+				return berr
+			}
+		}
+		if terr := writeHumanTasks(w, prepared, indexed, opts); terr != nil {
+			return terr
+		}
+		wroteBody = true
 	}
-	if derr := writeHumanDiagnostics(w, prepared.Diagnostics, prepared.Header.Namespace, opts); derr != nil {
-		return derr
+	if len(prepared.Diagnostics) > 0 {
+		if wroteBody {
+			if berr := writeBlank(w); berr != nil {
+				return berr
+			}
+		}
+		if derr := writeHumanDiagnostics(w, prepared.Diagnostics, prepared.Header.Namespace, opts); derr != nil {
+			return derr
+		}
+		wroteBody = true
+	}
+	if wroteBody {
+		if berr := writeBlank(w); berr != nil {
+			return berr
+		}
 	}
 	return writeHumanFooter(w, prepared, opts)
 }
@@ -107,7 +133,7 @@ func padLabel(label string) string {
 	return label + strings.Repeat(" ", headerLabelWidth-len(label))
 }
 
-func writeHumanResources(w io.Writer, changes []semantic.ResourceChange, owned map[string]struct{}, planNS string, opts Options) error {
+func writeHumanResources(w io.Writer, changes []semantic.ResourceChange, owned map[string]struct{}, planNS string, opts Options) (bool, error) {
 	var visible []semantic.ResourceChange
 	for _, c := range changes {
 		if _, ok := owned[refKey(c.Resource)]; ok {
@@ -116,20 +142,25 @@ func writeHumanResources(w io.Writer, changes []semantic.ResourceChange, owned m
 		visible = append(visible, c)
 	}
 	if len(visible) == 0 {
-		return nil
+		return false, nil
 	}
 	if err := writeln(w, opts, theme.TextTitle, "Resources"); err != nil {
-		return err
+		return false, err
 	}
-	if _, err := fmt.Fprintln(w); err != nil {
-		return err
+	if err := writeBlank(w); err != nil {
+		return false, err
 	}
 	for i := range visible {
+		if i > 0 {
+			if err := writeBlank(w); err != nil {
+				return false, err
+			}
+		}
 		if err := writeHumanChange(w, visible[i], planNS, "  ", opts); err != nil {
-			return err
+			return false, err
 		}
 	}
-	return nil
+	return true, nil
 }
 
 func writeHumanTasks(w io.Writer, p semantic.Plan, indexed map[string]semantic.ResourceChange, opts Options) error {
@@ -139,21 +170,36 @@ func writeHumanTasks(w io.Writer, p semantic.Plan, indexed map[string]semantic.R
 	if err := writeln(w, opts, theme.TextTitle, "Tasks"); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintln(w); err != nil {
+	if err := writeBlank(w); err != nil {
 		return err
 	}
 	var current semantic.TaskPhase
+	firstPhase := true
+	firstInPhase := true
 	for i := range p.Tasks {
 		t := p.Tasks[i]
 		if t.Phase != current {
+			if !firstPhase {
+				if err := writeBlank(w); err != nil {
+					return err
+				}
+			}
+			firstPhase = false
+			firstInPhase = true
 			current = t.Phase
 			if err := writeln(w, opts, theme.TextTitle, "  "+t.Phase.String()); err != nil {
 				return err
 			}
-			if _, err := fmt.Fprintln(w); err != nil {
+			if err := writeBlank(w); err != nil {
 				return err
 			}
 		}
+		if !firstInPhase {
+			if err := writeBlank(w); err != nil {
+				return err
+			}
+		}
+		firstInPhase = false
 		if err := writeHumanTask(w, t, indexed, p.Header.Namespace, opts); err != nil {
 			return err
 		}
@@ -166,6 +212,9 @@ func writeHumanTask(w io.Writer, t semantic.TaskPlan, indexed map[string]semanti
 		return err
 	}
 	for i := range t.Definitions {
+		if err := writeBlank(w); err != nil {
+			return err
+		}
 		if err := writeHumanDefinition(w, t.Definitions[i], planNS, opts); err != nil {
 			return err
 		}
@@ -175,12 +224,14 @@ func writeHumanTask(w io.Writer, t semantic.TaskPlan, indexed map[string]semanti
 		if !ok {
 			return fmt.Errorf("task %s: missing resource %s", t.Name, ref)
 		}
+		if err := writeBlank(w); err != nil {
+			return err
+		}
 		if err := writeHumanChange(w, c, planNS, "      ", opts); err != nil {
 			return err
 		}
 	}
-	_, err := fmt.Fprintln(w)
-	return err
+	return nil
 }
 
 func taskTitle(t semantic.TaskPlan) string {
@@ -361,6 +412,9 @@ func writeHumanDiagnostics(w io.Writer, diags []semantic.Diagnostic, planNS stri
 	if err := writeln(w, opts, theme.TextTitle, "Diagnostics"); err != nil {
 		return err
 	}
+	if err := writeBlank(w); err != nil {
+		return err
+	}
 	for _, d := range diags {
 		ref := ""
 		if d.Resource != nil {
@@ -378,9 +432,12 @@ func writeHumanDiagnostics(w io.Writer, diags []semantic.Diagnostic, planNS stri
 }
 
 func writeHumanFooter(w io.Writer, p semantic.Plan, opts Options) error {
+	if err := writeln(w, opts, theme.TextTitle, "Summary"); err != nil {
+		return err
+	}
 	s := p.Summary
-	planLine := fmt.Sprintf("Plan: %d create, %d update, %d delete, %d replace", s.Create, s.Update, s.Delete, s.Replace)
-	if err := writeln(w, opts, theme.TextPrimary, planLine); err != nil {
+	resourceLine := fmt.Sprintf("  Resources: %d create, %d update, %d delete, %d replace", s.Create, s.Update, s.Delete, s.Replace)
+	if err := writeln(w, opts, theme.TextPrimary, resourceLine); err != nil {
 		return err
 	}
 	if len(p.Tasks) == 0 {
@@ -396,11 +453,16 @@ func writeHumanFooter(w io.Writer, p semantic.Plan, opts Options) error {
 			schedChanged++
 		}
 	}
-	taskLine := fmt.Sprintf("Tasks: %d to run", toRun)
+	taskLine := fmt.Sprintf("  Tasks: %d to run", toRun)
 	if schedChanged > 0 {
 		taskLine += fmt.Sprintf(", %d schedule changed", schedChanged)
 	}
 	return writeln(w, opts, theme.TextPrimary, taskLine)
+}
+
+func writeBlank(w io.Writer) error {
+	_, err := fmt.Fprintln(w)
+	return err
 }
 
 func resourceHeading(action semantic.Action, ref semantic.ResourceRef, planNS string) string {
