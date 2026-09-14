@@ -13,6 +13,7 @@ metadata:
         deployah.dev/environment: dev
         deployah.dev/instance: task-schedule-full-dev
         deployah.dev/project: task-schedule-full
+        deployah.dev/task: cleanup
         helm.sh/chart: cleanup-0.1.0
     name: task-schedule-full-dev-cleanup
     namespace: default
@@ -38,6 +39,7 @@ spec:
                         deployah.dev/environment: dev
                         deployah.dev/instance: task-schedule-full-dev
                         deployah.dev/project: task-schedule-full
+                        deployah.dev/task: cleanup
                         helm.sh/chart: cleanup-0.1.0
                 spec:
                     automountServiceAccountToken: false

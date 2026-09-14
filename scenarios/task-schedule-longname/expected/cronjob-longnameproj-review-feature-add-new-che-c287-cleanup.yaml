@@ -13,6 +13,7 @@ metadata:
         deployah.dev/environment: review-feature-add-new-checkout-flow
         deployah.dev/instance: longnameproj-review-feature-add-new-checkout-flow
         deployah.dev/project: longnameproj
+        deployah.dev/task: cleanup
         helm.sh/chart: cleanup-0.1.0
     name: longnameproj-review-feature-add-new-che-c287-cleanup
     namespace: default
@@ -38,6 +39,7 @@ spec:
                         deployah.dev/environment: review-feature-add-new-checkout-flow
                         deployah.dev/instance: longnameproj-review-feature-add-new-checkout-flow
                         deployah.dev/project: longnameproj
+                        deployah.dev/task: cleanup
                         helm.sh/chart: cleanup-0.1.0
                 spec:
                     automountServiceAccountToken: false

@@ -333,6 +333,10 @@ func (a TaskAction) valid() bool {
 // values in Plan.Changes. A current-only manual task is omitted. A
 // current manual task whose previous release was preDeploy, postDeploy,
 // or schedule is represented as a deletion of that previous footprint.
+// Changing on between schedule and preDeploy or postDeploy is a
+// [TaskUpdate] of the current phase. The previous CronJob stays in
+// Plan.Changes; previous hook documents are not emitted as Kubernetes
+// deletes.
 type TaskPlan struct {
 	Name        string
 	Phase       TaskPhase

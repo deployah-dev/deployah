@@ -84,15 +84,6 @@ func assembleTasks(
 		if !hasCurrent && hasPrev && prev.On == spec.TaskOnManual {
 			continue
 		}
-		if hasCurrent {
-			prevOn, prevOnErr := previousTaskOn(hasPrev, prev, previousDocs[name])
-			if prevOnErr != nil {
-				return nil, fmt.Errorf("task %s: %w", name, prevOnErr)
-			}
-			if prevOn != "" && incompatibleTaskOn(current.Task.On, prevOn) {
-				return nil, fmt.Errorf("task %s: cannot change on from %s to %s", name, prevOn, current.Task.On)
-			}
-		}
 
 		on, onErr := taskOn(hasCurrent, current, hasPrev, prev, previousDocs[name])
 		if onErr != nil {
@@ -116,20 +107,6 @@ func assembleTasks(
 	}
 	applyHelmWillRun(tasks, fresh, len(changes) > 0)
 	return tasks, nil
-}
-
-func incompatibleTaskOn(current, previous spec.TaskOn) bool {
-	return current.IsHook() && previous.IsScheduled() || current.IsScheduled() && previous.IsHook()
-}
-
-func previousTaskOn(hasPrev bool, prev previousTask, docs map[string]hookDoc) (spec.TaskOn, error) {
-	if hasPrev {
-		return prev.On, nil
-	}
-	if len(docs) == 0 {
-		return "", nil
-	}
-	return taskOnFromDocs(docs)
 }
 
 func taskOn(hasCurrent bool, current spec.ResolvedTask, hasPrev bool, prev previousTask, previousDocs map[string]hookDoc) (spec.TaskOn, error) {
