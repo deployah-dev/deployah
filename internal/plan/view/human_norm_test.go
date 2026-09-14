@@ -61,11 +61,9 @@ func TestWriteHuman_SecretDiffs(t *testing.T) {
 			contains: []string{
 				"-   password: (redacted)",
 				"+   password: (redacted)",
-				"    token: (redacted)",
 			},
 			omits: []string{
-				"-   token: (redacted)",
-				"+   token: (redacted)",
+				"token:",
 				"old-pass", "new-pass", "same-tok", "deployah-secret-",
 			},
 		},
@@ -77,9 +75,8 @@ func TestWriteHuman_SecretDiffs(t *testing.T) {
 			contains: []string{
 				"-   password: old-pass",
 				"+   password: new-pass",
-				"    token: same-tok",
 			},
-			omits: []string{"-   token:", "+   token:"},
+			omits: []string{"token:", "same-tok"},
 		},
 		{
 			name:   "add key",
@@ -115,9 +112,9 @@ func TestWriteHuman_SecretDiffs(t *testing.T) {
 				"+   foo/bar: (redacted)",
 				"-   tilde~x: (redacted)",
 				"+   tilde~x: (redacted)",
-				"    keep: (redacted)",
 			},
 			omits: []string{
+				"keep:",
 				"old-slash", "new-slash", "old-tilde", "new-tilde", "deployah-secret-",
 			},
 		},
@@ -180,7 +177,7 @@ func TestWriteHuman_OmitsBookkeepingFields(t *testing.T) {
 	assertNoBookkeeping(t, text)
 	assert.Contains(t, text, "-   key: v1")
 	assert.Contains(t, text, "+   key: v2")
-	assertKeepsUserMeta(t, text)
+	assert.NotContains(t, text, "example.com/keep")
 	assert.Contains(t, jsonBuf.String(), `"resourceVersion"`)
 	assert.Contains(t, jsonBuf.String(), `"managedFields"`)
 	assert.Contains(t, jsonBuf.String(), `"status"`)

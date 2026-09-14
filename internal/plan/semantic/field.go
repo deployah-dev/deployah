@@ -319,6 +319,37 @@ func copyDiagnostics(in []Diagnostic) []Diagnostic {
 	return out
 }
 
+func copyTasks(in []TaskPlan) []TaskPlan {
+	if in == nil {
+		return []TaskPlan{}
+	}
+	out := slices.Clone(in)
+	for i := range out {
+		out[i].Definitions = copyDefinitions(out[i].Definitions)
+		out[i].Resources = slices.Clone(out[i].Resources)
+		if out[i].Resources == nil {
+			out[i].Resources = []ResourceRef{}
+		}
+	}
+	return out
+}
+
+func copyDefinitions(in []HookDefinition) []HookDefinition {
+	if in == nil {
+		return []HookDefinition{}
+	}
+	out := slices.Clone(in)
+	for i := range out {
+		out[i].Before = copySnapshot(out[i].Before)
+		out[i].After = copySnapshot(out[i].After)
+		out[i].Fields = copyFields(out[i].Fields)
+		if out[i].Fields == nil {
+			out[i].Fields = []FieldChange{}
+		}
+	}
+	return out
+}
+
 func snapshotObject(s *ResourceSnapshot) map[string]any {
 	if s == nil {
 		return nil

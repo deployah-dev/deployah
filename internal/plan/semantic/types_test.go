@@ -51,6 +51,15 @@ func TestEnumString(t *testing.T) {
 		{name: "unknown severity", got: semantic.DiagnosticSeverity(0).String(), want: "DiagnosticSeverity(0)"},
 		{name: "prediction_limitation", got: semantic.CategoryPredictionLimitation.String(), want: "prediction_limitation"},
 		{name: "unknown category", got: semantic.DiagnosticCategory(0).String(), want: "DiagnosticCategory(0)"},
+		{name: "preDeploy", got: semantic.TaskPreDeploy.String(), want: "preDeploy"},
+		{name: "postDeploy", got: semantic.TaskPostDeploy.String(), want: "postDeploy"},
+		{name: "schedule", got: semantic.TaskSchedule.String(), want: "schedule"},
+		{name: "unknown task phase", got: semantic.TaskPhase(0).String(), want: "TaskPhase(0)"},
+		{name: "task unchanged", got: semantic.TaskUnchanged.String(), want: "unchanged"},
+		{name: "task create", got: semantic.TaskCreate.String(), want: "create"},
+		{name: "task update", got: semantic.TaskUpdate.String(), want: "update"},
+		{name: "task delete", got: semantic.TaskDelete.String(), want: "delete"},
+		{name: "unknown task action", got: semantic.TaskAction(0).String(), want: "TaskAction(0)"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -23,13 +23,13 @@ import (
 )
 
 type document struct {
-	Schema       string         `json:"schema"`
-	Header       headerDTO      `json:"header"`
-	Changes      []changeDTO    `json:"changes"`
-	Executions   []executionDTO `json:"executions"`
-	Diagnostics  []diagDTO      `json:"diagnostics"`
-	Summary      summaryDTO     `json:"summary"`
-	Completeness string         `json:"completeness"`
+	Schema       string      `json:"schema"`
+	Header       headerDTO   `json:"header"`
+	Changes      []changeDTO `json:"changes"`
+	Tasks        []taskDTO   `json:"tasks"`
+	Diagnostics  []diagDTO   `json:"diagnostics"`
+	Summary      summaryDTO  `json:"summary"`
+	Completeness string      `json:"completeness"`
 }
 
 type headerDTO struct {
@@ -107,10 +107,25 @@ type summaryDTO struct {
 	Total   int `json:"total"`
 }
 
-type executionDTO struct{}
+type taskDTO struct {
+	Name        string        `json:"name"`
+	Phase       string        `json:"phase"`
+	Action      string        `json:"action"`
+	WillRun     bool          `json:"willRun"`
+	Definitions []hookDefDTO  `json:"definitions"`
+	Resources   []resourceDTO `json:"resources"`
+}
 
-// WriteJSON writes the Stage C machine-readable plan document. It does
-// not mutate p and does not marshal semantic types directly.
+type hookDefDTO struct {
+	Resource resourceDTO `json:"resource"`
+	Action   string      `json:"action"`
+	Before   any         `json:"before"`
+	After    any         `json:"after"`
+	Fields   []fieldDTO  `json:"fields"`
+}
+
+// WriteJSON writes the machine-readable plan document. It does not
+// mutate p and does not marshal semantic types directly.
 func WriteJSON(w io.Writer, p semantic.Plan, opts Options) error {
 	doc, err := newDocument(p, opts)
 	if err != nil {
@@ -138,11 +153,15 @@ func newDocument(p semantic.Plan, opts Options) (document, error) {
 	for _, d := range prepared.Diagnostics {
 		diags = append(diags, toDiagDTO(d))
 	}
+	tasks := make([]taskDTO, 0, len(prepared.Tasks))
+	for _, t := range prepared.Tasks {
+		tasks = append(tasks, toTaskDTO(t))
+	}
 	return document{
 		Schema:       SchemaV1ID,
 		Header:       toHeaderDTO(prepared.Header),
 		Changes:      changes,
-		Executions:   []executionDTO{},
+		Tasks:        tasks,
 		Diagnostics:  diags,
 		Summary:      toSummaryDTO(prepared.Summary),
 		Completeness: prepared.Completeness.String(),
@@ -239,6 +258,39 @@ func toSummaryDTO(s semantic.Summary) summaryDTO {
 		Delete:  s.Delete,
 		Replace: s.Replace,
 		Total:   s.Total(),
+	}
+}
+
+func toTaskDTO(t semantic.TaskPlan) taskDTO {
+	defs := make([]hookDefDTO, 0, len(t.Definitions))
+	for _, d := range t.Definitions {
+		defs = append(defs, toHookDefDTO(d))
+	}
+	refs := make([]resourceDTO, 0, len(t.Resources))
+	for _, r := range t.Resources {
+		refs = append(refs, toResourceDTO(r))
+	}
+	return taskDTO{
+		Name:        t.Name,
+		Phase:       t.Phase.String(),
+		Action:      t.Action.String(),
+		WillRun:     t.WillRun,
+		Definitions: defs,
+		Resources:   refs,
+	}
+}
+
+func toHookDefDTO(d semantic.HookDefinition) hookDefDTO {
+	fields := make([]fieldDTO, 0, len(d.Fields))
+	for _, f := range d.Fields {
+		fields = append(fields, toFieldDTO(f))
+	}
+	return hookDefDTO{
+		Resource: toResourceDTO(d.Resource),
+		Action:   d.Action.String(),
+		Before:   snapshotJSON(d.Before),
+		After:    snapshotJSON(d.After),
+		Fields:   fields,
 	}
 }
 

@@ -15,6 +15,7 @@
 package view_test
 
 import (
+	"encoding/json"
 	"flag"
 	"os"
 	"path/filepath"
@@ -98,6 +99,15 @@ func noisyCM(name, value, rv, uid string) map[string]any {
 	}
 }
 
+func widget(name, color string) map[string]any {
+	return map[string]any{
+		"apiVersion": "example.com/v1",
+		"kind":       "Widget",
+		"metadata":   map[string]any{"name": name, "namespace": "prod"},
+		"spec":       map[string]any{"color": color, "size": "large"},
+	}
+}
+
 func secretObj(name, password, token string) map[string]any {
 	return map[string]any{
 		"apiVersion": "v1",
@@ -151,12 +161,17 @@ func createChangeForHuman() semantic.ResourceChange {
 
 func mustPlan(tb testing.TB, changes []semantic.ResourceChange, diags []semantic.Diagnostic) semantic.Plan {
 	tb.Helper()
+	return mustPlanWithTasks(tb, changes, nil, diags)
+}
+
+func mustPlanWithTasks(tb testing.TB, changes []semantic.ResourceChange, tasks []semantic.TaskPlan, diags []semantic.Diagnostic) semantic.Plan {
+	tb.Helper()
 	p, err := semantic.New(semantic.Header{
 		Project:     "web",
 		Environment: "prod",
 		Release:     "web",
 		Namespace:   "prod",
-	}, changes, diags)
+	}, changes, tasks, diags)
 	require.NoError(tb, err)
 	return p
 }
@@ -177,6 +192,62 @@ func assertKeepsUserMeta(t *testing.T, text string) {
 	assert.Contains(t, text, "example.com/keep")
 	assert.Contains(t, text, "cert-manager.io/issue-temporary-certificate")
 	assert.Contains(t, text, "app: web")
+}
+
+func k8sObj(apiVersion, kind, namespace, name string) map[string]any {
+	meta := map[string]any{"name": name}
+	if namespace != "" {
+		meta["namespace"] = namespace
+	}
+	return map[string]any{
+		"apiVersion": apiVersion,
+		"kind":       kind,
+		"metadata":   meta,
+	}
+}
+
+func jsonSelect(tb testing.TB, raw []byte, path ...any) string {
+	tb.Helper()
+	var cur any
+	require.NoError(tb, json.Unmarshal(raw, &cur))
+	for _, p := range path {
+		switch key := p.(type) {
+		case string:
+			m, ok := cur.(map[string]any)
+			require.True(tb, ok, "jsonSelect: expected object at %v", p)
+			next, ok := m[key]
+			require.True(tb, ok, "jsonSelect: missing key %q", key)
+			cur = next
+		case int:
+			a, ok := cur.([]any)
+			require.True(tb, ok, "jsonSelect: expected array at %v", p)
+			require.GreaterOrEqual(tb, key, 0)
+			require.Less(tb, key, len(a))
+			cur = a[key]
+		default:
+			tb.Fatalf("jsonSelect: unsupported path element %T", p)
+		}
+	}
+	b, err := json.Marshal(cur)
+	require.NoError(tb, err)
+	return string(b)
+}
+
+func assertJSONAt(tb testing.TB, raw []byte, want string, path ...any) {
+	tb.Helper()
+	assert.JSONEq(tb, want, jsonSelect(tb, raw, path...))
+}
+
+type jsonPathWant struct {
+	want string
+	path []any
+}
+
+func assertJSONPaths(tb testing.TB, raw []byte, wants []jsonPathWant) {
+	tb.Helper()
+	for _, w := range wants {
+		assertJSONAt(tb, raw, w.want, w.path...)
+	}
 }
 
 func assertGolden(t *testing.T, name, got string) {

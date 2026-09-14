@@ -168,6 +168,31 @@ func TestSchemaV1_RejectsMalformedDocuments(t *testing.T) {
 		{name: "replace missing delete", raw: patched(t, replace, func(d map[string]any) {
 			delete(applyOf(t, d), "delete")
 		})},
+		{name: "unknown top-level executions", raw: patched(t, update, func(d map[string]any) {
+			d["executions"] = []any{}
+		})},
+		{name: "unknown top-level field", raw: patched(t, update, func(d map[string]any) {
+			d["unknown"] = true
+		})},
+		{name: "hook definition apply", raw: patched(t, mustPlanDoc(t, mustPlanWithTasks(t, nil, []semantic.TaskPlan{{
+			Name:    "migrate",
+			Phase:   semantic.TaskPreDeploy,
+			Action:  semantic.TaskCreate,
+			WillRun: true,
+			Definitions: []semantic.HookDefinition{{
+				Resource: ref("Job", "migrate"),
+				Action:   semantic.Create,
+				After:    snap(cm("migrate", "v1")),
+			}},
+		}}, nil)), func(d map[string]any) {
+			tasks, ok := d["tasks"].([]any)
+			require.True(t, ok)
+			require.NotEmpty(t, tasks)
+			defs, ok := asObject(t, tasks[0])["definitions"].([]any)
+			require.True(t, ok)
+			require.NotEmpty(t, defs)
+			asObject(t, defs[0])["apply"] = map[string]any{"write": ssaWrite}
+		})},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

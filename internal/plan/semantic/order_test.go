@@ -89,7 +89,7 @@ func TestNew_OrderTieBreakers(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			p, err := semantic.New(semantic.Header{}, tt.changes, nil)
+			p, err := semantic.New(semantic.Header{}, tt.changes, nil, nil)
 			require.NoError(t, err)
 			require.Len(t, p.Changes, len(tt.want))
 			got := make([]semantic.ResourceRef, 0, len(p.Changes))
@@ -135,7 +135,7 @@ func TestNew_ActionRank(t *testing.T) {
 			After:    snap(cm("app", "v1")),
 			Apply:    writeApply(),
 		},
-	}, nil)
+	}, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, p.Changes, 4)
 	assert.Equal(t, []semantic.Action{
@@ -154,7 +154,7 @@ func TestNew_FieldChangeOrder(t *testing.T) {
 		Before:   snap(map[string]any{"z": "1", "a": "1", "m": "1"}),
 		After:    snap(map[string]any{"z": "2", "a": "2", "m": "2"}),
 		Apply:    writeApply(),
-	}}, nil)
+	}}, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, p.Changes[0].Fields, 3)
 	assert.Equal(t, []string{"/a", "/m", "/z"}, []string{
@@ -168,7 +168,7 @@ func TestNew_DiagnosticOrder(t *testing.T) {
 	t.Parallel()
 	app := ref("ConfigMap", "app")
 	web := ref("ConfigMap", "web")
-	p, err := semantic.New(semantic.Header{}, nil, []semantic.Diagnostic{
+	p, err := semantic.New(semantic.Header{}, nil, nil, []semantic.Diagnostic{
 		{
 			Severity: semantic.DiagnosticWarning,
 			Category: semantic.CategoryPredictionLimitation,

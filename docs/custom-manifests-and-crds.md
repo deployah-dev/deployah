@@ -107,6 +107,9 @@ namespace.
   common operator APIs (cert-manager and prometheus-operator). With
   `deployah plan --offline`, unknown kinds are allowed so you can still
   preview; scope defaults to namespaced unless an in-repo CRD says otherwise.
+- Helm hook annotations (`helm.sh/hook`, `helm.sh/hook-weight`,
+  `helm.sh/hook-delete-policy`) are not supported on custom manifests. Use a
+  Deployah `preDeploy` or `postDeploy` task for deploy hooks.
 
 ## Plan vs deploy
 

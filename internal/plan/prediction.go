@@ -42,12 +42,23 @@ func semanticPlanFromResults(header semantic.Header, results []predict.Result) (
 		},
 	}
 
+	changes, diags, err := mapPredictResults(origin, results)
+	if err != nil {
+		return semantic.Plan{}, err
+	}
+	if orderErr := stampHelmApplyOrder(changes); orderErr != nil {
+		return semantic.Plan{}, orderErr
+	}
+	return semantic.New(header, changes, nil, diags)
+}
+
+func mapPredictResults(origin semantic.ResourceOrigin, results []predict.Result) ([]semantic.ResourceChange, []semantic.Diagnostic, error) {
 	changes := make([]semantic.ResourceChange, 0, len(results))
 	diags := make([]semantic.Diagnostic, 0)
 	for i, r := range results {
 		change, diag, err := mapResult(origin, r)
 		if err != nil {
-			return semantic.Plan{}, fmt.Errorf("result %d: %w", i, err)
+			return nil, nil, fmt.Errorf("result %d: %w", i, err)
 		}
 		if diag != nil {
 			diags = append(diags, *diag)
@@ -56,7 +67,7 @@ func semanticPlanFromResults(header semantic.Header, results []predict.Result) (
 			changes = append(changes, *change)
 		}
 	}
-	return semantic.New(header, changes, diags)
+	return changes, diags, nil
 }
 
 func mapResult(origin semantic.ResourceOrigin, r predict.Result) (*semantic.ResourceChange, *semantic.Diagnostic, error) {

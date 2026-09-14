@@ -9,7 +9,7 @@
     "schema",
     "header",
     "changes",
-    "executions",
+    "tasks",
     "diagnostics",
     "summary",
     "completeness"
@@ -28,9 +28,11 @@
         "$ref": "#/$defs/ResourceChange"
       }
     },
-    "executions": {
+    "tasks": {
       "type": "array",
-      "maxItems": 0
+      "items": {
+        "$ref": "#/$defs/Task"
+      }
     },
     "diagnostics": {
       "type": "array",
@@ -464,6 +466,203 @@
         },
         {
           "type": "object"
+        }
+      ]
+    },
+    "Task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "phase",
+        "action",
+        "willRun",
+        "definitions",
+        "resources"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "phase": {
+          "type": "string",
+          "enum": ["preDeploy", "postDeploy", "schedule"]
+        },
+        "action": {
+          "type": "string",
+          "enum": ["unchanged", "create", "update", "delete"]
+        },
+        "willRun": {
+          "type": "boolean"
+        },
+        "definitions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HookDefinition"
+          }
+        },
+        "resources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Resource"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "phase": {
+                "const": "schedule"
+              }
+            },
+            "required": ["phase"]
+          },
+          "then": {
+            "properties": {
+              "willRun": {
+                "const": false
+              },
+              "definitions": {
+                "maxItems": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "phase": {
+                "enum": ["preDeploy", "postDeploy"]
+              }
+            },
+            "required": ["phase"]
+          },
+          "then": {
+            "properties": {
+              "resources": {
+                "maxItems": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "delete"
+              }
+            },
+            "required": ["action"]
+          },
+          "then": {
+            "properties": {
+              "willRun": {
+                "const": false
+              }
+            }
+          }
+        }
+      ]
+    },
+    "HookDefinition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "resource",
+        "action",
+        "before",
+        "after",
+        "fields"
+      ],
+      "properties": {
+        "resource": {
+          "$ref": "#/$defs/Resource"
+        },
+        "action": {
+          "type": "string",
+          "enum": ["create", "update", "delete"]
+        },
+        "before": {
+          "$ref": "#/$defs/Snapshot"
+        },
+        "after": {
+          "$ref": "#/$defs/Snapshot"
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FieldChange"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "create"
+              }
+            },
+            "required": ["action"]
+          },
+          "then": {
+            "properties": {
+              "before": {
+                "type": "null"
+              },
+              "after": {
+                "type": "object"
+              },
+              "fields": {
+                "maxItems": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "update"
+              }
+            },
+            "required": ["action"]
+          },
+          "then": {
+            "properties": {
+              "before": {
+                "type": "object"
+              },
+              "after": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "delete"
+              }
+            },
+            "required": ["action"]
+          },
+          "then": {
+            "properties": {
+              "before": {
+                "type": "object"
+              },
+              "after": {
+                "type": "null"
+              },
+              "fields": {
+                "maxItems": 0
+              }
+            }
+          }
         }
       ]
     }

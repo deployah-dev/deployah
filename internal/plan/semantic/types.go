@@ -238,6 +238,127 @@ type ResourceSnapshot struct {
 	Object map[string]any
 }
 
-// Execution is a reserved slot for later task and hook runs. Stage C
-// defines no fields and does not accept non-empty execution lists.
-type Execution struct{}
+// TaskPhase is when a [TaskPlan] belongs in a deploy. The zero value is
+// invalid.
+type TaskPhase int
+
+const (
+	// TaskPreDeploy is a preDeploy hook task.
+	TaskPreDeploy TaskPhase = iota + 1
+	// TaskPostDeploy is a postDeploy hook task.
+	TaskPostDeploy
+	// TaskSchedule is a scheduled task whose backing objects are normal
+	// Helm Manifest resources.
+	TaskSchedule
+)
+
+func (p TaskPhase) String() string {
+	switch p {
+	case TaskPreDeploy:
+		return "preDeploy"
+	case TaskPostDeploy:
+		return "postDeploy"
+	case TaskSchedule:
+		return "schedule"
+	default:
+		return fmt.Sprintf("TaskPhase(%d)", int(p))
+	}
+}
+
+func (p TaskPhase) valid() bool {
+	switch p {
+	case TaskPreDeploy, TaskPostDeploy, TaskSchedule:
+		return true
+	default:
+		return false
+	}
+}
+
+func (p TaskPhase) rank() int {
+	switch p {
+	case TaskPreDeploy:
+		return 0
+	case TaskPostDeploy:
+		return 1
+	case TaskSchedule:
+		return 2
+	default:
+		return 3
+	}
+}
+
+// TaskAction is the definition-level action for a [TaskPlan]. The zero
+// value is invalid. It is independent of [TaskPlan.WillRun].
+type TaskAction int
+
+const (
+	// TaskUnchanged means the task still exists and its definition did
+	// not change.
+	TaskUnchanged TaskAction = iota + 1
+	// TaskCreate means the task is new in the desired spec.
+	TaskCreate
+	// TaskUpdate means the task still exists and at least one rendered
+	// definition or referenced resource changed.
+	TaskUpdate
+	// TaskDelete means the task was removed. WillRun is always false.
+	TaskDelete
+)
+
+func (a TaskAction) String() string {
+	switch a {
+	case TaskUnchanged:
+		return "unchanged"
+	case TaskCreate:
+		return "create"
+	case TaskUpdate:
+		return "update"
+	case TaskDelete:
+		return "delete"
+	default:
+		return fmt.Sprintf("TaskAction(%d)", int(a))
+	}
+}
+
+func (a TaskAction) valid() bool {
+	switch a {
+	case TaskUnchanged, TaskCreate, TaskUpdate, TaskDelete:
+		return true
+	default:
+		return false
+	}
+}
+
+// TaskPlan is one Deployah task in a [Plan]. preDeploy and postDeploy
+// carry [HookDefinition] diffs. schedule references [ResourceChange]
+// values in Plan.Changes. Manual tasks are never present.
+type TaskPlan struct {
+	Name        string
+	Phase       TaskPhase
+	Action      TaskAction
+	WillRun     bool
+	Definitions []HookDefinition
+	Resources   []ResourceRef
+	// HookWeight is the resolved Helm hook-weight used to sort preDeploy
+	// and postDeploy tasks. It is not a JSON field.
+	HookWeight int
+}
+
+// HookDefinition is a rendered Helm hook document difference for a
+// preDeploy or postDeploy task. It is not a live Kubernetes apply or
+// prune. It has no [ApplySemantics] and no [ResourceOrigin].
+type HookDefinition struct {
+	Resource ResourceRef
+	Action   Action
+	Before   *ResourceSnapshot
+	After    *ResourceSnapshot
+	Fields   []FieldChange
+}
+
+func (d HookDefinition) definitionActionValid() bool {
+	switch d.Action {
+	case Create, Update, Delete:
+		return true
+	default:
+		return false
+	}
+}

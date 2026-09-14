@@ -23,4 +23,8 @@ type ResourceChange struct {
 	After    *ResourceSnapshot
 	Fields   []FieldChange
 	Apply    ApplySemantics
+	// ApplyOrder is Helm-derived apply and presentation rank. Lower is
+	// earlier. The assembler stamps it; [New] sorts by ApplyOrder then
+	// identity. It is not a JSON field.
+	ApplyOrder int
 }

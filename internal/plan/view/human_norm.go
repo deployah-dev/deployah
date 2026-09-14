@@ -58,6 +58,50 @@ func markSecretDiffs(before, after map[string]any, fields []semantic.FieldChange
 	}
 }
 
+func secretSentinelFields(fields []semantic.FieldChange) []semantic.FieldChange {
+	out := make([]semantic.FieldChange, 0, len(fields))
+	out = append(out, fields...)
+	for i := range out {
+		if !isSecretDataPath(out[i].Path) {
+			continue
+		}
+		switch out[i].Op {
+		case semantic.FieldAdd:
+			out[i].After = secretSentinelValue(out[i].After, secretSentinelAfter)
+		case semantic.FieldRemove:
+			out[i].Before = secretSentinelValue(out[i].Before, secretSentinelBefore)
+		case semantic.FieldReplace:
+			out[i].Before = secretSentinelValue(out[i].Before, secretSentinelBefore)
+			out[i].After = secretSentinelValue(out[i].After, secretSentinelAfter)
+		}
+	}
+	return out
+}
+
+func secretSentinelValue(v any, sentinel string) any {
+	switch m := v.(type) {
+	case map[string]any:
+		out := copyJSONMap(m)
+		markLeaves(out, sentinel)
+		return out
+	case map[string]string:
+		out := make(map[string]any, len(m))
+		for k := range m {
+			out[k] = sentinel
+		}
+		return out
+	case []any:
+		out, ok := copyJSONValue(m).([]any)
+		if !ok {
+			return sentinel
+		}
+		markSliceLeaves(out, sentinel)
+		return out
+	default:
+		return sentinel
+	}
+}
+
 func setSecretMarker(obj map[string]any, pointer, sentinel string) {
 	cur, ok := lookupPointer(obj, pointer)
 	if !ok {

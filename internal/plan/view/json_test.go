@@ -28,7 +28,7 @@ import (
 	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
 )
 
-func TestWriteJSON_SchemaAndExecutions(t *testing.T) {
+func TestWriteJSON_SchemaAndTasks(t *testing.T) {
 	t.Parallel()
 	p := mustPlan(t, nil, nil)
 	var buf bytes.Buffer
@@ -42,7 +42,7 @@ func TestWriteJSON_SchemaAndExecutions(t *testing.T) {
 			"namespace": "prod"
 		},
 		"changes": [],
-		"executions": [],
+		"tasks": [],
 		"diagnostics": [],
 		"summary": {
 			"create": 0,
@@ -53,8 +53,59 @@ func TestWriteJSON_SchemaAndExecutions(t *testing.T) {
 		},
 		"completeness": "complete"
 	}`, buf.String())
-	assertNoSnakeCaseKeysFromBytes(t, buf.Bytes())
+	assertNoJSONKeysFromBytes(t, buf.Bytes())
 	validatePlanSchema(t, buf.Bytes())
+}
+
+func TestWriteJSON_TasksContract(t *testing.T) {
+	t.Parallel()
+	p := mustPlanWithTasks(t, nil, []semantic.TaskPlan{{
+		Name:    "migrate",
+		Phase:   semantic.TaskPreDeploy,
+		Action:  semantic.TaskCreate,
+		WillRun: true,
+		Definitions: []semantic.HookDefinition{{
+			Resource: ref("Job", "migrate"),
+			Action:   semantic.Create,
+			After:    snap(cm("migrate", "v1")),
+		}},
+	}}, nil)
+	var buf bytes.Buffer
+	require.NoError(t, view.WriteJSON(&buf, p, view.Options{}))
+	assert.JSONEq(t, `{
+		"schema": "https://deployah.dev/schemas/plan/v1/schema.json",
+		"header": {
+			"project": "web",
+			"environment": "prod",
+			"release": "web",
+			"namespace": "prod"
+		},
+		"changes": [],
+		"tasks": [{
+			"name": "migrate",
+			"phase": "preDeploy",
+			"action": "create",
+			"willRun": true,
+			"definitions": [{
+				"resource": {"apiVersion": "v1", "kind": "Job", "namespace": "prod", "name": "migrate"},
+				"action": "create",
+				"before": null,
+				"after": {
+					"apiVersion": "v1",
+					"kind": "ConfigMap",
+					"metadata": {"name": "migrate", "namespace": "prod"},
+					"data": {"key": "v1"}
+				},
+				"fields": []
+			}],
+			"resources": []
+		}],
+		"diagnostics": [],
+		"summary": {"create": 0, "update": 0, "delete": 0, "replace": 0, "total": 0},
+		"completeness": "complete"
+	}`, buf.String())
+	validatePlanSchema(t, buf.Bytes())
+	assertNoJSONKeysFromBytes(t, buf.Bytes())
 }
 
 func TestWriteJSON_Deterministic(t *testing.T) {
@@ -72,7 +123,7 @@ func TestWriteJSON_Deterministic(t *testing.T) {
 	require.NoError(t, view.WriteJSON(&b2, p, view.Options{}))
 	assert.Equal(t, b1.String(), b2.String())
 	assertJSONGolden(t, "json_update", b1.String())
-	assertNoSnakeCaseKeysFromBytes(t, b1.Bytes())
+	assertNoJSONKeysFromBytes(t, b1.Bytes())
 	validatePlanSchema(t, b1.Bytes())
 }
 
@@ -93,19 +144,28 @@ func TestWriteJSON_CamelCasePropertyNames(t *testing.T) {
 	p.Header.FreshInstall = true
 	var buf bytes.Buffer
 	require.NoError(t, view.WriteJSON(&buf, p, view.Options{}))
-	text := buf.String()
-	assert.Contains(t, text, `"freshInstall"`)
-	assert.Contains(t, text, `"apiVersion"`)
-	assert.Contains(t, text, `"generateName"`)
-	assert.Contains(t, text, `"fieldManager"`)
-	assert.Contains(t, text, `"forceConflicts"`)
-	assert.Contains(t, text, `"method": "server_side_apply"`)
-	assert.NotContains(t, text, `"fresh_install"`)
-	assert.NotContains(t, text, `"api_version"`)
-	assert.NotContains(t, text, `"generate_name"`)
-	assert.NotContains(t, text, `"field_manager"`)
-	assert.NotContains(t, text, `"force_conflicts"`)
-	validatePlanSchema(t, buf.Bytes())
+	raw := buf.Bytes()
+	assertJSONAt(t, raw, `{
+		"project": "web",
+		"environment": "prod",
+		"release": "web",
+		"namespace": "prod",
+		"freshInstall": true
+	}`, "header")
+	assertJSONAt(t, raw, `{
+		"apiVersion": "v1",
+		"kind": "ConfigMap",
+		"namespace": "prod",
+		"name": "",
+		"generateName": "app-"
+	}`, "changes", 0, "resource")
+	assertJSONAt(t, raw, `{
+		"method": "server_side_apply",
+		"fieldManager": "deployah",
+		"forceConflicts": false
+	}`, "changes", 0, "apply", "write")
+	assertNoJSONKeysFromBytes(t, raw)
+	validatePlanSchema(t, raw)
 }
 
 func TestWriteJSON_InvalidZero(t *testing.T) {
@@ -125,21 +185,51 @@ func TestWriteJSON_ShowSecrets(t *testing.T) {
 		After:    snap(secretObj("s", "new-pass", "new-tok")),
 		Apply:    writeApply(),
 	}}, nil)
-
-	var hidden, shown bytes.Buffer
-	require.NoError(t, view.WriteJSON(&hidden, p, view.Options{}))
-	require.NoError(t, view.WriteJSON(&shown, p, view.Options{ShowSecrets: true}))
-
-	assert.NotContains(t, hidden.String(), "old-pass")
-	assert.NotContains(t, hidden.String(), "new-pass")
-	assert.Contains(t, hidden.String(), "(redacted)")
-	assert.Contains(t, hidden.String(), `"/stringData/password"`)
-	assert.Contains(t, shown.String(), "old-pass")
-	assert.Contains(t, shown.String(), "new-pass")
-	assert.Contains(t, hidden.String(), `"name"`)
-	assert.Contains(t, hidden.String(), `"s"`)
-	validatePlanSchema(t, hidden.Bytes())
-	validatePlanSchema(t, shown.Bytes())
+	tests := []struct {
+		name       string
+		opts       view.Options
+		data       string
+		stringData string
+		fields     string
+		omit       []string
+	}{
+		{
+			name:       "redacted",
+			opts:       view.Options{},
+			data:       `{"token":"(redacted)"}`,
+			stringData: `{"password":"(redacted)"}`,
+			fields: `[
+				{"path":"/data/token","op":"replace","before":"(redacted)","after":"(redacted)"},
+				{"path":"/stringData/password","op":"replace","before":"(redacted)","after":"(redacted)"}
+			]`,
+			omit: []string{"old-pass", "new-pass", "old-tok", "new-tok"},
+		},
+		{
+			name:       "shown",
+			opts:       view.Options{ShowSecrets: true},
+			data:       `{"token":"new-tok"}`,
+			stringData: `{"password":"new-pass"}`,
+			fields: `[
+				{"path":"/data/token","op":"replace","before":"old-tok","after":"new-tok"},
+				{"path":"/stringData/password","op":"replace","before":"old-pass","after":"new-pass"}
+			]`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var buf bytes.Buffer
+			require.NoError(t, view.WriteJSON(&buf, p, tt.opts))
+			raw := buf.Bytes()
+			assertJSONAt(t, raw, tt.data, "changes", 0, "after", "data")
+			assertJSONAt(t, raw, tt.stringData, "changes", 0, "after", "stringData")
+			assertJSONAt(t, raw, tt.fields, "changes", 0, "fields")
+			for _, omit := range tt.omit {
+				assert.NotContains(t, buf.String(), omit)
+			}
+			validatePlanSchema(t, raw)
+		})
+	}
 }
 
 func TestWriteJSON_DoesNotMutatePlan(t *testing.T) {
@@ -178,19 +268,12 @@ func TestWriteJSON_ExplicitNullFields(t *testing.T) {
 	}}, nil)
 	var buf bytes.Buffer
 	require.NoError(t, view.WriteJSON(&buf, p, view.Options{}))
-	var doc struct {
-		Changes []struct {
-			Fields json.RawMessage `json:"fields"`
-		} `json:"changes"`
-	}
-	require.NoError(t, json.Unmarshal(buf.Bytes(), &doc))
-	require.Len(t, doc.Changes, 1)
-	assert.JSONEq(t, `[
+	assertJSONAt(t, buf.Bytes(), `[
 		{"path":"/added","op":"add","after":null},
 		{"path":"/gone","op":"remove","before":null},
 		{"path":"/stays","op":"replace","before":"y","after":null},
 		{"path":"/swap","op":"replace","before":null,"after":true}
-	]`, string(doc.Changes[0].Fields))
+	]`, "changes", 0, "fields")
 	validatePlanSchema(t, buf.Bytes())
 }
 
@@ -231,6 +314,17 @@ func TestWriteJSON_MatchesSchemaForRepresentativePlans(t *testing.T) {
 			After:    snap(cm("app", "v2")),
 			Apply:    bothApply(),
 		}}, nil)},
+		{name: "task create", plan: mustPlanWithTasks(t, nil, []semantic.TaskPlan{{
+			Name:    "migrate",
+			Phase:   semantic.TaskPreDeploy,
+			Action:  semantic.TaskCreate,
+			WillRun: true,
+			Definitions: []semantic.HookDefinition{{
+				Resource: ref("Job", "migrate"),
+				Action:   semantic.Create,
+				After:    snap(cm("migrate", "v1")),
+			}},
+		}}, nil)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -238,10 +332,35 @@ func TestWriteJSON_MatchesSchemaForRepresentativePlans(t *testing.T) {
 			var buf bytes.Buffer
 			require.NoError(t, view.WriteJSON(&buf, tt.plan, view.Options{}))
 			validatePlanSchema(t, buf.Bytes())
-			assert.NotContains(t, buf.String(), `"marker"`)
-			assert.NotContains(t, buf.String(), `"displayAction"`)
+			assertNoJSONKeysFromBytes(t, buf.Bytes())
 		})
 	}
+}
+
+func TestWriteJSON_SnapshotMayUseProtocolKeyNames(t *testing.T) {
+	t.Parallel()
+	obj := cm("app", "v1")
+	obj["data"] = map[string]any{
+		"executions":  "ok",
+		"api_version": "1",
+		"will_run":    "yes",
+	}
+	p := mustPlan(t, []semantic.ResourceChange{{
+		Resource: ref("ConfigMap", "app"),
+		Origin:   helmOrigin(),
+		Action:   semantic.Create,
+		After:    snap(obj),
+		Apply:    writeApply(),
+	}}, nil)
+	var buf bytes.Buffer
+	require.NoError(t, view.WriteJSON(&buf, p, view.Options{}))
+	assertJSONAt(t, buf.Bytes(), `{
+		"executions": "ok",
+		"api_version": "1",
+		"will_run": "yes"
+	}`, "changes", 0, "after", "data")
+	assertNoJSONKeysFromBytes(t, buf.Bytes())
+	validatePlanSchema(t, buf.Bytes())
 }
 
 func limitationFor(res semantic.ResourceRef) semantic.Diagnostic {
@@ -278,31 +397,124 @@ func assertSchemaRejects(t *testing.T, raw []byte) {
 	require.Error(t, compilePlanSchema(t).Validate(v))
 }
 
-func assertNoSnakeCaseKeysFromBytes(t *testing.T, raw []byte) {
+func assertNoJSONKeysFromBytes(t *testing.T, raw []byte) {
 	t.Helper()
 	var doc map[string]any
 	require.NoError(t, json.Unmarshal(raw, &doc))
-	assertNoSnakeCaseKeys(t, doc)
+	assertNoJSONKeys(t, doc)
+	if header := jsonObject(doc["header"]); header != nil {
+		assertNoJSONKeys(t, header)
+	}
+	if summary := jsonObject(doc["summary"]); summary != nil {
+		assertNoJSONKeys(t, summary)
+	}
+	for _, item := range jsonObjects(t, doc["changes"]) {
+		assertNoJSONChangeKeys(t, item)
+	}
+	for _, item := range jsonObjects(t, doc["tasks"]) {
+		assertNoJSONTaskKeys(t, item)
+	}
+	for _, item := range jsonObjects(t, doc["diagnostics"]) {
+		assertNoJSONDiagKeys(t, item)
+	}
 }
 
-func assertNoSnakeCaseKeys(t *testing.T, v any) {
+func jsonObject(v any) map[string]any {
+	obj, ok := v.(map[string]any)
+	if !ok {
+		return nil
+	}
+	return obj
+}
+
+func jsonObjects(t *testing.T, v any) []map[string]any {
 	t.Helper()
-	forbidden := []string{"fresh_install", "api_version", "generate_name", "field_manager", "force_conflicts"}
-	var walk func(any)
-	walk = func(cur any) {
-		switch x := cur.(type) {
-		case map[string]any:
-			for key, child := range x {
-				for _, name := range forbidden {
-					assert.NotEqual(t, name, key)
-				}
-				walk(child)
-			}
-		case []any:
-			for _, child := range x {
-				walk(child)
-			}
+	if v == nil {
+		return nil
+	}
+	raw, isArray := v.([]any)
+	require.True(t, isArray)
+	out := make([]map[string]any, 0, len(raw))
+	for _, item := range raw {
+		obj, isObject := item.(map[string]any)
+		require.True(t, isObject)
+		out = append(out, obj)
+	}
+	return out
+}
+
+func assertNoJSONChangeKeys(t *testing.T, change map[string]any) {
+	t.Helper()
+	assertNoJSONKeys(t, change)
+	assertNoJSONResourceKeys(t, change["resource"])
+	if origin := jsonObject(change["origin"]); origin != nil {
+		assertNoJSONKeys(t, origin)
+		if helm := jsonObject(origin["helm"]); helm != nil {
+			assertNoJSONKeys(t, helm)
 		}
 	}
-	walk(v)
+	if apply := jsonObject(change["apply"]); apply != nil {
+		assertNoJSONKeys(t, apply)
+		if write := jsonObject(apply["write"]); write != nil {
+			assertNoJSONKeys(t, write)
+		}
+		if del := jsonObject(apply["delete"]); del != nil {
+			assertNoJSONKeys(t, del)
+		}
+	}
+	assertNoJSONFieldKeys(t, change["fields"])
+}
+
+func assertNoJSONTaskKeys(t *testing.T, task map[string]any) {
+	t.Helper()
+	assertNoJSONKeys(t, task)
+	for _, item := range jsonObjects(t, task["resources"]) {
+		assertNoJSONKeys(t, item)
+	}
+	for _, def := range jsonObjects(t, task["definitions"]) {
+		assertNoJSONKeys(t, def)
+		assertNoJSONResourceKeys(t, def["resource"])
+		assertNoJSONFieldKeys(t, def["fields"])
+	}
+}
+
+func assertNoJSONDiagKeys(t *testing.T, diag map[string]any) {
+	t.Helper()
+	assertNoJSONKeys(t, diag)
+	if res := diag["resource"]; res != nil {
+		assertNoJSONResourceKeys(t, res)
+	}
+}
+
+func assertNoJSONResourceKeys(t *testing.T, raw any) {
+	t.Helper()
+	res, isObject := raw.(map[string]any)
+	require.True(t, isObject)
+	assertNoJSONKeys(t, res)
+}
+
+func assertNoJSONFieldKeys(t *testing.T, raw any) {
+	t.Helper()
+	for _, field := range jsonObjects(t, raw) {
+		assertNoJSONKeys(t, field)
+	}
+}
+
+func assertNoJSONKeys(t *testing.T, obj map[string]any) {
+	t.Helper()
+	require.NotNil(t, obj)
+	for _, name := range []string{
+		"fresh_install",
+		"api_version",
+		"generate_name",
+		"field_manager",
+		"force_conflicts",
+		"will_run",
+		"marker",
+		"displayAction",
+		"executions",
+		"helmAction",
+	} {
+		assert.NotContains(t, obj, name)
+	}
 }

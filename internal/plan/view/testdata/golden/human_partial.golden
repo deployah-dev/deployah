@@ -1,22 +1,13 @@
-project: web
-environment: prod
-release: web
-namespace: prod
-completeness: partial
+Plan for project "web" on environment "prod"
 
-Actions:
-  + create
-  ~ update
-  - delete
-  -/+ replace
+Namespace: prod
+Release:   web
 
-~ ConfigMap/prod/app update helm
+Warning: prediction is incomplete
+
+Resources
+
+  ~ update v1/ConfigMap "app"
 Diagnostics
-  warning prediction_limitation ConfigMap/prod/app: prediction is not exact: managed-fields-migration
-Executions: none
-Summary
-  create: 0
-  update: 1
-  delete: 0
-  replace: 0
-  total: 1
+  warning prediction_limitation v1/ConfigMap "app": prediction is not exact: managed-fields-migration
+Plan: 0 create, 1 update, 0 delete, 0 replace

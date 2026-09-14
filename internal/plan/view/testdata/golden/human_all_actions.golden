@@ -1,53 +1,37 @@
-project: web
-environment: prod
-release: web
-namespace: prod
-completeness: complete
+Plan for project "web" on environment "prod"
 
-Actions:
-  + create
-  ~ update
-  - delete
-  -/+ replace
+Namespace: prod
+Release:   web
 
-+ ConfigMap/prod/app create helm
-+ apiVersion: v1
-+ kind: ConfigMap
-+ metadata:
-+   name: app
-+   namespace: prod
-+ data:
-+   key: v1
-- ConfigMap/prod/old delete helm
-- apiVersion: v1
-- kind: ConfigMap
-- metadata:
--   name: old
--   namespace: prod
-- data:
--   key: v1
--/+ ConfigMap/prod/rs replace helm
-  apiVersion: v1
-  kind: ConfigMap
-  metadata:
-    name: rs
-    namespace: prod
-  data:
--   key: v1
-+   key: v2
-~ ConfigMap/prod/web update helm
-  apiVersion: v1
-  kind: ConfigMap
-  metadata:
-    name: web
-    namespace: prod
-  data:
--   key: v1
-+   key: v2
-Executions: none
-Summary
-  create: 1
-  update: 1
-  delete: 1
-  replace: 1
-  total: 4
+Resources
+
+  + create v1/ConfigMap "app"
+  + apiVersion: v1
+  + kind: ConfigMap
+  + metadata:
+  +   name: app
+  +   namespace: prod
+  + data:
+  +   key: v1
+  - delete v1/ConfigMap "old"
+  - apiVersion: v1
+  - kind: ConfigMap
+  - metadata:
+  -   name: old
+  -   namespace: prod
+  - data:
+  -   key: v1
+  -/+ replace v1/ConfigMap "rs"
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: rs
+      namespace: prod
+    data:
+  -   key: v1
+  +   key: v2
+  ~ update v1/ConfigMap "web"
+    data:
+  -   key: v1
+  +   key: v2
+Plan: 1 create, 1 update, 1 delete, 1 replace
