@@ -15,6 +15,7 @@
 package view_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"os"
@@ -25,6 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"deployah.dev/deployah/internal/plan/semantic"
+	"deployah.dev/deployah/internal/plan/view"
 )
 
 var update = flag.Bool("update", false, "update golden files")
@@ -274,6 +276,13 @@ func mustPlanWithHeader(tb testing.TB, header semantic.Header, changes []semanti
 	return p
 }
 
+func writeHuman(t *testing.T, p semantic.Plan) string {
+	t.Helper()
+	var buf bytes.Buffer
+	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
+	return buf.String()
+}
+
 func assertNoBookkeeping(t *testing.T, text string) {
 	t.Helper()
 	assert.NotContains(t, text, "resourceVersion")
@@ -348,6 +357,10 @@ func assertJSONPaths(tb testing.TB, raw []byte, wants []jsonPathWant) {
 	}
 }
 
+// assertGolden is the primary golden contract: got must equal
+// testdata/golden/<name>.golden in full. Contains checks in callers are
+// secondary invariants only. A normal run never skips the comparison.
+// -update rewrites the file from got, then the same equality still runs.
 func assertGolden(t *testing.T, name, got string) {
 	t.Helper()
 	assert.Equal(t, string(readGolden(t, name, got)), got)

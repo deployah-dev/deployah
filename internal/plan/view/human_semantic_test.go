@@ -15,7 +15,6 @@
 package view_test
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -34,7 +33,6 @@ import (
 	"deployah.dev/deployah/internal/helm"
 	"deployah.dev/deployah/internal/plan"
 	"deployah.dev/deployah/internal/plan/semantic"
-	"deployah.dev/deployah/internal/plan/view"
 	"deployah.dev/deployah/internal/predict"
 	"deployah.dev/deployah/internal/render"
 	"deployah.dev/deployah/internal/spec"
@@ -49,13 +47,16 @@ const (
 	productEnv            = "prod"
 )
 
-func TestWriteHuman_ProductPlan(t *testing.T) {
+// TestWriteHuman_SemanticPlan is the canonical human output of
+// RenderOffline -> prediction -> BuildSemanticPlan -> WriteHuman.
+// human_all_actions.golden stays the synthetic generic renderer contract.
+func TestWriteHuman_SemanticPlan(t *testing.T) {
 	t.Parallel()
-	p := productUpgradePlan(t, previousProductSpec(), currentProductSpec())
+	p := semanticUpgradePlan(t, previousProductSpec(), currentProductSpec())
 	text := writeHuman(t, p)
-	assertGolden(t, "human_product_plan", text)
+	assertGolden(t, "human_semantic_plan", text) // full-output contract; Contains below are invariants only
 	assertHumanLayout(t, text)
-	assertProductHeader(t, text, 2)
+	assertSemanticHeader(t, text, 2)
 	assert.Equal(t, "web-prod", p.Header.Release)
 	assert.Equal(t, productNamespace, p.Header.Namespace)
 	assert.False(t, p.Header.FreshInstall)
@@ -88,7 +89,7 @@ func TestWriteHuman_ProductPlan(t *testing.T) {
 	assert.NotContains(t, text, "completeness:")
 }
 
-func TestWriteHuman_ProductScheduleCreate(t *testing.T) {
+func TestWriteHuman_SemanticScheduleCreate(t *testing.T) {
 	t.Parallel()
 	previous := productSpec(
 		map[string]spec.Component{"api": productAPI("ghcr.io/example/web:1.0")},
@@ -101,20 +102,20 @@ func TestWriteHuman_ProductScheduleCreate(t *testing.T) {
 			"cleanup": scheduleTask("0 3 * * *", "./cleanup"),
 		},
 	)
-	text := writeHuman(t, productUpgradePlan(t, previous, current))
+	text := writeHuman(t, semanticUpgradePlan(t, previous, current))
 	assertHumanLayout(t, text)
 	assert.Contains(t, text, "  schedule")
 	assert.Contains(t, text, "+ cleanup  new")
 	assert.NotContains(t, text, "+ cleanup  new, will run")
 	assert.Contains(t, text, `+ create batch/v1/CronJob "web-prod-cleanup"`)
 	assertCronJobOnlyUnderTasks(t, text, "web-prod-cleanup")
-	assertProductCronJobBody(t, text)
+	assertSemanticCronJobBody(t, text)
 	assert.NotContains(t, text, "helm.sh/hook:")
 	assert.NotContains(t, text, `create v1/Namespace`)
 	assert.NotContains(t, text, "-/+")
 }
 
-func TestWriteHuman_ProductScheduleDelete(t *testing.T) {
+func TestWriteHuman_SemanticScheduleDelete(t *testing.T) {
 	t.Parallel()
 	previous := productSpec(
 		map[string]spec.Component{"api": productAPI("ghcr.io/example/web:1.0")},
@@ -127,27 +128,20 @@ func TestWriteHuman_ProductScheduleDelete(t *testing.T) {
 		map[string]spec.Component{"api": productAPI("ghcr.io/example/web:1.0")},
 		map[string]spec.Task{"migrate": hookTask(spec.TaskOnPreDeploy, "migrate", "up")},
 	)
-	text := writeHuman(t, productUpgradePlan(t, previous, current))
+	text := writeHuman(t, semanticUpgradePlan(t, previous, current))
 	assertHumanLayout(t, text)
 	assert.Contains(t, text, "  schedule")
 	assert.Contains(t, text, "- cleanup  removed")
 	assert.NotContains(t, text, "- cleanup  removed, will run")
 	assert.Contains(t, text, `- delete batch/v1/CronJob "web-prod-cleanup"`)
 	assertCronJobOnlyUnderTasks(t, text, "web-prod-cleanup")
-	assertProductCronJobBody(t, text)
+	assertSemanticCronJobBody(t, text)
 	assert.Contains(t, text, "meta.helm.sh/release-name: web-prod")
 	assert.NotContains(t, text, `create v1/Namespace`)
 	assert.NotContains(t, text, "-/+")
 }
 
-func writeHuman(t *testing.T, p semantic.Plan) string {
-	t.Helper()
-	var buf bytes.Buffer
-	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
-	return buf.String()
-}
-
-func assertProductHeader(t *testing.T, text string, revision int) {
+func assertSemanticHeader(t *testing.T, text string, revision int) {
 	t.Helper()
 	block := fmt.Sprintf("Context:   %s\nNamespace: %s\nRelease:   web-prod\nRevision:  %d\n", productClusterContext, productNamespace, revision)
 	assert.Contains(t, text, block)
@@ -174,7 +168,7 @@ func assertCronJobOnlyUnderTasks(t *testing.T, text, name string) {
 	}
 }
 
-func assertProductCronJobBody(t *testing.T, text string) {
+func assertSemanticCronJobBody(t *testing.T, text string) {
 	t.Helper()
 	assert.Contains(t, text, "deployah.dev/task: cleanup")
 	assert.Contains(t, text, "deployah.dev/project: web")
@@ -259,7 +253,7 @@ func scheduleTask(schedule string, command ...string) spec.Task {
 	}
 }
 
-func productUpgradePlan(t *testing.T, previous, current *spec.Spec) semantic.Plan {
+func semanticUpgradePlan(t *testing.T, previous, current *spec.Spec) semantic.Plan {
 	t.Helper()
 	client := productHelmClient(t)
 	prevResolved := resolveProductSpec(t, previous)

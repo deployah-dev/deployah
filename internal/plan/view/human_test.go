@@ -34,7 +34,7 @@ func TestWriteHuman_CreateUpdateDeleteReplace(t *testing.T) {
 	var buf bytes.Buffer
 	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
 	text := buf.String()
-	assertGolden(t, "human_all_actions", text)
+	assertGolden(t, "human_all_actions", text) // full-output contract; Contains below are invariants only
 	assertHumanLayout(t, text)
 	assertHumanHeaderMetadata(t, text, "production-eu", 12)
 	assert.Contains(t, text, "Resources")
@@ -103,26 +103,53 @@ func TestWriteHuman_CreateUpdateDeleteReplace(t *testing.T) {
 
 func TestWriteHuman_DiagnosticPartial(t *testing.T) {
 	t.Parallel()
-	res := ref("ConfigMap", "app")
-	p := mustPlanWithHeader(t, humanHeader(), []semantic.ResourceChange{{
-		Resource: res,
-		Origin:   helmOrigin(),
-		Action:   semantic.Update,
-		Before:   snap(cm("app", "v1")),
-		Apply:    writeApply(),
-	}}, nil, []semantic.Diagnostic{{
-		Severity: semantic.DiagnosticWarning,
-		Category: semantic.CategoryPredictionLimitation,
-		Message:  "prediction is not exact: managed-fields-migration",
-		Resource: &res,
-	}})
-	var buf bytes.Buffer
-	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
-	assertGolden(t, "human_partial", buf.String())
-	assert.Contains(t, buf.String(), "Warning: prediction is incomplete")
-	assert.Contains(t, buf.String(), "prediction_limitation")
-	assert.NotContains(t, buf.String(), "completeness:")
-	assert.NotContains(t, buf.String(), "Actions:")
+	res := ref("ConfigMap", "web")
+	p := mustPlanWithHeader(t, humanHeader(), []semantic.ResourceChange{
+		knownConfigMapUpdate(res),
+	}, nil, []semantic.Diagnostic{predictionLimitation(res)})
+	assert.Equal(t, semantic.CompletenessPartial, p.Completeness)
+	text := writeHuman(t, p)
+	assertGolden(t, "human_partial", text) // full-output contract; Contains below are invariants only
+	assert.Contains(t, text, "Warning: prediction is incomplete")
+	assert.Contains(t, text, `~ update v1/ConfigMap "web"`)
+	assert.Contains(t, text, "-   key: v1")
+	assert.Contains(t, text, "+   key: v2")
+	assert.Contains(t, text, "prediction_limitation")
+	assert.NotContains(t, text, "completeness:")
+	assert.NotContains(t, text, "Actions:")
+}
+
+func TestWriteHuman_PartialPreservesKnownDetails(t *testing.T) {
+	t.Parallel()
+	res := ref("ConfigMap", "web")
+	taskRes := ref("ConfigMap", "web-migrate-env")
+	changes := []semantic.ResourceChange{knownConfigMapUpdate(res)}
+	tasks := []semantic.TaskPlan{{
+		Name:    "migrate",
+		Phase:   semantic.TaskPreDeploy,
+		Action:  semantic.TaskUpdate,
+		WillRun: true,
+		Definitions: []semantic.HookDefinition{{
+			Resource: taskRes,
+			Action:   semantic.Update,
+			Before:   snap(cm("web-migrate-env", "v1")),
+			After:    snap(cm("web-migrate-env", "v2")),
+		}},
+	}}
+	complete := mustPlanWithHeader(t, humanHeader(), changes, tasks, nil)
+	partial := mustPlanWithHeader(t, humanHeader(), changes, tasks, []semantic.Diagnostic{
+		predictionLimitation(res),
+	})
+	assert.Equal(t, semantic.CompletenessComplete, complete.Completeness)
+	assert.Equal(t, semantic.CompletenessPartial, partial.Completeness)
+
+	completeText := writeHuman(t, complete)
+	partialText := writeHuman(t, partial)
+	assert.Contains(t, partialText, "Warning: prediction is incomplete")
+	assert.Contains(t, partialText, "Diagnostics")
+	assert.NotContains(t, completeText, "Warning: prediction is incomplete")
+	assert.NotContains(t, completeText, "Diagnostics")
+	require.Equal(t, completeText, stripPartialPresentation(t, partialText))
 }
 
 func TestWriteHuman_DeterministicMapOrder(t *testing.T) {
@@ -1009,8 +1036,8 @@ func TestWriteHuman_SummaryOmitsTasksWhenAbsent(t *testing.T) {
 }
 
 // allActionsPlan is the synthetic generic renderer fixture for
-// human_all_actions.golden. It is not Deployah product output; the
-// semantic-pipeline contract is TestWriteHuman_ProductPlan.
+// human_all_actions.golden. It is not the semantic-pipeline contract;
+// that is TestWriteHuman_SemanticPlan / human_semantic_plan.golden.
 func allActionsPlan(tb testing.TB) semantic.Plan {
 	tb.Helper()
 	cron := batchRef("CronJob", "web-cleanup")
@@ -1112,6 +1139,38 @@ func assertHumanLayout(t *testing.T, text string) {
 	assert.Contains(t, text, "\n\nSummary\n")
 	assert.NotContains(t, text, "Plan:")
 	assert.Contains(t, text, "\n  Resources:")
+}
+
+func knownConfigMapUpdate(res semantic.ResourceRef) semantic.ResourceChange {
+	return semantic.ResourceChange{
+		Resource: res,
+		Origin:   helmOrigin(),
+		Action:   semantic.Update,
+		Before:   snap(cm(res.Name, "v1")),
+		After:    snap(cm(res.Name, "v2")),
+		Apply:    writeApply(),
+	}
+}
+
+func predictionLimitation(res semantic.ResourceRef) semantic.Diagnostic {
+	return semantic.Diagnostic{
+		Severity: semantic.DiagnosticWarning,
+		Category: semantic.CategoryPredictionLimitation,
+		Message:  "prediction is not exact: managed-fields-migration",
+		Resource: new(res),
+	}
+}
+
+func stripPartialPresentation(t *testing.T, text string) string {
+	t.Helper()
+	const warning = "Warning: prediction is incomplete\n\n"
+	require.Contains(t, text, warning)
+	text = strings.Replace(text, warning, "", 1)
+	diagStart := strings.Index(text, "\nDiagnostics\n")
+	summaryStart := strings.Index(text, "\nSummary\n")
+	require.Greater(t, diagStart, -1)
+	require.Greater(t, summaryStart, diagStart)
+	return text[:diagStart] + text[summaryStart:]
 }
 
 func assertHumanHeaderMetadata(t *testing.T, text, kubeContext string, revision int) {

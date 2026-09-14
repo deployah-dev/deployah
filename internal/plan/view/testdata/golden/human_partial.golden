@@ -9,11 +9,14 @@ Warning: prediction is incomplete
 
 Resources
 
-  ~ update v1/ConfigMap "app"
+  ~ update v1/ConfigMap "web"
+    data:
+  -   key: v1
+  +   key: v2
 
 Diagnostics
 
-  warning prediction_limitation v1/ConfigMap "app": prediction is not exact: managed-fields-migration
+  warning prediction_limitation v1/ConfigMap "web": prediction is not exact: managed-fields-migration
 
 Summary
   Resources: 0 create, 1 update, 0 delete, 0 replace
