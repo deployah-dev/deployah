@@ -55,7 +55,7 @@ func assembleTasks(
 	if err != nil {
 		return nil, err
 	}
-	desiredDocs, err := hookDocsByTask(desiredHooks)
+	desiredDocs, err := desiredHookDocs(desiredHooks, resolved.Tasks)
 	if err != nil {
 		return nil, fmt.Errorf("desired hooks: %w", err)
 	}
@@ -63,24 +63,35 @@ func assembleTasks(
 	if prep.Current != nil {
 		previousHooks = prep.Current.Hooks
 	}
-	previousDocs, err := hookDocsByTask(previousHooks)
+	previousDocs, err := previousHookDocs(previousHooks)
 	if err != nil {
 		return nil, fmt.Errorf("current release hooks: %w", err)
 	}
 
 	names := taskNames(resolved.Tasks, previous, previousDocs)
 	fresh := prep.Operation == helm.OperationInstall || prep.Current == nil
-	helmSide := len(changes) > 0
 
 	tasks := make([]semantic.TaskPlan, 0, len(names))
 	for _, name := range names {
 		current, hasCurrent := resolved.Tasks[name]
 		prev, hasPrev := previous[name]
 		if hasCurrent && current.Task.On == spec.TaskOnManual {
-			continue
+			if !hasPrev && len(previousDocs[name]) == 0 {
+				continue
+			}
+			hasCurrent = false
 		}
 		if !hasCurrent && hasPrev && prev.On == spec.TaskOnManual {
 			continue
+		}
+		if hasCurrent {
+			prevOn, prevOnErr := previousTaskOn(hasPrev, prev, previousDocs[name])
+			if prevOnErr != nil {
+				return nil, fmt.Errorf("task %s: %w", name, prevOnErr)
+			}
+			if prevOn != "" && incompatibleTaskOn(current.Task.On, prevOn) {
+				return nil, fmt.Errorf("task %s: cannot change on from %s to %s", name, prevOn, current.Task.On)
+			}
 		}
 
 		on, onErr := taskOn(hasCurrent, current, hasPrev, prev, previousDocs[name])
@@ -89,12 +100,12 @@ func assembleTasks(
 		}
 		switch on {
 		case spec.TaskOnSchedule:
-			task, ok := scheduleTask(name, hasCurrent, hasPrev, current, prev, changes)
+			task, ok := scheduleTask(name, hasCurrent, hasPrev, current, prev, changes, previous)
 			if ok {
 				tasks = append(tasks, task)
 			}
 		case spec.TaskOnPreDeploy, spec.TaskOnPostDeploy:
-			task, hookErr := hookTask(name, on, hasCurrent, hasPrev, current, prev, desiredDocs[name], previousDocs[name], fresh, helmSide)
+			task, hookErr := hookTask(name, on, hasCurrent, hasPrev, current, prev, desiredDocs[name], previousDocs[name])
 			if hookErr != nil {
 				return nil, fmt.Errorf("task %s: %w", name, hookErr)
 			}
@@ -103,7 +114,22 @@ func assembleTasks(
 			return nil, fmt.Errorf("task %s: unsupported on %s", name, on)
 		}
 	}
+	applyHelmWillRun(tasks, fresh, len(changes) > 0)
 	return tasks, nil
+}
+
+func incompatibleTaskOn(current, previous spec.TaskOn) bool {
+	return current.IsHook() && previous.IsScheduled() || current.IsScheduled() && previous.IsHook()
+}
+
+func previousTaskOn(hasPrev bool, prev previousTask, docs map[string]hookDoc) (spec.TaskOn, error) {
+	if hasPrev {
+		return prev.On, nil
+	}
+	if len(docs) == 0 {
+		return "", nil
+	}
+	return taskOnFromDocs(docs)
 }
 
 func taskOn(hasCurrent bool, current spec.ResolvedTask, hasPrev bool, prev previousTask, previousDocs map[string]hookDoc) (spec.TaskOn, error) {
@@ -167,8 +193,9 @@ func scheduleTask(
 	current spec.ResolvedTask,
 	prev previousTask,
 	changes []semantic.ResourceChange,
+	previous map[string]previousTask,
 ) (semantic.TaskPlan, bool) {
-	refs := scheduleRefs(name, changes)
+	refs := scheduleRefs(name, changes, previous)
 	action := semantic.TaskUnchanged
 	switch {
 	case hasCurrent && !hasPrev:
@@ -197,15 +224,30 @@ func scheduleTask(
 	}, true
 }
 
-func scheduleRefs(name string, changes []semantic.ResourceChange) []semantic.ResourceRef {
+func scheduleRefs(name string, changes []semantic.ResourceChange, previous map[string]previousTask) []semantic.ResourceRef {
 	refs := make([]semantic.ResourceRef, 0)
 	for _, c := range changes {
-		if componentLabel(c) != name {
+		if resourceTaskName(c, previous) != name {
 			continue
 		}
 		refs = append(refs, c.Resource)
 	}
 	return refs
+}
+
+func resourceTaskName(c semantic.ResourceChange, previous map[string]previousTask) string {
+	if task := labelValue(snapshotMap(c.After), spec.LabelTask); task != "" {
+		return task
+	}
+	if task := labelValue(snapshotMap(c.Before), spec.LabelTask); task != "" {
+		return task
+	}
+	if task := labelValue(snapshotMap(c.Before), spec.LabelComponent); task != "" {
+		if _, ok := previous[task]; ok {
+			return task
+		}
+	}
+	return ""
 }
 
 func hookTask(
@@ -215,7 +257,6 @@ func hookTask(
 	current spec.ResolvedTask,
 	prev previousTask,
 	desired, previous map[string]hookDoc,
-	fresh, helmSide bool,
 ) (semantic.TaskPlan, error) {
 	defs, err := diffHookDocs(desired, previous)
 	if err != nil {
@@ -229,10 +270,6 @@ func hookTask(
 		action = semantic.TaskDelete
 	case len(defs) > 0:
 		action = semantic.TaskUpdate
-	}
-	willRun := false
-	if action != semantic.TaskDelete && hasCurrent {
-		willRun = fresh || helmSide || action == semantic.TaskCreate || action == semantic.TaskUpdate
 	}
 	weight := 0
 	switch {
@@ -251,10 +288,32 @@ func hookTask(
 		Name:        name,
 		Phase:       phase,
 		Action:      action,
-		WillRun:     willRun,
+		WillRun:     false,
 		Definitions: defs,
 		HookWeight:  weight,
 	}, nil
+}
+
+func applyHelmWillRun(tasks []semantic.TaskPlan, fresh, helmSide bool) {
+	helmWillRun := fresh || helmSide
+	if !helmWillRun {
+		for _, t := range tasks {
+			if hookPhase(t.Phase) && t.Action != semantic.TaskUnchanged {
+				helmWillRun = true
+				break
+			}
+		}
+	}
+	for i, t := range tasks {
+		if t.Action == semantic.TaskDelete || !hookPhase(t.Phase) {
+			continue
+		}
+		tasks[i].WillRun = helmWillRun
+	}
+}
+
+func hookPhase(p semantic.TaskPhase) bool {
+	return p == semantic.TaskPreDeploy || p == semantic.TaskPostDeploy
 }
 
 func diffHookDocs(desired, previous map[string]hookDoc) ([]semantic.HookDefinition, error) {
@@ -278,15 +337,17 @@ func diffHookDocs(desired, previous map[string]hookDoc) ([]semantic.HookDefiniti
 		switch {
 		case hasAfter && !hasBefore:
 			defs = append(defs, semantic.HookDefinition{
-				Resource: after.Ref,
-				Action:   semantic.Create,
-				After:    &semantic.ResourceSnapshot{Object: after.Object},
+				Resource:   after.Ref,
+				Action:     semantic.Create,
+				After:      &semantic.ResourceSnapshot{Object: after.Object},
+				HookWeight: after.Weight,
 			})
 		case !hasAfter && hasBefore:
 			defs = append(defs, semantic.HookDefinition{
-				Resource: before.Ref,
-				Action:   semantic.Delete,
-				Before:   &semantic.ResourceSnapshot{Object: before.Object},
+				Resource:   before.Ref,
+				Action:     semantic.Delete,
+				Before:     &semantic.ResourceSnapshot{Object: before.Object},
+				HookWeight: before.Weight,
 			})
 		default:
 			fields, err := semantic.DiffFields(before.Object, after.Object)
@@ -297,61 +358,116 @@ func diffHookDocs(desired, previous map[string]hookDoc) ([]semantic.HookDefiniti
 				continue
 			}
 			defs = append(defs, semantic.HookDefinition{
-				Resource: after.Ref,
-				Action:   semantic.Update,
-				Before:   &semantic.ResourceSnapshot{Object: before.Object},
-				After:    &semantic.ResourceSnapshot{Object: after.Object},
-				Fields:   fields,
+				Resource:   after.Ref,
+				Action:     semantic.Update,
+				Before:     &semantic.ResourceSnapshot{Object: before.Object},
+				After:      &semantic.ResourceSnapshot{Object: after.Object},
+				Fields:     fields,
+				HookWeight: after.Weight,
 			})
 		}
 	}
 	return defs, nil
 }
 
-func hookDocsByTask(hooks []*v1.Hook) (map[string]map[string]hookDoc, error) {
+func desiredHookDocs(hooks []*v1.Hook, current map[string]spec.ResolvedTask) (map[string]map[string]hookDoc, error) {
 	out := make(map[string]map[string]hookDoc)
 	for _, h := range hooks {
-		if h == nil || strings.TrimSpace(h.Manifest) == "" {
+		obj, skip, err := parseHookObject(h)
+		if err != nil {
+			return nil, err
+		}
+		if skip {
 			continue
 		}
-		obj, err := unstructuredFromYAML(h.Manifest)
-		if err != nil {
-			return nil, fmt.Errorf("parse hook %s: %w", h.Name, err)
-		}
-		name := obj.GetLabels()[spec.LabelComponent]
+		name := obj.GetLabels()[spec.LabelTask]
 		if name == "" {
-			display := strings.TrimSpace(h.Name)
-			if display == "" {
-				display = obj.GetName()
-			}
-			return nil, fmt.Errorf("hook %s: missing %s label", display, spec.LabelComponent)
+			return nil, fmt.Errorf("hook %s: missing %s label", hookDisplayName(h, obj), spec.LabelTask)
 		}
-		ref := semantic.ResourceRef{
-			APIVersion: obj.GetAPIVersion(),
-			Kind:       obj.GetKind(),
-			Namespace:  obj.GetNamespace(),
-			Name:       obj.GetName(),
+		rt, ok := current[name]
+		if !ok || !rt.Task.On.IsHook() {
+			return nil, fmt.Errorf("hook %s: %s %q is not a current preDeploy or postDeploy task", hookDisplayName(h, obj), spec.LabelTask, name)
 		}
-		if ref.Name == "" {
-			ref.GenerateName = obj.GetGenerateName()
-		}
-		key := ref.APIVersion + "\x00" + ref.Kind + "\x00" + ref.Namespace + "\x00" + ref.Name + "\x00" + ref.GenerateName
-		docs := out[name]
-		if docs == nil {
-			docs = map[string]hookDoc{}
-			out[name] = docs
-		}
-		if _, dup := docs[key]; dup {
-			return nil, fmt.Errorf("task %s: duplicate hook identity %s", name, ref)
-		}
-		docs[key] = hookDoc{
-			Ref:    ref,
-			Object: obj.Object,
-			Weight: hookWeight(h, obj),
-			Events: hookEvents(h, obj),
+		if addErr := addHookDoc(out, name, h, obj); addErr != nil {
+			return nil, addErr
 		}
 	}
 	return out, nil
+}
+
+func previousHookDocs(hooks []*v1.Hook) (map[string]map[string]hookDoc, error) {
+	out := make(map[string]map[string]hookDoc)
+	for _, h := range hooks {
+		obj, skip, err := parseHookObject(h)
+		if err != nil {
+			return nil, err
+		}
+		if skip {
+			continue
+		}
+		labels := obj.GetLabels()
+		name := labels[spec.LabelTask]
+		if name == "" {
+			name = labels[spec.LabelComponent]
+		}
+		if name == "" {
+			return nil, fmt.Errorf("hook %s: missing %s label", hookDisplayName(h, obj), spec.LabelComponent)
+		}
+		if addErr := addHookDoc(out, name, h, obj); addErr != nil {
+			return nil, addErr
+		}
+	}
+	return out, nil
+}
+
+func parseHookObject(h *v1.Hook) (*unstructured.Unstructured, bool, error) {
+	if h == nil || strings.TrimSpace(h.Manifest) == "" {
+		return nil, true, nil
+	}
+	obj, err := unstructuredFromYAML(h.Manifest)
+	if err != nil {
+		return nil, false, fmt.Errorf("parse hook %s: %w", h.Name, err)
+	}
+	return obj, false, nil
+}
+
+func hookDisplayName(h *v1.Hook, obj *unstructured.Unstructured) string {
+	display := ""
+	if h != nil {
+		display = strings.TrimSpace(h.Name)
+	}
+	if display == "" && obj != nil {
+		display = obj.GetName()
+	}
+	return display
+}
+
+func addHookDoc(out map[string]map[string]hookDoc, name string, h *v1.Hook, obj *unstructured.Unstructured) error {
+	ref := semantic.ResourceRef{
+		APIVersion: obj.GetAPIVersion(),
+		Kind:       obj.GetKind(),
+		Namespace:  obj.GetNamespace(),
+		Name:       obj.GetName(),
+	}
+	if ref.Name == "" {
+		ref.GenerateName = obj.GetGenerateName()
+	}
+	key := ref.APIVersion + "\x00" + ref.Kind + "\x00" + ref.Namespace + "\x00" + ref.Name + "\x00" + ref.GenerateName
+	docs := out[name]
+	if docs == nil {
+		docs = map[string]hookDoc{}
+		out[name] = docs
+	}
+	if _, dup := docs[key]; dup {
+		return fmt.Errorf("task %s: duplicate hook identity %s", name, ref)
+	}
+	docs[key] = hookDoc{
+		Ref:    ref,
+		Object: obj.Object,
+		Weight: hookWeight(h, obj),
+		Events: hookEvents(h, obj),
+	}
+	return nil
 }
 
 func hookEvents(h *v1.Hook, obj *unstructured.Unstructured) []v1.HookEvent {
@@ -470,14 +586,6 @@ func taskNames(
 		names = append(names, name)
 	}
 	return names
-}
-
-func componentLabel(c semantic.ResourceChange) string {
-	obj := snapshotMap(c.After)
-	if len(obj) == 0 {
-		obj = snapshotMap(c.Before)
-	}
-	return labelValue(obj, spec.LabelComponent)
 }
 
 func labelValue(obj map[string]any, key string) string {

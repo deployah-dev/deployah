@@ -330,7 +330,9 @@ func (a TaskAction) valid() bool {
 
 // TaskPlan is one Deployah task in a [Plan]. preDeploy and postDeploy
 // carry [HookDefinition] diffs. schedule references [ResourceChange]
-// values in Plan.Changes. Manual tasks are never present.
+// values in Plan.Changes. A current-only manual task is omitted. A
+// current manual task whose previous release was preDeploy, postDeploy,
+// or schedule is represented as a deletion of that previous footprint.
 type TaskPlan struct {
 	Name        string
 	Phase       TaskPhase
@@ -352,6 +354,9 @@ type HookDefinition struct {
 	Before   *ResourceSnapshot
 	After    *ResourceSnapshot
 	Fields   []FieldChange
+	// HookWeight is the Helm hook-weight of this document. [New] sorts
+	// definitions by HookWeight then identity. It is not a JSON field.
+	HookWeight int
 }
 
 func (d HookDefinition) definitionActionValid() bool {

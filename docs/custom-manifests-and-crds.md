@@ -75,7 +75,8 @@ rewrites object names:
 
 | Object | Labels | Annotations |
 |---|---|---|
-| Generated (from the spec) | `deployah.dev/project`, `deployah.dev/environment`, `deployah.dev/component`, `deployah.dev/instance` | `deployah.dev/source=spec`, `deployah.dev/project`, `deployah.dev/environment-instance` |
+| Generated component | `deployah.dev/project`, `deployah.dev/environment`, `deployah.dev/component`, `deployah.dev/instance` | `deployah.dev/source=spec`, `deployah.dev/project`, `deployah.dev/environment-instance` |
+| Generated task | same as a component, plus `deployah.dev/task` (the task name). Components never carry this key. | `deployah.dev/source=spec`, `deployah.dev/project`, `deployah.dev/environment-instance` |
 | Extra manifests | `deployah.dev/project`, `deployah.dev/environment`, `deployah.dev/instance` | `deployah.dev/source=manifests`, `deployah.dev/project`, `deployah.dev/environment-instance` |
 | Extra CRDs | project only (no environment or instance) | `deployah.dev/source=crds`, `deployah.dev/project` |
 

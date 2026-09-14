@@ -160,6 +160,7 @@ func jobIdentityLabels(project, taskName, mapKey, release string) map[string]str
 	return map[string]string{
 		spec.LabelProject:     project,
 		spec.LabelComponent:   taskName,
+		spec.LabelTask:        taskName,
 		spec.LabelEnvironment: mapKey,
 		spec.LabelManagedBy:   spec.ManagedByValue,
 		spec.LabelInstance:    release,

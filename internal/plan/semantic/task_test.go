@@ -232,6 +232,77 @@ func TestNew_TaskSort(t *testing.T) {
 	})
 }
 
+func TestNew_NestedTaskOrder(t *testing.T) {
+	t.Parallel()
+	z := createChange("z", "1")
+	z.ApplyOrder = 1
+	a := createChange("a", "1")
+	a.ApplyOrder = 2
+	tests := []struct {
+		name          string
+		changes       []semantic.ResourceChange
+		task          semantic.TaskPlan
+		wantDefs      []string
+		wantResources []string
+	}{
+		{
+			name: "definitions by hook weight",
+			task: semantic.TaskPlan{
+				Name:    "migrate",
+				Phase:   semantic.TaskPreDeploy,
+				Action:  semantic.TaskUpdate,
+				WillRun: true,
+				Definitions: []semantic.HookDefinition{
+					{
+						Resource:   ref("ConfigMap", "z-env"),
+						Action:     semantic.Create,
+						After:      snap(cm("z-env", "v1")),
+						HookWeight: 2,
+					},
+					{
+						Resource:   ref("ConfigMap", "a-env"),
+						Action:     semantic.Create,
+						After:      snap(cm("a-env", "v1")),
+						HookWeight: 1,
+					},
+				},
+			},
+			wantDefs:      []string{"a-env", "z-env"},
+			wantResources: []string{},
+		},
+		{
+			name:    "schedule resources by apply order",
+			changes: []semantic.ResourceChange{a, z},
+			task: semantic.TaskPlan{
+				Name:      "cleanup",
+				Phase:     semantic.TaskSchedule,
+				Action:    semantic.TaskUpdate,
+				Resources: []semantic.ResourceRef{a.Resource, z.Resource},
+			},
+			wantDefs:      []string{},
+			wantResources: []string{"z", "a"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			p, err := semantic.New(semantic.Header{}, tt.changes, []semantic.TaskPlan{tt.task}, nil)
+			require.NoError(t, err)
+			require.Len(t, p.Tasks, 1)
+			gotDefs := make([]string, 0, len(p.Tasks[0].Definitions))
+			for _, d := range p.Tasks[0].Definitions {
+				gotDefs = append(gotDefs, d.Resource.Name)
+			}
+			gotResources := make([]string, 0, len(p.Tasks[0].Resources))
+			for _, r := range p.Tasks[0].Resources {
+				gotResources = append(gotResources, r.Name)
+			}
+			assert.Equal(t, tt.wantDefs, gotDefs)
+			assert.Equal(t, tt.wantResources, gotResources)
+		})
+	}
+}
+
 func TestNew_ApplyOrderThenIdentity(t *testing.T) {
 	t.Parallel()
 	a := createChange("a", "1")

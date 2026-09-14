@@ -16,7 +16,6 @@ package plan
 
 import (
 	"fmt"
-	"strconv"
 
 	"helm.sh/helm/v4/pkg/release/v1/util"
 	"sigs.k8s.io/yaml"
@@ -45,7 +44,7 @@ func stampHelmApplyOrder(changes []semantic.ResourceChange) error {
 		if err != nil {
 			return fmt.Errorf("encode %s for helm order: %w", c.Resource, err)
 		}
-		name := strconv.Itoa(i) + ".yaml"
+		name := fmt.Sprintf("%010d.yaml", i)
 		if c.Action == semantic.Delete {
 			deleteFiles[name] = string(raw)
 			deleteIdx[name] = i

@@ -153,6 +153,7 @@ func TestHelmCronJob_InMainManifest(t *testing.T) {
 	assert.Equal(t, int64(3600), *cj.Spec.JobTemplate.Spec.ActiveDeadlineSeconds)
 	assert.Empty(t, cj.Annotations["helm.sh/hook"])
 	assert.Equal(t, "cleanup", cj.Labels[spec.LabelComponent])
+	assert.Equal(t, "cleanup", cj.Labels[spec.LabelTask])
 	assert.Equal(t, "shop", cj.Labels[spec.LabelProject])
 }
 

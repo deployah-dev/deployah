@@ -73,7 +73,7 @@ func New(header Header, changes []ResourceChange, tasks []TaskPlan, diagnostics 
 	}
 
 	sortChanges(copiedChanges)
-	sortTasks(copiedTasks)
+	sortTasks(copiedTasks, copiedChanges)
 	sortDiagnostics(copiedDiags)
 
 	return Plan{

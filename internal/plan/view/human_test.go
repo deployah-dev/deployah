@@ -708,3 +708,59 @@ func TestWriteHuman_UnchangedTaskWillRun(t *testing.T) {
 	assert.Contains(t, text, "Tasks: 1 to run")
 	assert.NotContains(t, text, "schedule changed")
 }
+
+func TestWriteHuman_TaskFooter(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name            string
+		tasks           []semantic.TaskPlan
+		wantContains    []string
+		wantNotContains []string
+	}{
+		{
+			name: "unchanged schedule omitted",
+			tasks: []semantic.TaskPlan{{
+				Name:   "cleanup",
+				Phase:  semantic.TaskSchedule,
+				Action: semantic.TaskUnchanged,
+			}},
+			wantContains:    []string{"Tasks: 0 to run"},
+			wantNotContains: []string{"schedule changed"},
+		},
+		{
+			name: "changed schedule counted",
+			tasks: []semantic.TaskPlan{{
+				Name:   "cleanup",
+				Phase:  semantic.TaskSchedule,
+				Action: semantic.TaskUpdate,
+			}},
+			wantContains: []string{"Tasks: 0 to run, 1 schedule changed"},
+		},
+		{
+			name: "unchanged hook to run",
+			tasks: []semantic.TaskPlan{{
+				Name:    "seed",
+				Phase:   semantic.TaskPreDeploy,
+				Action:  semantic.TaskUnchanged,
+				WillRun: true,
+			}},
+			wantContains:    []string{"Tasks: 1 to run"},
+			wantNotContains: []string{"schedule changed"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			p := mustPlanWithTasks(t, nil, tt.tasks, nil)
+			var buf bytes.Buffer
+			require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
+			text := buf.String()
+			for _, s := range tt.wantContains {
+				assert.Contains(t, text, s)
+			}
+			for _, s := range tt.wantNotContains {
+				assert.NotContains(t, text, s)
+			}
+		})
+	}
+}

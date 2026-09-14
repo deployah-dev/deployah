@@ -117,10 +117,12 @@ func chartIdentity(project, component, environment string) (labels, annotations,
 
 // restampChartIdentity writes reserved Deployah identity keys after profile
 // labels may have overwritten them, and keeps the Original annotation on pods.
+// Component charts never keep [spec.LabelTask].
 func restampChartIdentity(values map[string]any, project, component, environment string) {
 	labels, annotations, podAnns := chartIdentity(project, component, environment)
 	commonLabels := cloneStringMap(values["commonLabels"])
 	maps.Copy(commonLabels, labels)
+	delete(commonLabels, spec.LabelTask)
 	values["commonLabels"] = commonLabels
 
 	commonAnns := cloneStringMap(values["commonAnnotations"])
@@ -130,6 +132,15 @@ func restampChartIdentity(values map[string]any, project, component, environment
 	merged := cloneStringMap(values["podAnnotations"])
 	maps.Copy(merged, podAnns)
 	values["podAnnotations"] = merged
+}
+
+// restampTaskIdentity writes reserved identity keys for a generated task
+// chart, including [spec.LabelTask].
+func restampTaskIdentity(values map[string]any, project, task, environment string) {
+	restampChartIdentity(values, project, task, environment)
+	commonLabels := cloneStringMap(values["commonLabels"])
+	commonLabels[spec.LabelTask] = task
+	values["commonLabels"] = commonLabels
 }
 
 // cloneStringMap copies v when it is a map[string]string.

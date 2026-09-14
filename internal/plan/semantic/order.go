@@ -40,7 +40,11 @@ func compareChange(a, b ResourceChange) int {
 	)
 }
 
-func sortTasks(tasks []TaskPlan) {
+func sortTasks(tasks []TaskPlan, changes []ResourceChange) {
+	applyOrder := make(map[string]int, len(changes))
+	for _, c := range changes {
+		applyOrder[c.Resource.identityKey()] = c.ApplyOrder
+	}
 	slices.SortFunc(tasks, func(a, b TaskPlan) int {
 		return cmp.Or(
 			cmp.Compare(a.Phase.rank(), b.Phase.rank()),
@@ -50,10 +54,16 @@ func sortTasks(tasks []TaskPlan) {
 	})
 	for i := range tasks {
 		slices.SortFunc(tasks[i].Definitions, func(a, b HookDefinition) int {
-			return cmp.Compare(a.Resource.identityKey(), b.Resource.identityKey())
+			return cmp.Or(
+				cmp.Compare(a.HookWeight, b.HookWeight),
+				cmp.Compare(a.Resource.identityKey(), b.Resource.identityKey()),
+			)
 		})
 		slices.SortFunc(tasks[i].Resources, func(a, b ResourceRef) int {
-			return cmp.Compare(a.identityKey(), b.identityKey())
+			return cmp.Or(
+				cmp.Compare(applyOrder[a.identityKey()], applyOrder[b.identityKey()]),
+				cmp.Compare(a.identityKey(), b.identityKey()),
+			)
 		})
 		for j := range tasks[i].Definitions {
 			slices.SortFunc(tasks[i].Definitions[j].Fields, func(a, b FieldChange) int {

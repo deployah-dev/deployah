@@ -249,7 +249,21 @@ func TestAssembleTasks_FailClosed(t *testing.T) {
 			resolved: resolvedWithTasks(nil),
 			prep:     helm.ReleasePrep{Operation: helm.OperationInstall, NextRevision: 1},
 			desired:  []*v1.Hook{unlabeledHook()},
-			wantErr:  spec.LabelComponent,
+			wantErr:  spec.LabelTask,
+		},
+		{
+			name:     "desired hook for unknown task",
+			resolved: resolvedWithTasks(map[string]spec.ResolvedTask{"migrate": hookResolved(spec.TaskOnPreDeploy, 1)}),
+			prep:     helm.ReleasePrep{Operation: helm.OperationInstall, NextRevision: 1},
+			desired:  []*v1.Hook{testHook("Job", "ghost", "ghost", "v1", 1)},
+			wantErr:  spec.LabelTask,
+		},
+		{
+			name:     "desired hook for schedule task",
+			resolved: resolvedWithTasks(map[string]spec.ResolvedTask{"cleanup": {Task: spec.Task{On: spec.TaskOnSchedule}}}),
+			prep:     helm.ReleasePrep{Operation: helm.OperationInstall, NextRevision: 1},
+			desired:  []*v1.Hook{testHook("Job", "cleanup", "cleanup", "v1", 1)},
+			wantErr:  spec.LabelTask,
 		},
 		{
 			name:     "duplicate hook identity",
@@ -287,6 +301,258 @@ func TestAssembleTasks_FailClosed(t *testing.T) {
 	}
 }
 
+func TestAssembleTasks_HookChangeRunsAllCurrentHooks(t *testing.T) {
+	t.Parallel()
+	type want struct {
+		Action  semantic.TaskAction
+		Phase   semantic.TaskPhase
+		WillRun bool
+	}
+	seed := testHook("Job", "seed", "seed", "same", 1)
+	migrateV1 := testHook("Job", "migrate", "migrate", "v1", 1)
+	migrateV2 := testHook("Job", "migrate", "migrate", "v2", 1)
+	smoke := testHook("Job", "smoke", "smoke", "v1", 2, v1.HookPostInstall, v1.HookPostUpgrade)
+	old := testHook("Job", "old", "old", "v1", 2)
+	tests := []struct {
+		name     string
+		resolved map[string]spec.ResolvedTask
+		previous map[string]any
+		prev     []*v1.Hook
+		desired  []*v1.Hook
+		want     map[string]want
+	}{
+		{
+			name: "definition change runs unchanged sibling",
+			resolved: map[string]spec.ResolvedTask{
+				"migrate": hookResolved(spec.TaskOnPreDeploy, 1),
+				"seed":    hookResolved(spec.TaskOnPreDeploy, 2),
+			},
+			previous: map[string]any{
+				"migrate": map[string]any{"on": "preDeploy", "hookWeight": 1},
+				"seed":    map[string]any{"on": "preDeploy", "hookWeight": 2},
+			},
+			prev:    []*v1.Hook{migrateV1, seed},
+			desired: []*v1.Hook{migrateV2, seed},
+			want: map[string]want{
+				"migrate": {Action: semantic.TaskUpdate, Phase: semantic.TaskPreDeploy, WillRun: true},
+				"seed":    {Action: semantic.TaskUnchanged, Phase: semantic.TaskPreDeploy, WillRun: true},
+			},
+		},
+		{
+			name: "new hook runs unchanged sibling",
+			resolved: map[string]spec.ResolvedTask{
+				"seed":  hookResolved(spec.TaskOnPreDeploy, 1),
+				"smoke": hookResolved(spec.TaskOnPostDeploy, 2),
+			},
+			previous: map[string]any{
+				"seed": map[string]any{"on": "preDeploy", "hookWeight": 1},
+			},
+			prev:    []*v1.Hook{seed},
+			desired: []*v1.Hook{seed, smoke},
+			want: map[string]want{
+				"seed":  {Action: semantic.TaskUnchanged, Phase: semantic.TaskPreDeploy, WillRun: true},
+				"smoke": {Action: semantic.TaskCreate, Phase: semantic.TaskPostDeploy, WillRun: true},
+			},
+		},
+		{
+			name: "removed hook runs remaining sibling",
+			resolved: map[string]spec.ResolvedTask{
+				"seed": hookResolved(spec.TaskOnPreDeploy, 1),
+			},
+			previous: map[string]any{
+				"old":  map[string]any{"on": "preDeploy", "hookWeight": 2},
+				"seed": map[string]any{"on": "preDeploy", "hookWeight": 1},
+			},
+			prev:    []*v1.Hook{old, seed},
+			desired: []*v1.Hook{seed},
+			want: map[string]want{
+				"old":  {Action: semantic.TaskDelete, Phase: semantic.TaskPreDeploy, WillRun: false},
+				"seed": {Action: semantic.TaskUnchanged, Phase: semantic.TaskPreDeploy, WillRun: true},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			tasks, err := assembleTasks(resolvedWithTasks(tt.resolved), upgradePrep(tt.previous, tt.prev, nil), tt.desired, nil)
+			require.NoError(t, err)
+			byName := taskByName(t, tasks)
+			require.Len(t, byName, len(tt.want))
+			for name, want := range tt.want {
+				got, ok := byName[name]
+				require.True(t, ok, "missing task %s", name)
+				assert.Equal(t, want.Action, got.Action, name)
+				assert.Equal(t, want.Phase, got.Phase, name)
+				assert.Equal(t, want.WillRun, got.WillRun, name)
+			}
+		})
+	}
+}
+
+func TestAssembleTasks_RemovedScheduleDoesNotCaptureComponent(t *testing.T) {
+	t.Parallel()
+	resolved := resolvedWithTasks(nil)
+	cron := labeledLegacyDelete("cleanup", "cleanup")
+	comp := labeledCreate("cleanup", "cleanup")
+	prep := upgradePrep(map[string]any{
+		"cleanup": map[string]any{"on": "schedule"},
+	}, nil, nil)
+	tasks, err := assembleTasks(resolved, prep, nil, []semantic.ResourceChange{cron, comp})
+	require.NoError(t, err)
+	byName := taskByName(t, tasks)
+	require.Contains(t, byName, "cleanup")
+	assert.Equal(t, semantic.TaskDelete, byName["cleanup"].Action)
+	require.Len(t, byName["cleanup"].Resources, 1)
+	assert.Equal(t, "cleanup", byName["cleanup"].Resources[0].Name)
+	assert.Equal(t, "CronJob", byName["cleanup"].Resources[0].Kind)
+}
+
+func TestAssembleTasks_TransitionToManual(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name           string
+		task           string
+		previous       map[string]any
+		prevHooks      []*v1.Hook
+		changes        []semantic.ResourceChange
+		wantPhase      semantic.TaskPhase
+		wantDefActions []semantic.Action
+		wantResources  []string
+	}{
+		{
+			name: "preDeploy",
+			task: "migrate",
+			previous: map[string]any{
+				"migrate": map[string]any{"on": "preDeploy", "hookWeight": 1},
+			},
+			prevHooks:      []*v1.Hook{testHook("Job", "migrate", "migrate", "v1", 1)},
+			wantPhase:      semantic.TaskPreDeploy,
+			wantDefActions: []semantic.Action{semantic.Delete},
+			wantResources:  []string{},
+		},
+		{
+			name: "postDeploy",
+			task: "smoke",
+			previous: map[string]any{
+				"smoke": map[string]any{"on": "postDeploy", "hookWeight": 2},
+			},
+			prevHooks:      []*v1.Hook{testHook("Job", "smoke", "smoke", "v1", 2, v1.HookPostInstall, v1.HookPostUpgrade)},
+			wantPhase:      semantic.TaskPostDeploy,
+			wantDefActions: []semantic.Action{semantic.Delete},
+			wantResources:  []string{},
+		},
+		{
+			name: "schedule",
+			task: "cleanup",
+			previous: map[string]any{
+				"cleanup": map[string]any{"on": "schedule"},
+			},
+			changes:        []semantic.ResourceChange{labeledLegacyDelete("cleanup", "cleanup")},
+			wantPhase:      semantic.TaskSchedule,
+			wantDefActions: []semantic.Action{},
+			wantResources:  []string{"cleanup"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			resolved := resolvedWithTasks(map[string]spec.ResolvedTask{
+				tt.task: {Task: spec.Task{On: spec.TaskOnManual}},
+			})
+			tasks, err := assembleTasks(resolved, upgradePrep(tt.previous, tt.prevHooks, nil), nil, tt.changes)
+			require.NoError(t, err)
+			byName := taskByName(t, tasks)
+			require.Contains(t, byName, tt.task)
+			got := byName[tt.task]
+			assert.Equal(t, semantic.TaskDelete, got.Action)
+			assert.False(t, got.WillRun)
+			assert.Equal(t, tt.wantPhase, got.Phase)
+			assert.Equal(t, tt.wantDefActions, definitionActions(got.Definitions))
+			assert.Equal(t, tt.wantResources, resourceNames(got.Resources))
+		})
+	}
+}
+
+func TestAssembleTasks_HookPhaseChange(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		current   spec.TaskOn
+		previous  string
+		prev      *v1.Hook
+		desired   *v1.Hook
+		wantPhase semantic.TaskPhase
+	}{
+		{
+			name:      "preDeploy to postDeploy",
+			current:   spec.TaskOnPostDeploy,
+			previous:  "preDeploy",
+			prev:      testHook("Job", "migrate", "migrate", "v1", 1),
+			desired:   testHook("Job", "migrate", "migrate", "v2", 1, v1.HookPostInstall, v1.HookPostUpgrade),
+			wantPhase: semantic.TaskPostDeploy,
+		},
+		{
+			name:      "postDeploy to preDeploy",
+			current:   spec.TaskOnPreDeploy,
+			previous:  "postDeploy",
+			prev:      testHook("Job", "migrate", "migrate", "v1", 1, v1.HookPostInstall, v1.HookPostUpgrade),
+			desired:   testHook("Job", "migrate", "migrate", "v2", 1),
+			wantPhase: semantic.TaskPreDeploy,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			resolved := resolvedWithTasks(map[string]spec.ResolvedTask{
+				"migrate": hookResolved(tt.current, 1),
+			})
+			prep := upgradePrep(map[string]any{
+				"migrate": map[string]any{"on": tt.previous, "hookWeight": 1},
+			}, []*v1.Hook{tt.prev}, nil)
+			tasks, err := assembleTasks(resolved, prep, []*v1.Hook{tt.desired}, nil)
+			require.NoError(t, err)
+			got := taskByName(t, tasks)["migrate"]
+			assert.Equal(t, tt.wantPhase, got.Phase)
+			assert.Equal(t, semantic.TaskUpdate, got.Action)
+			assert.True(t, got.WillRun)
+		})
+	}
+}
+
+func TestAssembleTasks_IncompatibleOnChange(t *testing.T) {
+	t.Parallel()
+	pre := testHook("Job", "work", "work", "v1", 1)
+	post := testHook("Job", "work", "work", "v1", 1, v1.HookPostInstall, v1.HookPostUpgrade)
+	scheduled := map[string]any{"work": map[string]any{"on": "schedule", "hookWeight": 1}}
+	preCfg := map[string]any{"work": map[string]any{"on": "preDeploy", "hookWeight": 1}}
+	postCfg := map[string]any{"work": map[string]any{"on": "postDeploy", "hookWeight": 1}}
+	tests := []struct {
+		name      string
+		current   spec.TaskOn
+		previous  map[string]any
+		prevHooks []*v1.Hook
+		desired   []*v1.Hook
+	}{
+		{name: "schedule to preDeploy", current: spec.TaskOnPreDeploy, previous: scheduled, desired: []*v1.Hook{pre}},
+		{name: "preDeploy to schedule", current: spec.TaskOnSchedule, previous: preCfg},
+		{name: "postDeploy to schedule", current: spec.TaskOnSchedule, previous: postCfg},
+		{name: "schedule to postDeploy", current: spec.TaskOnPostDeploy, previous: scheduled, desired: []*v1.Hook{post}},
+		{name: "leftover preDeploy hooks to schedule", current: spec.TaskOnSchedule, previous: map[string]any{}, prevHooks: []*v1.Hook{pre}},
+		{name: "leftover postDeploy hooks to schedule", current: spec.TaskOnSchedule, previous: map[string]any{}, prevHooks: []*v1.Hook{post}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			resolved := resolvedWithTasks(map[string]spec.ResolvedTask{
+				"work": {Task: spec.Task{On: tt.current}, HookWeight: 1},
+			})
+			_, err := assembleTasks(resolved, upgradePrep(tt.previous, tt.prevHooks, nil), tt.desired, nil)
+			require.Error(t, err)
+			assert.ErrorContains(t, err, "cannot change on")
+		})
+	}
+}
+
 func TestAssembleTasks_ScheduleReferencesAndOmitsUnchanged(t *testing.T) {
 	t.Parallel()
 	resolved := resolvedWithTasks(map[string]spec.ResolvedTask{
@@ -309,6 +575,58 @@ func TestAssembleTasks_ScheduleReferencesAndOmitsUnchanged(t *testing.T) {
 	require.Len(t, byName["cleanup"].Resources, 1)
 	assert.Equal(t, "cleanup", byName["cleanup"].Resources[0].Name)
 	assert.Equal(t, semantic.TaskUpdate, byName["cleanup"].Action)
+}
+
+func TestAssembleTasks_ScheduleProvenance(t *testing.T) {
+	t.Parallel()
+	cleanup := map[string]spec.ResolvedTask{
+		"cleanup": {Task: spec.Task{On: spec.TaskOnSchedule}},
+	}
+	tests := []struct {
+		name          string
+		resolved      map[string]spec.ResolvedTask
+		previous      map[string]any
+		changes       []semantic.ResourceChange
+		wantAction    semantic.TaskAction
+		wantResources []string
+	}{
+		{
+			name:          "create uses After LabelTask only",
+			resolved:      cleanup,
+			previous:      map[string]any{},
+			changes:       []semantic.ResourceChange{labeledTaskCreate("cleanup")},
+			wantAction:    semantic.TaskCreate,
+			wantResources: []string{"cleanup"},
+		},
+		{
+			name:          "update uses After LabelTask",
+			resolved:      cleanup,
+			previous:      map[string]any{"cleanup": map[string]any{"on": "schedule"}},
+			changes:       []semantic.ResourceChange{labeledUpdate("cleanup", "cleanup")},
+			wantAction:    semantic.TaskUpdate,
+			wantResources: []string{"cleanup"},
+		},
+		{
+			name:          "legacy delete uses Before LabelComponent",
+			resolved:      map[string]spec.ResolvedTask{},
+			previous:      map[string]any{"cleanup": map[string]any{"on": "schedule"}},
+			changes:       []semantic.ResourceChange{labeledLegacyDelete("cleanup", "cleanup")},
+			wantAction:    semantic.TaskDelete,
+			wantResources: []string{"cleanup"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			tasks, err := assembleTasks(resolvedWithTasks(tt.resolved), upgradePrep(tt.previous, nil, nil), nil, tt.changes)
+			require.NoError(t, err)
+			byName := taskByName(t, tasks)
+			require.Contains(t, byName, "cleanup")
+			got := byName["cleanup"]
+			assert.Equal(t, tt.wantAction, got.Action)
+			assert.Equal(t, tt.wantResources, resourceNames(got.Resources))
+		})
+	}
 }
 
 func TestStampHelmApplyOrder_ConfigMapBeforeDeployment(t *testing.T) {
@@ -335,6 +653,32 @@ func TestStampHelmApplyOrder_ConfigMapBeforeDeployment(t *testing.T) {
 	require.Len(t, p.Changes, 2)
 	assert.Equal(t, "ConfigMap", p.Changes[0].Resource.Kind)
 	assert.Equal(t, "Deployment", p.Changes[1].Resource.Kind)
+}
+
+func TestStampHelmApplyOrder_SameKindPreservesInputOrder(t *testing.T) {
+	t.Parallel()
+	const n = 12
+	changes := make([]semantic.ResourceChange, 0, n)
+	for i := range n {
+		name := fmt.Sprintf("n%d", n-1-i)
+		changes = append(changes, semantic.ResourceChange{
+			Resource: semantic.ResourceRef{APIVersion: "v1", Kind: "ConfigMap", Namespace: "prod", Name: name},
+			Origin:   semantic.ResourceOrigin{Kind: semantic.OriginHelm, Helm: &semantic.HelmOrigin{Release: "web", Namespace: "prod"}},
+			Action:   semantic.Create,
+			After:    snapObj(map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": name}}),
+			Apply:    writeApply(),
+		})
+	}
+	require.NoError(t, stampHelmApplyOrder(changes))
+	for i, c := range changes {
+		assert.Equal(t, i+1, c.ApplyOrder, "input index %d", i)
+	}
+	p, err := semantic.New(semantic.Header{}, changes, nil, nil)
+	require.NoError(t, err)
+	require.Len(t, p.Changes, n)
+	for i, c := range p.Changes {
+		assert.Equal(t, fmt.Sprintf("n%d", n-1-i), c.Resource.Name)
+	}
 }
 
 func resolvedWithTasks(tasks map[string]spec.ResolvedTask) *spec.ResolvedSpec {
@@ -389,7 +733,8 @@ metadata:
   namespace: prod
   labels:
     %s: %s
-%s`, api, kind, name, spec.LabelComponent, task, body),
+    %s: %s
+%s`, api, kind, name, spec.LabelComponent, task, spec.LabelTask, task, body),
 	}
 }
 
@@ -441,15 +786,34 @@ func labeledCreate(name, component string) semantic.ResourceChange {
 	}
 }
 
+func labeledTaskCreate(name string) semantic.ResourceChange {
+	return semantic.ResourceChange{
+		Resource: semantic.ResourceRef{APIVersion: "batch/v1", Kind: "CronJob", Namespace: "prod", Name: name},
+		Origin:   semantic.ResourceOrigin{Kind: semantic.OriginHelm, Helm: &semantic.HelmOrigin{Release: "web", Namespace: "prod"}},
+		Action:   semantic.Create,
+		After: snapObj(map[string]any{
+			"apiVersion": "batch/v1",
+			"kind":       "CronJob",
+			"metadata": map[string]any{
+				"name":      name,
+				"namespace": "prod",
+				"labels":    map[string]any{spec.LabelTask: name},
+			},
+			"spec": map[string]any{"schedule": "0 3 * * *"},
+		}),
+		Apply: writeApply(),
+	}
+}
+
 func labeledUpdate(name, component string) semantic.ResourceChange {
-	obj := func(sched string) map[string]any {
+	obj := func(sched string, labels map[string]any) map[string]any {
 		return map[string]any{
 			"apiVersion": "batch/v1",
 			"kind":       "CronJob",
 			"metadata": map[string]any{
 				"name":      name,
 				"namespace": "prod",
-				"labels":    map[string]any{spec.LabelComponent: component},
+				"labels":    labels,
 			},
 			"spec": map[string]any{"schedule": sched},
 		}
@@ -458,9 +822,31 @@ func labeledUpdate(name, component string) semantic.ResourceChange {
 		Resource: semantic.ResourceRef{APIVersion: "batch/v1", Kind: "CronJob", Namespace: "prod", Name: name},
 		Origin:   semantic.ResourceOrigin{Kind: semantic.OriginHelm, Helm: &semantic.HelmOrigin{Release: "web", Namespace: "prod"}},
 		Action:   semantic.Update,
-		Before:   snapObj(obj("0 2 * * *")),
-		After:    snapObj(obj("0 3 * * *")),
-		Apply:    writeApply(),
+		Before:   snapObj(obj("0 2 * * *", map[string]any{spec.LabelComponent: component})),
+		After: snapObj(obj("0 3 * * *", map[string]any{
+			spec.LabelComponent: component,
+			spec.LabelTask:      name,
+		})),
+		Apply: writeApply(),
+	}
+}
+
+func labeledLegacyDelete(name, component string) semantic.ResourceChange {
+	return semantic.ResourceChange{
+		Resource: semantic.ResourceRef{APIVersion: "batch/v1", Kind: "CronJob", Namespace: "prod", Name: name},
+		Origin:   semantic.ResourceOrigin{Kind: semantic.OriginHelm, Helm: &semantic.HelmOrigin{Release: "web", Namespace: "prod"}},
+		Action:   semantic.Delete,
+		Before: snapObj(map[string]any{
+			"apiVersion": "batch/v1",
+			"kind":       "CronJob",
+			"metadata": map[string]any{
+				"name":      name,
+				"namespace": "prod",
+				"labels":    map[string]any{spec.LabelComponent: component},
+			},
+			"spec": map[string]any{"schedule": "0 3 * * *"},
+		}),
+		Apply: deleteApply(),
 	}
 }
 
@@ -475,6 +861,22 @@ func taskByName(t *testing.T, tasks []semantic.TaskPlan) map[string]semantic.Tas
 		_, exists := out[task.Name]
 		require.False(t, exists, "duplicate task %s", task.Name)
 		out[task.Name] = task
+	}
+	return out
+}
+
+func definitionActions(defs []semantic.HookDefinition) []semantic.Action {
+	out := make([]semantic.Action, 0, len(defs))
+	for _, d := range defs {
+		out = append(out, d.Action)
+	}
+	return out
+}
+
+func resourceNames(refs []semantic.ResourceRef) []string {
+	out := make([]string, 0, len(refs))
+	for _, r := range refs {
+		out = append(out, r.Name)
 	}
 	return out
 }

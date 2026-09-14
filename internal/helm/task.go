@@ -304,6 +304,7 @@ func taskBaseChartValues(m *spec.Spec, name string, rt spec.ResolvedTask, desire
 	}
 
 	labels, annotations, podAnnotations := chartIdentity(m.Project, name, desiredEnvironment)
+	labels[spec.LabelTask] = name
 	values := map[string]any{
 		"commonLabels":      labels,
 		"commonAnnotations": annotations,
@@ -324,6 +325,6 @@ func taskBaseChartValues(m *spec.Spec, name string, rt spec.ResolvedTask, desire
 	if applyErr := applyMergedProfile(values, rt.MergedProfile); applyErr != nil {
 		return nil, spec.TaskJobSpec{}, applyErr
 	}
-	restampChartIdentity(values, m.Project, name, desiredEnvironment)
+	restampTaskIdentity(values, m.Project, name, desiredEnvironment)
 	return values, fields, nil
 }

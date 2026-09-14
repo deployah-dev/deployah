@@ -392,7 +392,7 @@ func writeHumanFooter(w io.Writer, p semantic.Plan, opts Options) error {
 		if t.WillRun {
 			toRun++
 		}
-		if t.Phase == semantic.TaskSchedule {
+		if t.Phase == semantic.TaskSchedule && t.Action != semantic.TaskUnchanged {
 			schedChanged++
 		}
 	}

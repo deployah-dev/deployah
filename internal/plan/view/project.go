@@ -129,7 +129,7 @@ func (n *projNode) toValue() any {
 	if n == nil {
 		return map[string]any{}
 	}
-	if n.hasLeaf && len(n.m) == 0 && len(n.a) == 0 && !n.hasName {
+	if n.hasLeaf {
 		return n.leaf
 	}
 	if len(n.a) > 0 {
@@ -155,9 +155,6 @@ func (n *projNode) toValue() any {
 	slices.Sort(keys)
 	for _, k := range keys {
 		out[k] = n.m[k].toValue()
-	}
-	if n.hasLeaf && len(out) == 0 {
-		return n.leaf
 	}
 	return out
 }

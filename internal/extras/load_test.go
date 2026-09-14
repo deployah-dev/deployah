@@ -273,6 +273,7 @@ metadata:
     deployah.dev/project: wrong
     deployah.dev/managed-by: impostor
     deployah.dev/version: "9"
+    deployah.dev/task: impostor
   annotations:
     note: keep
 `)
@@ -298,6 +299,7 @@ metadata:
 	assert.Equal(t, "shop", obj.GetAnnotations()[spec.AnnotationProject])
 	assert.Equal(t, "keep", obj.GetAnnotations()["note"])
 	assert.NotContains(t, obj.GetLabels(), spec.LabelComponent)
+	assert.NotContains(t, obj.GetLabels(), spec.LabelTask)
 	assert.NotContains(t, obj.GetLabels(), spec.LabelManagedBy)
 	assert.NotContains(t, obj.GetLabels(), spec.LabelVersion)
 }

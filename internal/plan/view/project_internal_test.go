@@ -98,3 +98,74 @@ func TestProjectFields_AddAfterOnlyRemoveBeforeOnly(t *testing.T) {
 	assert.Equal(t, map[string]any{"data": map[string]any{"gone": "y"}}, gotBefore)
 	assert.Empty(t, gotAfter)
 }
+
+func TestProjectFields_WholeNamedListElement(t *testing.T) {
+	t.Parallel()
+	added := map[string]any{
+		"name":    "sidecar",
+		"image":   "busybox:1.36",
+		"command": []any{"sleep", "3600"},
+		"env":     []any{map[string]any{"name": "MODE", "value": "side"}},
+	}
+	one := map[string]any{
+		"spec": map[string]any{
+			"containers": []any{
+				map[string]any{"name": "api", "image": "app:1"},
+			},
+		},
+	}
+	two := map[string]any{
+		"spec": map[string]any{
+			"containers": []any{
+				map[string]any{"name": "api", "image": "app:1"},
+				added,
+			},
+		},
+	}
+	projected := map[string]any{
+		"spec": map[string]any{
+			"containers": []any{added},
+		},
+	}
+	tests := []struct {
+		name       string
+		before     map[string]any
+		after      map[string]any
+		field      semantic.FieldChange
+		wantBefore map[string]any
+		wantAfter  map[string]any
+	}{
+		{
+			name:   "add complete named item",
+			before: one,
+			after:  two,
+			field: semantic.FieldChange{
+				Path:  "/spec/containers/1",
+				Op:    semantic.FieldAdd,
+				After: added,
+			},
+			wantBefore: map[string]any{},
+			wantAfter:  projected,
+		},
+		{
+			name:   "remove complete named item",
+			before: two,
+			after:  one,
+			field: semantic.FieldChange{
+				Path:   "/spec/containers/1",
+				Op:     semantic.FieldRemove,
+				Before: added,
+			},
+			wantBefore: projected,
+			wantAfter:  map[string]any{},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			gotBefore, gotAfter := projectFields(tt.before, tt.after, []semantic.FieldChange{tt.field})
+			assert.Equal(t, tt.wantBefore, gotBefore)
+			assert.Equal(t, tt.wantAfter, gotAfter)
+		})
+	}
+}
