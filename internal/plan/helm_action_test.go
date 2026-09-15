@@ -61,6 +61,7 @@ func TestDeriveHelmAction(t *testing.T) {
 		{name: "upgrade with hook create", op: helm.OperationUpgrade, tasks: []semantic.TaskPlan{hookCreate}, want: semantic.HelmUpgrade},
 		{name: "upgrade with hook delete", op: helm.OperationUpgrade, tasks: []semantic.TaskPlan{hookDelete}, want: semantic.HelmUpgrade},
 		{name: "crd change does not upgrade", op: helm.OperationUpgrade, changes: []semantic.ResourceChange{crdChange}, tasks: []semantic.TaskPlan{unchanged}, want: semantic.HelmNone},
+		{name: "crd plus helm upgrades", op: helm.OperationUpgrade, changes: []semantic.ResourceChange{crdChange, helmChange}, want: semantic.HelmUpgrade},
 		{name: "namespace change does not upgrade", op: helm.OperationUpgrade, changes: []semantic.ResourceChange{nsChange}, want: semantic.HelmNone},
 		{name: "schedule change does not upgrade", op: helm.OperationUpgrade, tasks: []semantic.TaskPlan{schedule}, want: semantic.HelmNone},
 		{name: "unchanged hooks none", op: helm.OperationUpgrade, tasks: []semantic.TaskPlan{unchanged}, want: semantic.HelmNone},

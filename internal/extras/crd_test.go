@@ -192,47 +192,50 @@ func TestApplyCRDs_CreateIfMissing(t *testing.T) {
 	assert.Contains(t, client.objects, "new.example.com")
 }
 
-// TestApplyCRDs_CreateReplaceAppliesExisting exercises extras package behavior.
-func TestApplyCRDs_CreateReplaceAppliesExisting(t *testing.T) {
+// TestApplyCRDs_CreateReplace exercises extras package behavior.
+func TestApplyCRDs_CreateReplace(t *testing.T) {
 	t.Parallel()
-
-	client := newFakeCRDClient()
-	client.establishAfterNGets = 1
-	client.objects["widgets.example.com"] = &apiextensionsv1.CustomResourceDefinition{
-		Name: "widgets.example.com", ResourceVersion: "7",
+	tests := []struct {
+		name    string
+		objects map[string]*apiextensionsv1.CustomResourceDefinition
+		want    CRDStats
+	}{
+		{
+			name: "existing CRD",
+			objects: map[string]*apiextensionsv1.CustomResourceDefinition{
+				"widgets.example.com": {
+					ObjectMeta: metav1.ObjectMeta{Name: "widgets.example.com", ResourceVersion: "7"},
+				},
+			},
+			want: CRDStats{Replaced: 1, Ready: 1},
+		},
+		{
+			name:    "missing CRD",
+			objects: make(map[string]*apiextensionsv1.CustomResourceDefinition),
+			want:    CRDStats{Created: 1, Ready: 1},
+		},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			client := newFakeCRDClient()
+			client.establishAfterNGets = 1
+			client.objects = tt.objects
 
-	stats, err := applyCRDs(t.Context(), client, []Object{
-		sampleCRDObject(t, "widgets.example.com"),
-	}, PolicyCreateReplace, 2*time.Second)
-	require.NoError(t, err)
-	assert.Equal(t, 0, client.creates)
-	assert.Equal(t, 1, client.applies)
-	assert.Equal(t, 0, stats.Created)
-	assert.Equal(t, 1, stats.Replaced)
-	assert.Equal(t, 1, stats.Ready)
-	require.NotEmpty(t, client.lastPatch)
-	assert.NotContains(t, string(client.lastPatch), `"status"`)
-	assert.NotContains(t, string(client.lastPatch), `"managedFields"`)
-	assert.NotContains(t, string(client.lastPatch), `"resourceVersion"`)
-}
-
-// TestApplyCRDs_CreateReplaceAppliesMissing exercises extras package behavior.
-func TestApplyCRDs_CreateReplaceAppliesMissing(t *testing.T) {
-	t.Parallel()
-
-	client := newFakeCRDClient()
-	client.establishAfterNGets = 1
-
-	stats, err := applyCRDs(t.Context(), client, []Object{
-		sampleCRDObject(t, "new.example.com"),
-	}, PolicyCreateReplace, 2*time.Second)
-	require.NoError(t, err)
-	assert.Equal(t, 0, client.creates)
-	assert.Equal(t, 1, client.applies)
-	assert.Equal(t, 1, stats.Created)
-	assert.Equal(t, 0, stats.Replaced)
-	assert.Contains(t, client.objects, "new.example.com")
+			stats, err := applyCRDs(t.Context(), client, []Object{
+				sampleCRDObject(t, "widgets.example.com"),
+			}, PolicyCreateReplace, 2*time.Second)
+			require.NoError(t, err)
+			assert.Equal(t, 0, client.creates)
+			assert.Equal(t, 1, client.applies)
+			assert.Equal(t, tt.want, stats)
+			assert.Contains(t, client.objects, "widgets.example.com")
+			require.NotEmpty(t, client.lastPatch)
+			assert.NotContains(t, string(client.lastPatch), `"status"`)
+			assert.NotContains(t, string(client.lastPatch), `"managedFields"`)
+			assert.NotContains(t, string(client.lastPatch), `"resourceVersion"`)
+		})
+	}
 }
 
 // TestApplyCRDs_WaitsForEstablished exercises extras package behavior.
@@ -332,24 +335,87 @@ func TestSSAPatchFromObject_StripsServerFields(t *testing.T) {
 	assert.Equal(t, "example.com", spec["group"])
 }
 
-// TestApplyCRDs_ExportedGuards covers the public ApplyCRDs entry points that
-// never reach the fake client.
-func TestApplyCRDs_ExportedGuards(t *testing.T) {
+func TestApplyObject_StripsServerFields(t *testing.T) {
 	t.Parallel()
 
-	crd := sampleCRDObject(t, "widgets.example.com")
+	o := sampleCRDObject(t, "widgets.example.com")
+	u, err := ApplyObject(o)
+	require.NoError(t, err)
+	_, hasStatus := u.Object["status"]
+	assert.False(t, hasStatus)
+	meta, ok := u.Object["metadata"].(map[string]any)
+	require.True(t, ok)
+	_, hasMF := meta["managedFields"]
+	assert.False(t, hasMF)
+	_, hasRV := meta["resourceVersion"]
+	assert.False(t, hasRV)
+	assert.Equal(t, "widgets.example.com", meta["name"])
+	spec, ok := u.Object["spec"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "example.com", spec["group"])
 
+	patch, err := json.Marshal(u.Object)
+	require.NoError(t, err)
+	fromHelper, err := ssaPatchFromObject(o)
+	require.NoError(t, err)
+	assert.JSONEq(t, string(patch), string(fromHelper))
+}
+
+func TestCreateObject_UsesTypedDecode(t *testing.T) {
+	t.Parallel()
+
+	o := sampleCRDObject(t, "widgets.example.com")
+	typed, err := DecodeCRD(o)
+	require.NoError(t, err)
+	u, err := CreateObject(o)
+	require.NoError(t, err)
+	assert.Equal(t, "apiextensions.k8s.io/v1", u.GetAPIVersion())
+	assert.Equal(t, "CustomResourceDefinition", u.GetKind())
+	assert.Equal(t, typed.Name, u.GetName())
+	assert.Equal(t, "deployah", CRDFieldManager)
+}
+
+func TestApplyCRDs_EmptyExportedNoop(t *testing.T) {
+	t.Parallel()
 	stats, err := ApplyCRDs(t.Context(), nil, nil, PolicyCreate, time.Second)
 	require.NoError(t, err)
 	assert.Equal(t, CRDStats{}, stats)
+}
 
-	_, err = ApplyCRDs(t.Context(), nil, []Object{crd}, PolicyCreate, time.Second)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "cluster configuration is required")
-
-	_, err = ApplyCRDs(t.Context(), &rest.Config{Host: "https://127.0.0.1:1"}, []Object{crd}, Policy("nope"), time.Second)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unknown CRD policy")
+// TestApplyCRDs_ExportedGuardErrors covers the public ApplyCRDs errors that
+// occur before constructing a Kubernetes client.
+func TestApplyCRDs_ExportedGuardErrors(t *testing.T) {
+	t.Parallel()
+	crd := sampleCRDObject(t, "widgets.example.com")
+	tests := []struct {
+		name    string
+		config  *rest.Config
+		objects []Object
+		policy  Policy
+		wantErr string
+	}{
+		{
+			name:    "missing cluster configuration",
+			objects: []Object{crd},
+			policy:  PolicyCreate,
+			wantErr: "cluster configuration is required",
+		},
+		{
+			name:    "unknown policy",
+			config:  &rest.Config{Host: "https://127.0.0.1:1"},
+			objects: []Object{crd},
+			policy:  Policy("nope"),
+			wantErr: "unknown CRD policy",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := ApplyCRDs(t.Context(), tt.config, tt.objects, tt.policy, time.Second)
+			require.Error(t, err)
+			assert.ErrorContains(t, err, tt.wantErr)
+		})
+	}
 }
 
 // TestApplyCRDs_DecodeAndClientErrors covers decode/get/create/apply failures.

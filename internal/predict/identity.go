@@ -59,7 +59,10 @@ func sameResource(a, b Identity) bool {
 	return a.Name == b.Name && a.Namespace == b.Namespace && a.Group == b.Group && a.Kind == b.Kind
 }
 
-func flattenManifest(manifest string) ([]*unstructured.Unstructured, error) {
+// FlattenManifest parses a multi-document Kubernetes YAML manifest into
+// unstructured objects. List items are flattened the same way [Predict]
+// loads Desired and Previous.
+func FlattenManifest(manifest string) ([]*unstructured.Unstructured, error) {
 	if strings.TrimSpace(manifest) == "" {
 		return nil, nil
 	}
@@ -74,28 +77,21 @@ func flattenManifest(manifest string) ([]*unstructured.Unstructured, error) {
 	}
 	out := make([]*unstructured.Unstructured, 0, len(infos))
 	for _, info := range infos {
-		u, convErr := asUnstructured(info.Object)
-		if convErr != nil {
-			return nil, convErr
+		if u, ok := info.Object.(*unstructured.Unstructured); ok {
+			out = append(out, u.DeepCopy())
+			continue
 		}
-		out = append(out, u)
+		m, convErr := runtime.DefaultUnstructuredConverter.ToUnstructured(info.Object)
+		if convErr != nil {
+			return nil, fmt.Errorf("convert object to unstructured: %w", convErr)
+		}
+		out = append(out, &unstructured.Unstructured{Object: m})
 	}
 	return out, nil
 }
 
-func asUnstructured(obj runtime.Object) (*unstructured.Unstructured, error) {
-	if u, ok := obj.(*unstructured.Unstructured); ok {
-		return u.DeepCopy(), nil
-	}
-	m, err := runtime.DefaultUnstructuredConverter.ToUnstructured(obj)
-	if err != nil {
-		return nil, fmt.Errorf("convert object to unstructured: %w", err)
-	}
-	return &unstructured.Unstructured{Object: m}, nil
-}
-
 func loadResources(cluster Cluster, manifest, defaultNamespace string) ([]resourceObj, error) {
-	objs, err := flattenManifest(manifest)
+	objs, err := FlattenManifest(manifest)
 	if err != nil {
 		return nil, err
 	}

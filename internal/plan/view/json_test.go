@@ -376,6 +376,28 @@ func TestWriteJSON_MatchesSchemaForRepresentativePlans(t *testing.T) {
 			}),
 			Apply: writeCreate(),
 		}}, nil)},
+		{name: "origin crd replace", plan: mustPlan(t, semantic.HelmNone, []semantic.ResourceChange{{
+			Resource: semantic.ResourceRef{
+				APIVersion: "apiextensions.k8s.io/v1",
+				Kind:       "CustomResourceDefinition",
+				Name:       "widgets.example.com",
+			},
+			Origin: semantic.ResourceOrigin{Kind: semantic.OriginCRD},
+			Action: semantic.Update,
+			Before: snap(map[string]any{
+				"apiVersion": "apiextensions.k8s.io/v1",
+				"kind":       "CustomResourceDefinition",
+				"metadata":   map[string]any{"name": "widgets.example.com"},
+				"spec":       map[string]any{"group": "example.com"},
+			}),
+			After: snap(map[string]any{
+				"apiVersion": "apiextensions.k8s.io/v1",
+				"kind":       "CustomResourceDefinition",
+				"metadata":   map[string]any{"name": "widgets.example.com"},
+				"spec":       map[string]any{"group": "example.com", "scope": "Namespaced"},
+			}),
+			Apply: writeForceApply(),
+		}}, nil)},
 		{name: "origin namespace", plan: mustPlanWithHeader(t, semantic.Header{
 			Project:      "web",
 			Environment:  "prod",
@@ -391,7 +413,7 @@ func TestWriteJSON_MatchesSchemaForRepresentativePlans(t *testing.T) {
 				"kind":       "Namespace",
 				"metadata":   map[string]any{"name": "prod"},
 			}),
-			Apply: writeCreate(),
+			Apply: writeApply(),
 		}}, nil, nil)},
 		{name: "task create", plan: mustPlanWithTasks(t, semantic.HelmUpgrade, nil, []semantic.TaskPlan{{
 			Name:    "migrate",

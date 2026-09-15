@@ -30,6 +30,7 @@ func sortChanges(changes []ResourceChange) {
 
 func compareChange(a, b ResourceChange) int {
 	return cmp.Or(
+		cmp.Compare(originRank(a.Origin.Kind), originRank(b.Origin.Kind)),
 		cmp.Compare(a.ApplyOrder, b.ApplyOrder),
 		cmp.Compare(a.Resource.APIVersion, b.Resource.APIVersion),
 		cmp.Compare(a.Resource.Kind, b.Resource.Kind),
@@ -38,6 +39,19 @@ func compareChange(a, b ResourceChange) int {
 		cmp.Compare(a.Resource.GenerateName, b.Resource.GenerateName),
 		cmp.Compare(actionRank(a.Action), actionRank(b.Action)),
 	)
+}
+
+func originRank(k OriginKind) int {
+	switch k {
+	case OriginCRD:
+		return 1
+	case OriginNamespace:
+		return 2
+	case OriginHelm:
+		return 3
+	default:
+		return 4
+	}
 }
 
 func sortTasks(tasks []TaskPlan, changes []ResourceChange) {

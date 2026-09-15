@@ -307,7 +307,13 @@ func validateChange(c ResourceChange, diags []Diagnostic) error {
 	if err := validateOrigin(c.Origin); err != nil {
 		return err
 	}
+	if err := validateOriginResource(c); err != nil {
+		return err
+	}
 	if err := validateApply(c.Action, c.Apply); err != nil {
+		return err
+	}
+	if err := validateOriginApply(c); err != nil {
 		return err
 	}
 	return validateSnapshots(c, diags)
@@ -325,6 +331,71 @@ func validateOrigin(o ResourceOrigin) error {
 	case OriginCRD, OriginNamespace:
 		if o.Helm != nil {
 			return fmt.Errorf("%s origin must not include helm details", o.Kind)
+		}
+	}
+	return nil
+}
+
+func validateOriginResource(c ResourceChange) error {
+	switch c.Origin.Kind {
+	case OriginCRD:
+		if c.Resource.APIVersion != "apiextensions.k8s.io/v1" || c.Resource.Kind != "CustomResourceDefinition" {
+			return fmt.Errorf("crd origin requires apiextensions.k8s.io/v1 CustomResourceDefinition")
+		}
+		if c.Resource.Namespace != "" {
+			return fmt.Errorf("crd origin must be cluster-scoped")
+		}
+		switch c.Action {
+		case Create, Update:
+		default:
+			return fmt.Errorf("crd origin does not support %s", c.Action)
+		}
+	case OriginNamespace:
+		if c.Resource.APIVersion != "v1" || c.Resource.Kind != "Namespace" {
+			return fmt.Errorf("namespace origin requires v1 Namespace")
+		}
+		if c.Resource.Namespace != "" {
+			return fmt.Errorf("namespace origin must be cluster-scoped")
+		}
+		switch c.Action {
+		case Create, Update:
+		default:
+			return fmt.Errorf("namespace origin does not support %s", c.Action)
+		}
+	}
+	return nil
+}
+
+func validateOriginApply(c ResourceChange) error {
+	if c.Apply.Write == nil {
+		return nil
+	}
+	switch c.Origin.Kind {
+	case OriginCRD:
+		switch c.Action {
+		case Create:
+			switch c.Apply.Write.Method {
+			case WriteCreate:
+				return nil
+			case WriteServerSide:
+				if !c.Apply.Write.ForceConflicts {
+					return fmt.Errorf("crd create server_side_apply requires force conflicts")
+				}
+				return nil
+			default:
+				return fmt.Errorf("crd create requires create or server_side_apply")
+			}
+		case Update:
+			if c.Apply.Write.Method != WriteServerSide || !c.Apply.Write.ForceConflicts {
+				return fmt.Errorf("crd update requires server_side_apply with force conflicts")
+			}
+		}
+	case OriginNamespace:
+		if c.Apply.Write.Method != WriteServerSide {
+			return fmt.Errorf("namespace origin requires server_side_apply")
+		}
+		if c.Apply.Write.ForceConflicts {
+			return fmt.Errorf("namespace origin must not force conflicts")
 		}
 	}
 	return nil

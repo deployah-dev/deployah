@@ -21,6 +21,8 @@ import (
 	"fmt"
 	"time"
 
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/rest"
@@ -42,7 +44,9 @@ const (
 	// an existing one (force ownership).
 	PolicyCreateReplace Policy = "create-replace"
 
-	crdFieldManager = "deployah"
+	// CRDFieldManager is the Kubernetes field manager extras uses for
+	// create-replace server-side apply.
+	CRDFieldManager = "deployah"
 )
 
 // CRDStats summarizes what [ApplyCRDs] did for one deploy.
@@ -78,7 +82,7 @@ func (a crdClientAdapter) Apply(ctx context.Context, name string, patch []byte) 
 		name,
 		types.ApplyPatchType,
 		patch,
-		metav1.PatchOptions{FieldManager: crdFieldManager, Force: &force},
+		metav1.PatchOptions{FieldManager: CRDFieldManager, Force: &force},
 	)
 }
 
@@ -119,7 +123,7 @@ func applyCRDs(ctx context.Context, client crdClient, crds []Object, policy Poli
 	}
 	applied := make([]string, 0, len(crds))
 	for i := range crds {
-		crd, err := decodeCRD(crds[i])
+		crd, err := DecodeCRD(crds[i])
 		if err != nil {
 			return stats, err
 		}
@@ -177,7 +181,9 @@ func applyCRDs(ctx context.Context, client crdClient, crds []Object, policy Poli
 	return stats, nil
 }
 
-func decodeCRD(o Object) (*apiextensionsv1.CustomResourceDefinition, error) {
+// DecodeCRD decodes o as a typed CustomResourceDefinition. It is the
+// request body [ApplyCRDs] uses for policy=create.
+func DecodeCRD(o Object) (*apiextensionsv1.CustomResourceDefinition, error) {
 	var crd apiextensionsv1.CustomResourceDefinition
 	if err := sigsyaml.Unmarshal(o.Raw, &crd); err != nil {
 		return nil, fmt.Errorf("%s: decode CRD: %w", o.Path, err)
@@ -188,10 +194,28 @@ func decodeCRD(o Object) (*apiextensionsv1.CustomResourceDefinition, error) {
 	return &crd, nil
 }
 
-// ssaPatchFromObject builds a server-side apply body from the object's YAML.
-// Status and server-managed metadata are stripped so the patch matches the
-// intended document rather than a typed round-trip full of null fields.
-func ssaPatchFromObject(o Object) ([]byte, error) {
+// CreateObject returns the unstructured body [ApplyCRDs] would send on
+// policy=create Kubernetes CREATE. It decodes through the typed CRD so
+// the dry-run request matches the real request.
+func CreateObject(o Object) (*unstructured.Unstructured, error) {
+	crd, err := DecodeCRD(o)
+	if err != nil {
+		return nil, err
+	}
+	m, err := runtime.DefaultUnstructuredConverter.ToUnstructured(crd)
+	if err != nil {
+		return nil, fmt.Errorf("%s: convert CRD for create: %w", o.Path, err)
+	}
+	u := &unstructured.Unstructured{Object: m}
+	u.SetGroupVersionKind(apiextensionsv1.SchemeGroupVersion.WithKind("CustomResourceDefinition"))
+	return u, nil
+}
+
+// ApplyObject returns the unstructured body [ApplyCRDs] would send on
+// create-replace server-side apply. Status and server-managed metadata
+// are stripped so the patch matches the intended document rather than a
+// typed round-trip full of null fields.
+func ApplyObject(o Object) (*unstructured.Unstructured, error) {
 	var obj map[string]any
 	if err := sigsyaml.Unmarshal(o.Raw, &obj); err != nil {
 		return nil, fmt.Errorf("%s: decode for apply: %w", o.Path, err)
@@ -205,7 +229,15 @@ func ssaPatchFromObject(o Object) ([]byte, error) {
 		delete(meta, "generation")
 		delete(meta, "selfLink")
 	}
-	patch, err := json.Marshal(obj)
+	return &unstructured.Unstructured{Object: obj}, nil
+}
+
+func ssaPatchFromObject(o Object) ([]byte, error) {
+	u, err := ApplyObject(o)
+	if err != nil {
+		return nil, err
+	}
+	patch, err := json.Marshal(u.Object)
 	if err != nil {
 		return nil, fmt.Errorf("%s: marshal apply patch: %w", o.Path, err)
 	}

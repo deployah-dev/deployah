@@ -37,5 +37,6 @@
 // errors are not rewritten to [ActionNoOp]. They do not necessarily prove
 // that a real Deployah deploy would fail: install sets CreateNamespace, and
 // Deployah applies .deployah/crds/ before Helm. Namespace and CRD
-// prerequisite prediction are out of scope for this package.
+// prerequisite prediction live in the plan package, which wraps [Cluster]
+// for same-deploy fallback. This package stays Helm-strict.
 package predict
