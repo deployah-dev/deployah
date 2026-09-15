@@ -19,7 +19,7 @@
 // Snapshots and field values stay complete. Serialization and secret
 // redaction belong to deployah.dev/deployah/internal/plan/view.
 // [deployah.dev/deployah/internal/plan/view.WriteJSON] is the only
-// Stage C machine-readable output contract.
+// machine-readable output contract.
 //
 // Do not treat encoding/json of these types as a supported output path.
 package semantic

@@ -13,6 +13,7 @@ metadata:
         deployah.dev/environment: dev
         deployah.dev/instance: task-schedule-macros-dev
         deployah.dev/project: task-schedule-macros
+        deployah.dev/task: every
         helm.sh/chart: every-0.1.0
     name: task-schedule-macros-dev-every
     namespace: default
@@ -38,6 +39,7 @@ spec:
                         deployah.dev/environment: dev
                         deployah.dev/instance: task-schedule-macros-dev
                         deployah.dev/project: task-schedule-macros
+                        deployah.dev/task: every
                         helm.sh/chart: every-0.1.0
                 spec:
                     automountServiceAccountToken: false

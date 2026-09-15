@@ -44,7 +44,7 @@ func mergeIdentity(o *Object, project, environment, instance, original, source, 
 
 	// Labels: reserved keys we own overwrite; other deployah.dev/* keys are
 	// stripped so extras cannot impersonate reserved semantics. Never set
-	// component on extras.
+	// component or task on extras.
 	labels := getMetaStringMap(o.Obj, "labels")
 	if labels == nil {
 		labels = map[string]string{}

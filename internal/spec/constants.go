@@ -333,6 +333,11 @@ const (
 	// LabelComponent is the label key for component identification
 	LabelComponent = LabelPrefix + "/component"
 
+	// LabelTask is the label key for task provenance on generated task
+	// resources. Its value is the Deployah task name. Component resources
+	// do not carry this key.
+	LabelTask = LabelPrefix + "/task"
+
 	// ManagedByValue is the value used for the managed-by label
 	ManagedByValue = "deployah"
 

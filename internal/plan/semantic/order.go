@@ -30,6 +30,7 @@ func sortChanges(changes []ResourceChange) {
 
 func compareChange(a, b ResourceChange) int {
 	return cmp.Or(
+		cmp.Compare(a.ApplyOrder, b.ApplyOrder),
 		cmp.Compare(a.Resource.APIVersion, b.Resource.APIVersion),
 		cmp.Compare(a.Resource.Kind, b.Resource.Kind),
 		cmp.Compare(a.Resource.Namespace, b.Resource.Namespace),
@@ -37,6 +38,39 @@ func compareChange(a, b ResourceChange) int {
 		cmp.Compare(a.Resource.GenerateName, b.Resource.GenerateName),
 		cmp.Compare(actionRank(a.Action), actionRank(b.Action)),
 	)
+}
+
+func sortTasks(tasks []TaskPlan, changes []ResourceChange) {
+	applyOrder := make(map[string]int, len(changes))
+	for _, c := range changes {
+		applyOrder[c.Resource.identityKey()] = c.ApplyOrder
+	}
+	slices.SortFunc(tasks, func(a, b TaskPlan) int {
+		return cmp.Or(
+			cmp.Compare(a.Phase.rank(), b.Phase.rank()),
+			cmp.Compare(a.HookWeight, b.HookWeight),
+			cmp.Compare(a.Name, b.Name),
+		)
+	})
+	for i := range tasks {
+		slices.SortFunc(tasks[i].Definitions, func(a, b HookDefinition) int {
+			return cmp.Or(
+				cmp.Compare(a.HookWeight, b.HookWeight),
+				cmp.Compare(a.Resource.identityKey(), b.Resource.identityKey()),
+			)
+		})
+		slices.SortFunc(tasks[i].Resources, func(a, b ResourceRef) int {
+			return cmp.Or(
+				cmp.Compare(applyOrder[a.identityKey()], applyOrder[b.identityKey()]),
+				cmp.Compare(a.identityKey(), b.identityKey()),
+			)
+		})
+		for j := range tasks[i].Definitions {
+			slices.SortFunc(tasks[i].Definitions[j].Fields, func(a, b FieldChange) int {
+				return cmp.Compare(a.Path, b.Path)
+			})
+		}
+	}
 }
 
 func sortDiagnostics(diags []Diagnostic) {

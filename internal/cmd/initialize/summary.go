@@ -211,6 +211,7 @@ as your generated resources.
 - Per environment: use a subdirectory named after a declared environment
   key (for example manifests/prod/extra.yaml)
 - Files are applied literally: no Helm templating and no env substitution
+- Helm hook annotations are not supported here; use a Deployah task
 - CustomResourceDefinition belongs in ../crds/, not here
 `
 	crdsREADME = `# Extra CRDs

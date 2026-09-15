@@ -15,6 +15,7 @@
 package extras_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -26,6 +27,8 @@ import (
 	"deployah.dev/deployah/internal/extras"
 	"deployah.dev/deployah/internal/helm"
 	"deployah.dev/deployah/internal/spec"
+
+	v1 "helm.sh/helm/v4/pkg/release/v1"
 )
 
 func writeFile(t *testing.T, path, content string) {
@@ -270,6 +273,7 @@ metadata:
     deployah.dev/project: wrong
     deployah.dev/managed-by: impostor
     deployah.dev/version: "9"
+    deployah.dev/task: impostor
   annotations:
     note: keep
 `)
@@ -295,6 +299,7 @@ metadata:
 	assert.Equal(t, "shop", obj.GetAnnotations()[spec.AnnotationProject])
 	assert.Equal(t, "keep", obj.GetAnnotations()["note"])
 	assert.NotContains(t, obj.GetLabels(), spec.LabelComponent)
+	assert.NotContains(t, obj.GetLabels(), spec.LabelTask)
 	assert.NotContains(t, obj.GetLabels(), spec.LabelManagedBy)
 	assert.NotContains(t, obj.GetLabels(), spec.LabelVersion)
 }
@@ -803,4 +808,100 @@ metadata:
 	require.NoError(t, err)
 	require.Len(t, bundle.Manifests, 1)
 	assert.NotNil(t, bundle.PostRendererFor())
+}
+
+func TestLoad_RejectsHelmHookAnnotations(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		key  string
+	}{
+		{name: "hook", key: v1.HookAnnotation},
+		{name: "hook-weight", key: v1.HookWeightAnnotation},
+		{name: "hook-delete-policy", key: v1.HookDeleteAnnotation},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			writeFile(t, filepath.Join(dir, ".deployah", "manifests", "hook.yaml"), fmt.Sprintf(`
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hooked
+  annotations:
+    %s: pre-install
+`, tt.key))
+			_, err := extras.Load(extras.LoadConfig{
+				SpecDir:          dir,
+				Project:          "demo",
+				Environment:      "prod",
+				DeclaredEnvs:     []string{"prod"},
+				ReleaseNamespace: "apps",
+				Scope:            &extras.TableResolver{},
+			})
+			require.Error(t, err)
+			assert.ErrorContains(t, err, tt.key)
+			assert.ErrorContains(t, err, "not supported on custom manifests")
+		})
+	}
+
+	t.Run("plain configmap", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		writeFile(t, filepath.Join(dir, ".deployah", "manifests", "cm.yaml"), `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: plain
+data:
+  k: v
+`)
+		bundle, err := extras.Load(extras.LoadConfig{
+			SpecDir:          dir,
+			Project:          "demo",
+			Environment:      "prod",
+			DeclaredEnvs:     []string{"prod"},
+			ReleaseNamespace: "apps",
+			Scope:            &extras.TableResolver{},
+		})
+		require.NoError(t, err)
+		require.Len(t, bundle.Manifests, 1)
+	})
+}
+
+func TestLoad_AllowsCRDWithHelmHookAnnotation(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".deployah", "crds", "widget.yaml"), fmt.Sprintf(`
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: widgets.example.com
+  annotations:
+    %s: pre-install
+spec:
+  group: example.com
+  scope: Namespaced
+  names:
+    kind: Widget
+    plural: widgets
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+`, v1.HookAnnotation))
+	bundle, err := extras.Load(extras.LoadConfig{
+		SpecDir:          dir,
+		Project:          "demo",
+		Environment:      "prod",
+		DeclaredEnvs:     []string{"prod"},
+		ReleaseNamespace: "apps",
+		Scope:            &extras.TableResolver{},
+	})
+	require.NoError(t, err)
+	require.Len(t, bundle.CRDs, 1)
 }

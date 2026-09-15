@@ -31,6 +31,7 @@ import (
 
 	"deployah.dev/deployah/internal/spec"
 
+	v1 "helm.sh/helm/v4/pkg/release/v1"
 	yamlutil "k8s.io/apimachinery/pkg/util/yaml"
 )
 
@@ -313,6 +314,16 @@ func classifyFile(path, name string) (bool, error) {
 	return false, fmt.Errorf("%s: unsupported file (only .yaml/.yml are loaded; remove it or rename)", path)
 }
 
+func rejectHelmHookAnnotations(path string, obj *unstructured.Unstructured) error {
+	anns := obj.GetAnnotations()
+	for _, key := range []string{v1.HookAnnotation, v1.HookWeightAnnotation, v1.HookDeleteAnnotation} {
+		if _, ok := anns[key]; ok {
+			return fmt.Errorf("%s: Helm hook annotation %s is not supported on custom manifests; use a Deployah task for deploy hooks", path, key)
+		}
+	}
+	return nil
+}
+
 // loadFile parses a multi-doc YAML file into Objects. When rejectCRD is true,
 // a CustomResourceDefinition document is an error.
 func loadFile(path string, rejectCRD bool) ([]Object, error) {
@@ -343,6 +354,11 @@ func loadFile(path string, rejectCRD bool) ([]Object, error) {
 		}
 		if rejectCRD && kind == "CustomResourceDefinition" {
 			return nil, fmt.Errorf("%s: CustomResourceDefinition belongs in .deployah/crds/, not .deployah/manifests/", path)
+		}
+		if rejectCRD {
+			if hookErr := rejectHelmHookAnnotations(path, &obj); hookErr != nil {
+				return nil, hookErr
+			}
 		}
 		raw, marshalErr := sigsyamlMarshal(&obj)
 		if marshalErr != nil {

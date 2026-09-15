@@ -98,7 +98,25 @@ func BuildSemanticPlan(
 		Revision:     prep.NextRevision,
 		FreshInstall: prep.Operation == helm.OperationInstall,
 	}
-	p, err := semanticPlanFromResults(header, results)
+	origin := semantic.ResourceOrigin{
+		Kind: semantic.OriginHelm,
+		Helm: &semantic.HelmOrigin{
+			Release:   header.Release,
+			Namespace: header.Namespace,
+		},
+	}
+	changes, diags, err := mapPredictResults(origin, results)
+	if err != nil {
+		return semantic.Plan{}, nil, cleanup, fmt.Errorf("assemble semantic plan: %w", err)
+	}
+	if orderErr := stampHelmApplyOrder(changes); orderErr != nil {
+		return semantic.Plan{}, nil, cleanup, fmt.Errorf("assemble semantic plan: %w", orderErr)
+	}
+	tasks, err := assembleTasks(resolved, prep, result.Hooks, changes)
+	if err != nil {
+		return semantic.Plan{}, nil, cleanup, fmt.Errorf("assemble semantic plan: %w", err)
+	}
+	p, err := semantic.New(header, changes, tasks, diags)
 	if err != nil {
 		return semantic.Plan{}, nil, cleanup, fmt.Errorf("assemble semantic plan: %w", err)
 	}

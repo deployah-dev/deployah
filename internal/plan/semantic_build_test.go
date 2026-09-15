@@ -310,6 +310,7 @@ func TestBuildSemanticPlan_Upgrade(t *testing.T) {
 	registerCleanup(t, cleanup)
 	require.NoError(t, err)
 	assert.Same(t, result, got)
+	assert.Equal(t, "kind-dev", p.Header.Context)
 	assert.Equal(t, 7, p.Header.Revision)
 	assert.False(t, p.Header.FreshInstall)
 	require.Len(t, p.Changes, 1)

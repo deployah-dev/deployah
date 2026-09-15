@@ -80,7 +80,7 @@ func TestNew_SnapshotInvariants(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			p, err := semantic.New(header, []semantic.ResourceChange{tt.change}, nil)
+			p, err := semantic.New(header, []semantic.ResourceChange{tt.change}, nil, nil)
 			require.NoError(t, err)
 			require.Len(t, p.Changes, 1)
 			c := p.Changes[0]
@@ -115,23 +115,27 @@ func TestNew_UpdateWithoutAfterRequiresLimitation(t *testing.T) {
 		Apply:    writeApply(),
 	}
 
-	_, err := semantic.New(header, []semantic.ResourceChange{change}, nil)
+	_, err := semantic.New(header, []semantic.ResourceChange{change}, nil, nil)
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "update without after")
 
-	p, err := semantic.New(header, []semantic.ResourceChange{change}, []semantic.Diagnostic{limitation(res)})
+	p, err := semantic.New(header, []semantic.ResourceChange{change}, nil, []semantic.Diagnostic{limitation(res)})
 	require.NoError(t, err)
 	assert.Nil(t, p.Changes[0].After)
 	assert.Empty(t, p.Changes[0].Fields)
 	assert.Equal(t, semantic.CompletenessPartial, p.Completeness)
 }
 
-func TestNew_ExecutionsAlwaysEmpty(t *testing.T) {
+func TestNew_TasksAlwaysNonNil(t *testing.T) {
 	t.Parallel()
-	p, err := semantic.New(semantic.Header{}, nil, nil)
+	p, err := semantic.New(semantic.Header{}, nil, nil, nil)
 	require.NoError(t, err)
-	require.NotNil(t, p.Executions)
-	assert.Empty(t, p.Executions)
+	require.NotNil(t, p.Tasks)
+	assert.Empty(t, p.Tasks)
+	require.NotNil(t, p.Changes)
+	assert.Empty(t, p.Changes)
+	require.NotNil(t, p.Diagnostics)
+	assert.Empty(t, p.Diagnostics)
 	assert.Equal(t, semantic.CompletenessComplete, p.Completeness)
 	assert.Equal(t, 0, p.Summary.Total())
 }
@@ -143,7 +147,7 @@ func TestNew_SummaryDerived(t *testing.T) {
 		updateChange("b", "1", "2"),
 		deleteChange("c", "1"),
 		replaceChange("d", "1", "2"),
-	}, nil)
+	}, nil, nil)
 	require.NoError(t, err)
 	assert.Equal(t, semantic.Summary{Create: 1, Update: 1, Delete: 1, Replace: 1}, p.Summary)
 	assert.Equal(t, 4, p.Summary.Total())
@@ -155,7 +159,7 @@ func TestNew_DeterministicOrder(t *testing.T) {
 		deleteChange("z", "1"),
 		createChange("a", "1"),
 		updateChange("m", "1", "2"),
-	}, nil)
+	}, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, p.Changes, 3)
 	assert.Equal(t, "a", p.Changes[0].Resource.Name)
@@ -178,7 +182,7 @@ func TestNew_GoIntInSnapshot(t *testing.T) {
 		Action:   semantic.Create,
 		After:    snap(obj),
 		Apply:    writeApply(),
-	}}, nil)
+	}}, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, p.Changes[0].After)
 	spec, ok := p.Changes[0].After.Object["spec"].(map[string]any)
@@ -203,7 +207,7 @@ func TestNew_DoesNotMutateCallerSnapshots(t *testing.T) {
 		After:    snap(obj),
 		Apply:    writeApply(),
 	}
-	p, err := semantic.New(semantic.Header{}, []semantic.ResourceChange{change}, nil)
+	p, err := semantic.New(semantic.Header{}, []semantic.ResourceChange{change}, nil, nil)
 	require.NoError(t, err)
 	setObjectString(t, obj, "mutated", "data", "key")
 	assert.Equal(t, "v1", objectString(t, p.Changes[0].After.Object, "data", "key"))
@@ -223,7 +227,7 @@ func TestNew_DoesNotAliasCallerInputs(t *testing.T) {
 		Before:   snap(cm("app", "v1")),
 		After:    snap(cm("app", "v2")),
 		Apply:    semantic.ApplySemantics{Write: write, Delete: del},
-	}}, []semantic.Diagnostic{diag})
+	}}, nil, []semantic.Diagnostic{diag})
 	require.NoError(t, err)
 
 	helm.Release = "mutated"
@@ -545,7 +549,7 @@ func TestNew_RejectsInvalid(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := semantic.New(semantic.Header{}, []semantic.ResourceChange{tt.change}, nil)
+			_, err := semantic.New(semantic.Header{}, []semantic.ResourceChange{tt.change}, nil, nil)
 			require.Error(t, err)
 			assert.ErrorContains(t, err, tt.wantErr)
 			assert.ErrorContains(t, err, res.String())
@@ -592,7 +596,7 @@ func TestNew_DiagnosticValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := semantic.New(semantic.Header{}, nil, []semantic.Diagnostic{tt.diag})
+			_, err := semantic.New(semantic.Header{}, nil, nil, []semantic.Diagnostic{tt.diag})
 			require.Error(t, err)
 			assert.ErrorContains(t, err, tt.wantErr)
 		})
@@ -622,7 +626,7 @@ func TestNew_LimitationMatching(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := semantic.New(semantic.Header{}, []semantic.ResourceChange{change}, tt.diags)
+			_, err := semantic.New(semantic.Header{}, []semantic.ResourceChange{change}, nil, tt.diags)
 			require.Error(t, err)
 			assert.ErrorContains(t, err, "update without after")
 		})
@@ -670,7 +674,7 @@ func TestNew_Completeness(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			p, err := semantic.New(semantic.Header{}, tt.changes, tt.diags)
+			p, err := semantic.New(semantic.Header{}, tt.changes, nil, tt.diags)
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, p.Completeness)
 		})
@@ -696,7 +700,7 @@ func TestNew_CopiesNestedSnapshotShapes(t *testing.T) {
 		After:    snap(obj),
 		Fields:   []semantic.FieldChange{{Path: "/unused", Op: semantic.FieldAdd, After: "x"}},
 		Apply:    writeApply(),
-	}}, nil)
+	}}, nil, nil)
 	require.NoError(t, err)
 	assert.Empty(t, p.Changes[0].Fields)
 
@@ -726,7 +730,7 @@ func TestNew_UpdateEmptyBeforeObject(t *testing.T) {
 		Before:   &semantic.ResourceSnapshot{},
 		After:    snap(cm("app", "v1")),
 		Apply:    writeApply(),
-	}}, nil)
+	}}, nil, nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, p.Changes[0].Fields)
 	assert.Equal(t, semantic.FieldAdd, p.Changes[0].Fields[0].Op)
@@ -740,7 +744,7 @@ func TestNew_NilSnapshotObject(t *testing.T) {
 		Action:   semantic.Create,
 		After:    &semantic.ResourceSnapshot{},
 		Apply:    writeApply(),
-	}}, nil)
+	}}, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, p.Changes[0].After)
 	assert.Nil(t, p.Changes[0].After.Object)

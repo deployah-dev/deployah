@@ -15,6 +15,8 @@
 package view_test
 
 import (
+	"bytes"
+	"encoding/json"
 	"flag"
 	"os"
 	"path/filepath"
@@ -24,6 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"deployah.dev/deployah/internal/plan/semantic"
+	"deployah.dev/deployah/internal/plan/view"
 )
 
 var update = flag.Bool("update", false, "update golden files")
@@ -98,6 +101,15 @@ func noisyCM(name, value, rv, uid string) map[string]any {
 	}
 }
 
+func widget(name, color string) map[string]any {
+	return map[string]any{
+		"apiVersion": "example.com/v1",
+		"kind":       "Widget",
+		"metadata":   map[string]any{"name": name, "namespace": "prod"},
+		"spec":       map[string]any{"color": color, "size": "large"},
+	}
+}
+
 func secretObj(name, password, token string) map[string]any {
 	return map[string]any{
 		"apiVersion": "v1",
@@ -125,6 +137,88 @@ func ref(kind, name string) semantic.ResourceRef {
 	}
 }
 
+func batchRef(kind, name string) semantic.ResourceRef {
+	return semantic.ResourceRef{
+		APIVersion: "batch/v1",
+		Kind:       kind,
+		Namespace:  "prod",
+		Name:       name,
+	}
+}
+
+func cmWithMeta(name, value string) map[string]any {
+	return map[string]any{
+		"apiVersion": "v1",
+		"kind":       "ConfigMap",
+		"metadata": map[string]any{
+			"name":      name,
+			"namespace": "prod",
+			"labels":    map[string]any{"app": "web"},
+			"annotations": map[string]any{
+				"example.com/keep": "yes",
+			},
+		},
+		"data": map[string]any{"key": value},
+	}
+}
+
+func jobObj(name, task, hook, weight string) map[string]any {
+	return map[string]any{
+		"apiVersion": "batch/v1",
+		"kind":       "Job",
+		"metadata": map[string]any{
+			"name":      name,
+			"namespace": "prod",
+			"labels": map[string]any{
+				"deployah.dev/task": task,
+			},
+			"annotations": map[string]any{
+				"helm.sh/hook":        hook,
+				"helm.sh/hook-weight": weight,
+			},
+		},
+		"spec": jobSpec(task),
+	}
+}
+
+func cronJob(name, task, schedule string) map[string]any {
+	return map[string]any{
+		"apiVersion": "batch/v1",
+		"kind":       "CronJob",
+		"metadata": map[string]any{
+			"name":      name,
+			"namespace": "prod",
+			"labels": map[string]any{
+				"deployah.dev/task": task,
+			},
+		},
+		"spec": map[string]any{
+			"schedule": schedule,
+			"jobTemplate": map[string]any{
+				"spec": jobSpec(task),
+			},
+		},
+	}
+}
+
+func jobSpec(container string) map[string]any {
+	return map[string]any{
+		"backoffLimit": 1,
+		"template": map[string]any{
+			"spec": map[string]any{
+				"restartPolicy": "OnFailure",
+				"containers": []any{
+					map[string]any{
+						"name":    container,
+						"image":   "ghcr.io/example/web:1.2.3",
+						"command": []any{"./" + container},
+					},
+				},
+			},
+		},
+	}
+}
+
 func objectString(tb testing.TB, obj map[string]any, keys ...string) string {
 	tb.Helper()
 	var cur any = obj
@@ -149,16 +243,44 @@ func createChangeForHuman() semantic.ResourceChange {
 	}
 }
 
-func mustPlan(tb testing.TB, changes []semantic.ResourceChange, diags []semantic.Diagnostic) semantic.Plan {
-	tb.Helper()
-	p, err := semantic.New(semantic.Header{
+func humanHeader() semantic.Header {
+	return semantic.Header{
 		Project:     "web",
 		Environment: "prod",
 		Release:     "web",
 		Namespace:   "prod",
-	}, changes, diags)
+		Context:     "production-eu",
+		Revision:    12,
+	}
+}
+
+func mustPlan(tb testing.TB, changes []semantic.ResourceChange, diags []semantic.Diagnostic) semantic.Plan {
+	tb.Helper()
+	return mustPlanWithTasks(tb, changes, nil, diags)
+}
+
+func mustPlanWithTasks(tb testing.TB, changes []semantic.ResourceChange, tasks []semantic.TaskPlan, diags []semantic.Diagnostic) semantic.Plan {
+	tb.Helper()
+	return mustPlanWithHeader(tb, semantic.Header{
+		Project:     "web",
+		Environment: "prod",
+		Release:     "web",
+		Namespace:   "prod",
+	}, changes, tasks, diags)
+}
+
+func mustPlanWithHeader(tb testing.TB, header semantic.Header, changes []semantic.ResourceChange, tasks []semantic.TaskPlan, diags []semantic.Diagnostic) semantic.Plan {
+	tb.Helper()
+	p, err := semantic.New(header, changes, tasks, diags)
 	require.NoError(tb, err)
 	return p
+}
+
+func writeHuman(t *testing.T, p semantic.Plan) string {
+	t.Helper()
+	var buf bytes.Buffer
+	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
+	return buf.String()
 }
 
 func assertNoBookkeeping(t *testing.T, text string) {
@@ -179,6 +301,66 @@ func assertKeepsUserMeta(t *testing.T, text string) {
 	assert.Contains(t, text, "app: web")
 }
 
+func k8sObj(apiVersion, kind, namespace, name string) map[string]any {
+	meta := map[string]any{"name": name}
+	if namespace != "" {
+		meta["namespace"] = namespace
+	}
+	return map[string]any{
+		"apiVersion": apiVersion,
+		"kind":       kind,
+		"metadata":   meta,
+	}
+}
+
+func jsonSelect(tb testing.TB, raw []byte, path ...any) string {
+	tb.Helper()
+	var cur any
+	require.NoError(tb, json.Unmarshal(raw, &cur))
+	for _, p := range path {
+		switch key := p.(type) {
+		case string:
+			m, ok := cur.(map[string]any)
+			require.True(tb, ok, "jsonSelect: expected object at %v", p)
+			next, ok := m[key]
+			require.True(tb, ok, "jsonSelect: missing key %q", key)
+			cur = next
+		case int:
+			a, ok := cur.([]any)
+			require.True(tb, ok, "jsonSelect: expected array at %v", p)
+			require.GreaterOrEqual(tb, key, 0)
+			require.Less(tb, key, len(a))
+			cur = a[key]
+		default:
+			tb.Fatalf("jsonSelect: unsupported path element %T", p)
+		}
+	}
+	b, err := json.Marshal(cur)
+	require.NoError(tb, err)
+	return string(b)
+}
+
+func assertJSONAt(tb testing.TB, raw []byte, want string, path ...any) {
+	tb.Helper()
+	assert.JSONEq(tb, want, jsonSelect(tb, raw, path...))
+}
+
+type jsonPathWant struct {
+	want string
+	path []any
+}
+
+func assertJSONPaths(tb testing.TB, raw []byte, wants []jsonPathWant) {
+	tb.Helper()
+	for _, w := range wants {
+		assertJSONAt(tb, raw, w.want, w.path...)
+	}
+}
+
+// assertGolden is the primary golden contract: got must equal
+// testdata/golden/<name>.golden in full. Contains checks in callers are
+// secondary invariants only. A normal run never skips the comparison.
+// -update rewrites the file from got, then the same equality still runs.
 func assertGolden(t *testing.T, name, got string) {
 	t.Helper()
 	assert.Equal(t, string(readGolden(t, name, got)), got)

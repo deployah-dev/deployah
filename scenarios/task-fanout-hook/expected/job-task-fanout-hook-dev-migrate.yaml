@@ -16,6 +16,7 @@ metadata:
         deployah.dev/environment: dev
         deployah.dev/instance: task-fanout-hook-dev
         deployah.dev/project: task-fanout-hook
+        deployah.dev/task: migrate
         helm.sh/chart: migrate-0.1.0
     name: task-fanout-hook-dev-migrate
     namespace: default
@@ -37,6 +38,7 @@ spec:
                 deployah.dev/environment: dev
                 deployah.dev/instance: task-fanout-hook-dev
                 deployah.dev/project: task-fanout-hook
+                deployah.dev/task: migrate
                 helm.sh/chart: migrate-0.1.0
         spec:
             automountServiceAccountToken: false

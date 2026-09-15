@@ -68,6 +68,7 @@ func TestBuildTaskJob_IndexedAndLabels(t *testing.T) {
 	assert.Equal(t, int32(2), *job.Spec.Parallelism)
 	assert.Equal(t, "shop", job.Labels[spec.LabelProject])
 	assert.Equal(t, "backfill", job.Labels[spec.LabelComponent])
+	assert.Equal(t, "backfill", job.Labels[spec.LabelTask])
 	assert.Equal(t, "dev", job.Labels[spec.LabelEnvironment])
 	assert.Equal(t, "shop-dev", job.Labels[InstanceLabel])
 	require.Len(t, job.Spec.Template.Spec.Containers, 1)
@@ -823,6 +824,7 @@ func TestBuildTaskJob_ProfileCannotOverwriteIdentity(t *testing.T) {
 				spec.LabelEnvironment: "staging",
 				spec.LabelManagedBy:   "not-deployah",
 				spec.LabelComponent:   "other-task",
+				spec.LabelTask:        "other-task",
 				"tier":                "jobs",
 			},
 			PodAnnotations: map[string]string{
@@ -838,6 +840,7 @@ func TestBuildTaskJob_ProfileCannotOverwriteIdentity(t *testing.T) {
 	assert.Equal(t, "review", job.Spec.Template.Labels[spec.LabelEnvironment])
 	assert.Equal(t, spec.ManagedByValue, job.Spec.Template.Labels[spec.LabelManagedBy])
 	assert.Equal(t, "migrate", job.Spec.Template.Labels[spec.LabelComponent])
+	assert.Equal(t, "migrate", job.Spec.Template.Labels[spec.LabelTask])
 	assert.Equal(t, "jobs", job.Spec.Template.Labels["tier"])
 	assert.Equal(t, "review/pr-123", job.Spec.Template.Annotations[spec.AnnotationEnvironmentInstance])
 	assert.Equal(t, "platform", job.Spec.Template.Annotations["team"])

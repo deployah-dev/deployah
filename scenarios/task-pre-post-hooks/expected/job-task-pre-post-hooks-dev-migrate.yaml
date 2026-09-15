@@ -16,6 +16,7 @@ metadata:
         deployah.dev/environment: dev
         deployah.dev/instance: task-pre-post-hooks-dev
         deployah.dev/project: task-pre-post-hooks
+        deployah.dev/task: migrate
         helm.sh/chart: migrate-0.1.0
     name: task-pre-post-hooks-dev-migrate
     namespace: default
@@ -37,6 +38,7 @@ spec:
                 deployah.dev/environment: dev
                 deployah.dev/instance: task-pre-post-hooks-dev
                 deployah.dev/project: task-pre-post-hooks
+                deployah.dev/task: migrate
                 helm.sh/chart: migrate-0.1.0
         spec:
             automountServiceAccountToken: false

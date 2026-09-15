@@ -16,7 +16,7 @@ package view_test
 
 import (
 	"bytes"
-	"encoding/json"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -84,15 +84,12 @@ func TestSecretRedaction_FieldChangeComputedBeforeRedaction(t *testing.T) {
 		Apply:    writeApply(),
 	}}, nil)
 	require.NotEmpty(t, p.Changes[0].Fields)
-	found := false
-	for _, f := range p.Changes[0].Fields {
-		if f.Path == "/stringData/password" {
-			found = true
-			assert.Equal(t, "old-pass", f.Before)
-			assert.Equal(t, "new-pass", f.After)
-		}
-	}
-	assert.True(t, found, "secret field change must exist on the unredacted plan")
+	idx := slices.IndexFunc(p.Changes[0].Fields, func(f semantic.FieldChange) bool {
+		return f.Path == "/stringData/password"
+	})
+	require.GreaterOrEqual(t, idx, 0, "secret field change must exist on the unredacted plan")
+	assert.Equal(t, "old-pass", p.Changes[0].Fields[idx].Before)
+	assert.Equal(t, "new-pass", p.Changes[0].Fields[idx].After)
 
 	var buf bytes.Buffer
 	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
@@ -111,7 +108,7 @@ func TestSecretRedaction_CoreAPIVersions(t *testing.T) {
 		contains   []string
 		omits      []string
 	}{
-		{name: "v1", apiVersion: "v1", contains: []string{"(redacted)"}, omits: []string{"hidden"}},
+		{name: "v1", apiVersion: "v1", contains: []string{"+ apiVersion: v1", "+ kind: Secret", "name: s", "(redacted)"}, omits: []string{"hidden"}},
 		{name: "core/v1", apiVersion: "core/v1", contains: []string{"(redacted)"}, omits: []string{"hidden"}},
 		{name: "non-core group", apiVersion: "example.com/v1", contains: []string{"hidden"}, omits: []string{"(redacted)"}},
 	}
@@ -163,68 +160,124 @@ func TestSecretRedaction_MissingSectionsStayAbsent(t *testing.T) {
 	assert.NotContains(t, text, "(redacted)")
 }
 
-func TestSecretRedaction_NestedValueShapes(t *testing.T) {
+func TestSecretRedaction_JSONValueShapes(t *testing.T) {
 	t.Parallel()
-	p := mustPlan(t, []semantic.ResourceChange{{
-		Resource: ref("Secret", "s"),
-		Origin:   helmOrigin(),
-		Action:   semantic.Create,
-		After: snap(map[string]any{
-			"apiVersion": "v1",
-			"kind":       "Secret",
-			"metadata":   map[string]any{"name": "s", "namespace": "prod"},
-			"data": map[string]any{
-				"scalar": "secret",
-				"nested": map[string]any{"k": "secret"},
-				"list":   []any{"secret", nil},
+	redactedSecret := `{
+		"apiVersion": "v1",
+		"kind": "Secret",
+		"metadata": {"name": "s", "namespace": "prod"},
+		"type": "Opaque",
+		"data": {"token": "(redacted)"},
+		"stringData": {"password": "(redacted)"}
+	}`
+	tests := []struct {
+		name          string
+		change        semantic.ResourceChange
+		omit          []string
+		humanContains []string
+		at            []jsonPathWant
+	}{
+		{
+			name: "nested values",
+			change: semantic.ResourceChange{
+				Resource: ref("Secret", "s"),
+				Origin:   helmOrigin(),
+				Action:   semantic.Create,
+				After: snap(map[string]any{
+					"apiVersion": "v1",
+					"kind":       "Secret",
+					"metadata":   map[string]any{"name": "s", "namespace": "prod"},
+					"data": map[string]any{
+						"scalar": "secret",
+						"nested": map[string]any{"k": "secret"},
+						"list":   []any{"secret", nil},
+					},
+					"stringData": map[string]string{"plain": "secret"},
+				}),
+				Apply: writeApply(),
 			},
-			"stringData": map[string]string{"plain": "secret"},
-		}),
-		Apply: writeApply(),
-	}}, nil)
-	var buf bytes.Buffer
-	require.NoError(t, view.WriteJSON(&buf, p, view.Options{}))
-	assert.NotContains(t, buf.String(), `"secret"`)
-
-	var doc map[string]any
-	require.NoError(t, json.Unmarshal(buf.Bytes(), &doc))
-	changes, ok := doc["changes"].([]any)
-	require.True(t, ok)
-	require.Len(t, changes, 1)
-	change, ok := changes[0].(map[string]any)
-	require.True(t, ok)
-	after, ok := change["after"].(map[string]any)
-	require.True(t, ok)
-	data, ok := after["data"].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "(redacted)", data["scalar"])
-	assert.Equal(t, map[string]any{"k": "(redacted)"}, data["nested"])
-	assert.Equal(t, []any{"(redacted)", nil}, data["list"])
-	stringData, ok := after["stringData"].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "(redacted)", stringData["plain"])
-}
-
-func TestSecretRedaction_NullLeafStaysNull(t *testing.T) {
-	t.Parallel()
-	p := mustPlan(t, []semantic.ResourceChange{{
-		Resource: ref("Secret", "s"),
-		Origin:   helmOrigin(),
-		Action:   semantic.Create,
-		After: snap(map[string]any{
-			"apiVersion": "v1",
-			"kind":       "Secret",
-			"metadata":   map[string]any{"name": "s", "namespace": "prod"},
-			"data":       map[string]any{"token": nil},
-		}),
-		Apply: writeApply(),
-	}}, nil)
-	var human, jsonBuf bytes.Buffer
-	require.NoError(t, view.WriteHuman(&human, p, view.Options{}))
-	require.NoError(t, view.WriteJSON(&jsonBuf, p, view.Options{}))
-	assert.Contains(t, human.String(), "token: null")
-	assert.NotContains(t, human.String(), "leaked")
-	assert.Contains(t, jsonBuf.String(), `"token": null`)
+			omit: []string{`"secret"`},
+			at: []jsonPathWant{{
+				want: `{
+					"apiVersion": "v1",
+					"kind": "Secret",
+					"metadata": {"name": "s", "namespace": "prod"},
+					"data": {
+						"scalar": "(redacted)",
+						"nested": {"k": "(redacted)"},
+						"list": ["(redacted)", null]
+					},
+					"stringData": {"plain": "(redacted)"}
+				}`,
+				path: []any{"changes", 0, "after"},
+			}},
+		},
+		{
+			name: "null leaf stays null",
+			change: semantic.ResourceChange{
+				Resource: ref("Secret", "s"),
+				Origin:   helmOrigin(),
+				Action:   semantic.Create,
+				After: snap(map[string]any{
+					"apiVersion": "v1",
+					"kind":       "Secret",
+					"metadata":   map[string]any{"name": "s", "namespace": "prod"},
+					"data":       map[string]any{"token": nil},
+				}),
+				Apply: writeApply(),
+			},
+			humanContains: []string{"token: null"},
+			at: []jsonPathWant{{
+				want: `{"token": null}`,
+				path: []any{"changes", 0, "after", "data"},
+			}},
+		},
+		{
+			name: "whole map add keeps keys",
+			change: semantic.ResourceChange{
+				Resource: ref("Secret", "s"),
+				Origin:   helmOrigin(),
+				Action:   semantic.Update,
+				Before: snap(map[string]any{
+					"apiVersion": "v1",
+					"kind":       "Secret",
+					"metadata":   map[string]any{"name": "s", "namespace": "prod"},
+					"type":       "Opaque",
+				}),
+				After: snap(secretObj("s", "new-pass", "new-tok")),
+				Apply: writeApply(),
+			},
+			omit:          []string{"new-pass", "new-tok"},
+			humanContains: []string{"token: (redacted)", "password: (redacted)"},
+			at: []jsonPathWant{
+				{want: redactedSecret, path: []any{"changes", 0, "after"}},
+				{
+					want: `[
+						{"path":"/data","op":"add","after":{"token":"(redacted)"}},
+						{"path":"/stringData","op":"add","after":{"password":"(redacted)"}}
+					]`,
+					path: []any{"changes", 0, "fields"},
+				},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			p := mustPlan(t, []semantic.ResourceChange{tt.change}, nil)
+			var human, jsonBuf bytes.Buffer
+			require.NoError(t, view.WriteHuman(&human, p, view.Options{}))
+			require.NoError(t, view.WriteJSON(&jsonBuf, p, view.Options{}))
+			for _, omit := range tt.omit {
+				assert.NotContains(t, human.String(), omit)
+				assert.NotContains(t, jsonBuf.String(), omit)
+			}
+			for _, want := range tt.humanContains {
+				assert.Contains(t, human.String(), want)
+			}
+			assertJSONPaths(t, jsonBuf.Bytes(), tt.at)
+		})
+	}
 }
 
 func TestWriteRenderers_CopyIsolation(t *testing.T) {
@@ -253,7 +306,7 @@ func TestWriteRenderers_CopyIsolation(t *testing.T) {
 		Before:   snap(beforeObj),
 		After:    snap(secretObj("s", "new", "tok2")),
 		Apply:    semantic.ApplySemantics{Write: write, Delete: del},
-	}}, []semantic.Diagnostic{diag})
+	}}, nil, []semantic.Diagnostic{diag})
 	require.NoError(t, err)
 	require.NotEmpty(t, p.Changes[0].Fields)
 	fieldBefore := p.Changes[0].Fields[0].Before
@@ -310,44 +363,123 @@ func TestWriteRenderers_ManualSnapshotShapes(t *testing.T) {
 	require.NoError(t, view.WriteJSON(&jsonBuf, p, view.Options{}))
 	assert.Contains(t, human.String(), "app: web")
 	assert.Contains(t, human.String(), "serve")
-	assert.Contains(t, jsonBuf.String(), `"app": "web"`)
+	assertJSONAt(t, jsonBuf.Bytes(), `{
+		"labels": {"app": "web"},
+		"args": ["serve"],
+		"nested": ["x"],
+		"empty": null
+	}`, "changes", 0, "after")
+	assertJSONAt(t, jsonBuf.Bytes(), `{}`, "changes", 1, "after")
 }
 
-func TestWriteRenderers_NilExecutions(t *testing.T) {
+func TestWriteRenderers_NilTasks(t *testing.T) {
 	t.Parallel()
 	p := semantic.Plan{
 		Completeness: semantic.CompletenessComplete,
 		Header:       semantic.Header{Release: "web"},
 	}
-	assert.Nil(t, p.Executions)
+	assert.Nil(t, p.Tasks)
 	require.NoError(t, view.WriteHuman(&bytes.Buffer{}, p, view.Options{}))
-	require.NoError(t, view.WriteJSON(&bytes.Buffer{}, p, view.Options{}))
+	var jsonBuf bytes.Buffer
+	require.NoError(t, view.WriteJSON(&jsonBuf, p, view.Options{}))
+	assertJSONAt(t, jsonBuf.Bytes(), `[]`, "tasks")
 }
 
-func TestSecretRedaction_WholeMapKeepsKeys(t *testing.T) {
+func TestSecretRedaction_OmitsPlaintext(t *testing.T) {
 	t.Parallel()
-	before := map[string]any{
-		"apiVersion": "v1",
-		"kind":       "Secret",
-		"metadata":   map[string]any{"name": "s", "namespace": "prod"},
-		"type":       "Opaque",
+	redactedData := `{"token":"(redacted)"}`
+	redactedStringData := `{"password":"(redacted)"}`
+	redactedReplaceFields := `[
+		{"path":"/data/token","op":"replace","before":"(redacted)","after":"(redacted)"},
+		{"path":"/stringData/password","op":"replace","before":"(redacted)","after":"(redacted)"}
+	]`
+	tests := []struct {
+		name string
+		plan semantic.Plan
+		omit []string
+		at   []jsonPathWant
+	}{
+		{
+			name: "create and delete changes",
+			plan: mustPlan(t, []semantic.ResourceChange{
+				{
+					Resource: ref("Secret", "created"),
+					Origin:   helmOrigin(),
+					Action:   semantic.Create,
+					After:    snap(secretObj("created", "c-pass", "c-tok")),
+					Apply:    writeApply(),
+				},
+				{
+					Resource: ref("Secret", "removed"),
+					Origin:   helmOrigin(),
+					Action:   semantic.Delete,
+					Before:   snap(secretObj("removed", "d-pass", "d-tok")),
+					Apply:    deleteApply(),
+				},
+			}, nil),
+			omit: []string{"c-pass", "d-pass", "c-tok", "d-tok"},
+			at: []jsonPathWant{
+				{want: redactedData, path: []any{"changes", 0, "after", "data"}},
+				{want: redactedStringData, path: []any{"changes", 0, "after", "stringData"}},
+				{want: "null", path: []any{"changes", 0, "before"}},
+				{want: redactedData, path: []any{"changes", 1, "before", "data"}},
+				{want: redactedStringData, path: []any{"changes", 1, "before", "stringData"}},
+				{want: "null", path: []any{"changes", 1, "after"}},
+			},
+		},
+		{
+			name: "hook definitions",
+			plan: mustPlanWithTasks(t, nil, []semantic.TaskPlan{{
+				Name:    "migrate",
+				Phase:   semantic.TaskPreDeploy,
+				Action:  semantic.TaskUpdate,
+				WillRun: true,
+				Definitions: []semantic.HookDefinition{
+					{
+						Resource: ref("Secret", "hook-secret"),
+						Action:   semantic.Update,
+						Before:   snap(secretObj("hook-secret", "old-pass", "old-tok")),
+						After:    snap(secretObj("hook-secret", "new-pass", "new-tok")),
+					},
+					{
+						Resource: semantic.ResourceRef{APIVersion: "v1", Kind: "Secret", Namespace: "prod", Name: "created"},
+						Action:   semantic.Create,
+						After:    snap(secretObj("created", "c-pass", "c-tok")),
+					},
+					{
+						Resource: semantic.ResourceRef{APIVersion: "v1", Kind: "Secret", Namespace: "prod", Name: "removed"},
+						Action:   semantic.Delete,
+						Before:   snap(secretObj("removed", "d-pass", "d-tok")),
+					},
+				},
+			}}, nil),
+			omit: []string{"old-pass", "new-pass", "c-pass", "d-pass", "old-tok", "new-tok", "c-tok", "d-tok"},
+			at: []jsonPathWant{
+				{want: redactedData, path: []any{"tasks", 0, "definitions", 0, "after", "data"}},
+				{want: redactedStringData, path: []any{"tasks", 0, "definitions", 0, "after", "stringData"}},
+				{want: "null", path: []any{"tasks", 0, "definitions", 0, "before"}},
+				{want: redactedData, path: []any{"tasks", 0, "definitions", 1, "before", "data"}},
+				{want: redactedStringData, path: []any{"tasks", 0, "definitions", 1, "before", "stringData"}},
+				{want: redactedData, path: []any{"tasks", 0, "definitions", 1, "after", "data"}},
+				{want: redactedStringData, path: []any{"tasks", 0, "definitions", 1, "after", "stringData"}},
+				{want: redactedReplaceFields, path: []any{"tasks", 0, "definitions", 1, "fields"}},
+				{want: redactedData, path: []any{"tasks", 0, "definitions", 2, "before", "data"}},
+				{want: redactedStringData, path: []any{"tasks", 0, "definitions", 2, "before", "stringData"}},
+				{want: "null", path: []any{"tasks", 0, "definitions", 2, "after"}},
+			},
+		},
 	}
-	after := secretObj("s", "new-pass", "new-tok")
-	p := mustPlan(t, []semantic.ResourceChange{{
-		Resource: ref("Secret", "s"),
-		Origin:   helmOrigin(),
-		Action:   semantic.Update,
-		Before:   snap(before),
-		After:    snap(after),
-		Apply:    writeApply(),
-	}}, nil)
-	var hidden, jsonBuf bytes.Buffer
-	require.NoError(t, view.WriteHuman(&hidden, p, view.Options{}))
-	require.NoError(t, view.WriteJSON(&jsonBuf, p, view.Options{}))
-	assert.Contains(t, hidden.String(), "token: (redacted)")
-	assert.Contains(t, hidden.String(), "password: (redacted)")
-	assert.NotContains(t, hidden.String(), "new-pass")
-	assert.NotContains(t, jsonBuf.String(), `"after": "(redacted)"`)
-	assert.Contains(t, jsonBuf.String(), `"token": "(redacted)"`)
-	assert.Contains(t, jsonBuf.String(), `"password": "(redacted)"`)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var human, jsonBuf bytes.Buffer
+			require.NoError(t, view.WriteHuman(&human, tt.plan, view.Options{}))
+			require.NoError(t, view.WriteJSON(&jsonBuf, tt.plan, view.Options{}))
+			for _, omit := range tt.omit {
+				assert.NotContains(t, human.String(), omit)
+				assert.NotContains(t, jsonBuf.String(), omit)
+			}
+			assertJSONPaths(t, jsonBuf.Bytes(), tt.at)
+		})
+	}
 }

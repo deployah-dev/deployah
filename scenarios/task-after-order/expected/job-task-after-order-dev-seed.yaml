@@ -16,6 +16,7 @@ metadata:
         deployah.dev/environment: dev
         deployah.dev/instance: task-after-order-dev
         deployah.dev/project: task-after-order
+        deployah.dev/task: seed
         helm.sh/chart: seed-0.1.0
     name: task-after-order-dev-seed
     namespace: default
@@ -37,6 +38,7 @@ spec:
                 deployah.dev/environment: dev
                 deployah.dev/instance: task-after-order-dev
                 deployah.dev/project: task-after-order
+                deployah.dev/task: seed
                 helm.sh/chart: seed-0.1.0
         spec:
             automountServiceAccountToken: false

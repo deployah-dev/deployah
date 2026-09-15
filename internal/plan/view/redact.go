@@ -51,10 +51,29 @@ func copyPlan(p semantic.Plan) semantic.Plan {
 			out.Diagnostics[i].Resource = &r
 		}
 	}
-	if p.Executions == nil {
-		out.Executions = []semantic.Execution{}
-	} else {
-		out.Executions = slices.Clone(p.Executions)
+	out.Tasks = slices.Clone(p.Tasks)
+	if out.Tasks == nil {
+		out.Tasks = []semantic.TaskPlan{}
+	}
+	for i := range out.Tasks {
+		t := &out.Tasks[i]
+		t.Resources = slices.Clone(t.Resources)
+		if t.Resources == nil {
+			t.Resources = []semantic.ResourceRef{}
+		}
+		t.Definitions = slices.Clone(t.Definitions)
+		if t.Definitions == nil {
+			t.Definitions = []semantic.HookDefinition{}
+		}
+		for j := range t.Definitions {
+			d := &t.Definitions[j]
+			d.Before = copySnapshot(d.Before)
+			d.After = copySnapshot(d.After)
+			d.Fields = copyFields(d.Fields)
+			if d.Fields == nil {
+				d.Fields = []semantic.FieldChange{}
+			}
+		}
 	}
 	return out
 }
@@ -132,6 +151,23 @@ func redactPlan(p *semantic.Plan) {
 			}
 			c.Fields[j].Before = redactSecretValue(c.Fields[j].Before)
 			c.Fields[j].After = redactSecretValue(c.Fields[j].After)
+		}
+	}
+	for i := range p.Tasks {
+		for j := range p.Tasks[i].Definitions {
+			d := &p.Tasks[i].Definitions[j]
+			if !isCoreSecret(d.Resource) {
+				continue
+			}
+			redactSnapshot(d.Before)
+			redactSnapshot(d.After)
+			for k := range d.Fields {
+				if !isSecretDataPath(d.Fields[k].Path) {
+					continue
+				}
+				d.Fields[k].Before = redactSecretValue(d.Fields[k].Before)
+				d.Fields[k].After = redactSecretValue(d.Fields[k].After)
+			}
 		}
 	}
 }

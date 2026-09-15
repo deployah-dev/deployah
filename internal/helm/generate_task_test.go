@@ -100,6 +100,13 @@ func TestMapSpecToChartValues_HookTasks(t *testing.T) {
 	labels, ok := migrate["commonLabels"].(map[string]string)
 	require.True(t, ok)
 	assert.Equal(t, "migrate", labels[spec.LabelComponent])
+	assert.Equal(t, "migrate", labels[spec.LabelTask])
+
+	api := mustNestedMap(t, vals, "api")
+	apiLabels, ok := api["commonLabels"].(map[string]string)
+	require.True(t, ok)
+	assert.Equal(t, "api", apiLabels[spec.LabelComponent])
+	assert.NotContains(t, apiLabels, spec.LabelTask)
 
 	smoke := mustNestedMap(t, vals, "smoke")
 	smokeJob := mustNestedMap(t, smoke, "job")

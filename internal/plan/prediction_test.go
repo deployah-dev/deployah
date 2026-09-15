@@ -61,8 +61,8 @@ func TestSemanticPlanFromResults_ActionMapping(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Len(t, p.Changes, 3)
-	assert.NotNil(t, p.Executions)
-	assert.Empty(t, p.Executions)
+	assert.NotNil(t, p.Tasks)
+	assert.Empty(t, p.Tasks)
 	assert.Equal(t, semantic.CompletenessComplete, p.Completeness)
 
 	byName := map[string]semantic.ResourceChange{}

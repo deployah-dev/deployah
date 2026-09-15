@@ -16,7 +16,7 @@
 // semantic Plan domain model.
 //
 // This package is not the deployah plan command. The semantic model stays
-// full and unredacted. [WriteJSON] is the only Stage C machine-readable
-// output contract. Do not treat encoding/json of semantic types as
-// supported output.
+// full and unredacted. [WriteJSON] is the only machine-readable output
+// contract. Do not treat encoding/json of semantic types as supported
+// output.
 package view
