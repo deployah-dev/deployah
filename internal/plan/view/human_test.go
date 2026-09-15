@@ -121,27 +121,14 @@ func TestWriteHuman_DiagnosticPartial(t *testing.T) {
 
 func TestWriteHuman_PartialPreservesKnownDetails(t *testing.T) {
 	t.Parallel()
-	res := ref("ConfigMap", "web")
-	taskRes := ref("ConfigMap", "web-migrate-env")
-	changes := []semantic.ResourceChange{knownConfigMapUpdate(res)}
-	tasks := []semantic.TaskPlan{{
-		Name:    "migrate",
-		Phase:   semantic.TaskPreDeploy,
-		Action:  semantic.TaskUpdate,
-		WillRun: true,
-		Definitions: []semantic.HookDefinition{{
-			Resource: taskRes,
-			Action:   semantic.Update,
-			Before:   snap(cm("web-migrate-env", "v1")),
-			After:    snap(cm("web-migrate-env", "v2")),
-		}},
-	}}
-	complete := mustPlanWithHeader(t, humanHeader(), changes, tasks, nil)
-	partial := mustPlanWithHeader(t, humanHeader(), changes, tasks, []semantic.Diagnostic{
-		predictionLimitation(res),
+	header, changes, tasks := allActionsInputs()
+	complete := mustPlanWithHeader(t, header, changes, tasks, nil)
+	partial := mustPlanWithHeader(t, header, changes, tasks, []semantic.Diagnostic{
+		predictionLimitation(ref("ConfigMap", "web")),
 	})
 	assert.Equal(t, semantic.CompletenessComplete, complete.Completeness)
 	assert.Equal(t, semantic.CompletenessPartial, partial.Completeness)
+	assert.Equal(t, complete.Summary, partial.Summary)
 
 	completeText := writeHuman(t, complete)
 	partialText := writeHuman(t, partial)
@@ -1040,8 +1027,13 @@ func TestWriteHuman_SummaryOmitsTasksWhenAbsent(t *testing.T) {
 // that is TestWriteHuman_SemanticPlan / human_semantic_plan.golden.
 func allActionsPlan(tb testing.TB) semantic.Plan {
 	tb.Helper()
+	header, changes, tasks := allActionsInputs()
+	return mustPlanWithHeader(tb, header, changes, tasks, nil)
+}
+
+func allActionsInputs() (semantic.Header, []semantic.ResourceChange, []semantic.TaskPlan) {
 	cron := batchRef("CronJob", "web-cleanup")
-	return mustPlanWithHeader(tb, humanHeader(), []semantic.ResourceChange{
+	changes := []semantic.ResourceChange{
 		{
 			Resource: ref("ConfigMap", "app"),
 			Origin:   helmOrigin(),
@@ -1080,7 +1072,8 @@ func allActionsPlan(tb testing.TB) semantic.Plan {
 			After:    snap(cronJob("web-cleanup", "cleanup", "0 3 * * *")),
 			Apply:    writeApply(),
 		},
-	}, []semantic.TaskPlan{
+	}
+	tasks := []semantic.TaskPlan{
 		{
 			Name:    "migrate",
 			Phase:   semantic.TaskPreDeploy,
@@ -1128,7 +1121,8 @@ func allActionsPlan(tb testing.TB) semantic.Plan {
 			Action:    semantic.TaskUpdate,
 			Resources: []semantic.ResourceRef{cron},
 		},
-	}, nil)
+	}
+	return humanHeader(), changes, tasks
 }
 
 func assertHumanLayout(t *testing.T, text string) {
