@@ -204,7 +204,7 @@ func predictDesired(
 	if applyErr != nil {
 		return Result{}, applyErr
 	}
-	if equalBookkeeping(live, predicted) {
+	if EqualPredictedState(live, predicted) {
 		return Result{
 			Identity:  desired.id,
 			Action:    ActionNoOp,

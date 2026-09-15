@@ -83,7 +83,7 @@ func nsCreate(name string) semantic.ResourceChange {
 			"kind":       "Namespace",
 			"metadata":   map[string]any{"name": name},
 		}},
-		Apply: writeCreate(),
+		Apply: writeApply(),
 	}
 }
 
@@ -102,6 +102,12 @@ func writeApply() semantic.ApplySemantics {
 			FieldManager: "deployah",
 		},
 	}
+}
+
+func writeForceApply() semantic.ApplySemantics {
+	a := writeApply()
+	a.Write.ForceConflicts = true
+	return a
 }
 
 func deleteApply() semantic.ApplySemantics {

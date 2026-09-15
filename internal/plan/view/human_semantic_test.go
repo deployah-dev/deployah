@@ -30,6 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/yaml"
 
+	"deployah.dev/deployah/internal/extras"
 	"deployah.dev/deployah/internal/helm"
 	"deployah.dev/deployah/internal/plan"
 	"deployah.dev/deployah/internal/plan/semantic"
@@ -357,7 +358,10 @@ func seedTargetNamespace(cluster *fakeCluster, namespace string) {
 	cluster.store(&unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "v1",
 		"kind":       "Namespace",
-		"metadata":   map[string]any{"name": namespace},
+		"metadata": map[string]any{
+			"name":   namespace,
+			"labels": map[string]any{"name": namespace},
+		},
 	}})
 }
 
@@ -372,7 +376,11 @@ func storePredictedLive(cluster *fakeCluster, changes []semantic.ResourceChange)
 
 func buildSemanticPlan(t *testing.T, client plan.SemanticBuildClient, cluster predict.Cluster, resolved *spec.ResolvedSpec) semantic.Plan {
 	t.Helper()
-	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, productClusterContext, resolved, nil)
+	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, plan.SemanticBuildInput{
+		ClusterContext: productClusterContext,
+		Resolved:       resolved,
+		CRDPolicy:      extras.PolicyCreate,
+	})
 	require.NotNil(t, cleanup)
 	t.Cleanup(cleanup)
 	require.NoError(t, err)

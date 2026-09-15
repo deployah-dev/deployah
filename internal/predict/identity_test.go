@@ -419,3 +419,26 @@ metadata:
 		assert.True(t, apimeta.IsNoMatchError(err), "Predict() = %v, want IsNoMatchError", err)
 	})
 }
+
+func TestFlattenManifest_ListItems(t *testing.T) {
+	t.Parallel()
+	objs, err := predict.FlattenManifest(`apiVersion: v1
+kind: List
+items:
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    name: prod
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: app
+    namespace: prod
+`)
+	require.NoError(t, err)
+	require.Len(t, objs, 2)
+	assert.Equal(t, "Namespace", objs[0].GetKind())
+	assert.Equal(t, "prod", objs[0].GetName())
+	assert.Equal(t, "ConfigMap", objs[1].GetKind())
+	assert.Equal(t, "app", objs[1].GetName())
+}

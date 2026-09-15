@@ -101,6 +101,90 @@ func TestWriteHuman_CreateUpdateDeleteReplace(t *testing.T) {
 	assert.NotContains(t, text, "@@")
 }
 
+func TestWriteHuman_NoOpLimitationDiagnosticsOnly(t *testing.T) {
+	t.Parallel()
+	widget := semantic.ResourceRef{APIVersion: "example.com/v1", Kind: "Widget", Namespace: "prod", Name: "app"}
+	p := mustPlanWithHeader(t, humanHeader(), semantic.HelmUpgrade, nil, nil, []semantic.Diagnostic{{
+		Severity: semantic.DiagnosticWarning,
+		Category: semantic.CategoryPredictionLimitation,
+		Message:  "prediction is not exact: prediction used the currently installed CRD, but that CRD's spec changes before Helm executes",
+		Resource: &widget,
+	}})
+	assert.Equal(t, semantic.CompletenessPartial, p.Completeness)
+	assert.False(t, p.IsNoOp())
+	text := writeHuman(t, p)
+	assertGolden(t, "human_noop_limitation", text)
+	assert.Contains(t, text, "Warning: prediction is incomplete")
+	assert.Contains(t, text, "Diagnostics")
+	assert.Contains(t, text, `example.com/v1/Widget "app"`)
+	assert.NotContains(t, text, "\nResources\n")
+}
+
+func TestWriteHuman_Prerequisites(t *testing.T) {
+	t.Parallel()
+	widgetRef := semantic.ResourceRef{APIVersion: "example.com/v1", Kind: "Widget", Namespace: "prod", Name: "app"}
+	p := mustPlanWithHeader(t, semantic.Header{
+		Project:      "web",
+		Environment:  "prod",
+		Release:      "web",
+		Namespace:    "prod",
+		Context:      "kind-dev",
+		Revision:     1,
+		FreshInstall: true,
+	}, semantic.HelmInstall, []semantic.ResourceChange{
+		{
+			Resource: semantic.ResourceRef{
+				APIVersion: "apiextensions.k8s.io/v1",
+				Kind:       "CustomResourceDefinition",
+				Name:       "widgets.example.com",
+			},
+			Origin: semantic.ResourceOrigin{Kind: semantic.OriginCRD},
+			Action: semantic.Create,
+			After: snap(map[string]any{
+				"apiVersion": "apiextensions.k8s.io/v1",
+				"kind":       "CustomResourceDefinition",
+				"metadata":   map[string]any{"name": "widgets.example.com"},
+			}),
+			Apply:      writeCreate(),
+			ApplyOrder: 1,
+		},
+		{
+			Resource: semantic.ResourceRef{APIVersion: "v1", Kind: "Namespace", Name: "prod"},
+			Origin:   semantic.ResourceOrigin{Kind: semantic.OriginNamespace},
+			Action:   semantic.Create,
+			After: snap(map[string]any{
+				"apiVersion": "v1",
+				"kind":       "Namespace",
+				"metadata": map[string]any{
+					"name":   "prod",
+					"labels": map[string]any{"name": "prod"},
+				},
+			}),
+			Apply:      writeApply(),
+			ApplyOrder: 1,
+		},
+		{
+			Resource:   widgetRef,
+			Origin:     helmOrigin(),
+			Action:     semantic.Create,
+			After:      snap(widget("app", "blue")),
+			Apply:      writeApply(),
+			ApplyOrder: 1,
+		},
+	}, nil, []semantic.Diagnostic{{
+		Severity: semantic.DiagnosticWarning,
+		Category: semantic.CategoryPredictionLimitation,
+		Message:  "prediction is not exact: API example.com/v1/Widget becomes available after CRD widgets.example.com is created earlier in this deployment",
+		Resource: &widgetRef,
+	}})
+	text := writeHuman(t, p)
+	assertGolden(t, "human_prerequisites", text)
+	assert.Contains(t, text, `+ create apiextensions.k8s.io/v1/CustomResourceDefinition "widgets.example.com"`)
+	assert.Contains(t, text, `+ create v1/Namespace "prod"`)
+	assert.Contains(t, text, `+ create example.com/v1/Widget "app"`)
+	assert.Contains(t, text, "Diagnostics")
+}
+
 func TestWriteHuman_DiagnosticPartial(t *testing.T) {
 	t.Parallel()
 	res := ref("ConfigMap", "web")
