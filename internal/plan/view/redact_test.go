@@ -28,7 +28,7 @@ import (
 
 func TestSecretRedaction_DefaultAndShowSecrets(t *testing.T) {
 	t.Parallel()
-	p := mustPlan(t, []semantic.ResourceChange{{
+	p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 		Resource: ref("Secret", "s"),
 		Origin:   helmOrigin(),
 		Action:   semantic.Update,
@@ -58,7 +58,7 @@ func TestSecretRedaction_DefaultAndShowSecrets(t *testing.T) {
 
 func TestSecretRedaction_ConfigMapNotRedacted(t *testing.T) {
 	t.Parallel()
-	p := mustPlan(t, []semantic.ResourceChange{{
+	p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 		Resource: ref("ConfigMap", "app"),
 		Origin:   helmOrigin(),
 		Action:   semantic.Update,
@@ -75,7 +75,7 @@ func TestSecretRedaction_ConfigMapNotRedacted(t *testing.T) {
 
 func TestSecretRedaction_FieldChangeComputedBeforeRedaction(t *testing.T) {
 	t.Parallel()
-	p := mustPlan(t, []semantic.ResourceChange{{
+	p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 		Resource: ref("Secret", "s"),
 		Origin:   helmOrigin(),
 		Action:   semantic.Update,
@@ -117,7 +117,7 @@ func TestSecretRedaction_CoreAPIVersions(t *testing.T) {
 			t.Parallel()
 			res := ref("Secret", "s")
 			res.APIVersion = tt.apiVersion
-			p := mustPlan(t, []semantic.ResourceChange{{
+			p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 				Resource: res,
 				Origin:   helmOrigin(),
 				Action:   semantic.Create,
@@ -139,7 +139,7 @@ func TestSecretRedaction_CoreAPIVersions(t *testing.T) {
 
 func TestSecretRedaction_MissingSectionsStayAbsent(t *testing.T) {
 	t.Parallel()
-	p := mustPlan(t, []semantic.ResourceChange{{
+	p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 		Resource: ref("Secret", "s"),
 		Origin:   helmOrigin(),
 		Action:   semantic.Create,
@@ -264,7 +264,7 @@ func TestSecretRedaction_JSONValueShapes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			p := mustPlan(t, []semantic.ResourceChange{tt.change}, nil)
+			p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{tt.change}, nil)
 			var human, jsonBuf bytes.Buffer
 			require.NoError(t, view.WriteHuman(&human, p, view.Options{}))
 			require.NoError(t, view.WriteJSON(&jsonBuf, p, view.Options{}))
@@ -299,7 +299,7 @@ func TestWriteRenderers_CopyIsolation(t *testing.T) {
 	require.True(t, ok)
 	meta["labels"] = labels
 	beforeObj["args"] = args
-	p, err := semantic.New(semantic.Header{Release: "web", Namespace: "prod"}, []semantic.ResourceChange{{
+	p, err := semantic.New(semantic.Header{Release: "web", Namespace: "prod"}, semantic.HelmUpgrade, []semantic.ResourceChange{{
 		Resource: res,
 		Origin:   semantic.ResourceOrigin{Kind: semantic.OriginHelm, Helm: helm},
 		Action:   semantic.Replace,
@@ -335,6 +335,7 @@ func TestWriteRenderers_ManualSnapshotShapes(t *testing.T) {
 	t.Parallel()
 	p := semantic.Plan{
 		Completeness: semantic.CompletenessComplete,
+		HelmAction:   semantic.HelmUpgrade,
 		Header:       semantic.Header{Release: "web"},
 		Changes: []semantic.ResourceChange{
 			{
@@ -376,6 +377,7 @@ func TestWriteRenderers_NilTasks(t *testing.T) {
 	t.Parallel()
 	p := semantic.Plan{
 		Completeness: semantic.CompletenessComplete,
+		HelmAction:   semantic.HelmNone,
 		Header:       semantic.Header{Release: "web"},
 	}
 	assert.Nil(t, p.Tasks)
@@ -401,7 +403,7 @@ func TestSecretRedaction_OmitsPlaintext(t *testing.T) {
 	}{
 		{
 			name: "create and delete changes",
-			plan: mustPlan(t, []semantic.ResourceChange{
+			plan: mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{
 				{
 					Resource: ref("Secret", "created"),
 					Origin:   helmOrigin(),
@@ -429,7 +431,7 @@ func TestSecretRedaction_OmitsPlaintext(t *testing.T) {
 		},
 		{
 			name: "hook definitions",
-			plan: mustPlanWithTasks(t, nil, []semantic.TaskPlan{{
+			plan: mustPlanWithTasks(t, semantic.HelmUpgrade, nil, []semantic.TaskPlan{{
 				Name:    "migrate",
 				Phase:   semantic.TaskPreDeploy,
 				Action:  semantic.TaskUpdate,

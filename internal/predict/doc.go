@@ -18,9 +18,12 @@
 // [Predict] is a library. It is not the deployah plan command and is not
 // wired into plan or deploy.
 //
-// Deployah is SSA-only. There is no client-side apply predictor and no
-// apply-method switch. All production PATCH and DELETE calls use server
-// dry-run.
+// Helm [Predict] stays on server-side apply. There is no client-side
+// apply predictor and no apply-method switch for Helm resources.
+// [Cluster] is a generic dry-run write surface: Apply is SSA with
+// caller FieldManager and ForceConflicts, and Create is a Kubernetes
+// create. All production writes use server dry-run. Predict does not
+// call Create.
 //
 // Exact Helm-resource prediction requires that the cluster API surface
 // already exists at prediction time:

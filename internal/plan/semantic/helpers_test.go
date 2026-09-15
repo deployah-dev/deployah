@@ -55,6 +55,46 @@ func helmOrigin() semantic.ResourceOrigin {
 	}
 }
 
+func crdCreate(name string) semantic.ResourceChange {
+	return semantic.ResourceChange{
+		Resource: semantic.ResourceRef{
+			APIVersion: "apiextensions.k8s.io/v1",
+			Kind:       "CustomResourceDefinition",
+			Name:       name,
+		},
+		Origin: semantic.ResourceOrigin{Kind: semantic.OriginCRD},
+		Action: semantic.Create,
+		After: &semantic.ResourceSnapshot{Object: map[string]any{
+			"apiVersion": "apiextensions.k8s.io/v1",
+			"kind":       "CustomResourceDefinition",
+			"metadata":   map[string]any{"name": name},
+		}},
+		Apply: writeCreate(),
+	}
+}
+
+func nsCreate(name string) semantic.ResourceChange {
+	return semantic.ResourceChange{
+		Resource: semantic.ResourceRef{APIVersion: "v1", Kind: "Namespace", Name: name},
+		Origin:   semantic.ResourceOrigin{Kind: semantic.OriginNamespace},
+		Action:   semantic.Create,
+		After: &semantic.ResourceSnapshot{Object: map[string]any{
+			"apiVersion": "v1",
+			"kind":       "Namespace",
+			"metadata":   map[string]any{"name": name},
+		}},
+		Apply: writeCreate(),
+	}
+}
+
+func writeCreate() semantic.ApplySemantics {
+	return semantic.ApplySemantics{
+		Write: &semantic.WriteSemantics{
+			Method: semantic.WriteCreate,
+		},
+	}
+}
+
 func writeApply() semantic.ApplySemantics {
 	return semantic.ApplySemantics{
 		Write: &semantic.WriteSemantics{
@@ -75,10 +115,6 @@ func bothApply() semantic.ApplySemantics {
 		Write:  writeApply().Write,
 		Delete: deleteApply().Delete,
 	}
-}
-
-func snap(obj map[string]any) *semantic.ResourceSnapshot {
-	return &semantic.ResourceSnapshot{Object: obj}
 }
 
 func cm(name, value string) map[string]any {
@@ -116,7 +152,7 @@ func createChange(name, value string) semantic.ResourceChange {
 		Resource: ref("ConfigMap", name),
 		Origin:   helmOrigin(),
 		Action:   semantic.Create,
-		After:    snap(cm(name, value)),
+		After:    &semantic.ResourceSnapshot{Object: cm(name, value)},
 		Apply:    writeApply(),
 	}
 }
@@ -126,8 +162,8 @@ func updateChange(name, before, after string) semantic.ResourceChange {
 		Resource: ref("ConfigMap", name),
 		Origin:   helmOrigin(),
 		Action:   semantic.Update,
-		Before:   snap(cm(name, before)),
-		After:    snap(cm(name, after)),
+		Before:   &semantic.ResourceSnapshot{Object: cm(name, before)},
+		After:    &semantic.ResourceSnapshot{Object: cm(name, after)},
 		Apply:    writeApply(),
 	}
 }
@@ -137,7 +173,7 @@ func deleteChange(name, value string) semantic.ResourceChange {
 		Resource: ref("ConfigMap", name),
 		Origin:   helmOrigin(),
 		Action:   semantic.Delete,
-		Before:   snap(cm(name, value)),
+		Before:   &semantic.ResourceSnapshot{Object: cm(name, value)},
 		Apply:    deleteApply(),
 	}
 }
@@ -147,8 +183,8 @@ func replaceChange(name, before, after string) semantic.ResourceChange {
 		Resource: ref("ConfigMap", name),
 		Origin:   helmOrigin(),
 		Action:   semantic.Replace,
-		Before:   snap(cm(name, before)),
-		After:    snap(cm(name, after)),
+		Before:   &semantic.ResourceSnapshot{Object: cm(name, before)},
+		After:    &semantic.ResourceSnapshot{Object: cm(name, after)},
 		Apply:    bothApply(),
 	}
 }

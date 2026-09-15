@@ -35,14 +35,14 @@ func TestSchemaV1ID_MatchesEmbeddedAndRendered(t *testing.T) {
 	assert.Equal(t, view.SchemaV1ID, sch["$id"])
 	assert.Equal(t, "https://json-schema.org/draft/2020-12/schema", sch["$schema"])
 
-	doc := mustPlanDoc(t, mustPlan(t, nil, nil))
+	doc := mustPlanDoc(t, mustPlan(t, semantic.HelmNone, nil, nil))
 	assert.Equal(t, view.SchemaV1ID, doc["schema"])
 }
 
 func TestSchemaV1_RejectsMalformedDocuments(t *testing.T) {
 	t.Parallel()
 	res := ref("ConfigMap", "app")
-	update := mustPlanDoc(t, mustPlan(t, []semantic.ResourceChange{{
+	update := mustPlanDoc(t, mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 		Resource: res,
 		Origin:   helmOrigin(),
 		Action:   semantic.Update,
@@ -50,21 +50,21 @@ func TestSchemaV1_RejectsMalformedDocuments(t *testing.T) {
 		After:    snap(cm("app", "v2")),
 		Apply:    writeApply(),
 	}}, nil))
-	create := mustPlanDoc(t, mustPlan(t, []semantic.ResourceChange{{
+	create := mustPlanDoc(t, mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 		Resource: res,
 		Origin:   helmOrigin(),
 		Action:   semantic.Create,
 		After:    snap(cm("app", "v1")),
 		Apply:    writeApply(),
 	}}, nil))
-	deleteDoc := mustPlanDoc(t, mustPlan(t, []semantic.ResourceChange{{
+	deleteDoc := mustPlanDoc(t, mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 		Resource: res,
 		Origin:   helmOrigin(),
 		Action:   semantic.Delete,
 		Before:   snap(cm("app", "v1")),
 		Apply:    deleteApply(),
 	}}, nil))
-	replace := mustPlanDoc(t, mustPlan(t, []semantic.ResourceChange{{
+	replace := mustPlanDoc(t, mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 		Resource: res,
 		Origin:   helmOrigin(),
 		Action:   semantic.Replace,
@@ -72,6 +72,14 @@ func TestSchemaV1_RejectsMalformedDocuments(t *testing.T) {
 		After:    snap(cm("app", "v2")),
 		Apply:    bothApply(),
 	}}, nil))
+	createWrite := mustPlanDoc(t, mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
+		Resource: res,
+		Origin:   helmOrigin(),
+		Action:   semantic.Create,
+		After:    snap(cm("app", "v1")),
+		Apply:    writeCreate(),
+	}}, nil))
+	noneDoc := mustPlanDoc(t, mustPlan(t, semantic.HelmNone, nil, nil))
 	ssaWrite := map[string]any{
 		"method":         "server_side_apply",
 		"fieldManager":   "deployah",
@@ -174,7 +182,7 @@ func TestSchemaV1_RejectsMalformedDocuments(t *testing.T) {
 		{name: "unknown top-level field", raw: patched(t, update, func(d map[string]any) {
 			d["unknown"] = true
 		})},
-		{name: "hook definition apply", raw: patched(t, mustPlanDoc(t, mustPlanWithTasks(t, nil, []semantic.TaskPlan{{
+		{name: "hook definition apply", raw: patched(t, mustPlanDoc(t, mustPlanWithTasks(t, semantic.HelmUpgrade, nil, []semantic.TaskPlan{{
 			Name:    "migrate",
 			Phase:   semantic.TaskPreDeploy,
 			Action:  semantic.TaskCreate,
@@ -193,11 +201,91 @@ func TestSchemaV1_RejectsMalformedDocuments(t *testing.T) {
 			require.NotEmpty(t, defs)
 			asObject(t, defs[0])["apply"] = map[string]any{"write": ssaWrite}
 		})},
+		{name: "crd origin with helm", raw: patched(t, update, func(d map[string]any) {
+			origin := asObject(t, firstChange(t, d)["origin"])
+			origin["kind"] = "crd"
+		})},
+		{name: "namespace origin with helm", raw: patched(t, update, func(d map[string]any) {
+			origin := asObject(t, firstChange(t, d)["origin"])
+			origin["kind"] = "namespace"
+		})},
+		{name: "create write with fieldManager", raw: patched(t, createWrite, func(d map[string]any) {
+			asObject(t, applyOf(t, d)["write"])["fieldManager"] = "deployah"
+		})},
+		{name: "create write with forceConflicts", raw: patched(t, createWrite, func(d map[string]any) {
+			asObject(t, applyOf(t, d)["write"])["forceConflicts"] = true
+		})},
+		{name: "update write method create", raw: patched(t, update, func(d map[string]any) {
+			write := asObject(t, applyOf(t, d)["write"])
+			write["method"] = "create"
+			delete(write, "fieldManager")
+		})},
+		{name: "install without freshInstall", raw: patched(t, noneDoc, func(d map[string]any) {
+			d["helmAction"] = "install"
+		})},
+		{name: "freshInstall with none", raw: patched(t, noneDoc, func(d map[string]any) {
+			asObject(t, d["header"])["freshInstall"] = true
+		})},
+		{name: "freshInstall with upgrade", raw: patched(t, update, func(d map[string]any) {
+			asObject(t, d["header"])["freshInstall"] = true
+		})},
+		{name: "none with origin helm", raw: patched(t, update, func(d map[string]any) {
+			d["helmAction"] = "none"
+		})},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			assertSchemaRejects(t, tt.raw)
+		})
+	}
+}
+
+func TestSchemaV1_AcceptsHelmActionOrigins(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		plan semantic.Plan
+	}{
+		{name: "none with origin crd", plan: mustPlan(t, semantic.HelmNone, []semantic.ResourceChange{{
+			Resource: semantic.ResourceRef{
+				APIVersion: "apiextensions.k8s.io/v1",
+				Kind:       "CustomResourceDefinition",
+				Name:       "widgets.example.com",
+			},
+			Origin: semantic.ResourceOrigin{Kind: semantic.OriginCRD},
+			Action: semantic.Create,
+			After: snap(map[string]any{
+				"apiVersion": "apiextensions.k8s.io/v1",
+				"kind":       "CustomResourceDefinition",
+				"metadata":   map[string]any{"name": "widgets.example.com"},
+			}),
+			Apply: writeCreate(),
+		}}, nil)},
+		{name: "install with origin namespace", plan: mustPlanWithHeader(t, semantic.Header{
+			Project:      "web",
+			Environment:  "prod",
+			Release:      "web",
+			Namespace:    "prod",
+			FreshInstall: true,
+		}, semantic.HelmInstall, []semantic.ResourceChange{{
+			Resource: semantic.ResourceRef{APIVersion: "v1", Kind: "Namespace", Name: "prod"},
+			Origin:   semantic.ResourceOrigin{Kind: semantic.OriginNamespace},
+			Action:   semantic.Create,
+			After: snap(map[string]any{
+				"apiVersion": "v1",
+				"kind":       "Namespace",
+				"metadata":   map[string]any{"name": "prod"},
+			}),
+			Apply: writeCreate(),
+		}}, nil, nil)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var buf bytes.Buffer
+			require.NoError(t, view.WriteJSON(&buf, tt.plan, view.Options{}))
+			validatePlanSchema(t, buf.Bytes())
 		})
 	}
 }

@@ -20,6 +20,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"helm.sh/helm/v4/pkg/kube"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
@@ -443,6 +444,45 @@ func TestPredict_DesiredGetError(t *testing.T) {
 	assert.ErrorContains(t, err, "could not get information about the resource")
 	assert.True(t, apierrors.IsForbidden(err), "Predict() desired GET = %v, want forbidden", err)
 	assert.Empty(t, cluster.applies)
+}
+
+func TestPredict_HelmPathUsesSSAApply(t *testing.T) {
+	t.Parallel()
+	t.Run("create", func(t *testing.T) {
+		t.Parallel()
+		cluster := newFakeCluster()
+		_, err := predict.Predict(t.Context(), cluster, predict.Input{
+			Operation:   helm.OperationInstall,
+			ReleaseName: "web",
+			Namespace:   "prod",
+			Desired:     configMapYAML("app", "prod", "next"),
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 0, cluster.createCalls)
+		require.NotEmpty(t, cluster.applies)
+		for _, got := range cluster.applies {
+			assert.Equal(t, kube.ManagedFieldsManager, got.Opts.FieldManager)
+			assert.False(t, got.Opts.ForceConflicts)
+		}
+	})
+	t.Run("update", func(t *testing.T) {
+		t.Parallel()
+		cluster := newFakeCluster()
+		cluster.store(ownedConfigMap("app", "prod", "web"))
+		_, err := predict.Predict(t.Context(), cluster, predict.Input{
+			Operation:   helm.OperationInstall,
+			ReleaseName: "web",
+			Namespace:   "prod",
+			Desired:     configMapYAML("app", "prod", "next"),
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 0, cluster.createCalls)
+		require.NotEmpty(t, cluster.applies)
+		for _, got := range cluster.applies {
+			assert.Equal(t, kube.ManagedFieldsManager, got.Opts.FieldManager)
+			assert.False(t, got.Opts.ForceConflicts)
+		}
+	})
 }
 
 func TestPredict_EmptyManifests(t *testing.T) {

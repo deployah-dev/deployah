@@ -37,6 +37,10 @@ func validateRenderable(p semantic.Plan) error {
 		semantic.CompletenessComplete.String(), semantic.CompletenessPartial.String()); err != nil {
 		return err
 	}
+	if err := requireEnum("helmAction", p.HelmAction.String(),
+		semantic.HelmNone.String(), semantic.HelmInstall.String(), semantic.HelmUpgrade.String()); err != nil {
+		return err
+	}
 	for i, c := range p.Changes {
 		if err := requireEnum(fmt.Sprintf("change %d action", i), c.Action.String(),
 			semantic.Create.String(), semantic.Update.String(),
@@ -44,12 +48,12 @@ func validateRenderable(p semantic.Plan) error {
 			return err
 		}
 		if err := requireEnum(fmt.Sprintf("change %d origin", i), c.Origin.Kind.String(),
-			semantic.OriginHelm.String()); err != nil {
+			semantic.OriginHelm.String(), semantic.OriginCRD.String(), semantic.OriginNamespace.String()); err != nil {
 			return err
 		}
 		if c.Apply.Write != nil {
 			if err := requireEnum(fmt.Sprintf("change %d write method", i), c.Apply.Write.Method.String(),
-				semantic.WriteServerSide.String()); err != nil {
+				semantic.WriteCreate.String(), semantic.WriteServerSide.String()); err != nil {
 				return err
 			}
 		}

@@ -136,7 +136,7 @@ func TestWriteHuman_SecretDiffs(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			p := mustPlan(t, []semantic.ResourceChange{{
+			p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 				Resource: ref("Secret", "s"),
 				Origin:   helmOrigin(),
 				Action:   semantic.Update,
@@ -161,7 +161,7 @@ func TestWriteHuman_OmitsBookkeepingFields(t *testing.T) {
 	t.Parallel()
 	before := noisyCM("web", "v1", "11", "u-live")
 	after := noisyCM("web", "v2", "22", "u-pred")
-	p := mustPlan(t, []semantic.ResourceChange{{
+	p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 		Resource: ref("ConfigMap", "web"),
 		Origin:   helmOrigin(),
 		Action:   semantic.Update,
@@ -229,7 +229,7 @@ func TestWriteHuman_OmitsBookkeepingOnCreateDeleteReplace(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			p := mustPlan(t, tt.changes, nil)
+			p := mustPlan(t, semantic.HelmUpgrade, tt.changes, nil)
 			var buf bytes.Buffer
 			require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
 			text := buf.String()

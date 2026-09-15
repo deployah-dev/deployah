@@ -6,6 +6,7 @@
     "release": "web",
     "namespace": "prod"
   },
+  "helmAction": "upgrade",
   "changes": [
     {
       "resource": {

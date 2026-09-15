@@ -95,6 +95,44 @@ func (c Completeness) String() string {
 	}
 }
 
+// HelmAction is whether Helm will install, upgrade, or do neither. The
+// zero value is invalid.
+type HelmAction int
+
+const (
+	// HelmNone means Helm will not execute. OriginHelm changes and
+	// changed or WillRun preDeploy/postDeploy tasks are invalid.
+	HelmNone HelmAction = iota + 1
+	// HelmInstall is a fresh Helm install. It requires
+	// [Header.FreshInstall].
+	HelmInstall
+	// HelmUpgrade is a Helm upgrade. Zero known effects remain valid
+	// for a future reapply.
+	HelmUpgrade
+)
+
+func (a HelmAction) String() string {
+	switch a {
+	case HelmNone:
+		return "none"
+	case HelmInstall:
+		return "install"
+	case HelmUpgrade:
+		return "upgrade"
+	default:
+		return fmt.Sprintf("HelmAction(%d)", int(a))
+	}
+}
+
+func (a HelmAction) valid() bool {
+	switch a {
+	case HelmNone, HelmInstall, HelmUpgrade:
+		return true
+	default:
+		return false
+	}
+}
+
 // Header identifies the release a plan describes. Empty fields are valid;
 // callers fill them for display.
 type Header struct {
@@ -138,24 +176,38 @@ type OriginKind int
 const (
 	// OriginHelm is a Helm-predicted resource.
 	OriginHelm OriginKind = iota + 1
+	// OriginCRD is a CustomResourceDefinition applied outside Helm.
+	OriginCRD
+	// OriginNamespace is the target Namespace created as part of a
+	// Helm install. It is invalid with [HelmNone] or [HelmUpgrade].
+	OriginNamespace
 )
 
 func (k OriginKind) String() string {
 	switch k {
 	case OriginHelm:
 		return "helm"
+	case OriginCRD:
+		return "crd"
+	case OriginNamespace:
+		return "namespace"
 	default:
 		return fmt.Sprintf("OriginKind(%d)", int(k))
 	}
 }
 
 func (k OriginKind) valid() bool {
-	return k == OriginHelm
+	switch k {
+	case OriginHelm, OriginCRD, OriginNamespace:
+		return true
+	default:
+		return false
+	}
 }
 
-// ResourceOrigin names the producer of a [ResourceChange]. Stage C only
-// constructs Helm origins. Later stages can add fields without changing
-// [ResourceChange].
+// ResourceOrigin names the producer of a [ResourceChange]. Helm details
+// are required for [OriginHelm] and forbidden for [OriginCRD] and
+// [OriginNamespace].
 type ResourceOrigin struct {
 	Kind OriginKind
 	Helm *HelmOrigin
@@ -167,17 +219,23 @@ type HelmOrigin struct {
 	Namespace string
 }
 
-// WriteMethod is how a replacement object is written. The zero value is
+// WriteMethod is the write method on [WriteSemantics]. The zero value is
 // invalid.
 type WriteMethod int
 
 const (
-	// WriteServerSide is Kubernetes server-side apply.
-	WriteServerSide WriteMethod = iota + 1
+	// WriteCreate is Kubernetes create. FieldManager must be empty and
+	// ForceConflicts must be false.
+	WriteCreate WriteMethod = iota + 1
+	// WriteServerSide is Kubernetes server-side apply. FieldManager
+	// must be non-empty. ForceConflicts may be true or false.
+	WriteServerSide
 )
 
 func (m WriteMethod) String() string {
 	switch m {
+	case WriteCreate:
+		return "create"
 	case WriteServerSide:
 		return "server_side_apply"
 	default:
@@ -186,7 +244,12 @@ func (m WriteMethod) String() string {
 }
 
 func (m WriteMethod) valid() bool {
-	return m == WriteServerSide
+	switch m {
+	case WriteCreate, WriteServerSide:
+		return true
+	default:
+		return false
+	}
 }
 
 // DeletePropagation is Kubernetes deletion propagation. The zero value

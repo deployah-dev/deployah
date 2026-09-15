@@ -116,7 +116,9 @@ func BuildSemanticPlan(
 	if err != nil {
 		return semantic.Plan{}, nil, cleanup, fmt.Errorf("assemble semantic plan: %w", err)
 	}
-	p, err := semantic.New(header, changes, tasks, diags)
+	helmAction := deriveHelmAction(prep.Operation, changes, tasks)
+	applyHelmWillRun(tasks, helmAction)
+	p, err := semantic.New(header, helmAction, changes, tasks, diags)
 	if err != nil {
 		return semantic.Plan{}, nil, cleanup, fmt.Errorf("assemble semantic plan: %w", err)
 	}

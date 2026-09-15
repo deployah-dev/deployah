@@ -101,7 +101,11 @@ func (f *fakeCluster) Get(ctx context.Context, id predict.Identity) (*unstructur
 	return obj.DeepCopy(), nil
 }
 
-func (f *fakeCluster) Apply(ctx context.Context, obj *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+func (f *fakeCluster) Create(context.Context, *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+	return nil, f.applyErr
+}
+
+func (f *fakeCluster) Apply(ctx context.Context, obj *unstructured.Unstructured, _ predict.ApplyOptions) (*unstructured.Unstructured, error) {
 	f.gotCtx = ctx
 	if f.applyErr != nil {
 		return nil, f.applyErr
@@ -279,6 +283,7 @@ func TestBuildSemanticPlan_FreshInstall(t *testing.T) {
 	assert.Equal(t, "kind-dev", p.Header.Context)
 	assert.Equal(t, 1, p.Header.Revision)
 	assert.True(t, p.Header.FreshInstall)
+	assert.Equal(t, semantic.HelmInstall, p.HelmAction)
 	require.Len(t, p.Changes, 1)
 	assert.Equal(t, semantic.Create, p.Changes[0].Action)
 	assert.Equal(t, "app", p.Changes[0].Resource.Name)
@@ -313,6 +318,7 @@ func TestBuildSemanticPlan_Upgrade(t *testing.T) {
 	assert.Equal(t, "kind-dev", p.Header.Context)
 	assert.Equal(t, 7, p.Header.Revision)
 	assert.False(t, p.Header.FreshInstall)
+	assert.Equal(t, semantic.HelmUpgrade, p.HelmAction)
 	require.Len(t, p.Changes, 1)
 	assert.Equal(t, semantic.Update, p.Changes[0].Action)
 	require.NotNil(t, p.Changes[0].Before)
@@ -548,4 +554,298 @@ func TestBuildSemanticPlan_NoChange(t *testing.T) {
 	assert.Empty(t, p.Changes)
 	assert.Equal(t, 0, p.Summary.Total())
 	assert.Equal(t, semantic.CompletenessComplete, p.Completeness)
+	assert.Equal(t, semantic.HelmNone, p.HelmAction)
+	assert.False(t, p.HasEffects())
+	assert.True(t, p.IsNoOp())
+}
+
+func TestBuildSemanticPlan_InstallHookWillRun(t *testing.T) {
+	t.Parallel()
+	hook := planHook("migrate", "busybox")
+	result := installResult(configMapYAML("app", "prod", "v1"))
+	result.Hooks = []*v1.Hook{hook}
+	resolved := resolvedSpec()
+	resolved.Tasks = map[string]spec.ResolvedTask{
+		"migrate": {Task: spec.Task{On: spec.TaskOnPreDeploy}, HookWeight: 1},
+	}
+	client := &fakeBuildClient{
+		result:  result,
+		prep:    helm.ReleasePrep{Operation: helm.OperationInstall, NextRevision: 1},
+		cleanup: func() {},
+	}
+	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, newFakeCluster(), "ctx", resolved, nil)
+	registerCleanup(t, cleanup)
+	require.NoError(t, err)
+	assert.Equal(t, semantic.HelmInstall, p.HelmAction)
+	require.Len(t, p.Tasks, 1)
+	assert.Equal(t, semantic.TaskCreate, p.Tasks[0].Action)
+	assert.True(t, p.Tasks[0].WillRun)
+}
+
+func TestBuildSemanticPlan_UnchangedHookNoHelmChange(t *testing.T) {
+	t.Parallel()
+	manifest := configMapYAML("app", "prod", "same")
+	hook := planHook("migrate", "busybox")
+	result := upgradeResult(manifest, 4)
+	result.Hooks = []*v1.Hook{hook}
+	resolved := resolvedSpec()
+	resolved.Tasks = map[string]spec.ResolvedTask{
+		"migrate": {Task: spec.Task{On: spec.TaskOnPreDeploy}, HookWeight: 1},
+	}
+	client := &fakeBuildClient{
+		result:  result,
+		prep:    upgradePrepWithHook(manifest, 3, 4, hook),
+		cleanup: func() {},
+	}
+	cluster := newFakeCluster()
+	cluster.store(ownedConfigMap("app", "prod", "web", "same"))
+	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, "ctx", resolved, nil)
+	registerCleanup(t, cleanup)
+	require.NoError(t, err)
+	assert.Equal(t, semantic.HelmNone, p.HelmAction)
+	assert.Empty(t, p.Changes)
+	require.Len(t, p.Tasks, 1)
+	assert.Equal(t, semantic.TaskUnchanged, p.Tasks[0].Action)
+	assert.False(t, p.Tasks[0].WillRun)
+	assert.True(t, p.IsNoOp())
+}
+
+func TestBuildSemanticPlan_HelmChangeUnchangedHookWillRun(t *testing.T) {
+	t.Parallel()
+	hook := planHook("migrate", "busybox")
+	result := upgradeResult(configMapYAML("app", "prod", "new"), 7)
+	result.Hooks = []*v1.Hook{hook}
+	resolved := resolvedSpec()
+	resolved.Tasks = map[string]spec.ResolvedTask{
+		"migrate": {Task: spec.Task{On: spec.TaskOnPreDeploy}, HookWeight: 1},
+	}
+	client := &fakeBuildClient{
+		result:  result,
+		prep:    upgradePrepWithHook(configMapYAML("app", "prod", "old"), 6, 7, hook),
+		cleanup: func() {},
+	}
+	cluster := newFakeCluster()
+	cluster.store(ownedConfigMap("app", "prod", "web", "old"))
+	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, "ctx", resolved, nil)
+	registerCleanup(t, cleanup)
+	require.NoError(t, err)
+	assert.Equal(t, semantic.HelmUpgrade, p.HelmAction)
+	require.Len(t, p.Changes, 1)
+	require.Len(t, p.Tasks, 1)
+	assert.Equal(t, semantic.TaskUnchanged, p.Tasks[0].Action)
+	assert.True(t, p.Tasks[0].WillRun)
+}
+
+func TestBuildSemanticPlan_HookCreateWithoutResourceChange(t *testing.T) {
+	t.Parallel()
+	manifest := configMapYAML("app", "prod", "same")
+	hook := planHook("migrate", "busybox")
+	result := upgradeResult(manifest, 4)
+	result.Hooks = []*v1.Hook{hook}
+	resolved := resolvedSpec()
+	resolved.Tasks = map[string]spec.ResolvedTask{
+		"migrate": {Task: spec.Task{On: spec.TaskOnPreDeploy}, HookWeight: 1},
+	}
+	current := &v1.Release{
+		Version:  3,
+		Manifest: manifest,
+	}
+	client := &fakeBuildClient{
+		result: result,
+		prep: helm.ReleasePrep{
+			Operation:    helm.OperationUpgrade,
+			Current:      current,
+			Newest:       current,
+			NextRevision: 4,
+		},
+		cleanup: func() {},
+	}
+	cluster := newFakeCluster()
+	cluster.store(ownedConfigMap("app", "prod", "web", "same"))
+	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, "ctx", resolved, nil)
+	registerCleanup(t, cleanup)
+	require.NoError(t, err)
+	assert.Empty(t, p.Changes)
+	assert.Equal(t, semantic.HelmUpgrade, p.HelmAction)
+	require.Len(t, p.Tasks, 1)
+	assert.Equal(t, semantic.TaskCreate, p.Tasks[0].Action)
+	assert.True(t, p.Tasks[0].WillRun)
+	assert.False(t, p.IsNoOp())
+}
+
+func TestBuildSemanticPlan_HookUpdateWithoutResourceChange(t *testing.T) {
+	t.Parallel()
+	manifest := configMapYAML("app", "prod", "same")
+	prev := planHook("migrate", "old")
+	desired := planHook("migrate", "new")
+	result := upgradeResult(manifest, 4)
+	result.Hooks = []*v1.Hook{desired}
+	resolved := resolvedSpec()
+	resolved.Tasks = map[string]spec.ResolvedTask{
+		"migrate": {Task: spec.Task{On: spec.TaskOnPreDeploy}, HookWeight: 1},
+	}
+	client := &fakeBuildClient{
+		result:  result,
+		prep:    upgradePrepWithHook(manifest, 3, 4, prev),
+		cleanup: func() {},
+	}
+	cluster := newFakeCluster()
+	cluster.store(ownedConfigMap("app", "prod", "web", "same"))
+	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, "ctx", resolved, nil)
+	registerCleanup(t, cleanup)
+	require.NoError(t, err)
+	assert.Empty(t, p.Changes)
+	assert.Equal(t, semantic.HelmUpgrade, p.HelmAction)
+	require.Len(t, p.Tasks, 1)
+	assert.Equal(t, semantic.TaskUpdate, p.Tasks[0].Action)
+	assert.True(t, p.Tasks[0].WillRun)
+}
+
+func TestBuildSemanticPlan_HookDeleteWithoutResourceChange(t *testing.T) {
+	t.Parallel()
+	manifest := configMapYAML("app", "prod", "same")
+	prev := planHook("migrate", "busybox")
+	result := upgradeResult(manifest, 4)
+	client := &fakeBuildClient{
+		result:  result,
+		prep:    upgradePrepWithHook(manifest, 3, 4, prev),
+		cleanup: func() {},
+	}
+	cluster := newFakeCluster()
+	cluster.store(ownedConfigMap("app", "prod", "web", "same"))
+	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, "ctx", resolvedSpec(), nil)
+	registerCleanup(t, cleanup)
+	require.NoError(t, err)
+	assert.Empty(t, p.Changes)
+	assert.Equal(t, semantic.HelmUpgrade, p.HelmAction)
+	require.Len(t, p.Tasks, 1)
+	assert.Equal(t, "migrate", p.Tasks[0].Name)
+	assert.Equal(t, semantic.TaskDelete, p.Tasks[0].Action)
+	assert.False(t, p.Tasks[0].WillRun)
+	assert.False(t, p.IsNoOp())
+}
+
+func TestBuildSemanticPlan_ScheduleCronJobChange(t *testing.T) {
+	t.Parallel()
+	previous := cronJobYAML("cleanup", "0 2 * * *")
+	desired := cronJobYAML("cleanup", "0 3 * * *")
+	current := &v1.Release{Version: 3, Manifest: previous}
+	client := &fakeBuildClient{
+		result: upgradeResult(desired, 4),
+		prep: helm.ReleasePrep{
+			Operation:    helm.OperationUpgrade,
+			Current:      current,
+			Newest:       current,
+			NextRevision: 4,
+		},
+		cleanup: func() {},
+	}
+	cluster := newFakeCluster()
+	cluster.store(ownedCronJob("cleanup", "prod", "web", "0 2 * * *"))
+	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, "ctx", resolvedSpec(), nil)
+	registerCleanup(t, cleanup)
+	require.NoError(t, err)
+	assert.Equal(t, semantic.HelmUpgrade, p.HelmAction)
+	require.Len(t, p.Changes, 1)
+	assert.Equal(t, "CronJob", p.Changes[0].Resource.Kind)
+	assert.Equal(t, semantic.Update, p.Changes[0].Action)
+}
+
+func planHook(name, image string) *v1.Hook {
+	return &v1.Hook{
+		Name:   name,
+		Kind:   "Job",
+		Weight: 1,
+		Events: []v1.HookEvent{v1.HookPreInstall, v1.HookPreUpgrade},
+		Manifest: fmt.Sprintf(`apiVersion: batch/v1
+kind: Job
+metadata:
+  name: %s
+  namespace: prod
+  labels:
+    %s: %s
+    %s: %s
+spec:
+  template:
+    spec:
+      containers:
+      - name: job
+        image: %s
+`, name, spec.LabelComponent, name, spec.LabelTask, name, image),
+	}
+}
+
+func upgradePrepWithHook(manifest string, currentRevision, nextRevision int, hook *v1.Hook) helm.ReleasePrep {
+	current := &v1.Release{
+		Version:  currentRevision,
+		Manifest: manifest,
+		Hooks:    []*v1.Hook{hook},
+		Config: map[string]any{
+			"deployah": map[string]any{
+				"resolved": map[string]any{
+					"tasks": map[string]any{
+						hook.Name: map[string]any{"on": "preDeploy", "hookWeight": 1},
+					},
+				},
+			},
+		},
+	}
+	return helm.ReleasePrep{
+		Operation:    helm.OperationUpgrade,
+		Current:      current,
+		Newest:       current,
+		NextRevision: nextRevision,
+	}
+}
+
+func cronJobYAML(name, schedule string) string {
+	return fmt.Sprintf(`apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: %s
+  namespace: prod
+spec:
+  schedule: %q
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: job
+            image: busybox
+          restartPolicy: OnFailure
+`, name, schedule)
+}
+
+func ownedCronJob(name, namespace, release, schedule string) *unstructured.Unstructured {
+	return &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "batch/v1",
+		"kind":       "CronJob",
+		"metadata": map[string]any{
+			"name":      name,
+			"namespace": namespace,
+			"labels": map[string]any{
+				"app.kubernetes.io/managed-by": "Helm",
+			},
+			"annotations": map[string]any{
+				"meta.helm.sh/release-name":      release,
+				"meta.helm.sh/release-namespace": namespace,
+			},
+		},
+		"spec": map[string]any{
+			"schedule": schedule,
+			"jobTemplate": map[string]any{
+				"spec": map[string]any{
+					"template": map[string]any{
+						"spec": map[string]any{
+							"containers": []any{
+								map[string]any{"name": "job", "image": "busybox"},
+							},
+							"restartPolicy": "OnFailure",
+						},
+					},
+				},
+			},
+		},
+	}}
 }

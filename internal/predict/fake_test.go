@@ -33,6 +33,7 @@ type recordedApply struct {
 	Name      string
 	Namespace string
 	Obj       *unstructured.Unstructured
+	Opts      predict.ApplyOptions
 }
 
 type recordedJSONPatch struct {
@@ -52,6 +53,8 @@ type fakeCluster struct {
 	applyErr          error
 	applySeq          []error
 	applyCalls        int
+	createCalls       int
+	lastCreate        *unstructured.Unstructured
 	jsonPatchErr      error
 	jsonPatchCalls    int
 	jsonPatchConflict int
@@ -104,12 +107,19 @@ func (f *fakeCluster) Get(_ context.Context, id predict.Identity) (*unstructured
 	return obj.DeepCopy(), nil
 }
 
-func (f *fakeCluster) Apply(_ context.Context, obj *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+func (f *fakeCluster) Create(_ context.Context, obj *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+	f.createCalls++
+	f.lastCreate = obj.DeepCopy()
+	return obj.DeepCopy(), nil
+}
+
+func (f *fakeCluster) Apply(_ context.Context, obj *unstructured.Unstructured, opts predict.ApplyOptions) (*unstructured.Unstructured, error) {
 	f.applyCalls++
 	f.applies = append(f.applies, recordedApply{
 		Name:      obj.GetName(),
 		Namespace: obj.GetNamespace(),
 		Obj:       obj.DeepCopy(),
+		Opts:      opts,
 	})
 	if len(f.applySeq) > 0 {
 		err := f.applySeq[0]

@@ -35,12 +35,14 @@ func TestAssembleTasks_FreshInstallPrePost(t *testing.T) {
 		"smoke":   hookResolved(spec.TaskOnPostDeploy, 2),
 		"run":     {Task: spec.Task{On: spec.TaskOnManual}},
 	})
-	tasks, err := assembleTasks(resolved, helm.ReleasePrep{Operation: helm.OperationInstall, NextRevision: 1}, []*v1.Hook{
+	prep := helm.ReleasePrep{Operation: helm.OperationInstall, NextRevision: 1}
+	tasks, err := assembleTasks(resolved, prep, []*v1.Hook{
 		testHook("ConfigMap", "migrate-env", "migrate", "v1", 0),
 		testHook("Job", "migrate", "migrate", "v1", 1),
 		testHook("Job", "smoke", "smoke", "v1", 2),
 	}, nil)
 	require.NoError(t, err)
+	applyHelmWillRun(tasks, deriveHelmAction(prep.Operation, nil, tasks))
 	byName := taskByName(t, tasks)
 	require.Contains(t, byName, "migrate")
 	require.Contains(t, byName, "smoke")
@@ -63,6 +65,7 @@ func TestAssembleTasks_ManifestChangeUnchangedHookWillRun(t *testing.T) {
 	prep := upgradePrep(map[string]any{"seed": map[string]any{"on": "preDeploy", "hookWeight": 1}}, []*v1.Hook{hook}, nil)
 	tasks, err := assembleTasks(resolved, prep, []*v1.Hook{hook}, []semantic.ResourceChange{labeledCreate("api", "api")})
 	require.NoError(t, err)
+	applyHelmWillRun(tasks, deriveHelmAction(prep.Operation, []semantic.ResourceChange{labeledCreate("api", "api")}, tasks))
 	byName := taskByName(t, tasks)
 	require.Contains(t, byName, "seed")
 	assert.Equal(t, semantic.TaskUnchanged, byName["seed"].Action)
@@ -80,6 +83,7 @@ func TestAssembleTasks_HookDefinitionOnly(t *testing.T) {
 	prep := upgradePrep(map[string]any{"migrate": map[string]any{"on": "preDeploy", "hookWeight": 1}}, []*v1.Hook{prev}, nil)
 	tasks, err := assembleTasks(resolved, prep, []*v1.Hook{desired}, nil)
 	require.NoError(t, err)
+	applyHelmWillRun(tasks, deriveHelmAction(prep.Operation, nil, tasks))
 	byName := taskByName(t, tasks)
 	require.Contains(t, byName, "migrate")
 	assert.Equal(t, semantic.TaskUpdate, byName["migrate"].Action)
@@ -100,6 +104,7 @@ func TestAssembleTasks_HookCreateAndDelete(t *testing.T) {
 	}, []*v1.Hook{prev}, nil)
 	tasks, err := assembleTasks(resolved, prep, []*v1.Hook{desired}, nil)
 	require.NoError(t, err)
+	applyHelmWillRun(tasks, deriveHelmAction(prep.Operation, nil, tasks))
 	byName := taskByName(t, tasks)
 	require.Contains(t, byName, "smoke")
 	require.Contains(t, byName, "old")
@@ -123,8 +128,10 @@ func TestAssembleTasks_AllCurrentHooksRunOnHelmChange(t *testing.T) {
 		"migrate": map[string]any{"on": "preDeploy", "hookWeight": 1},
 		"seed":    map[string]any{"on": "preDeploy", "hookWeight": 2},
 	}, []*v1.Hook{migrate, seed}, nil)
-	tasks, err := assembleTasks(resolved, prep, []*v1.Hook{migrate, seed}, []semantic.ResourceChange{labeledCreate("api", "api")})
+	changes := []semantic.ResourceChange{labeledCreate("api", "api")}
+	tasks, err := assembleTasks(resolved, prep, []*v1.Hook{migrate, seed}, changes)
 	require.NoError(t, err)
+	applyHelmWillRun(tasks, deriveHelmAction(prep.Operation, changes, tasks))
 	byName := taskByName(t, tasks)
 	assert.True(t, byName["migrate"].WillRun)
 	assert.True(t, byName["seed"].WillRun)
@@ -144,6 +151,7 @@ func TestAssembleTasks_NewestHooksIgnored(t *testing.T) {
 	prep := upgradePrep(map[string]any{"migrate": map[string]any{"on": "preDeploy", "hookWeight": 1}}, []*v1.Hook{currentHook}, newest)
 	tasks, err := assembleTasks(resolved, prep, []*v1.Hook{desired}, nil)
 	require.NoError(t, err)
+	applyHelmWillRun(tasks, deriveHelmAction(prep.Operation, nil, tasks))
 	byName := taskByName(t, tasks)
 	assert.Equal(t, semantic.TaskUnchanged, byName["migrate"].Action)
 	assert.Empty(t, byName["migrate"].Definitions)
@@ -161,6 +169,7 @@ func TestAssembleTasks_MultiResourceBundleOnlyChangedDefinition(t *testing.T) {
 	prep := upgradePrep(map[string]any{"migrate": map[string]any{"on": "preDeploy", "hookWeight": 1}}, []*v1.Hook{prevCM, prevJob}, nil)
 	tasks, err := assembleTasks(resolved, prep, []*v1.Hook{desiredCM, desiredJob}, nil)
 	require.NoError(t, err)
+	applyHelmWillRun(tasks, deriveHelmAction(prep.Operation, nil, tasks))
 	byName := taskByName(t, tasks)
 	require.Len(t, byName["migrate"].Definitions, 1)
 	assert.Equal(t, "migrate-env", byName["migrate"].Definitions[0].Resource.Name)
@@ -192,6 +201,7 @@ func TestAssembleTasks_LeftoverHookWithoutConfig(t *testing.T) {
 			prep := upgradePrep(map[string]any{}, []*v1.Hook{hook}, nil)
 			tasks, err := assembleTasks(resolvedWithTasks(nil), prep, nil, nil)
 			require.NoError(t, err)
+			applyHelmWillRun(tasks, deriveHelmAction(prep.Operation, nil, tasks))
 			byName := taskByName(t, tasks)
 			require.Contains(t, byName, "orphan")
 			assert.Equal(t, semantic.TaskDelete, byName["orphan"].Action)
@@ -227,6 +237,7 @@ spec:
 	prep := upgradePrep(map[string]any{}, []*v1.Hook{hook}, nil)
 	tasks, err := assembleTasks(resolvedWithTasks(nil), prep, nil, nil)
 	require.NoError(t, err)
+	applyHelmWillRun(tasks, deriveHelmAction(prep.Operation, nil, tasks))
 	byName := taskByName(t, tasks)
 	require.Contains(t, byName, "orphan")
 	assert.Equal(t, semantic.TaskDelete, byName["orphan"].Action)
@@ -374,8 +385,10 @@ func TestAssembleTasks_HookChangeRunsAllCurrentHooks(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			tasks, err := assembleTasks(resolvedWithTasks(tt.resolved), upgradePrep(tt.previous, tt.prev, nil), tt.desired, nil)
+			prep := upgradePrep(tt.previous, tt.prev, nil)
+			tasks, err := assembleTasks(resolvedWithTasks(tt.resolved), prep, tt.desired, nil)
 			require.NoError(t, err)
+			applyHelmWillRun(tasks, deriveHelmAction(prep.Operation, nil, tasks))
 			byName := taskByName(t, tasks)
 			require.Len(t, byName, len(tt.want))
 			for name, want := range tt.want {
@@ -397,8 +410,10 @@ func TestAssembleTasks_RemovedScheduleDoesNotCaptureComponent(t *testing.T) {
 	prep := upgradePrep(map[string]any{
 		"cleanup": map[string]any{"on": "schedule"},
 	}, nil, nil)
-	tasks, err := assembleTasks(resolved, prep, nil, []semantic.ResourceChange{cron, comp})
+	changes := []semantic.ResourceChange{cron, comp}
+	tasks, err := assembleTasks(resolved, prep, nil, changes)
 	require.NoError(t, err)
+	applyHelmWillRun(tasks, deriveHelmAction(prep.Operation, changes, tasks))
 	byName := taskByName(t, tasks)
 	require.Contains(t, byName, "cleanup")
 	assert.Equal(t, semantic.TaskDelete, byName["cleanup"].Action)
@@ -459,8 +474,10 @@ func TestAssembleTasks_TransitionToManual(t *testing.T) {
 			resolved := resolvedWithTasks(map[string]spec.ResolvedTask{
 				tt.task: {Task: spec.Task{On: spec.TaskOnManual}},
 			})
-			tasks, err := assembleTasks(resolved, upgradePrep(tt.previous, tt.prevHooks, nil), nil, tt.changes)
+			prep := upgradePrep(tt.previous, tt.prevHooks, nil)
+			tasks, err := assembleTasks(resolved, prep, nil, tt.changes)
 			require.NoError(t, err)
+			applyHelmWillRun(tasks, deriveHelmAction(prep.Operation, tt.changes, tasks))
 			byName := taskByName(t, tasks)
 			require.Contains(t, byName, tt.task)
 			got := byName[tt.task]
@@ -511,6 +528,7 @@ func TestAssembleTasks_HookPhaseChange(t *testing.T) {
 			}, []*v1.Hook{tt.prev}, nil)
 			tasks, err := assembleTasks(resolved, prep, []*v1.Hook{tt.desired}, nil)
 			require.NoError(t, err)
+			applyHelmWillRun(tasks, deriveHelmAction(prep.Operation, nil, tasks))
 			got := taskByName(t, tasks)["migrate"]
 			assert.Equal(t, tt.wantPhase, got.Phase)
 			assert.Equal(t, semantic.TaskUpdate, got.Action)
@@ -627,9 +645,11 @@ func TestAssembleTasks_HookScheduleTransition(t *testing.T) {
 			resolved := resolvedWithTasks(map[string]spec.ResolvedTask{
 				"work": {Task: spec.Task{On: tt.current}, HookWeight: 1},
 			})
-			tasks, err := assembleTasks(resolved, upgradePrep(tt.previous, tt.prevHooks, nil), tt.desired, tt.changes)
+			prep := upgradePrep(tt.previous, tt.prevHooks, nil)
+			tasks, err := assembleTasks(resolved, prep, tt.desired, tt.changes)
 			require.NoError(t, err)
-			p, err := semantic.New(semantic.Header{}, tt.changes, tasks, nil)
+			applyHelmWillRun(tasks, deriveHelmAction(prep.Operation, tt.changes, tasks))
+			p, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, tt.changes, tasks, nil)
 			require.NoError(t, err)
 			byName := taskByName(t, p.Tasks)
 			require.Contains(t, byName, "work")
@@ -655,8 +675,10 @@ func TestAssembleTasks_ScheduleReferencesAndOmitsUnchanged(t *testing.T) {
 		"cleanup": map[string]any{"on": "schedule"},
 		"keep":    map[string]any{"on": "schedule"},
 	}, nil, nil)
-	tasks, err := assembleTasks(resolved, prep, nil, []semantic.ResourceChange{cron, labeledCreate("api", "api")})
+	changes := []semantic.ResourceChange{cron, labeledCreate("api", "api")}
+	tasks, err := assembleTasks(resolved, prep, nil, changes)
 	require.NoError(t, err)
+	applyHelmWillRun(tasks, deriveHelmAction(prep.Operation, changes, tasks))
 	byName := taskByName(t, tasks)
 	require.Contains(t, byName, "cleanup")
 	assert.NotContains(t, byName, "keep")
@@ -709,8 +731,10 @@ func TestAssembleTasks_ScheduleProvenance(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			tasks, err := assembleTasks(resolvedWithTasks(tt.resolved), upgradePrep(tt.previous, nil, nil), nil, tt.changes)
+			prep := upgradePrep(tt.previous, nil, nil)
+			tasks, err := assembleTasks(resolvedWithTasks(tt.resolved), prep, nil, tt.changes)
 			require.NoError(t, err)
+			applyHelmWillRun(tasks, deriveHelmAction(prep.Operation, tt.changes, tasks))
 			byName := taskByName(t, tasks)
 			require.Contains(t, byName, "cleanup")
 			got := byName["cleanup"]
@@ -739,7 +763,7 @@ func TestStampHelmApplyOrder_ConfigMapBeforeDeployment(t *testing.T) {
 		},
 	}
 	require.NoError(t, stampHelmApplyOrder(changes))
-	p, err := semantic.New(semantic.Header{}, changes, nil, nil)
+	p, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, changes, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, p.Changes, 2)
 	assert.Equal(t, "ConfigMap", p.Changes[0].Resource.Kind)
@@ -764,7 +788,7 @@ func TestStampHelmApplyOrder_SameKindPreservesInputOrder(t *testing.T) {
 	for i, c := range changes {
 		assert.Equal(t, i+1, c.ApplyOrder, "input index %d", i)
 	}
-	p, err := semantic.New(semantic.Header{}, changes, nil, nil)
+	p, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, changes, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, p.Changes, n)
 	for i, c := range p.Changes {

@@ -32,7 +32,10 @@ func applyCreate(ctx context.Context, cluster Cluster, obj *unstructured.Unstruc
 	var predicted *unstructured.Unstructured
 	err := retry.OnError(retry.DefaultRetry, isResourceQuotaConflict, func() error {
 		var applyErr error
-		predicted, applyErr = cluster.Apply(ctx, obj)
+		predicted, applyErr = cluster.Apply(ctx, obj, ApplyOptions{
+			FieldManager:   kube.ManagedFieldsManager,
+			ForceConflicts: false,
+		})
 		return applyErr
 	})
 	if err != nil {
@@ -42,7 +45,10 @@ func applyCreate(ctx context.Context, cluster Cluster, obj *unstructured.Unstruc
 }
 
 func applyUpdate(ctx context.Context, cluster Cluster, obj *unstructured.Unstructured) (*unstructured.Unstructured, error) {
-	return cluster.Apply(ctx, obj)
+	return cluster.Apply(ctx, obj, ApplyOptions{
+		FieldManager:   kube.ManagedFieldsManager,
+		ForceConflicts: false,
+	})
 }
 
 // isResourceQuotaConflict matches Helm pkg/kube isResourceQuotaConflict.

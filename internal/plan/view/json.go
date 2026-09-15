@@ -25,6 +25,7 @@ import (
 type document struct {
 	Schema       string      `json:"schema"`
 	Header       headerDTO   `json:"header"`
+	HelmAction   string      `json:"helmAction"`
 	Changes      []changeDTO `json:"changes"`
 	Tasks        []taskDTO   `json:"tasks"`
 	Diagnostics  []diagDTO   `json:"diagnostics"`
@@ -77,7 +78,7 @@ type applyDTO struct {
 
 type writeDTO struct {
 	Method         string `json:"method"`
-	FieldManager   string `json:"fieldManager"`
+	FieldManager   string `json:"fieldManager,omitempty"`
 	ForceConflicts bool   `json:"forceConflicts"`
 }
 
@@ -160,6 +161,7 @@ func newDocument(p semantic.Plan, opts Options) (document, error) {
 	return document{
 		Schema:       SchemaV1ID,
 		Header:       toHeaderDTO(prepared.Header),
+		HelmAction:   prepared.HelmAction.String(),
 		Changes:      changes,
 		Tasks:        tasks,
 		Diagnostics:  diags,
