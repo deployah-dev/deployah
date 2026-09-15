@@ -29,8 +29,9 @@ import (
 // [semantic.Plan]. It does not mutate results or the unstructured objects
 // they hold. Current predictor actions never produce [semantic.Replace].
 //
-// Write FieldManager values come from [kube.ManagedFieldsManager].
-// [semantic.New] rejects an empty field manager, so callers must import
+// Write FieldManager values come from [kube.ManagedFieldsManager]. This
+// helper always emits [semantic.WriteServerSide] writes. [semantic.New]
+// rejects those without a field manager, so callers must import
 // [deployah.dev/deployah/internal/helm] (or otherwise pin that global)
 // before calling this function.
 func semanticPlanFromResults(header semantic.Header, results []predict.Result) (semantic.Plan, error) {
@@ -49,7 +50,13 @@ func semanticPlanFromResults(header semantic.Header, results []predict.Result) (
 	if orderErr := stampHelmApplyOrder(changes); orderErr != nil {
 		return semantic.Plan{}, orderErr
 	}
-	return semantic.New(header, changes, nil, diags)
+	helmAction := semantic.HelmUpgrade
+	if header.FreshInstall {
+		helmAction = semantic.HelmInstall
+	} else if len(changes) == 0 {
+		helmAction = semantic.HelmNone
+	}
+	return semantic.New(header, helmAction, changes, nil, diags)
 }
 
 func mapPredictResults(origin semantic.ResourceOrigin, results []predict.Result) ([]semantic.ResourceChange, []semantic.Diagnostic, error) {

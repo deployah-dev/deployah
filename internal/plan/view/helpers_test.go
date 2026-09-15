@@ -38,6 +38,14 @@ func helmOrigin() semantic.ResourceOrigin {
 	}
 }
 
+func writeCreate() semantic.ApplySemantics {
+	return semantic.ApplySemantics{
+		Write: &semantic.WriteSemantics{
+			Method: semantic.WriteCreate,
+		},
+	}
+}
+
 func writeApply() semantic.ApplySemantics {
 	return semantic.ApplySemantics{
 		Write: &semantic.WriteSemantics{
@@ -254,24 +262,24 @@ func humanHeader() semantic.Header {
 	}
 }
 
-func mustPlan(tb testing.TB, changes []semantic.ResourceChange, diags []semantic.Diagnostic) semantic.Plan {
+func mustPlan(tb testing.TB, helmAction semantic.HelmAction, changes []semantic.ResourceChange, diags []semantic.Diagnostic) semantic.Plan {
 	tb.Helper()
-	return mustPlanWithTasks(tb, changes, nil, diags)
+	return mustPlanWithTasks(tb, helmAction, changes, nil, diags)
 }
 
-func mustPlanWithTasks(tb testing.TB, changes []semantic.ResourceChange, tasks []semantic.TaskPlan, diags []semantic.Diagnostic) semantic.Plan {
+func mustPlanWithTasks(tb testing.TB, helmAction semantic.HelmAction, changes []semantic.ResourceChange, tasks []semantic.TaskPlan, diags []semantic.Diagnostic) semantic.Plan {
 	tb.Helper()
 	return mustPlanWithHeader(tb, semantic.Header{
 		Project:     "web",
 		Environment: "prod",
 		Release:     "web",
 		Namespace:   "prod",
-	}, changes, tasks, diags)
+	}, helmAction, changes, tasks, diags)
 }
 
-func mustPlanWithHeader(tb testing.TB, header semantic.Header, changes []semantic.ResourceChange, tasks []semantic.TaskPlan, diags []semantic.Diagnostic) semantic.Plan {
+func mustPlanWithHeader(tb testing.TB, header semantic.Header, helmAction semantic.HelmAction, changes []semantic.ResourceChange, tasks []semantic.TaskPlan, diags []semantic.Diagnostic) semantic.Plan {
 	tb.Helper()
-	p, err := semantic.New(header, changes, tasks, diags)
+	p, err := semantic.New(header, helmAction, changes, tasks, diags)
 	require.NoError(tb, err)
 	return p
 }

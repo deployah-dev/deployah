@@ -77,7 +77,10 @@ func TestRESTCluster_ApplyRequestShape(t *testing.T) {
 	cluster, fakeClient := testRESTCluster(t)
 	obj := testConfigMap("app", "prod", "next")
 
-	got, err := cluster.Apply(t.Context(), obj)
+	got, err := cluster.Apply(t.Context(), obj, ApplyOptions{
+		FieldManager:   kube.ManagedFieldsManager,
+		ForceConflicts: false,
+	})
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.Equal(t, "app", got.GetName())
@@ -95,6 +98,47 @@ func TestRESTCluster_ApplyRequestShape(t *testing.T) {
 	require.NotNil(t, opts.Force)
 	assert.False(t, *opts.Force)
 	assert.Equal(t, metav1.FieldValidationStrict, opts.FieldValidation)
+}
+
+func TestRESTCluster_ApplyCallerForceConflicts(t *testing.T) {
+	t.Parallel()
+	cluster, fakeClient := testRESTCluster(t)
+	obj := testConfigMap("app", "prod", "next")
+
+	_, err := cluster.Apply(t.Context(), obj, ApplyOptions{
+		FieldManager:   "other-manager",
+		ForceConflicts: true,
+	})
+	require.NoError(t, err)
+	opts := lastPatch(t, fakeClient).GetPatchOptions()
+	assert.Equal(t, "other-manager", opts.FieldManager)
+	require.NotNil(t, opts.Force)
+	assert.True(t, *opts.Force)
+	assert.Equal(t, []string{metav1.DryRunAll}, opts.DryRun)
+	assert.Equal(t, metav1.FieldValidationStrict, opts.FieldValidation)
+}
+
+func TestRESTCluster_CreateRequestShape(t *testing.T) {
+	t.Parallel()
+	cluster, fakeClient := testRESTCluster(t)
+	obj := testConfigMap("app", "prod", "next")
+
+	got, err := cluster.Create(t.Context(), obj)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, "app", got.GetName())
+	assert.Equal(t, "prod", got.GetNamespace())
+
+	create := lastCreate(t, fakeClient)
+	obj, ok := create.GetObject().(*unstructured.Unstructured)
+	require.True(t, ok)
+	assert.Equal(t, "app", obj.GetName())
+	assert.Equal(t, "prod", obj.GetNamespace())
+	assert.Equal(t, "prod", create.GetNamespace())
+	opts := create.GetCreateOptions()
+	assert.Equal(t, []string{metav1.DryRunAll}, opts.DryRun)
+	assert.Equal(t, metav1.FieldValidationStrict, opts.FieldValidation)
+	assert.Empty(t, opts.FieldManager)
 }
 
 func TestRESTCluster_JSONPatchRequestShape(t *testing.T) {
@@ -150,4 +194,15 @@ func lastPatch(t *testing.T, fakeClient *dynamicfake.FakeDynamicClient) clientte
 	}
 	t.Fatal("expected a patch action")
 	return clienttesting.PatchActionImpl{}
+}
+
+func lastCreate(t *testing.T, fakeClient *dynamicfake.FakeDynamicClient) clienttesting.CreateActionImpl {
+	t.Helper()
+	for _, action := range slices.Backward(fakeClient.Actions()) {
+		if c, ok := action.(clienttesting.CreateActionImpl); ok {
+			return c
+		}
+	}
+	t.Fatal("expected a create action")
+	return clienttesting.CreateActionImpl{}
 }

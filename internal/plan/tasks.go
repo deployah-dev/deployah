@@ -47,6 +47,9 @@ func assembleTasks(
 	desiredHooks []*v1.Hook,
 	changes []semantic.ResourceChange,
 ) ([]semantic.TaskPlan, error) {
+	// WillRun stays false. Callers stamp it with applyHelmWillRun after
+	// deriveHelmAction. HelmAction is the source of truth for whether
+	// Helm executes.
 	if resolved == nil {
 		return []semantic.TaskPlan{}, nil
 	}
@@ -69,7 +72,6 @@ func assembleTasks(
 	}
 
 	names := taskNames(resolved.Tasks, previous, previousDocs)
-	fresh := prep.Operation == helm.OperationInstall || prep.Current == nil
 
 	tasks := make([]semantic.TaskPlan, 0, len(names))
 	for _, name := range names {
@@ -105,7 +107,6 @@ func assembleTasks(
 			return nil, fmt.Errorf("task %s: unsupported on %s", name, on)
 		}
 	}
-	applyHelmWillRun(tasks, fresh, len(changes) > 0)
 	return tasks, nil
 }
 
@@ -271,18 +272,18 @@ func hookTask(
 	}, nil
 }
 
-func applyHelmWillRun(tasks []semantic.TaskPlan, fresh, helmSide bool) {
-	helmWillRun := fresh || helmSide
-	if !helmWillRun {
-		for _, t := range tasks {
-			if hookPhase(t.Phase) && t.Action != semantic.TaskUnchanged {
-				helmWillRun = true
-				break
-			}
-		}
-	}
+func applyHelmWillRun(tasks []semantic.TaskPlan, helmAction semantic.HelmAction) {
+	helmWillRun := helmAction == semantic.HelmInstall || helmAction == semantic.HelmUpgrade
 	for i, t := range tasks {
-		if t.Action == semantic.TaskDelete || !hookPhase(t.Phase) {
+		if t.Phase == semantic.TaskSchedule {
+			tasks[i].WillRun = false
+			continue
+		}
+		if !hookPhase(t.Phase) {
+			continue
+		}
+		if t.Action == semantic.TaskDelete {
+			tasks[i].WillRun = false
 			continue
 		}
 		tasks[i].WillRun = helmWillRun

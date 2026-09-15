@@ -24,6 +24,7 @@ import (
 // rendering contract.
 type Plan struct {
 	Header       Header
+	HelmAction   HelmAction
 	Changes      []ResourceChange
 	Tasks        []TaskPlan
 	Diagnostics  []Diagnostic
@@ -31,11 +32,20 @@ type Plan struct {
 	Completeness Completeness
 }
 
-// New validates changes, tasks, and diagnostics, sorts them, derives
-// [Summary] and [Completeness], and returns a plan whose slices are
-// non-nil. Task references to [ResourceChange] values must be
-// consistent; it fails closed on dangling or duplicate ownership.
-func New(header Header, changes []ResourceChange, tasks []TaskPlan, diagnostics []Diagnostic) (Plan, error) {
+// New validates helmAction, header, changes, tasks, and diagnostics,
+// sorts them, derives [Summary] and [Completeness], and returns a plan
+// whose slices are non-nil. Task references to [ResourceChange] values
+// must be consistent; it fails closed on dangling or duplicate
+// ownership. helmAction is stored as provided; [New] does not derive or
+// mutate it.
+func New(header Header, helmAction HelmAction, changes []ResourceChange, tasks []TaskPlan, diagnostics []Diagnostic) (Plan, error) {
+	if !helmAction.valid() {
+		return Plan{}, fmt.Errorf("invalid helm action %s", helmAction)
+	}
+	if err := validateHelmAction(header, helmAction); err != nil {
+		return Plan{}, err
+	}
+
 	copiedChanges := slices.Clone(changes)
 	if copiedChanges == nil {
 		copiedChanges = []ResourceChange{}
@@ -71,6 +81,9 @@ func New(header Header, changes []ResourceChange, tasks []TaskPlan, diagnostics 
 	if err := validateTasks(copiedTasks, copiedChanges); err != nil {
 		return Plan{}, err
 	}
+	if err := validateHelmContent(helmAction, copiedChanges, copiedTasks); err != nil {
+		return Plan{}, err
+	}
 
 	sortChanges(copiedChanges)
 	sortTasks(copiedTasks, copiedChanges)
@@ -78,12 +91,37 @@ func New(header Header, changes []ResourceChange, tasks []TaskPlan, diagnostics 
 
 	return Plan{
 		Header:       header,
+		HelmAction:   helmAction,
 		Changes:      copiedChanges,
 		Tasks:        copiedTasks,
 		Diagnostics:  copiedDiags,
 		Summary:      Summarize(copiedChanges),
 		Completeness: deriveCompleteness(copiedChanges, copiedDiags),
 	}, nil
+}
+
+// HasEffects reports whether the plan lists a known resource mutation or
+// a task that would change or run. Diagnostics and [HelmAction] are not
+// effects.
+func (p Plan) HasEffects() bool {
+	if len(p.Changes) > 0 {
+		return true
+	}
+	for _, t := range p.Tasks {
+		if t.Action != TaskUnchanged || t.WillRun {
+			return true
+		}
+	}
+	return false
+}
+
+// IsNoOp reports whether the plan is a complete, non-install HelmNone
+// with no known effects. Keep this expression verbatim.
+func (p Plan) IsNoOp() bool {
+	return !p.Header.FreshInstall &&
+		p.Completeness == CompletenessComplete &&
+		p.HelmAction == HelmNone &&
+		!p.HasEffects()
 }
 
 func normalizeChange(c ResourceChange) (ResourceChange, error) {
@@ -279,8 +317,15 @@ func validateOrigin(o ResourceOrigin) error {
 	if !o.Kind.valid() {
 		return fmt.Errorf("invalid origin %s", o.Kind)
 	}
-	if o.Kind == OriginHelm && o.Helm == nil {
-		return fmt.Errorf("helm origin requires helm details")
+	switch o.Kind {
+	case OriginHelm:
+		if o.Helm == nil {
+			return fmt.Errorf("helm origin requires helm details")
+		}
+	case OriginCRD, OriginNamespace:
+		if o.Helm != nil {
+			return fmt.Errorf("%s origin must not include helm details", o.Kind)
+		}
 	}
 	return nil
 }
@@ -294,7 +339,13 @@ func validateApply(action Action, apply ApplySemantics) error {
 		if apply.Delete != nil {
 			return fmt.Errorf("%s must not have delete semantics", action)
 		}
-		return validateWrite(*apply.Write)
+		if err := validateWrite(*apply.Write); err != nil {
+			return err
+		}
+		if action == Update && apply.Write.Method == WriteCreate {
+			return fmt.Errorf("update requires server_side_apply")
+		}
+		return nil
 	case Delete:
 		if apply.Write != nil {
 			return fmt.Errorf("delete must not have write semantics")
@@ -323,8 +374,62 @@ func validateWrite(w WriteSemantics) error {
 	if !w.Method.valid() {
 		return fmt.Errorf("invalid write method %s", w.Method)
 	}
-	if w.Method == WriteServerSide && w.FieldManager == "" {
-		return fmt.Errorf("server_side_apply requires a field manager")
+	switch w.Method {
+	case WriteServerSide:
+		if w.FieldManager == "" {
+			return fmt.Errorf("server_side_apply requires a field manager")
+		}
+	case WriteCreate:
+		if w.FieldManager != "" {
+			return fmt.Errorf("create write must not set a field manager")
+		}
+		if w.ForceConflicts {
+			return fmt.Errorf("create write must not force conflicts")
+		}
+	}
+	return nil
+}
+
+func validateHelmAction(header Header, helmAction HelmAction) error {
+	switch helmAction {
+	case HelmInstall:
+		if !header.FreshInstall {
+			return fmt.Errorf("helm install requires a fresh install")
+		}
+	case HelmNone, HelmUpgrade:
+		if header.FreshInstall {
+			return fmt.Errorf("fresh install requires helm install")
+		}
+	default:
+		return fmt.Errorf("invalid helm action %s", helmAction)
+	}
+	return nil
+}
+
+func validateHelmContent(helmAction HelmAction, changes []ResourceChange, tasks []TaskPlan) error {
+	for _, c := range changes {
+		if c.Origin.Kind == OriginNamespace && helmAction != HelmInstall {
+			return fmt.Errorf("namespace origin requires helm install")
+		}
+	}
+	if helmAction != HelmNone {
+		return nil
+	}
+	for _, c := range changes {
+		if c.Origin.Kind == OriginHelm {
+			return fmt.Errorf("helm none must not include helm resource changes")
+		}
+	}
+	for _, t := range tasks {
+		if t.Phase != TaskPreDeploy && t.Phase != TaskPostDeploy {
+			continue
+		}
+		if t.Action != TaskUnchanged {
+			return fmt.Errorf("helm none must not include changed %s task %s", t.Phase, t.Name)
+		}
+		if t.WillRun {
+			return fmt.Errorf("helm none must not will run %s task %s", t.Phase, t.Name)
+		}
 	}
 	return nil
 }

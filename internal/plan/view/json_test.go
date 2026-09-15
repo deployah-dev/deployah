@@ -30,7 +30,7 @@ import (
 
 func TestWriteJSON_HeaderContextAndRevision(t *testing.T) {
 	t.Parallel()
-	p := mustPlanWithHeader(t, humanHeader(), nil, nil, nil)
+	p := mustPlanWithHeader(t, humanHeader(), semantic.HelmNone, nil, nil, nil)
 	var buf bytes.Buffer
 	require.NoError(t, view.WriteJSON(&buf, p, view.Options{}))
 	assertJSONAt(t, buf.Bytes(), `"production-eu"`, "header", "context")
@@ -40,7 +40,7 @@ func TestWriteJSON_HeaderContextAndRevision(t *testing.T) {
 
 func TestWriteJSON_SchemaAndTasks(t *testing.T) {
 	t.Parallel()
-	p := mustPlan(t, nil, nil)
+	p := mustPlan(t, semantic.HelmNone, nil, nil)
 	var buf bytes.Buffer
 	require.NoError(t, view.WriteJSON(&buf, p, view.Options{}))
 	assert.JSONEq(t, `{
@@ -51,6 +51,7 @@ func TestWriteJSON_SchemaAndTasks(t *testing.T) {
 			"release": "web",
 			"namespace": "prod"
 		},
+		"helmAction": "none",
 		"changes": [],
 		"tasks": [],
 		"diagnostics": [],
@@ -67,9 +68,31 @@ func TestWriteJSON_SchemaAndTasks(t *testing.T) {
 	validatePlanSchema(t, buf.Bytes())
 }
 
+func TestWriteJSON_WriteCreateOmitsFieldManager(t *testing.T) {
+	t.Parallel()
+	p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
+		Resource: ref("ConfigMap", "app"),
+		Origin:   helmOrigin(),
+		Action:   semantic.Create,
+		After:    snap(cm("app", "v1")),
+		Apply:    writeCreate(),
+	}}, nil)
+	var buf bytes.Buffer
+	require.NoError(t, view.WriteJSON(&buf, p, view.Options{}))
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &doc))
+	write := jsonObject(jsonObject(jsonObjects(t, doc["changes"])[0]["apply"])["write"])
+	require.NotNil(t, write)
+	assert.Equal(t, "create", write["method"])
+	_, hasManager := write["fieldManager"]
+	assert.False(t, hasManager)
+	assert.Equal(t, false, write["forceConflicts"])
+	validatePlanSchema(t, buf.Bytes())
+}
+
 func TestWriteJSON_TasksContract(t *testing.T) {
 	t.Parallel()
-	p := mustPlanWithTasks(t, nil, []semantic.TaskPlan{{
+	p := mustPlanWithTasks(t, semantic.HelmUpgrade, nil, []semantic.TaskPlan{{
 		Name:    "migrate",
 		Phase:   semantic.TaskPreDeploy,
 		Action:  semantic.TaskCreate,
@@ -90,6 +113,7 @@ func TestWriteJSON_TasksContract(t *testing.T) {
 			"release": "web",
 			"namespace": "prod"
 		},
+		"helmAction": "upgrade",
 		"changes": [],
 		"tasks": [{
 			"name": "migrate",
@@ -120,7 +144,7 @@ func TestWriteJSON_TasksContract(t *testing.T) {
 
 func TestWriteJSON_Deterministic(t *testing.T) {
 	t.Parallel()
-	p := mustPlan(t, []semantic.ResourceChange{{
+	p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 		Resource: ref("ConfigMap", "app"),
 		Origin:   helmOrigin(),
 		Action:   semantic.Update,
@@ -139,7 +163,14 @@ func TestWriteJSON_Deterministic(t *testing.T) {
 
 func TestWriteJSON_CamelCasePropertyNames(t *testing.T) {
 	t.Parallel()
-	p := mustPlan(t, []semantic.ResourceChange{{
+	header := semantic.Header{
+		Project:      "web",
+		Environment:  "prod",
+		Release:      "web",
+		Namespace:    "prod",
+		FreshInstall: true,
+	}
+	p := mustPlanWithHeader(t, header, semantic.HelmInstall, []semantic.ResourceChange{{
 		Resource: semantic.ResourceRef{
 			APIVersion:   "v1",
 			Kind:         "ConfigMap",
@@ -150,8 +181,7 @@ func TestWriteJSON_CamelCasePropertyNames(t *testing.T) {
 		Action: semantic.Create,
 		After:  snap(cm("app", "v1")),
 		Apply:  writeApply(),
-	}}, nil)
-	p.Header.FreshInstall = true
+	}}, nil, nil)
 	var buf bytes.Buffer
 	require.NoError(t, view.WriteJSON(&buf, p, view.Options{}))
 	raw := buf.Bytes()
@@ -187,7 +217,7 @@ func TestWriteJSON_InvalidZero(t *testing.T) {
 
 func TestWriteJSON_ShowSecrets(t *testing.T) {
 	t.Parallel()
-	p := mustPlan(t, []semantic.ResourceChange{{
+	p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 		Resource: ref("Secret", "s"),
 		Origin:   helmOrigin(),
 		Action:   semantic.Update,
@@ -244,7 +274,7 @@ func TestWriteJSON_ShowSecrets(t *testing.T) {
 
 func TestWriteJSON_DoesNotMutatePlan(t *testing.T) {
 	t.Parallel()
-	p := mustPlan(t, []semantic.ResourceChange{{
+	p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 		Resource: ref("Secret", "s"),
 		Origin:   helmOrigin(),
 		Action:   semantic.Update,
@@ -258,7 +288,7 @@ func TestWriteJSON_DoesNotMutatePlan(t *testing.T) {
 
 func TestWriteJSON_ExplicitNullFields(t *testing.T) {
 	t.Parallel()
-	p := mustPlan(t, []semantic.ResourceChange{{
+	p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 		Resource: ref("ConfigMap", "app"),
 		Origin:   helmOrigin(),
 		Action:   semantic.Update,
@@ -294,29 +324,29 @@ func TestWriteJSON_MatchesSchemaForRepresentativePlans(t *testing.T) {
 		name string
 		plan semantic.Plan
 	}{
-		{name: "empty", plan: mustPlan(t, nil, nil)},
-		{name: "create", plan: mustPlan(t, []semantic.ResourceChange{{
+		{name: "empty", plan: mustPlan(t, semantic.HelmNone, nil, nil)},
+		{name: "create", plan: mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 			Resource: res,
 			Origin:   helmOrigin(),
 			Action:   semantic.Create,
 			After:    snap(cm("app", "v1")),
 			Apply:    writeApply(),
 		}}, nil)},
-		{name: "delete", plan: mustPlan(t, []semantic.ResourceChange{{
+		{name: "delete", plan: mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 			Resource: res,
 			Origin:   helmOrigin(),
 			Action:   semantic.Delete,
 			Before:   snap(cm("app", "v1")),
 			Apply:    deleteApply(),
 		}}, nil)},
-		{name: "partial update", plan: mustPlan(t, []semantic.ResourceChange{{
+		{name: "partial update", plan: mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 			Resource: res,
 			Origin:   helmOrigin(),
 			Action:   semantic.Update,
 			Before:   snap(cm("app", "v1")),
 			Apply:    writeApply(),
 		}}, []semantic.Diagnostic{limitationFor(res)})},
-		{name: "replace", plan: mustPlan(t, []semantic.ResourceChange{{
+		{name: "replace", plan: mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 			Resource: res,
 			Origin:   helmOrigin(),
 			Action:   semantic.Replace,
@@ -324,7 +354,46 @@ func TestWriteJSON_MatchesSchemaForRepresentativePlans(t *testing.T) {
 			After:    snap(cm("app", "v2")),
 			Apply:    bothApply(),
 		}}, nil)},
-		{name: "task create", plan: mustPlanWithTasks(t, nil, []semantic.TaskPlan{{
+		{name: "create write create", plan: mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
+			Resource: res,
+			Origin:   helmOrigin(),
+			Action:   semantic.Create,
+			After:    snap(cm("app", "v1")),
+			Apply:    writeCreate(),
+		}}, nil)},
+		{name: "origin crd", plan: mustPlan(t, semantic.HelmNone, []semantic.ResourceChange{{
+			Resource: semantic.ResourceRef{
+				APIVersion: "apiextensions.k8s.io/v1",
+				Kind:       "CustomResourceDefinition",
+				Name:       "widgets.example.com",
+			},
+			Origin: semantic.ResourceOrigin{Kind: semantic.OriginCRD},
+			Action: semantic.Create,
+			After: snap(map[string]any{
+				"apiVersion": "apiextensions.k8s.io/v1",
+				"kind":       "CustomResourceDefinition",
+				"metadata":   map[string]any{"name": "widgets.example.com"},
+			}),
+			Apply: writeCreate(),
+		}}, nil)},
+		{name: "origin namespace", plan: mustPlanWithHeader(t, semantic.Header{
+			Project:      "web",
+			Environment:  "prod",
+			Release:      "web",
+			Namespace:    "prod",
+			FreshInstall: true,
+		}, semantic.HelmInstall, []semantic.ResourceChange{{
+			Resource: semantic.ResourceRef{APIVersion: "v1", Kind: "Namespace", Name: "prod"},
+			Origin:   semantic.ResourceOrigin{Kind: semantic.OriginNamespace},
+			Action:   semantic.Create,
+			After: snap(map[string]any{
+				"apiVersion": "v1",
+				"kind":       "Namespace",
+				"metadata":   map[string]any{"name": "prod"},
+			}),
+			Apply: writeCreate(),
+		}}, nil, nil)},
+		{name: "task create", plan: mustPlanWithTasks(t, semantic.HelmUpgrade, nil, []semantic.TaskPlan{{
 			Name:    "migrate",
 			Phase:   semantic.TaskPreDeploy,
 			Action:  semantic.TaskCreate,
@@ -355,7 +424,7 @@ func TestWriteJSON_SnapshotMayUseProtocolKeyNames(t *testing.T) {
 		"api_version": "1",
 		"will_run":    "yes",
 	}
-	p := mustPlan(t, []semantic.ResourceChange{{
+	p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 		Resource: ref("ConfigMap", "app"),
 		Origin:   helmOrigin(),
 		Action:   semantic.Create,
@@ -412,6 +481,7 @@ func assertNoJSONKeysFromBytes(t *testing.T, raw []byte) {
 	var doc map[string]any
 	require.NoError(t, json.Unmarshal(raw, &doc))
 	assertNoJSONKeys(t, doc)
+	assert.Contains(t, doc, "helmAction")
 	if header := jsonObject(doc["header"]); header != nil {
 		assertNoJSONKeys(t, header)
 	}
@@ -523,7 +593,7 @@ func assertNoJSONKeys(t *testing.T, obj map[string]any) {
 		"marker",
 		"displayAction",
 		"executions",
-		"helmAction",
+		"helm_action",
 	} {
 		assert.NotContains(t, obj, name)
 	}

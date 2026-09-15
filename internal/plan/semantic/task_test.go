@@ -96,7 +96,7 @@ func TestNew_TaskValidation(t *testing.T) {
 				Definitions: []semantic.HookDefinition{{
 					Resource: app,
 					Action:   semantic.Create,
-					After:    snap(cm("app", "v1")),
+					After:    &semantic.ResourceSnapshot{Object: cm("app", "v1")},
 				}},
 			}},
 			wantErr: "schedule must not have hook definitions",
@@ -162,8 +162,8 @@ func TestNew_TaskValidation(t *testing.T) {
 				Definitions: []semantic.HookDefinition{{
 					Resource: app,
 					Action:   semantic.Replace,
-					Before:   snap(cm("app", "v1")),
-					After:    snap(cm("app", "v2")),
+					Before:   &semantic.ResourceSnapshot{Object: cm("app", "v1")},
+					After:    &semantic.ResourceSnapshot{Object: cm("app", "v2")},
 				}},
 			}},
 			wantErr: "invalid action",
@@ -172,7 +172,7 @@ func TestNew_TaskValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := semantic.New(semantic.Header{}, tt.changes, tt.tasks, nil)
+			_, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, tt.changes, tt.tasks, nil)
 			require.Error(t, err)
 			assert.ErrorContains(t, err, tt.wantErr)
 		})
@@ -182,7 +182,7 @@ func TestNew_TaskValidation(t *testing.T) {
 func TestNew_ValidScheduleReference(t *testing.T) {
 	t.Parallel()
 	app := ref("ConfigMap", "app")
-	p, err := semantic.New(semantic.Header{}, []semantic.ResourceChange{createChange("app", "v1")}, []semantic.TaskPlan{{
+	p, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, []semantic.ResourceChange{createChange("app", "v1")}, []semantic.TaskPlan{{
 		Name:      "cleanup",
 		Phase:     semantic.TaskSchedule,
 		Action:    semantic.TaskCreate,
@@ -198,7 +198,7 @@ func TestNew_ValidScheduleReference(t *testing.T) {
 
 func TestNew_SummaryIgnoresHookDefinitions(t *testing.T) {
 	t.Parallel()
-	p, err := semantic.New(semantic.Header{}, nil, []semantic.TaskPlan{{
+	p, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, nil, []semantic.TaskPlan{{
 		Name:    "migrate",
 		Phase:   semantic.TaskPreDeploy,
 		Action:  semantic.TaskCreate,
@@ -206,7 +206,7 @@ func TestNew_SummaryIgnoresHookDefinitions(t *testing.T) {
 		Definitions: []semantic.HookDefinition{{
 			Resource: ref("Job", "migrate"),
 			Action:   semantic.Create,
-			After:    snap(cm("migrate", "v1")),
+			After:    &semantic.ResourceSnapshot{Object: cm("migrate", "v1")},
 		}},
 	}}, nil)
 	require.NoError(t, err)
@@ -218,7 +218,7 @@ func TestNew_SummaryIgnoresHookDefinitions(t *testing.T) {
 
 func TestNew_TaskSort(t *testing.T) {
 	t.Parallel()
-	p, err := semantic.New(semantic.Header{}, nil, []semantic.TaskPlan{
+	p, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, nil, []semantic.TaskPlan{
 		{Name: "z", Phase: semantic.TaskPreDeploy, Action: semantic.TaskUnchanged, WillRun: true, HookWeight: 2},
 		{Name: "cleanup", Phase: semantic.TaskSchedule, Action: semantic.TaskUnchanged},
 		{Name: "a", Phase: semantic.TaskPreDeploy, Action: semantic.TaskUnchanged, WillRun: true, HookWeight: 2},
@@ -256,13 +256,13 @@ func TestNew_NestedTaskOrder(t *testing.T) {
 					{
 						Resource:   ref("ConfigMap", "z-env"),
 						Action:     semantic.Create,
-						After:      snap(cm("z-env", "v1")),
+						After:      &semantic.ResourceSnapshot{Object: cm("z-env", "v1")},
 						HookWeight: 2,
 					},
 					{
 						Resource:   ref("ConfigMap", "a-env"),
 						Action:     semantic.Create,
-						After:      snap(cm("a-env", "v1")),
+						After:      &semantic.ResourceSnapshot{Object: cm("a-env", "v1")},
 						HookWeight: 1,
 					},
 				},
@@ -286,7 +286,7 @@ func TestNew_NestedTaskOrder(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			p, err := semantic.New(semantic.Header{}, tt.changes, []semantic.TaskPlan{tt.task}, nil)
+			p, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, tt.changes, []semantic.TaskPlan{tt.task}, nil)
 			require.NoError(t, err)
 			require.Len(t, p.Tasks, 1)
 			gotDefs := make([]string, 0, len(p.Tasks[0].Definitions))
@@ -309,7 +309,7 @@ func TestNew_ApplyOrderThenIdentity(t *testing.T) {
 	a.ApplyOrder = 2
 	z := createChange("z", "1")
 	z.ApplyOrder = 1
-	p, err := semantic.New(semantic.Header{}, []semantic.ResourceChange{a, z}, nil, nil)
+	p, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, []semantic.ResourceChange{a, z}, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, p.Changes, 2)
 	assert.Equal(t, "z", p.Changes[0].Resource.Name)
@@ -318,7 +318,7 @@ func TestNew_ApplyOrderThenIdentity(t *testing.T) {
 
 func TestNew_NonNilNestedTaskSlices(t *testing.T) {
 	t.Parallel()
-	p, err := semantic.New(semantic.Header{}, nil, []semantic.TaskPlan{{
+	p, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, nil, []semantic.TaskPlan{{
 		Name:    "seed",
 		Phase:   semantic.TaskPreDeploy,
 		Action:  semantic.TaskUnchanged,
@@ -336,10 +336,10 @@ func TestNew_DoesNotAliasCallerTasks(t *testing.T) {
 	defs := []semantic.HookDefinition{{
 		Resource: ref("ConfigMap", "env"),
 		Action:   semantic.Update,
-		Before:   snap(cm("env", "v1")),
-		After:    snap(cm("env", "v2")),
+		Before:   &semantic.ResourceSnapshot{Object: cm("env", "v1")},
+		After:    &semantic.ResourceSnapshot{Object: cm("env", "v2")},
 	}}
-	p, err := semantic.New(semantic.Header{}, nil, []semantic.TaskPlan{{
+	p, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, nil, []semantic.TaskPlan{{
 		Name:        "migrate",
 		Phase:       semantic.TaskPreDeploy,
 		Action:      semantic.TaskUpdate,

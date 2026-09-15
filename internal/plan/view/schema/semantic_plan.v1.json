@@ -8,6 +8,7 @@
   "required": [
     "schema",
     "header",
+    "helmAction",
     "changes",
     "tasks",
     "diagnostics",
@@ -21,6 +22,10 @@
     },
     "header": {
       "$ref": "#/$defs/Header"
+    },
+    "helmAction": {
+      "type": "string",
+      "enum": ["none", "install", "upgrade"]
     },
     "changes": {
       "type": "array",
@@ -48,6 +53,115 @@
       "enum": ["complete", "partial"]
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "helmAction": {
+            "const": "install"
+          }
+        },
+        "required": ["helmAction"]
+      },
+      "then": {
+        "properties": {
+          "header": {
+            "properties": {
+              "freshInstall": {
+                "const": true
+              }
+            },
+            "required": ["freshInstall"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "header": {
+            "properties": {
+              "freshInstall": {
+                "const": true
+              }
+            },
+            "required": ["freshInstall"]
+          }
+        },
+        "required": ["header"]
+      },
+      "then": {
+        "properties": {
+          "helmAction": {
+            "const": "install"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "helmAction": {
+            "const": "none"
+          }
+        },
+        "required": ["helmAction"]
+      },
+      "then": {
+        "properties": {
+          "header": {
+            "properties": {
+              "freshInstall": {
+                "not": {
+                  "const": true
+                }
+              }
+            }
+          },
+          "changes": {
+            "items": {
+              "not": {
+                "properties": {
+                  "origin": {
+                    "properties": {
+                      "kind": {
+                        "const": "helm"
+                      }
+                    },
+                    "required": ["kind"]
+                  }
+                },
+                "required": ["origin"]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "helmAction": {
+            "const": "upgrade"
+          }
+        },
+        "required": ["helmAction"]
+      },
+      "then": {
+        "properties": {
+          "header": {
+            "properties": {
+              "freshInstall": {
+                "not": {
+                  "const": true
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
   "$defs": {
     "Header": {
       "type": "object",
@@ -163,6 +277,16 @@
                 "required": ["write"],
                 "not": {
                   "required": ["delete"]
+                },
+                "properties": {
+                  "write": {
+                    "properties": {
+                      "method": {
+                        "const": "server_side_apply"
+                      }
+                    },
+                    "required": ["method"]
+                  }
                 }
               }
             }
@@ -251,7 +375,7 @@
       "properties": {
         "kind": {
           "type": "string",
-          "enum": ["helm"]
+          "enum": ["helm", "crd", "namespace"]
         },
         "helm": {
           "$ref": "#/$defs/HelmOrigin"
@@ -269,6 +393,36 @@
           },
           "then": {
             "required": ["helm"]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "crd"
+              }
+            },
+            "required": ["kind"]
+          },
+          "then": {
+            "not": {
+              "required": ["helm"]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "namespace"
+              }
+            },
+            "required": ["kind"]
+          },
+          "then": {
+            "not": {
+              "required": ["helm"]
+            }
           }
         }
       ]
@@ -305,11 +459,10 @@
       "properties": {
         "method": {
           "type": "string",
-          "enum": ["server_side_apply"]
+          "enum": ["create", "server_side_apply"]
         },
         "fieldManager": {
-          "type": "string",
-          "minLength": 1
+          "type": "string"
         },
         "forceConflicts": {
           "type": "boolean"
@@ -332,6 +485,26 @@
                 "type": "string",
                 "minLength": 1
               }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "method": {
+                "const": "create"
+              }
+            },
+            "required": ["method"]
+          },
+          "then": {
+            "properties": {
+              "forceConflicts": {
+                "const": false
+              }
+            },
+            "not": {
+              "required": ["fieldManager"]
             }
           }
         }

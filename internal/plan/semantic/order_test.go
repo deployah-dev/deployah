@@ -89,7 +89,7 @@ func TestNew_OrderTieBreakers(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			p, err := semantic.New(semantic.Header{}, tt.changes, nil, nil)
+			p, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, tt.changes, nil, nil)
 			require.NoError(t, err)
 			require.Len(t, p.Changes, len(tt.want))
 			got := make([]semantic.ResourceRef, 0, len(p.Changes))
@@ -104,35 +104,35 @@ func TestNew_OrderTieBreakers(t *testing.T) {
 func TestNew_ActionRank(t *testing.T) {
 	t.Parallel()
 	res := ref("ConfigMap", "app")
-	p, err := semantic.New(semantic.Header{}, []semantic.ResourceChange{
+	p, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, []semantic.ResourceChange{
 		{
 			Resource: res,
 			Origin:   helmOrigin(),
 			Action:   semantic.Delete,
-			Before:   snap(cm("app", "v1")),
+			Before:   &semantic.ResourceSnapshot{Object: cm("app", "v1")},
 			Apply:    deleteApply(),
 		},
 		{
 			Resource: res,
 			Origin:   helmOrigin(),
 			Action:   semantic.Replace,
-			Before:   snap(cm("app", "v1")),
-			After:    snap(cm("app", "v2")),
+			Before:   &semantic.ResourceSnapshot{Object: cm("app", "v1")},
+			After:    &semantic.ResourceSnapshot{Object: cm("app", "v2")},
 			Apply:    bothApply(),
 		},
 		{
 			Resource: res,
 			Origin:   helmOrigin(),
 			Action:   semantic.Update,
-			Before:   snap(cm("app", "v1")),
-			After:    snap(cm("app", "v2")),
+			Before:   &semantic.ResourceSnapshot{Object: cm("app", "v1")},
+			After:    &semantic.ResourceSnapshot{Object: cm("app", "v2")},
 			Apply:    writeApply(),
 		},
 		{
 			Resource: res,
 			Origin:   helmOrigin(),
 			Action:   semantic.Create,
-			After:    snap(cm("app", "v1")),
+			After:    &semantic.ResourceSnapshot{Object: cm("app", "v1")},
 			Apply:    writeApply(),
 		},
 	}, nil, nil)
@@ -147,12 +147,12 @@ func TestNew_ActionRank(t *testing.T) {
 
 func TestNew_FieldChangeOrder(t *testing.T) {
 	t.Parallel()
-	p, err := semantic.New(semantic.Header{}, []semantic.ResourceChange{{
+	p, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, []semantic.ResourceChange{{
 		Resource: ref("ConfigMap", "app"),
 		Origin:   helmOrigin(),
 		Action:   semantic.Update,
-		Before:   snap(map[string]any{"z": "1", "a": "1", "m": "1"}),
-		After:    snap(map[string]any{"z": "2", "a": "2", "m": "2"}),
+		Before:   &semantic.ResourceSnapshot{Object: map[string]any{"z": "1", "a": "1", "m": "1"}},
+		After:    &semantic.ResourceSnapshot{Object: map[string]any{"z": "2", "a": "2", "m": "2"}},
 		Apply:    writeApply(),
 	}}, nil, nil)
 	require.NoError(t, err)
@@ -168,7 +168,7 @@ func TestNew_DiagnosticOrder(t *testing.T) {
 	t.Parallel()
 	app := ref("ConfigMap", "app")
 	web := ref("ConfigMap", "web")
-	p, err := semantic.New(semantic.Header{}, nil, nil, []semantic.Diagnostic{
+	p, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, nil, nil, []semantic.Diagnostic{
 		{
 			Severity: semantic.DiagnosticWarning,
 			Category: semantic.CategoryPredictionLimitation,
@@ -213,7 +213,7 @@ func namedCreate(res semantic.ResourceRef) semantic.ResourceChange {
 		Resource: res,
 		Origin:   helmOrigin(),
 		Action:   semantic.Create,
-		After:    snap(cm(name, "v1")),
+		After:    &semantic.ResourceSnapshot{Object: cm(name, "v1")},
 		Apply:    writeApply(),
 	}
 }

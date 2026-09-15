@@ -35,13 +35,22 @@ import (
 )
 
 // Cluster is the Kubernetes surface [Predict] uses. The production
-// implementation dry-runs every write. Tests substitute a fake.
+// implementation dry-runs every write. Apply is server-side apply with
+// caller [ApplyOptions]. Create is a Kubernetes create and is unused
+// by Helm [Predict]. Tests substitute a fake.
 type Cluster interface {
 	Get(ctx context.Context, id Identity) (*unstructured.Unstructured, error)
-	Apply(ctx context.Context, obj *unstructured.Unstructured) (*unstructured.Unstructured, error)
+	Create(ctx context.Context, obj *unstructured.Unstructured) (*unstructured.Unstructured, error)
+	Apply(ctx context.Context, obj *unstructured.Unstructured, opts ApplyOptions) (*unstructured.Unstructured, error)
 	JSONPatch(ctx context.Context, id Identity, patch []byte) error
 	Delete(ctx context.Context, id Identity) error
 	Mapping(gvk schema.GroupVersionKind) (*meta.RESTMapping, error)
+}
+
+// ApplyOptions configures a dry-run server-side apply.
+type ApplyOptions struct {
+	FieldManager   string
+	ForceConflicts bool
 }
 
 type restCluster struct {
@@ -52,8 +61,8 @@ type restCluster struct {
 var _ Cluster = (*restCluster)(nil)
 
 // NewCluster builds the production [Cluster] for cfg. Construction matches
-// the existing dynamic-client plus discovery REST-mapper stack. Apply,
-// JSONPatch, and Delete always send server dry-run.
+// the existing dynamic-client plus discovery REST-mapper stack. Create,
+// Apply, JSONPatch, and Delete always send server dry-run.
 func NewCluster(cfg *rest.Config) (Cluster, error) {
 	dyn, err := dynamic.NewForConfig(cfg)
 	if err != nil {
@@ -79,7 +88,23 @@ func (c *restCluster) Get(ctx context.Context, id Identity) (*unstructured.Unstr
 	return ri.Get(ctx, id.Name, metav1.GetOptions{})
 }
 
-func (c *restCluster) Apply(ctx context.Context, obj *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+func (c *restCluster) Create(ctx context.Context, obj *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+	ri, err := c.resource(obj.GroupVersionKind(), obj.GetNamespace())
+	if err != nil {
+		return nil, err
+	}
+	predicted, err := ri.Create(ctx, obj, metav1.CreateOptions{
+		DryRun:          []string{metav1.DryRunAll},
+		FieldValidation: metav1.FieldValidationStrict,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create failed for object %s/%s %s: %w",
+			obj.GetNamespace(), obj.GetName(), obj.GroupVersionKind().String(), err)
+	}
+	return predicted, nil
+}
+
+func (c *restCluster) Apply(ctx context.Context, obj *unstructured.Unstructured, opts ApplyOptions) (*unstructured.Unstructured, error) {
 	data, err := runtime.Encode(unstructured.UnstructuredJSONScheme, obj)
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode object %s/%s %s: %w",
@@ -89,7 +114,7 @@ func (c *restCluster) Apply(ctx context.Context, obj *unstructured.Unstructured)
 	if err != nil {
 		return nil, err
 	}
-	predicted, err := ri.Patch(ctx, obj.GetName(), types.ApplyPatchType, data, applyPatchOptions())
+	predicted, err := ri.Patch(ctx, obj.GetName(), types.ApplyPatchType, data, applyPatchOptions(opts))
 	if err != nil {
 		if apierrors.IsConflict(err) {
 			return nil, fmt.Errorf("conflict occurred while applying object %s/%s %s: %w",
@@ -134,11 +159,11 @@ func (c *restCluster) resource(gvk schema.GroupVersionKind, namespace string) (d
 	return nri, nil
 }
 
-func applyPatchOptions() metav1.PatchOptions {
+func applyPatchOptions(opts ApplyOptions) metav1.PatchOptions {
 	return metav1.PatchOptions{
 		DryRun:          []string{metav1.DryRunAll},
-		FieldManager:    kube.ManagedFieldsManager,
-		Force:           new(false),
+		FieldManager:    opts.FieldManager,
+		Force:           new(opts.ForceConflicts),
 		FieldValidation: metav1.FieldValidationStrict,
 	}
 }

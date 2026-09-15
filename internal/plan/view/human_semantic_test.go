@@ -412,7 +412,11 @@ func (f *fakeCluster) Get(_ context.Context, id predict.Identity) (*unstructured
 	return obj.DeepCopy(), nil
 }
 
-func (f *fakeCluster) Apply(_ context.Context, obj *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+func (f *fakeCluster) Create(_ context.Context, obj *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+	return obj.DeepCopy(), nil
+}
+
+func (f *fakeCluster) Apply(_ context.Context, obj *unstructured.Unstructured, _ predict.ApplyOptions) (*unstructured.Unstructured, error) {
 	return obj.DeepCopy(), nil
 }
 
