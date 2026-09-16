@@ -29,6 +29,8 @@ import (
 	"deployah.dev/deployah/internal/helm"
 	"deployah.dev/deployah/internal/plan"
 	"deployah.dev/deployah/internal/plan/semantic"
+	"deployah.dev/deployah/internal/render"
+	"deployah.dev/deployah/internal/spec"
 
 	v1 "helm.sh/helm/v4/pkg/release/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -126,7 +128,7 @@ func TestBuildSemanticPlan_InstallCreatesNamespace(t *testing.T) {
 	}
 	cluster := newFakeCluster()
 	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, buildInput("ctx", resolvedSpec(), nil))
-	registerCleanup(t, cleanup)
+	t.Cleanup(cleanup)
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(p.Changes), 2)
 	assert.Equal(t, semantic.OriginNamespace, p.Changes[0].Origin.Kind)
@@ -143,47 +145,49 @@ func TestBuildSemanticPlan_InstallCreatesNamespace(t *testing.T) {
 
 func TestBuildSemanticPlan_InstallNamespaceLabelUpdate(t *testing.T) {
 	t.Parallel()
-	client := &fakeBuildClient{
-		result:  installResult(configMapYAML("app", "prod", "v1")),
-		prep:    helm.ReleasePrep{Operation: helm.OperationInstall, NextRevision: 1},
-		cleanup: func() {},
-	}
-	cluster := newFakeCluster()
-	cluster.store(&unstructured.Unstructured{Object: map[string]any{
-		"apiVersion": "v1",
-		"kind":       "Namespace",
-		"metadata":   map[string]any{"name": "prod"},
-	}})
-	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, buildInput("ctx", resolvedSpec(), nil))
-	registerCleanup(t, cleanup)
-	require.NoError(t, err)
-	require.GreaterOrEqual(t, len(p.Changes), 1)
-	assert.Equal(t, semantic.OriginNamespace, p.Changes[0].Origin.Kind)
-	assert.Equal(t, semantic.Update, p.Changes[0].Action)
-	assert.True(t, hasFieldPath(p.Changes[0].Fields, "/metadata/labels") || hasFieldPath(p.Changes[0].Fields, "/metadata/labels/name"))
-}
-
-func TestBuildSemanticPlan_InstallWrongNamespaceLabel(t *testing.T) {
-	t.Parallel()
-	client := &fakeBuildClient{
-		result:  installResult(configMapYAML("app", "prod", "v1")),
-		prep:    helm.ReleasePrep{Operation: helm.OperationInstall, NextRevision: 1},
-		cleanup: func() {},
-	}
-	cluster := newFakeCluster()
-	cluster.store(&unstructured.Unstructured{Object: map[string]any{
-		"apiVersion": "v1",
-		"kind":       "Namespace",
-		"metadata": map[string]any{
-			"name":   "prod",
-			"labels": map[string]any{"name": "other"},
+	tests := []struct {
+		name string
+		ns   *unstructured.Unstructured
+	}{
+		{
+			name: "missing name label",
+			ns: &unstructured.Unstructured{Object: map[string]any{
+				"apiVersion": "v1",
+				"kind":       "Namespace",
+				"metadata":   map[string]any{"name": "prod"},
+			}},
 		},
-	}})
-	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, buildInput("ctx", resolvedSpec(), nil))
-	registerCleanup(t, cleanup)
-	require.NoError(t, err)
-	assert.Equal(t, semantic.OriginNamespace, p.Changes[0].Origin.Kind)
-	assert.Equal(t, semantic.Update, p.Changes[0].Action)
+		{
+			name: "wrong name label",
+			ns: &unstructured.Unstructured{Object: map[string]any{
+				"apiVersion": "v1",
+				"kind":       "Namespace",
+				"metadata": map[string]any{
+					"name":   "prod",
+					"labels": map[string]any{"name": "other"},
+				},
+			}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			client := &fakeBuildClient{
+				result:  installResult(configMapYAML("app", "prod", "v1")),
+				prep:    helm.ReleasePrep{Operation: helm.OperationInstall, NextRevision: 1},
+				cleanup: func() {},
+			}
+			cluster := newFakeCluster()
+			cluster.store(tt.ns)
+			p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, buildInput("ctx", resolvedSpec(), nil))
+			t.Cleanup(cleanup)
+			require.NoError(t, err)
+			require.GreaterOrEqual(t, len(p.Changes), 1)
+			assert.Equal(t, semantic.OriginNamespace, p.Changes[0].Origin.Kind)
+			assert.Equal(t, semantic.Update, p.Changes[0].Action)
+			assert.True(t, hasFieldPath(p.Changes[0].Fields, "/metadata/labels") || hasFieldPath(p.Changes[0].Fields, "/metadata/labels/name"))
+		})
+	}
 }
 
 func TestBuildSemanticPlan_UpgradeMissingNamespace(t *testing.T) {
@@ -199,7 +203,7 @@ func TestBuildSemanticPlan_UpgradeMissingNamespace(t *testing.T) {
 		cleanup: func() {},
 	}
 	_, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, newFakeCluster(), buildInput("ctx", resolvedSpec(), nil))
-	registerCleanup(t, cleanup)
+	t.Cleanup(cleanup)
 	require.Error(t, err)
 	assert.ErrorContains(t, err, `upgrade requires namespace "prod" to exist`)
 }
@@ -239,7 +243,7 @@ items:
 				cleanup: func() {},
 			}
 			p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, readyCluster(), buildInput("ctx", resolvedSpec(), nil))
-			registerCleanup(t, cleanup)
+			t.Cleanup(cleanup)
 			require.Error(t, err)
 			assert.ErrorContains(t, err, "cannot plan target namespace")
 			assert.Zero(t, p)
@@ -268,7 +272,7 @@ data:
 		cleanup: func() {},
 	}
 	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, readyCluster(), buildInput("ctx", resolvedSpec(), nil))
-	registerCleanup(t, cleanup)
+	t.Cleanup(cleanup)
 	require.NoError(t, err)
 	var kinds []string
 	for _, c := range p.Changes {
@@ -304,7 +308,7 @@ metadata:
 	}
 	cluster := readyCluster()
 	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, buildInput("ctx", resolvedSpec(), nil))
-	registerCleanup(t, cleanup)
+	t.Cleanup(cleanup)
 	require.NoError(t, err)
 	require.NotEmpty(t, p.Changes)
 	assert.Equal(t, semantic.OriginHelm, p.Changes[0].Origin.Kind)
@@ -324,7 +328,7 @@ func TestBuildSemanticPlan_CRDCreateAndWidget(t *testing.T) {
 	in := buildInput("ctx", resolvedSpec(), nil)
 	in.CRDs = []extras.Object{widgetCRDObject(t, nil)}
 	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, in)
-	registerCleanup(t, cleanup)
+	t.Cleanup(cleanup)
 	require.NoError(t, err)
 	require.Len(t, p.Changes, 2)
 	assert.Equal(t, semantic.OriginCRD, p.Changes[0].Origin.Kind)
@@ -350,7 +354,7 @@ func TestBuildSemanticPlan_CRDCreateExistingIgnored(t *testing.T) {
 	in := buildInput("ctx", resolvedSpec(), nil)
 	in.CRDs = []extras.Object{widgetCRDObject(t, nil)}
 	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, in)
-	registerCleanup(t, cleanup)
+	t.Cleanup(cleanup)
 	require.NoError(t, err)
 	assert.Equal(t, semantic.CompletenessComplete, p.Completeness)
 	for _, c := range p.Changes {
@@ -372,7 +376,7 @@ func TestBuildSemanticPlan_CRDCreateReplaceExisting(t *testing.T) {
 	in.CRDs = []extras.Object{widgetCRDObject(t, nil)}
 	in.CRDPolicy = extras.PolicyCreateReplace
 	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, in)
-	registerCleanup(t, cleanup)
+	t.Cleanup(cleanup)
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(p.Changes), 1)
 	assert.Equal(t, semantic.OriginCRD, p.Changes[0].Origin.Kind)
@@ -407,7 +411,7 @@ data:
 	}
 	cluster := newFakeCluster()
 	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, buildInput("ctx", resolvedSpec(), nil))
-	registerCleanup(t, cleanup)
+	t.Cleanup(cleanup)
 	require.NoError(t, err)
 	assert.Equal(t, semantic.CompletenessPartial, p.Completeness)
 	var gens []string
@@ -435,7 +439,7 @@ func TestBuildSemanticPlan_GenerateNameMissingCRD(t *testing.T) {
 	in := buildInput("ctx", resolvedSpec(), nil)
 	in.CRDs = []extras.Object{widgetCRDObject(t, nil)}
 	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, in)
-	registerCleanup(t, cleanup)
+	t.Cleanup(cleanup)
 	require.NoError(t, err)
 	var gens []string
 	for _, d := range p.Diagnostics {
@@ -465,7 +469,7 @@ func TestBuildSemanticPlan_GenerateNameMissingNamespace(t *testing.T) {
 	in := buildInput("ctx", resolvedSpec(), nil)
 	in.CRDs = []extras.Object{widgetCRDObject(t, nil)}
 	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, in)
-	registerCleanup(t, cleanup)
+	t.Cleanup(cleanup)
 	require.NoError(t, err)
 	var gens []string
 	for _, d := range p.Diagnostics {
@@ -496,7 +500,7 @@ func TestBuildSemanticPlan_PruneSyntheticGetNoLimitation(t *testing.T) {
 	in := buildInput("ctx", resolvedSpec(), nil)
 	in.CRDs = []extras.Object{widgetCRDObject(t, nil)}
 	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, in)
-	registerCleanup(t, cleanup)
+	t.Cleanup(cleanup)
 	require.NoError(t, err)
 	for _, c := range p.Changes {
 		assert.NotEqual(t, "old", c.Resource.Name)
@@ -523,10 +527,11 @@ func TestBuildSemanticPlan_CreateReplaceCurrentAPIFailure(t *testing.T) {
 	in.CRDs = []extras.Object{widgetCRDObject(t, nil)}
 	in.CRDPolicy = extras.PolicyCreateReplace
 	_, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, in)
-	registerCleanup(t, cleanup)
+	t.Cleanup(cleanup)
 	require.Error(t, err)
-	assert.ErrorContains(t, err, "cannot predict helm resources against the current API")
+	assert.ErrorContains(t, err, "predict resources")
 	assert.ErrorContains(t, err, "CRD spec changes")
+	assert.ErrorContains(t, err, "denied")
 }
 
 func TestBuildSemanticPlan_CRDCollision(t *testing.T) {
@@ -564,7 +569,7 @@ func TestBuildSemanticPlan_CRDCollision(t *testing.T) {
 			in := buildInput("ctx", resolvedSpec(), nil)
 			in.CRDs = []extras.Object{widgetCRDObject(t, nil), extraCRD(t, tt.crdName, tt.kind, tt.plural)}
 			_, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, readyCluster(), in)
-			registerCleanup(t, cleanup)
+			t.Cleanup(cleanup)
 			require.Error(t, err)
 			assert.ErrorContains(t, err, tt.wantErr)
 		})
@@ -584,7 +589,7 @@ func TestBuildSemanticPlan_MultiVersionCRD(t *testing.T) {
 		map[string]any{"name": "v2", "served": true, "storage": false, "schema": map[string]any{"openAPIV3Schema": map[string]any{"type": "object"}}},
 	})}
 	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, readyCluster(), in)
-	registerCleanup(t, cleanup)
+	t.Cleanup(cleanup)
 	require.NoError(t, err)
 	assert.Equal(t, semantic.OriginCRD, p.Changes[0].Origin.Kind)
 }
@@ -607,7 +612,7 @@ func TestBuildSemanticPlan_DistinctCRDs(t *testing.T) {
 	in := buildInput("ctx", resolvedSpec(), nil)
 	in.CRDs = []extras.Object{widgetCRDObject(t, nil), gadget}
 	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, readyCluster(), in)
-	registerCleanup(t, cleanup)
+	t.Cleanup(cleanup)
 	require.NoError(t, err)
 	var crdCreates int
 	for _, c := range p.Changes {
@@ -616,97 +621,6 @@ func TestBuildSemanticPlan_DistinctCRDs(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 2, crdCreates)
-}
-
-func TestBuildSemanticPlan_RemovedCRDVersionHardError(t *testing.T) {
-	t.Parallel()
-	previous := `apiVersion: example.com/v2
-kind: Widget
-metadata:
-  name: old
-  namespace: prod
-`
-	client := &fakeBuildClient{
-		result: upgradeResult(configMapYAML("app", "prod", "v1"), 2),
-		prep: helm.ReleasePrep{
-			Operation:    helm.OperationUpgrade,
-			Current:      &v1.Release{Version: 1, Manifest: previous},
-			NextRevision: 2,
-		},
-		cleanup: func() {},
-	}
-	cluster := readyCluster()
-	liveCRD := storedCRD("widgets.example.com", "example.com", "Widget", "widgets", "v1", nil)
-	specMap, ok := liveCRD.Object["spec"].(map[string]any)
-	require.True(t, ok)
-	versions, ok := specMap["versions"].([]any)
-	require.True(t, ok)
-	specMap["versions"] = append(versions, map[string]any{
-		"name":    "v2",
-		"served":  true,
-		"storage": false,
-		"schema":  map[string]any{"openAPIV3Schema": map[string]any{"type": "object"}},
-	})
-	cluster.store(liveCRD)
-
-	in := buildInput("ctx", resolvedSpec(), nil)
-	in.CRDs = []extras.Object{widgetCRDObject(t, nil)}
-	in.CRDPolicy = extras.PolicyCreateReplace
-	_, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, in)
-	registerCleanup(t, cleanup)
-	require.Error(t, err)
-	assert.ErrorContains(t, err, "API example.com/v2/Widget is not served by CRD widgets.example.com")
-}
-
-func TestBuildSemanticPlan_UnservedVersionHardError(t *testing.T) {
-	t.Parallel()
-	client := &fakeBuildClient{
-		result: installResult(`apiVersion: example.com/v2
-kind: Widget
-metadata:
-  name: app
-  namespace: prod
-`),
-		prep:    helm.ReleasePrep{Operation: helm.OperationInstall, NextRevision: 1},
-		cleanup: func() {},
-	}
-	in := buildInput("ctx", resolvedSpec(), nil)
-	in.CRDs = []extras.Object{widgetCRDObject(t, []any{
-		map[string]any{"name": "v1", "served": true, "storage": true, "schema": map[string]any{"openAPIV3Schema": map[string]any{"type": "object"}}},
-		map[string]any{"name": "v2", "served": false, "storage": false, "schema": map[string]any{"openAPIV3Schema": map[string]any{"type": "object"}}},
-	})}
-	_, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, readyCluster(), in)
-	registerCleanup(t, cleanup)
-	require.Error(t, err)
-	assert.ErrorContains(t, err, "is not served by CRD widgets.example.com")
-}
-
-func TestBuildSemanticPlan_NewVersionOnExistingCRD(t *testing.T) {
-	t.Parallel()
-	client := &fakeBuildClient{
-		result: installResult(`apiVersion: example.com/v2
-kind: Widget
-metadata:
-  name: app
-  namespace: prod
-`),
-		prep:    helm.ReleasePrep{Operation: helm.OperationInstall, NextRevision: 1},
-		cleanup: func() {},
-	}
-	cluster := readyCluster()
-	cluster.store(storedCRD("widgets.example.com", "example.com", "Widget", "widgets", "v1", nil))
-	v2 := schema.GroupVersionKind{Group: "example.com", Version: "v2", Kind: "Widget"}
-	cluster.mappingErr[v2] = &meta.NoKindMatchError{GroupKind: v2.GroupKind()}
-	in := buildInput("ctx", resolvedSpec(), nil)
-	in.CRDs = []extras.Object{widgetCRDObject(t, []any{
-		map[string]any{"name": "v1", "served": true, "storage": false, "schema": map[string]any{"openAPIV3Schema": map[string]any{"type": "object"}}},
-		map[string]any{"name": "v2", "served": true, "storage": true, "schema": map[string]any{"openAPIV3Schema": map[string]any{"type": "object"}}},
-	})}
-	in.CRDPolicy = extras.PolicyCreateReplace
-	_, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, in)
-	registerCleanup(t, cleanup)
-	require.Error(t, err)
-	assert.ErrorContains(t, err, "would add this API but it is not discoverable")
 }
 
 func TestBuildSemanticPlan_SpecChangeNoOpLimitation(t *testing.T) {
@@ -741,7 +655,7 @@ func TestBuildSemanticPlan_SpecChangeNoOpLimitation(t *testing.T) {
 	in.CRDs = []extras.Object{widgetCRDObject(t, nil)}
 	in.CRDPolicy = extras.PolicyCreateReplace
 	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, in)
-	registerCleanup(t, cleanup)
+	t.Cleanup(cleanup)
 	require.NoError(t, err)
 	assert.Equal(t, semantic.CompletenessPartial, p.Completeness)
 	var widgetChange bool
@@ -753,4 +667,328 @@ func TestBuildSemanticPlan_SpecChangeNoOpLimitation(t *testing.T) {
 	assert.False(t, widgetChange)
 	require.NotEmpty(t, p.Diagnostics)
 	assert.Contains(t, p.Diagnostics[0].Message, "currently installed CRD")
+}
+
+func unservedWidgetVersions() []any {
+	return []any{map[string]any{
+		"name":    "v1",
+		"served":  false,
+		"storage": true,
+		"schema":  map[string]any{"openAPIV3Schema": map[string]any{"type": "object"}},
+	}}
+}
+
+func TestBuildSemanticPlan_UnservedOnlyCRDChange(t *testing.T) {
+	t.Parallel()
+	manifest := configMapYAML("app", "prod", "same")
+	tests := []struct {
+		name       string
+		policy     extras.Policy
+		store      []*unstructured.Unstructured
+		wantAction semantic.Action
+		wantMethod semantic.WriteMethod
+		wantForce  bool
+	}{
+		{
+			name:       "missing create",
+			policy:     extras.PolicyCreate,
+			wantAction: semantic.Create,
+			wantMethod: semantic.WriteCreate,
+		},
+		{
+			name:       "existing create-replace",
+			policy:     extras.PolicyCreateReplace,
+			store:      []*unstructured.Unstructured{storedCRD("widgets.example.com", "example.com", "Widget", "widgets", "v1", nil)},
+			wantAction: semantic.Update,
+			wantMethod: semantic.WriteServerSide,
+			wantForce:  true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			current := &v1.Release{Version: 3, Manifest: manifest}
+			client := &fakeBuildClient{
+				result: upgradeResult(manifest, 4),
+				prep: helm.ReleasePrep{
+					Operation:    helm.OperationUpgrade,
+					Current:      current,
+					Newest:       current,
+					NextRevision: 4,
+				},
+				cleanup: func() {},
+			}
+			cluster := readyCluster()
+			cluster.store(ownedConfigMap("app", "prod", "web", "same"))
+			for _, obj := range tt.store {
+				cluster.store(obj)
+			}
+			in := buildInput("ctx", resolvedSpec(), nil)
+			in.CRDs = []extras.Object{widgetCRDObject(t, unservedWidgetVersions())}
+			in.CRDPolicy = tt.policy
+			p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, in)
+			t.Cleanup(cleanup)
+			require.NoError(t, err)
+			require.Len(t, p.Changes, 1)
+			c := p.Changes[0]
+			assert.Equal(t, semantic.OriginCRD, c.Origin.Kind)
+			assert.Equal(t, tt.wantAction, c.Action)
+			assert.Equal(t, tt.wantMethod, c.Apply.Write.Method)
+			assert.Equal(t, tt.wantForce, c.Apply.Write.ForceConflicts)
+			assert.NotNil(t, c.After)
+			assert.Equal(t, semantic.HelmNone, p.HelmAction)
+		})
+	}
+}
+
+func TestBuildSemanticPlan_UnavailableAPIHardError(t *testing.T) {
+	t.Parallel()
+	previous := &v1.Release{Version: 1, Manifest: widgetManifest("old", "")}
+	v2 := schema.GroupVersionKind{Group: "example.com", Version: "v2", Kind: "Widget"}
+	liveV1V2 := storedCRD("widgets.example.com", "example.com", "Widget", "widgets", "v1", map[string]any{
+		"versions": []any{
+			map[string]any{"name": "v1", "served": true, "storage": true, "schema": map[string]any{"openAPIV3Schema": map[string]any{"type": "object"}}},
+			map[string]any{"name": "v2", "served": true, "storage": false, "schema": map[string]any{"openAPIV3Schema": map[string]any{"type": "object"}}},
+		},
+	})
+	tests := []struct {
+		name       string
+		result     *render.RenderResult
+		prep       helm.ReleasePrep
+		versions   []any
+		store      []*unstructured.Unstructured
+		mappingErr map[schema.GroupVersionKind]error
+		policy     extras.Policy
+		wantErr    string
+	}{
+		{
+			name:     "desired all unserved",
+			result:   installResult(widgetManifest("app", "")),
+			prep:     helm.ReleasePrep{Operation: helm.OperationInstall, NextRevision: 1},
+			versions: unservedWidgetVersions(),
+			policy:   extras.PolicyCreate,
+			wantErr:  "API example.com/v1/Widget is not served by CRD widgets.example.com",
+		},
+		{
+			name:   "previous becomes unserved",
+			result: upgradeResult(configMapYAML("app", "prod", "v1"), 2),
+			prep: helm.ReleasePrep{
+				Operation:    helm.OperationUpgrade,
+				Current:      previous,
+				Newest:       previous,
+				NextRevision: 2,
+			},
+			versions: unservedWidgetVersions(),
+			store:    []*unstructured.Unstructured{storedCRD("widgets.example.com", "example.com", "Widget", "widgets", "v1", nil)},
+			policy:   extras.PolicyCreateReplace,
+			wantErr:  "API example.com/v1/Widget is not served by CRD widgets.example.com",
+		},
+		{
+			name: "desired unserved version while another remains served",
+			result: installResult(`apiVersion: example.com/v2
+kind: Widget
+metadata:
+  name: app
+  namespace: prod
+`),
+			prep: helm.ReleasePrep{Operation: helm.OperationInstall, NextRevision: 1},
+			versions: []any{
+				map[string]any{"name": "v1", "served": true, "storage": true, "schema": map[string]any{"openAPIV3Schema": map[string]any{"type": "object"}}},
+				map[string]any{"name": "v2", "served": false, "storage": false, "schema": map[string]any{"openAPIV3Schema": map[string]any{"type": "object"}}},
+			},
+			policy:  extras.PolicyCreate,
+			wantErr: "is not served by CRD widgets.example.com",
+		},
+		{
+			name:   "removed served version still in previous release",
+			result: upgradeResult(configMapYAML("app", "prod", "v1"), 2),
+			prep: helm.ReleasePrep{
+				Operation: helm.OperationUpgrade,
+				Current: &v1.Release{Version: 1, Manifest: `apiVersion: example.com/v2
+kind: Widget
+metadata:
+  name: old
+  namespace: prod
+`},
+				NextRevision: 2,
+			},
+			store:   []*unstructured.Unstructured{liveV1V2},
+			policy:  extras.PolicyCreateReplace,
+			wantErr: "API example.com/v2/Widget is not served by CRD widgets.example.com",
+		},
+		{
+			name: "new version on existing CRD is not discoverable",
+			result: installResult(`apiVersion: example.com/v2
+kind: Widget
+metadata:
+  name: app
+  namespace: prod
+`),
+			prep: helm.ReleasePrep{Operation: helm.OperationInstall, NextRevision: 1},
+			versions: []any{
+				map[string]any{"name": "v1", "served": true, "storage": false, "schema": map[string]any{"openAPIV3Schema": map[string]any{"type": "object"}}},
+				map[string]any{"name": "v2", "served": true, "storage": true, "schema": map[string]any{"openAPIV3Schema": map[string]any{"type": "object"}}},
+			},
+			store: []*unstructured.Unstructured{storedCRD("widgets.example.com", "example.com", "Widget", "widgets", "v1", nil)},
+			mappingErr: map[schema.GroupVersionKind]error{
+				v2: &meta.NoKindMatchError{GroupKind: v2.GroupKind()},
+			},
+			policy:  extras.PolicyCreateReplace,
+			wantErr: "would add this API but it is not discoverable",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			client := &fakeBuildClient{result: tt.result, prep: tt.prep, cleanup: func() {}}
+			cluster := readyCluster()
+			for _, obj := range tt.store {
+				cluster.store(obj)
+			}
+			maps.Copy(cluster.mappingErr, tt.mappingErr)
+			in := buildInput("ctx", resolvedSpec(), nil)
+			in.CRDs = []extras.Object{widgetCRDObject(t, tt.versions)}
+			in.CRDPolicy = tt.policy
+			_, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, in)
+			t.Cleanup(cleanup)
+			require.Error(t, err)
+			assert.ErrorContains(t, err, tt.wantErr)
+		})
+	}
+}
+
+func TestBuildSemanticPlan_CRDCreateReplaceMissing(t *testing.T) {
+	t.Parallel()
+	manifest := configMapYAML("app", "prod", "same")
+	current := &v1.Release{Version: 3, Manifest: manifest}
+	client := &fakeBuildClient{
+		result: upgradeResult(manifest, 4),
+		prep: helm.ReleasePrep{
+			Operation:    helm.OperationUpgrade,
+			Current:      current,
+			Newest:       current,
+			NextRevision: 4,
+		},
+		cleanup: func() {},
+	}
+	cluster := readyCluster()
+	cluster.store(ownedConfigMap("app", "prod", "web", "same"))
+	in := buildInput("ctx", resolvedSpec(), nil)
+	in.CRDs = []extras.Object{widgetCRDObject(t, nil)}
+	in.CRDPolicy = extras.PolicyCreateReplace
+	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, in)
+	t.Cleanup(cleanup)
+	require.NoError(t, err)
+	require.Len(t, p.Changes, 1)
+	c := p.Changes[0]
+	assert.Equal(t, semantic.OriginCRD, c.Origin.Kind)
+	assert.Equal(t, semantic.Create, c.Action)
+	assert.Equal(t, semantic.WriteServerSide, c.Apply.Write.Method)
+	assert.Equal(t, extras.CRDFieldManager, c.Apply.Write.FieldManager)
+	assert.True(t, c.Apply.Write.ForceConflicts)
+	assert.Nil(t, c.Before)
+	require.NotNil(t, c.After)
+	assert.Equal(t, semantic.HelmNone, p.HelmAction)
+	for _, ch := range p.Changes {
+		assert.NotEqual(t, semantic.OriginHelm, ch.Origin.Kind)
+	}
+	for _, obj := range cluster.creates {
+		assert.NotEqual(t, "CustomResourceDefinition", obj.GetKind())
+	}
+	var sawCRD bool
+	for _, a := range cluster.applies {
+		if a.Obj.GetKind() != "CustomResourceDefinition" {
+			continue
+		}
+		sawCRD = true
+		assert.Equal(t, extras.CRDFieldManager, a.Opts.FieldManager)
+		assert.True(t, a.Opts.ForceConflicts)
+	}
+	assert.True(t, sawCRD)
+}
+
+func TestBuildSemanticPlan_CRDOnlyDoesNotRunHooks(t *testing.T) {
+	t.Parallel()
+	manifest := configMapYAML("app", "prod", "same")
+	pre := planHook("migrate", "busybox")
+	post := planHook("smoke", "busybox")
+	post.Events = []v1.HookEvent{v1.HookPostInstall, v1.HookPostUpgrade}
+	result := upgradeResult(manifest, 4)
+	result.Hooks = []*v1.Hook{pre, post}
+	resolved := resolvedSpec()
+	resolved.Tasks = map[string]spec.ResolvedTask{
+		"migrate": {Task: spec.Task{On: spec.TaskOnPreDeploy}, HookWeight: 1},
+		"smoke":   {Task: spec.Task{On: spec.TaskOnPostDeploy}, HookWeight: 2},
+	}
+	current := &v1.Release{
+		Version:  3,
+		Manifest: manifest,
+		Hooks:    []*v1.Hook{pre, post},
+		Config: map[string]any{
+			"deployah": map[string]any{
+				"resolved": map[string]any{
+					"tasks": map[string]any{
+						"migrate": map[string]any{"on": "preDeploy", "hookWeight": 1},
+						"smoke":   map[string]any{"on": "postDeploy", "hookWeight": 2},
+					},
+				},
+			},
+		},
+	}
+	client := &fakeBuildClient{
+		result: result,
+		prep: helm.ReleasePrep{
+			Operation:    helm.OperationUpgrade,
+			Current:      current,
+			Newest:       current,
+			NextRevision: 4,
+		},
+		cleanup: func() {},
+	}
+	cluster := readyCluster()
+	cluster.store(ownedConfigMap("app", "prod", "web", "same"))
+	cluster.store(storedCRD("widgets.example.com", "example.com", "Widget", "widgets", "v1", nil))
+	in := buildInput("ctx", resolved, nil)
+	in.CRDs = []extras.Object{widgetCRDObject(t, nil)}
+	in.CRDPolicy = extras.PolicyCreateReplace
+	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, in)
+	t.Cleanup(cleanup)
+	require.NoError(t, err)
+	require.Len(t, p.Changes, 1)
+	assert.Equal(t, semantic.OriginCRD, p.Changes[0].Origin.Kind)
+	assert.Equal(t, semantic.HelmNone, p.HelmAction)
+	require.Len(t, p.Tasks, 2)
+	byName := make(map[string]semantic.TaskPlan, len(p.Tasks))
+	for _, task := range p.Tasks {
+		byName[task.Name] = task
+		assert.Equal(t, semantic.TaskUnchanged, task.Action)
+		assert.False(t, task.WillRun)
+	}
+	assert.Equal(t, semantic.TaskPreDeploy, byName["migrate"].Phase)
+	assert.Equal(t, semantic.TaskPostDeploy, byName["smoke"].Phase)
+}
+
+func TestBuildSemanticPlan_OmittedLiveCRDIsNotDeleted(t *testing.T) {
+	t.Parallel()
+	manifest := configMapYAML("app", "prod", "same")
+	current := &v1.Release{Version: 3, Manifest: manifest}
+	client := &fakeBuildClient{
+		result: upgradeResult(manifest, 4),
+		prep: helm.ReleasePrep{
+			Operation:    helm.OperationUpgrade,
+			Current:      current,
+			Newest:       current,
+			NextRevision: 4,
+		},
+		cleanup: func() {},
+	}
+	cluster := readyCluster()
+	cluster.store(ownedConfigMap("app", "prod", "web", "same"))
+	cluster.store(storedCRD("widgets.example.com", "example.com", "Widget", "widgets", "v1", nil))
+	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, buildInput("ctx", resolvedSpec(), nil))
+	t.Cleanup(cleanup)
+	require.NoError(t, err)
+	assert.Empty(t, p.Changes)
+	assert.Empty(t, cluster.deletes)
+	assert.Equal(t, semantic.HelmNone, p.HelmAction)
 }

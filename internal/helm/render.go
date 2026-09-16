@@ -35,12 +35,9 @@ import (
 // render when there is no discovery client.
 const offlineMonitorAPIVersion = "monitoring.coreos.com/v1"
 
-// RenderManifests renders the chart from [spec.ResolvedSpec] client-side,
-// matching [Client.InstallApp]. It looks up complete release history
-// first, so the cluster must be reachable for both install and upgrade.
-// Use [Client.RenderOffline] when there is no Kubernetes API access. A
-// nil or unresolved spec is an error. Callers must run the returned
-// cleanup func.
+// RenderManifests renders the chart from [spec.ResolvedSpec] client-side.
+// The cluster must be reachable. Use [Client.RenderOffline] when there is
+// no Kubernetes API access. Callers must run the returned cleanup func.
 func (c *Client) RenderManifests(ctx context.Context, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) (*render.RenderResult, func(), error) {
 	result, _, cleanup, err := c.RenderManifestsWithPrep(ctx, resolved, postRenderer)
 	return result, cleanup, err
@@ -48,9 +45,7 @@ func (c *Client) RenderManifests(ctx context.Context, resolved *spec.ResolvedSpe
 
 // RenderManifestsWithPrep renders the chart from [spec.ResolvedSpec]
 // client-side and returns the [ReleasePrep] used to choose install or
-// upgrade. It performs one Deployah history lookup. The returned
-// [ReleasePrep] is meaningful only when err is nil. Cleanup is nil
-// when err is not nil; on success the caller must run cleanup once.
+// upgrade. Cleanup is nil on error; on success the caller must run it once.
 func (c *Client) RenderManifestsWithPrep(ctx context.Context, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) (*render.RenderResult, ReleasePrep, func(), error) {
 	releaseName, labels, err := releaseIdentity(resolved)
 	if err != nil {
@@ -136,18 +131,15 @@ func (c *Client) prepareAndLoadChart(ctx context.Context, resolved *spec.Resolve
 	return ch, chartPath, cleanup, nil
 }
 
-// restoreConfigForDryRun returns a func that restores cfg after a client-side
-// dry run. Call as `defer restoreConfigForDryRun(cfg)()`. Skipping restore
-// makes later real installs a silent no-op.
+// restoreConfigForDryRun restores cfg after a client-side dry run.
+// Call as `defer restoreConfigForDryRun(cfg)()`. Skip it and later
+// real installs are a silent no-op.
 func restoreConfigForDryRun(cfg *action.Configuration) func() {
-	// Install's dry-run path (action/install.go, !interactWithServer branch)
-	// sets KubeClient to a kubefake.PrintingKubeClient that discards
-	// everything, and Releases to a throwaway in-memory store.
+	// Helm install dry-run replaces KubeClient and Releases with fakes.
 	kubeClient := cfg.KubeClient
 	releases := cfg.Releases
-	// Upgrade's dry-run path writes MaxHistory in place on the shared
-	// Releases storage object, so restoring the pointer alone would not
-	// undo that field write; it must be snapshotted separately.
+	// Upgrade dry-run writes MaxHistory in place; restoring the pointer
+	// is not enough.
 	maxHistory := 0
 	if releases != nil {
 		maxHistory = releases.MaxHistory
@@ -174,17 +166,14 @@ func restoreCapabilitiesForDryRun(cfg *action.Configuration) func() {
 }
 
 func (c *Client) renderInstall(ctx context.Context, releaseName string, ch *chart.Chart, values map[string]any, labels map[string]string, postRenderer postrenderer.PostRenderer) (*render.RenderResult, error) {
-	// See restoreCapabilitiesForDryRun: a client-side dry-run install swaps
-	// cfg.KubeClient, cfg.Releases, and cfg.Capabilities. Restore them once
-	// this render is done so only this call is affected.
+	// Dry-run install mutates the shared config. Restore when this returns.
 	defer restoreCapabilitiesForDryRun(c.config)()
 
 	install := c.newInstallAction(releaseName, labels, postRenderer)
 	install.DryRunStrategy = action.DryRunClient
 	install.DisableOpenAPIValidation = true
-	// DryRunClient resets Capabilities to DefaultCapabilities (built-in
-	// APIs only). Append the Prometheus Operator GV so chart templates
-	// gated on .Capabilities.APIVersions.Has still render offline.
+	// Client dry-run sees only built-in APIs. Add the monitor GV so
+	// ServiceMonitor templates still render.
 	install.APIVersions = chartcommon.VersionSet{offlineMonitorAPIVersion}
 
 	rel, runErr := install.RunWithContext(ctx, ch, values)
@@ -206,11 +195,8 @@ func (c *Client) renderInstall(ctx context.Context, releaseName string, ch *char
 }
 
 func (c *Client) renderUpgrade(ctx context.Context, releaseName string, ch *chart.Chart, values map[string]any, labels map[string]string, postRenderer postrenderer.PostRenderer) (*render.RenderResult, error) {
-	// Upgrade's dry-run path doesn't swap KubeClient/Releases as of Helm
-	// v4.2.1; restoring defensively guards against a future version adding
-	// the short-circuit Install already has. Capabilities is deliberately
-	// not restored here (see restoreCapabilitiesForDryRun): Upgrade's fetch
-	// is a legitimate cache other calls should reuse.
+	// Restore KubeClient/Releases in case Helm later swaps them like
+	// install dry-run. Keep Capabilities so later calls reuse discovery.
 	defer restoreConfigForDryRun(c.config)()
 
 	upgrade := c.newUpgradeAction(labels, postRenderer)

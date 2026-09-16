@@ -66,9 +66,11 @@ func TestCRDSurface_AddConflict(t *testing.T) {
 func TestCRDSurface_Add(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name string
-		apis []crdAPI
-		want []schema.GroupVersionKind
+		name          string
+		apis          []crdAPI
+		missingEntire bool
+		want          []schema.GroupVersionKind
+		wantUnserved  map[schema.GroupVersionKind]string
 	}{
 		{
 			name: "multi-version and distinct CRDs",
@@ -92,18 +94,33 @@ func TestCRDSurface_Add(t *testing.T) {
 				{Group: "example.com", Version: "v1", Kind: "Widget"},
 			},
 		},
+		{
+			name: "all versions unserved",
+			apis: []crdAPI{
+				{Name: "widgets.example.com", Group: "example.com", Kind: "Widget", Plural: "widgets", Unserved: []string{"v1"}},
+			},
+			missingEntire: true,
+			wantUnserved: map[schema.GroupVersionKind]string{
+				{Group: "example.com", Version: "v1", Kind: "Widget"}: "widgets.example.com",
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			s := newCRDSurface()
 			for _, api := range tt.apis {
-				require.NoError(t, s.add(api, false))
+				require.NoError(t, s.add(api, tt.missingEntire))
 			}
+			assert.Len(t, s.served, len(tt.want))
+			assert.Len(t, s.byGVR, len(tt.want))
 			for _, gvk := range tt.want {
 				assert.Contains(t, s.served, gvk)
 			}
-			assert.Len(t, s.served, len(tt.want))
+			assert.Len(t, s.unserved, len(tt.wantUnserved))
+			for gvk, name := range tt.wantUnserved {
+				assert.Equal(t, name, s.unserved[gvk])
+			}
 		})
 	}
 }

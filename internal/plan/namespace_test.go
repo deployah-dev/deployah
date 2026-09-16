@@ -45,7 +45,7 @@ func TestCheckInstallNamespaceOverlap_Errors(t *testing.T) {
 			name:      "invalid yaml",
 			manifest:  "not: [valid",
 			namespace: "prod",
-			wantErr:   "parse desired manifest",
+			wantErr:   "parse manifest",
 		},
 	}
 	for _, tt := range tests {

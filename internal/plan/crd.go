@@ -235,9 +235,8 @@ func (s *crdSurface) markSpecChanged(live, predicted *unstructured.Unstructured,
 }
 
 func (s *crdSurface) add(api crdAPI, missingEntire bool) error {
-	if len(api.Versions) == 0 {
-		return fmt.Errorf("CRD %s has no served versions", api.Name)
-	}
+	// A CRD may keep versions with served=false only. That contributes
+	// no REST APIs; do not invent a served mapping.
 	for _, ver := range api.Versions {
 		gvk := schema.GroupVersionKind{Group: api.Group, Version: ver, Kind: api.Kind}
 		gvr := schema.GroupVersionResource{Group: api.Group, Version: ver, Resource: api.Plural}
@@ -367,7 +366,7 @@ func checkRenderedAPIs(manifests []string, surface *crdSurface) error {
 	for _, manifest := range manifests {
 		objs, err := predict.FlattenManifest(manifest)
 		if err != nil {
-			return fmt.Errorf("parse manifest: %w", err)
+			return err
 		}
 		for _, obj := range objs {
 			gvk := obj.GroupVersionKind()

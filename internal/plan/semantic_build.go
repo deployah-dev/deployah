@@ -133,7 +133,7 @@ func BuildSemanticPlan(
 	results, err := predict.Predict(ctx, wrapper, predInput)
 	if err != nil {
 		if len(surface.specChanged) > 0 {
-			return semantic.Plan{}, nil, cleanup, fmt.Errorf("cannot predict helm resources against the current API: %w; at least one CRD spec changes before helm executes and post-CRD behavior cannot be simulated", err)
+			return semantic.Plan{}, nil, cleanup, fmt.Errorf("predict resources: CRD spec changes before helm executes: %w", err)
 		}
 		return semantic.Plan{}, nil, cleanup, fmt.Errorf("predict resources: %w", err)
 	}

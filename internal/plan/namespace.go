@@ -99,7 +99,7 @@ func predictNamespace(ctx context.Context, cluster predict.Cluster, op helm.Oper
 func checkInstallNamespaceOverlap(manifest, namespace string) error {
 	objs, err := predict.FlattenManifest(manifest)
 	if err != nil {
-		return fmt.Errorf("parse desired manifest: %w", err)
+		return err
 	}
 	for _, obj := range objs {
 		if obj.GetAPIVersion() == "v1" && obj.GetKind() == "Namespace" && obj.GetName() == namespace {
