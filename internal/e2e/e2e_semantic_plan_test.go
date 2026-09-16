@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"helm.sh/helm/v4/pkg/postrenderer"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/client-go/kubernetes"
 
 	"deployah.dev/deployah/internal/extras"
 	"deployah.dev/deployah/internal/helm"
@@ -82,7 +83,8 @@ func (s *E2ESuite) TestSemanticPlanPrerequisites() {
 	t := s.T()
 	ns := fixtureNamespace("semantic-plan-prereq")
 	crdName := "planwidgets.plan.example.com"
-	cluster := s.predictCluster(t)
+	cluster, err := plan.NewClusterReader(s.client.RESTConfig())
+	require.NoError(t, err)
 	client := &semanticPlanClient{
 		result: &render.RenderResult{
 			ReleaseName: "web",
@@ -110,20 +112,15 @@ func (s *E2ESuite) TestSemanticPlanPrerequisites() {
 	assert.Equal(t, semantic.OriginHelm, p.Changes[2].Origin.Kind)
 	assert.Equal(t, "PlanWidget", p.Changes[2].Resource.Kind)
 	assert.Equal(t, semantic.Create, p.Changes[2].Action)
-	assert.Equal(t, semantic.CompletenessPartial, p.Completeness)
-	require.NotEmpty(t, p.Diagnostics)
-	for _, d := range p.Diagnostics {
-		require.NotNil(t, d.Resource)
-		assert.Equal(t, "PlanWidget", d.Resource.Kind)
-		assert.Contains(t, d.Message, "prediction is not exact:")
-	}
+	assert.Empty(t, p.Drift)
 
 	ext, err := apiextensionsclient.NewForConfig(s.client.RESTConfig())
 	require.NoError(t, err)
 	_, err = ext.ApiextensionsV1().CustomResourceDefinitions().Get(t.Context(), crdName, metav1.GetOptions{})
 	require.True(t, apierrors.IsNotFound(err), "CRD %s should still be absent: %v", crdName, err)
 
-	cs, _ := s.kubeClients(t)
+	cs, err := kubernetes.NewForConfig(s.client.RESTConfig())
+	require.NoError(t, err)
 	_, err = cs.CoreV1().Namespaces().Get(t.Context(), ns, metav1.GetOptions{})
 	require.True(t, apierrors.IsNotFound(err), "namespace %s should still be absent: %v", ns, err)
 }

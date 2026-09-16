@@ -286,11 +286,15 @@ func TestWriteRenderers_CopyIsolation(t *testing.T) {
 	write := &semantic.WriteSemantics{Method: semantic.WriteServerSide, FieldManager: "deployah"}
 	del := &semantic.DeleteSemantics{Propagation: semantic.PropagationBackground}
 	res := ref("Secret", "s")
-	diag := semantic.Diagnostic{
-		Severity: semantic.DiagnosticWarning,
-		Category: semantic.CategoryPredictionLimitation,
-		Message:  "prediction is not exact: managed-fields-migration",
-		Resource: &res,
+	drift := semantic.ResourceDrift{
+		Resource: res,
+		Kind:     semantic.DriftModified,
+		Fields: []semantic.FieldChange{{
+			Path:   "/data/token",
+			Op:     semantic.FieldReplace,
+			Before: "tok",
+			After:  "tok2",
+		}},
 	}
 	labels := map[string]string{"app": "web"}
 	args := []string{"serve"}
@@ -306,7 +310,7 @@ func TestWriteRenderers_CopyIsolation(t *testing.T) {
 		Before:   snap(beforeObj),
 		After:    snap(secretObj("s", "new", "tok2")),
 		Apply:    semantic.ApplySemantics{Write: write, Delete: del},
-	}}, nil, []semantic.Diagnostic{diag})
+	}}, nil, []semantic.ResourceDrift{drift})
 	require.NoError(t, err)
 	require.NotEmpty(t, p.Changes[0].Fields)
 	fieldBefore := p.Changes[0].Fields[0].Before
@@ -314,7 +318,7 @@ func TestWriteRenderers_CopyIsolation(t *testing.T) {
 	helmRelease := p.Changes[0].Origin.Helm.Release
 	fieldManager := p.Changes[0].Apply.Write.FieldManager
 	propagation := p.Changes[0].Apply.Delete.Propagation
-	diagName := p.Diagnostics[0].Resource.Name
+	driftName := p.Drift[0].Resource.Name
 
 	require.NoError(t, view.WriteHuman(&bytes.Buffer{}, p, view.Options{}))
 	require.NoError(t, view.WriteJSON(&bytes.Buffer{}, p, view.Options{}))
@@ -322,7 +326,7 @@ func TestWriteRenderers_CopyIsolation(t *testing.T) {
 	assert.Equal(t, helmRelease, p.Changes[0].Origin.Helm.Release)
 	assert.Equal(t, fieldManager, p.Changes[0].Apply.Write.FieldManager)
 	assert.Equal(t, propagation, p.Changes[0].Apply.Delete.Propagation)
-	assert.Equal(t, diagName, p.Diagnostics[0].Resource.Name)
+	assert.Equal(t, driftName, p.Drift[0].Resource.Name)
 	assert.Equal(t, "old", objectString(t, p.Changes[0].Before.Object, "stringData", "password"))
 	assert.Equal(t, "new", objectString(t, p.Changes[0].After.Object, "stringData", "password"))
 	assert.Equal(t, fieldBefore, p.Changes[0].Fields[0].Before)
@@ -334,9 +338,8 @@ func TestWriteRenderers_CopyIsolation(t *testing.T) {
 func TestWriteRenderers_ManualSnapshotShapes(t *testing.T) {
 	t.Parallel()
 	p := semantic.Plan{
-		Completeness: semantic.CompletenessComplete,
-		HelmAction:   semantic.HelmUpgrade,
-		Header:       semantic.Header{Release: "web"},
+		HelmAction: semantic.HelmUpgrade,
+		Header:     semantic.Header{Release: "web"},
 		Changes: []semantic.ResourceChange{
 			{
 				Resource: ref("ConfigMap", "app"),
@@ -376,9 +379,8 @@ func TestWriteRenderers_ManualSnapshotShapes(t *testing.T) {
 func TestWriteRenderers_NilTasks(t *testing.T) {
 	t.Parallel()
 	p := semantic.Plan{
-		Completeness: semantic.CompletenessComplete,
-		HelmAction:   semantic.HelmNone,
-		Header:       semantic.Header{Release: "web"},
+		HelmAction: semantic.HelmNone,
+		Header:     semantic.Header{Release: "web"},
 	}
 	assert.Nil(t, p.Tasks)
 	require.NoError(t, view.WriteHuman(&bytes.Buffer{}, p, view.Options{}))
@@ -468,6 +470,24 @@ func TestSecretRedaction_OmitsPlaintext(t *testing.T) {
 				{want: redactedData, path: []any{"tasks", 0, "definitions", 2, "before", "data"}},
 				{want: redactedStringData, path: []any{"tasks", 0, "definitions", 2, "before", "stringData"}},
 				{want: "null", path: []any{"tasks", 0, "definitions", 2, "after"}},
+			},
+		},
+		{
+			name: "drift fields",
+			plan: mustPlan(t, semantic.HelmNone, nil, []semantic.ResourceDrift{{
+				Resource: ref("Secret", "s"),
+				Kind:     semantic.DriftModified,
+				Fields: []semantic.FieldChange{{
+					Path:   "/data/token",
+					Op:     semantic.FieldReplace,
+					Before: "old-tok",
+					After:  "live-tok",
+				}},
+			}}),
+			omit: []string{"old-tok", "live-tok"},
+			at: []jsonPathWant{
+				{want: `"(redacted)"`, path: []any{"drift", 0, "fields", 0, "before"}},
+				{want: `"(redacted)"`, path: []any{"drift", 0, "fields", 0, "after"}},
 			},
 		},
 	}

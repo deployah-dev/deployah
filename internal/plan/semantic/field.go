@@ -308,12 +308,15 @@ func copyApply(a ApplySemantics) ApplySemantics {
 	return a
 }
 
-func copyDiagnostics(in []Diagnostic) []Diagnostic {
+func copyDrift(in []ResourceDrift) []ResourceDrift {
+	if in == nil {
+		return nil
+	}
 	out := slices.Clone(in)
 	for i := range out {
-		if out[i].Resource != nil {
-			r := *out[i].Resource
-			out[i].Resource = &r
+		out[i].Fields = copyFields(out[i].Fields)
+		if out[i].Fields == nil {
+			out[i].Fields = []FieldChange{}
 		}
 	}
 	return out

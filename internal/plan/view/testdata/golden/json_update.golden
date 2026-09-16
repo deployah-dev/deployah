@@ -55,13 +55,12 @@
     }
   ],
   "tasks": [],
-  "diagnostics": [],
+  "drift": [],
   "summary": {
     "create": 0,
     "update": 1,
     "delete": 0,
     "replace": 0,
     "total": 1
-  },
-  "completeness": "complete"
+  }
 }

@@ -20,7 +20,6 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
@@ -32,33 +31,14 @@ import (
 	sigsyaml "sigs.k8s.io/yaml"
 )
 
-// FieldManager is the field manager name every drift dry-run PATCH is sent
-// with. It matches the field manager Deployah's real applies use, so a
-// prediction reflects Deployah's own ownership, not a foreign manager's.
-const FieldManager = "deployah"
-
-// forceOwnership is passed as [metav1.PatchOptions.Force] on every dry-run
-// apply. Without it, a field another controller already owns (e.g. an HPA
-// driving spec.replicas) would make the dry-run fail with a conflict.
-var forceOwnership = true
-
-// Predictor predicts a resource's post-apply state via a server-side apply
-// dry-run and fetches its current live state. [Client] is the production
-// implementation; tests substitute a stub to exercise [ComputeDrift]'s
-// subtraction logic without a cluster.
-type Predictor interface {
-	// Predict returns the predicted and live YAML for the single resource
-	// described by resourceYAML. live is "" with a nil error when the
-	// resource does not exist yet (not a failure).
-	Predict(ctx context.Context, resourceYAML string) (predicted, live string, err error)
-}
-
-// Client is the production [Predictor], talking to a real Kubernetes API
+// Client is the production [LiveReader], talking to a real Kubernetes API
 // server through a dynamic client and a discovery-backed REST mapper.
 type Client struct {
 	dynamicClient dynamic.Interface
 	mapper        meta.RESTMapper
 }
+
+var _ LiveReader = (*Client)(nil)
 
 // NewClient builds a drift [Client] targeting the cluster described by cfg.
 func NewClient(cfg *rest.Config) (*Client, error) {
@@ -74,23 +54,22 @@ func NewClient(cfg *rest.Config) (*Client, error) {
 	return newClient(dyn, mapper), nil
 }
 
-// newClient is the shared constructor behind [NewClient] (real clusters)
-// and tests (a fake dynamic client paired with a static REST mapper).
 func newClient(dyn dynamic.Interface, mapper meta.RESTMapper) *Client {
 	return &Client{dynamicClient: dyn, mapper: mapper}
 }
 
-// Predict implements [Predictor].
-func (c *Client) Predict(ctx context.Context, resourceYAML string) (predicted, live string, err error) {
+// Live implements [LiveReader]. It GETs the object and does not dry-run
+// apply.
+func (c *Client) Live(ctx context.Context, resourceYAML string) (live string, err error) {
 	obj := &unstructured.Unstructured{}
 	if decodeErr := sigsyaml.Unmarshal([]byte(resourceYAML), &obj.Object); decodeErr != nil {
-		return "", "", fmt.Errorf("decode resource: %w", decodeErr)
+		return "", fmt.Errorf("decode resource: %w", decodeErr)
 	}
 	gvk := obj.GroupVersionKind()
 
 	mapping, err := c.mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
 	if err != nil {
-		return "", "", fmt.Errorf("resolve resource mapping for %s %s: %w", gvk, obj.GetName(), err)
+		return "", fmt.Errorf("resolve resource mapping for %s %s: %w", gvk, obj.GetName(), err)
 	}
 
 	var ri dynamic.ResourceInterface
@@ -100,36 +79,14 @@ func (c *Client) Predict(ctx context.Context, resourceYAML string) (predicted, l
 		ri = c.dynamicClient.Resource(mapping.Resource)
 	}
 
-	predictedObj, err := ri.Patch(ctx, obj.GetName(), types.ApplyPatchType, []byte(resourceYAML), metav1.PatchOptions{
-		DryRun:       []string{metav1.DryRunAll},
-		FieldManager: FieldManager,
-		Force:        &forceOwnership,
-	})
-	if err != nil {
-		return "", "", fmt.Errorf("predict %s %q: %w", gvk.Kind, obj.GetName(), err)
-	}
-
 	liveObj, err := ri.Get(ctx, obj.GetName(), metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		predicted, err = toYAML(predictedObj)
-		if err != nil {
-			return "", "", err
-		}
-		return predicted, "", nil
+		return "", nil
 	}
 	if err != nil {
-		return "", "", fmt.Errorf("fetch live state of %s %q: %w", gvk.Kind, obj.GetName(), err)
+		return "", fmt.Errorf("fetch live state of %s %q: %w", gvk.Kind, obj.GetName(), err)
 	}
-
-	predicted, err = toYAML(predictedObj)
-	if err != nil {
-		return "", "", err
-	}
-	live, err = toYAML(liveObj)
-	if err != nil {
-		return "", "", err
-	}
-	return predicted, live, nil
+	return toYAML(liveObj)
 }
 
 func toYAML(obj *unstructured.Unstructured) (string, error) {

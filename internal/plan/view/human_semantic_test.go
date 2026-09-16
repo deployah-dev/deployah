@@ -34,7 +34,6 @@ import (
 	"deployah.dev/deployah/internal/helm"
 	"deployah.dev/deployah/internal/plan"
 	"deployah.dev/deployah/internal/plan/semantic"
-	"deployah.dev/deployah/internal/predict"
 	"deployah.dev/deployah/internal/render"
 	"deployah.dev/deployah/internal/spec"
 
@@ -374,7 +373,7 @@ func storePredictedLive(cluster *fakeCluster, changes []semantic.ResourceChange)
 	}
 }
 
-func buildSemanticPlan(t *testing.T, client plan.SemanticBuildClient, cluster predict.Cluster, resolved *spec.ResolvedSpec) semantic.Plan {
+func buildSemanticPlan(t *testing.T, client plan.SemanticBuildClient, cluster plan.ClusterReader, resolved *spec.ResolvedSpec) semantic.Plan {
 	t.Helper()
 	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, plan.SemanticBuildInput{
 		ClusterContext: productClusterContext,
@@ -412,7 +411,8 @@ func (f *fakeCluster) store(obj *unstructured.Unstructured) {
 	f.objects[clusterKey(identityOf(obj))] = obj.DeepCopy()
 }
 
-func (f *fakeCluster) Get(_ context.Context, id predict.Identity) (*unstructured.Unstructured, error) {
+func (f *fakeCluster) Get(_ context.Context, loc plan.ResourceLocator) (*unstructured.Unstructured, error) {
+	id := loc.Identity
 	obj, ok := f.objects[clusterKey(id)]
 	if !ok {
 		return nil, apierrors.NewNotFound(schema.GroupResource{Resource: strings.ToLower(id.Kind) + "s"}, id.Name)
@@ -420,25 +420,12 @@ func (f *fakeCluster) Get(_ context.Context, id predict.Identity) (*unstructured
 	return obj.DeepCopy(), nil
 }
 
-func (f *fakeCluster) Create(_ context.Context, obj *unstructured.Unstructured) (*unstructured.Unstructured, error) {
-	return obj.DeepCopy(), nil
-}
-
-func (f *fakeCluster) Apply(_ context.Context, obj *unstructured.Unstructured, _ predict.ApplyOptions) (*unstructured.Unstructured, error) {
-	return obj.DeepCopy(), nil
-}
-
-func (f *fakeCluster) JSONPatch(context.Context, predict.Identity, []byte) error {
-	return nil
-}
-
-func (f *fakeCluster) Delete(context.Context, predict.Identity) error {
-	return nil
-}
-
 func (f *fakeCluster) Mapping(gvk schema.GroupVersionKind) (*meta.RESTMapping, error) {
 	scope := meta.RESTScopeNamespace
 	if gvk.Group == "" && gvk.Kind == "Namespace" {
+		scope = meta.RESTScopeRoot
+	}
+	if gvk.Kind == "CustomResourceDefinition" {
 		scope = meta.RESTScopeRoot
 	}
 	return &meta.RESTMapping{
@@ -448,14 +435,14 @@ func (f *fakeCluster) Mapping(gvk schema.GroupVersionKind) (*meta.RESTMapping, e
 	}, nil
 }
 
-func clusterKey(id predict.Identity) string {
+func clusterKey(id plan.ResourceIdentity) string {
 	gv := schema.GroupVersion{Group: id.Group, Version: id.Version}
 	return fmt.Sprintf("%s/%s/%s/%s", gv.String(), id.Kind, id.Namespace, id.Name)
 }
 
-func identityOf(obj *unstructured.Unstructured) predict.Identity {
+func identityOf(obj *unstructured.Unstructured) plan.ResourceIdentity {
 	gvk := obj.GroupVersionKind()
-	return predict.Identity{
+	return plan.ResourceIdentity{
 		Group:     gvk.Group,
 		Version:   gvk.Version,
 		Kind:      gvk.Kind,

@@ -263,6 +263,35 @@ func TestDiffFields(t *testing.T) {
 			}},
 		},
 		{
+			name: "container image is a leaf replace",
+			before: map[string]any{
+				"spec": map[string]any{
+					"template": map[string]any{
+						"spec": map[string]any{
+							"containers": []any{
+								map[string]any{"name": "app", "image": "nginx:1"},
+							},
+						},
+					},
+				},
+			},
+			after: map[string]any{
+				"spec": map[string]any{
+					"template": map[string]any{
+						"spec": map[string]any{
+							"containers": []any{
+								map[string]any{"name": "app", "image": "nginx:2"},
+							},
+						},
+					},
+				},
+			},
+			want: []semantic.FieldChange{{
+				Path: "/spec/template/spec/containers/0/image", Op: semantic.FieldReplace,
+				Before: "nginx:1", After: "nginx:2",
+			}},
+		},
+		{
 			name: "escaped secret key",
 			before: map[string]any{
 				"data": map[string]any{"foo/bar": "old", "tilde~x": "old"},

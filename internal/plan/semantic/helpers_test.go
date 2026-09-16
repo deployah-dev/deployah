@@ -110,16 +110,12 @@ func writeForceApply() semantic.ApplySemantics {
 	return a
 }
 
-func deleteApply() semantic.ApplySemantics {
-	return semantic.ApplySemantics{
-		Delete: &semantic.DeleteSemantics{Propagation: semantic.PropagationBackground},
-	}
-}
-
 func bothApply() semantic.ApplySemantics {
 	return semantic.ApplySemantics{
-		Write:  writeApply().Write,
-		Delete: deleteApply().Delete,
+		Write: writeApply().Write,
+		Delete: &semantic.DeleteSemantics{
+			Propagation: semantic.PropagationBackground,
+		},
 	}
 }
 
@@ -141,15 +137,6 @@ func ref(kind, name string) semantic.ResourceRef {
 		Kind:       kind,
 		Namespace:  "prod",
 		Name:       name,
-	}
-}
-
-func limitation(res semantic.ResourceRef) semantic.Diagnostic {
-	return semantic.Diagnostic{
-		Severity: semantic.DiagnosticWarning,
-		Category: semantic.CategoryPredictionLimitation,
-		Message:  "prediction is not exact: managed-fields-migration",
-		Resource: &res,
 	}
 }
 
@@ -180,7 +167,9 @@ func deleteChange(name, value string) semantic.ResourceChange {
 		Origin:   helmOrigin(),
 		Action:   semantic.Delete,
 		Before:   &semantic.ResourceSnapshot{Object: cm(name, value)},
-		Apply:    deleteApply(),
+		Apply: semantic.ApplySemantics{
+			Delete: &semantic.DeleteSemantics{Propagation: semantic.PropagationBackground},
+		},
 	}
 }
 

@@ -16,13 +16,13 @@
 // outside of Deployah that Deployah's own spec-edit plan would not
 // otherwise report.
 //
-// [Client] predicts each resource via a server-side apply dry-run and
-// fetches its live state. [ComputeDrift] diffs the two with
-// [deployah.dev/deployah/internal/plan.ComputeDiff] and subtracts every
+// [Client] GETs each resource's live state. [ComputeDrift] projects Live
+// onto Desired's declared surface, diffs with
+// [deployah.dev/deployah/internal/plan.ComputeDiff], and subtracts every
 // field path already explained by the spec-edit plan, so only changes the
 // cluster picked up on its own remain. This backs `deployah plan --drift`:
 //
 //	A = diff(render, last successful release)   # the spec edit
-//	B = diff(predicted, live)                    # total delta
-//	drift = B minus paths(A)                     # per resource, per field path
+//	B = diff(desired, projected live)           # declared-surface delta
+//	drift = B minus paths(A)                    # per resource, per field path
 package drift

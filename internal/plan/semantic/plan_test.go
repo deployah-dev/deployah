@@ -98,12 +98,11 @@ func TestNew_SnapshotInvariants(t *testing.T) {
 			assert.Equal(t, tt.delete, c.Apply.Delete != nil)
 			assert.Equal(t, tt.fieldPath, path)
 			assert.Equal(t, tt.fieldOp, op)
-			assert.Equal(t, semantic.CompletenessComplete, p.Completeness)
 		})
 	}
 }
 
-func TestNew_UpdateWithoutAfterRequiresLimitation(t *testing.T) {
+func TestNew_UpdateWithoutAfterIsInvalid(t *testing.T) {
 	t.Parallel()
 	header := semantic.Header{Release: "web", Namespace: "prod"}
 	res := ref("ConfigMap", "app")
@@ -117,13 +116,7 @@ func TestNew_UpdateWithoutAfterRequiresLimitation(t *testing.T) {
 
 	_, err := semantic.New(header, semantic.HelmUpgrade, []semantic.ResourceChange{change}, nil, nil)
 	require.Error(t, err)
-	assert.ErrorContains(t, err, "update without after")
-
-	p, err := semantic.New(header, semantic.HelmUpgrade, []semantic.ResourceChange{change}, nil, []semantic.Diagnostic{limitation(res)})
-	require.NoError(t, err)
-	assert.Nil(t, p.Changes[0].After)
-	assert.Empty(t, p.Changes[0].Fields)
-	assert.Equal(t, semantic.CompletenessPartial, p.Completeness)
+	assert.ErrorContains(t, err, "update requires an after snapshot")
 }
 
 func TestNew_TasksAlwaysNonNil(t *testing.T) {
@@ -134,9 +127,8 @@ func TestNew_TasksAlwaysNonNil(t *testing.T) {
 	assert.Empty(t, p.Tasks)
 	require.NotNil(t, p.Changes)
 	assert.Empty(t, p.Changes)
-	require.NotNil(t, p.Diagnostics)
-	assert.Empty(t, p.Diagnostics)
-	assert.Equal(t, semantic.CompletenessComplete, p.Completeness)
+	require.NotNil(t, p.Drift)
+	assert.Empty(t, p.Drift)
 	assert.Equal(t, semantic.HelmUpgrade, p.HelmAction)
 	assert.Equal(t, 0, p.Summary.Total())
 }
@@ -220,7 +212,6 @@ func TestNew_DoesNotAliasCallerInputs(t *testing.T) {
 	write := &semantic.WriteSemantics{Method: semantic.WriteServerSide, FieldManager: "deployah"}
 	del := &semantic.DeleteSemantics{Propagation: semantic.PropagationBackground}
 	res := ref("ConfigMap", "app")
-	diag := limitation(res)
 	p, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, []semantic.ResourceChange{{
 		Resource: res,
 		Origin:   semantic.ResourceOrigin{Kind: semantic.OriginHelm, Helm: helm},
@@ -228,20 +219,19 @@ func TestNew_DoesNotAliasCallerInputs(t *testing.T) {
 		Before:   &semantic.ResourceSnapshot{Object: cm("app", "v1")},
 		After:    &semantic.ResourceSnapshot{Object: cm("app", "v2")},
 		Apply:    semantic.ApplySemantics{Write: write, Delete: del},
-	}}, nil, []semantic.Diagnostic{diag})
+	}}, nil, []semantic.ResourceDrift{{Resource: res, Kind: semantic.DriftMissing}})
 	require.NoError(t, err)
 
 	helm.Release = "mutated"
 	write.FieldManager = "mutated"
 	del.Propagation = 0
-	diag.Resource.Name = "mutated"
 
 	require.Len(t, p.Changes, 1)
 	assert.Equal(t, "web", p.Changes[0].Origin.Helm.Release)
 	assert.Equal(t, "deployah", p.Changes[0].Apply.Write.FieldManager)
 	assert.Equal(t, semantic.PropagationBackground, p.Changes[0].Apply.Delete.Propagation)
-	require.Len(t, p.Diagnostics, 1)
-	assert.Equal(t, "app", p.Diagnostics[0].Resource.Name)
+	require.Len(t, p.Drift, 1)
+	assert.Equal(t, "app", p.Drift[0].Resource.Name)
 }
 
 func TestSummarize(t *testing.T) {
@@ -336,7 +326,9 @@ func TestNew_RejectsInvalid(t *testing.T) {
 				Resource: res,
 				Origin:   helmOrigin(),
 				Action:   semantic.Delete,
-				Apply:    deleteApply(),
+				Apply: semantic.ApplySemantics{
+					Delete: &semantic.DeleteSemantics{Propagation: semantic.PropagationBackground},
+				},
 			},
 			wantErr: "delete requires a before snapshot",
 		},
@@ -348,7 +340,9 @@ func TestNew_RejectsInvalid(t *testing.T) {
 				Action:   semantic.Delete,
 				Before:   &semantic.ResourceSnapshot{Object: cm("app", "v1")},
 				After:    &semantic.ResourceSnapshot{Object: cm("app", "v2")},
-				Apply:    deleteApply(),
+				Apply: semantic.ApplySemantics{
+					Delete: &semantic.DeleteSemantics{Propagation: semantic.PropagationBackground},
+				},
 			},
 			wantErr: "delete must not have an after snapshot",
 		},
@@ -384,7 +378,7 @@ func TestNew_RejectsInvalid(t *testing.T) {
 				After:    &semantic.ResourceSnapshot{Object: cm("app", "v2")},
 				Apply: semantic.ApplySemantics{
 					Write:  &semantic.WriteSemantics{Method: semantic.WriteServerSide},
-					Delete: deleteApply().Delete,
+					Delete: &semantic.DeleteSemantics{Propagation: semantic.PropagationBackground},
 				},
 			},
 			wantErr: "field manager",
@@ -478,7 +472,9 @@ func TestNew_RejectsInvalid(t *testing.T) {
 				Action:   semantic.Replace,
 				Before:   &semantic.ResourceSnapshot{Object: cm("app", "v1")},
 				After:    &semantic.ResourceSnapshot{Object: cm("app", "v2")},
-				Apply:    deleteApply(),
+				Apply: semantic.ApplySemantics{
+					Delete: &semantic.DeleteSemantics{Propagation: semantic.PropagationBackground},
+				},
 			},
 			wantErr: "requires write semantics",
 		},
@@ -558,56 +554,55 @@ func TestNew_RejectsInvalid(t *testing.T) {
 	}
 }
 
-func TestNew_DiagnosticValidation(t *testing.T) {
+func TestNew_DriftValidation(t *testing.T) {
 	t.Parallel()
 	res := ref("ConfigMap", "app")
 	tests := []struct {
 		name    string
-		diag    semantic.Diagnostic
+		drift   semantic.ResourceDrift
 		wantErr string
 	}{
 		{
-			name: "invalid severity",
-			diag: semantic.Diagnostic{
-				Category: semantic.CategoryPredictionLimitation,
-				Message:  "prediction is not exact",
-				Resource: &res,
-			},
-			wantErr: "invalid diagnostic severity",
+			name:    "invalid kind",
+			drift:   semantic.ResourceDrift{Resource: res},
+			wantErr: "invalid drift kind",
 		},
 		{
-			name: "invalid category",
-			diag: semantic.Diagnostic{
-				Severity: semantic.DiagnosticWarning,
-				Message:  "prediction is not exact",
-				Resource: &res,
+			name: "modified without fields",
+			drift: semantic.ResourceDrift{
+				Resource: res,
+				Kind:     semantic.DriftModified,
 			},
-			wantErr: "invalid diagnostic category",
+			wantErr: "modified drift requires fields",
 		},
 		{
-			name: "empty message",
-			diag: semantic.Diagnostic{
-				Severity: semantic.DiagnosticWarning,
-				Category: semantic.CategoryPredictionLimitation,
-				Resource: &res,
+			name: "missing with fields",
+			drift: semantic.ResourceDrift{
+				Resource: res,
+				Kind:     semantic.DriftMissing,
+				Fields: []semantic.FieldChange{{
+					Path:   "/data/key",
+					Op:     semantic.FieldReplace,
+					Before: "1",
+					After:  "2",
+				}},
 			},
-			wantErr: "diagnostic message is required",
+			wantErr: "missing drift must not have fields",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, nil, nil, []semantic.Diagnostic{tt.diag})
+			_, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, nil, nil, []semantic.ResourceDrift{tt.drift})
 			require.Error(t, err)
 			assert.ErrorContains(t, err, tt.wantErr)
 		})
 	}
 }
 
-func TestNew_LimitationMatching(t *testing.T) {
+func TestNew_UpdateWithoutAfterStaysInvalid(t *testing.T) {
 	t.Parallel()
 	res := ref("ConfigMap", "app")
-	other := ref("ConfigMap", "other")
 	change := semantic.ResourceChange{
 		Resource: res,
 		Origin:   helmOrigin(),
@@ -615,71 +610,22 @@ func TestNew_LimitationMatching(t *testing.T) {
 		Before:   &semantic.ResourceSnapshot{Object: cm("app", "v1")},
 		Apply:    writeApply(),
 	}
-	nilResource := limitation(res)
-	nilResource.Resource = nil
-	tests := []struct {
-		name  string
-		diags []semantic.Diagnostic
-	}{
-		{name: "other resource", diags: []semantic.Diagnostic{limitation(other)}},
-		{name: "nil resource", diags: []semantic.Diagnostic{nilResource}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			_, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, []semantic.ResourceChange{change}, nil, tt.diags)
-			require.Error(t, err)
-			assert.ErrorContains(t, err, "update without after")
-		})
-	}
+	_, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, []semantic.ResourceChange{change}, nil, nil)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "update requires an after snapshot")
 }
 
-func TestNew_Completeness(t *testing.T) {
+func TestNew_IsNoOpIgnoresDrift(t *testing.T) {
 	t.Parallel()
 	res := ref("ConfigMap", "app")
-	tests := []struct {
-		name    string
-		changes []semantic.ResourceChange
-		diags   []semantic.Diagnostic
-		want    semantic.Completeness
-	}{
-		{
-			name:    "complete create",
-			changes: []semantic.ResourceChange{createChange("app", "v1")},
-			want:    semantic.CompletenessComplete,
-		},
-		{
-			name:    "limitation on create",
-			changes: []semantic.ResourceChange{createChange("app", "v1")},
-			diags:   []semantic.Diagnostic{limitation(res)},
-			want:    semantic.CompletenessPartial,
-		},
-		{
-			name:  "limitation without changes",
-			diags: []semantic.Diagnostic{limitation(res)},
-			want:  semantic.CompletenessPartial,
-		},
-		{
-			name: "update without after",
-			changes: []semantic.ResourceChange{{
-				Resource: res,
-				Origin:   helmOrigin(),
-				Action:   semantic.Update,
-				Before:   &semantic.ResourceSnapshot{Object: cm("app", "v1")},
-				Apply:    writeApply(),
-			}},
-			diags: []semantic.Diagnostic{limitation(res)},
-			want:  semantic.CompletenessPartial,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			p, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, tt.changes, nil, tt.diags)
-			require.NoError(t, err)
-			assert.Equal(t, tt.want, p.Completeness)
-		})
-	}
+	p, err := semantic.New(semantic.Header{}, semantic.HelmNone, nil, nil, []semantic.ResourceDrift{{
+		Resource: res,
+		Kind:     semantic.DriftMissing,
+	}})
+	require.NoError(t, err)
+	assert.True(t, p.IsNoOp())
+	assert.False(t, p.HasEffects())
+	require.Len(t, p.Drift, 1)
 }
 
 func TestNew_CopiesNestedSnapshotShapes(t *testing.T) {
@@ -1061,7 +1007,9 @@ func TestNew_OriginContracts(t *testing.T) {
 				Origin: semantic.ResourceOrigin{Kind: semantic.OriginCRD},
 				Action: semantic.Delete,
 				Before: crdAfter,
-				Apply:  deleteApply(),
+				Apply: semantic.ApplySemantics{
+					Delete: &semantic.DeleteSemantics{Propagation: semantic.PropagationBackground},
+				},
 			},
 			wantErr: "crd origin does not support delete",
 		},
@@ -1191,7 +1139,6 @@ func TestNew_CRDEmptyFieldsStillHasEffects(t *testing.T) {
 	require.Len(t, p.Changes, 1)
 	assert.Empty(t, p.Changes[0].Fields)
 	assert.True(t, p.HasEffects())
-	assert.Equal(t, semantic.CompletenessComplete, p.Completeness)
 }
 
 func TestNew_WriteSemantics(t *testing.T) {
@@ -1329,10 +1276,10 @@ func TestPlan_IsNoOp(t *testing.T) {
 		helmAction semantic.HelmAction
 		changes    []semantic.ResourceChange
 		tasks      []semantic.TaskPlan
-		diags      []semantic.Diagnostic
+		drift      []semantic.ResourceDrift
 		want       bool
 	}{
-		{name: "A complete helm none", helmAction: semantic.HelmNone, want: true},
+		{name: "A helm none", helmAction: semantic.HelmNone, want: true},
 		{name: "B helm upgrade zero effects", helmAction: semantic.HelmUpgrade},
 		{
 			name:       "C fresh install",
@@ -1340,13 +1287,13 @@ func TestPlan_IsNoOp(t *testing.T) {
 			helmAction: semantic.HelmInstall,
 		},
 		{
-			name:       "D partial helm none",
+			name:       "D helm none with drift",
 			helmAction: semantic.HelmNone,
-			diags: []semantic.Diagnostic{{
-				Severity: semantic.DiagnosticWarning,
-				Category: semantic.CategoryPredictionLimitation,
-				Message:  "prediction is not exact",
+			drift: []semantic.ResourceDrift{{
+				Resource: ref("ConfigMap", "app"),
+				Kind:     semantic.DriftMissing,
 			}},
+			want: true,
 		},
 		{
 			name:       "E helm none with origin crd",
@@ -1363,7 +1310,7 @@ func TestPlan_IsNoOp(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			p, err := semantic.New(tt.header, tt.helmAction, tt.changes, tt.tasks, tt.diags)
+			p, err := semantic.New(tt.header, tt.helmAction, tt.changes, tt.tasks, tt.drift)
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, p.IsNoOp())
 		})

@@ -33,10 +33,6 @@ func prepareRender(p semantic.Plan, opts Options) (semantic.Plan, error) {
 }
 
 func validateRenderable(p semantic.Plan) error {
-	if err := requireEnum("completeness", p.Completeness.String(),
-		semantic.CompletenessComplete.String(), semantic.CompletenessPartial.String()); err != nil {
-		return err
-	}
 	if err := requireEnum("helmAction", p.HelmAction.String(),
 		semantic.HelmNone.String(), semantic.HelmInstall.String(), semantic.HelmUpgrade.String()); err != nil {
 		return err
@@ -131,14 +127,16 @@ func validateRenderable(p semantic.Plan) error {
 			}
 		}
 	}
-	for i, d := range p.Diagnostics {
-		if err := requireEnum(fmt.Sprintf("diagnostic %d severity", i), d.Severity.String(),
-			semantic.DiagnosticWarning.String()); err != nil {
+	for i, d := range p.Drift {
+		if err := requireEnum(fmt.Sprintf("drift %d kind", i), d.Kind.String(),
+			semantic.DriftModified.String(), semantic.DriftMissing.String()); err != nil {
 			return err
 		}
-		if err := requireEnum(fmt.Sprintf("diagnostic %d category", i), d.Category.String(),
-			semantic.CategoryPredictionLimitation.String()); err != nil {
-			return err
+		for j, f := range d.Fields {
+			if err := requireEnum(fmt.Sprintf("drift %d field %d op", i, j), f.Op.String(),
+				semantic.FieldAdd.String(), semantic.FieldRemove.String(), semantic.FieldReplace.String()); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

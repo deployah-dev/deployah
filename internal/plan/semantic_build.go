@@ -17,13 +17,14 @@ package plan
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"helm.sh/helm/v4/pkg/postrenderer"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"deployah.dev/deployah/internal/extras"
 	"deployah.dev/deployah/internal/helm"
 	"deployah.dev/deployah/internal/plan/semantic"
-	"deployah.dev/deployah/internal/predict"
 	"deployah.dev/deployah/internal/render"
 	"deployah.dev/deployah/internal/spec"
 )
@@ -59,15 +60,11 @@ type SemanticBuildInput struct {
 	CRDPolicy extras.Policy
 }
 
-// BuildSemanticPlan renders [spec.ResolvedSpec], predicts Live to
-// Predicted resource changes, and returns a [semantic.Plan]. It uses
-// the [helm.ReleasePrep] from [SemanticBuildClient.RenderManifestsWithPrep]
-// and does not look up Helm history itself. PostRenderer, when non-nil,
-// is forwarded once to the render client.
-//
-// CRDs and the install target Namespace are predicted on cluster first.
-// Helm [predict.Predict] then runs against a plan-local wrapper so
-// same-deploy missing APIs and namespaces are not fatal.
+// BuildSemanticPlan renders [spec.ResolvedSpec] and returns a
+// [semantic.Plan] of Previous/Live/Desired intent. It uses the
+// [helm.ReleasePrep] from [SemanticBuildClient.RenderManifestsWithPrep]
+// and does not look up Helm history itself. Cluster reads are GET and
+// discovery only.
 //
 // The caller must invoke the returned cleanup func once. Cleanup is
 // always non-nil. On error the plan is empty and the render result is
@@ -75,7 +72,7 @@ type SemanticBuildInput struct {
 func BuildSemanticPlan(
 	ctx context.Context,
 	client SemanticBuildClient,
-	cluster predict.Cluster,
+	cluster ClusterReader,
 	input SemanticBuildInput,
 ) (semantic.Plan, *render.RenderResult, func(), error) {
 	cleanup := func() {}
@@ -101,42 +98,45 @@ func BuildSemanticPlan(
 	if err != nil {
 		return semantic.Plan{}, nil, cleanup, fmt.Errorf("render manifests: %w", err)
 	}
-	err = validateRenderPrep(result, prep)
-	if err != nil {
-		return semantic.Plan{}, nil, cleanup, fmt.Errorf("render preparation: %w", err)
+	if prepErr := validateRenderPrep(result, prep); prepErr != nil {
+		return semantic.Plan{}, nil, cleanup, fmt.Errorf("render preparation: %w", prepErr)
 	}
 
-	predInput, err := predict.InputFromPrep(&prep, result.ReleaseName, result.Namespace, result.Manifest)
-	if err != nil {
-		return semantic.Plan{}, nil, cleanup, fmt.Errorf("build prediction input: %w", err)
+	previousManifest := ""
+	if prep.Current != nil {
+		previousManifest = prep.Current.Manifest
 	}
 
-	if prep.Operation == helm.OperationInstall {
-		if overlapErr := checkInstallNamespaceOverlap(result.Manifest, result.Namespace); overlapErr != nil {
-			return semantic.Plan{}, nil, cleanup, overlapErr
-		}
-	}
-
-	crdChanges, surface, err := predictCRDs(ctx, cluster, input.CRDs, input.CRDPolicy)
-	if err != nil {
-		return semantic.Plan{}, nil, cleanup, fmt.Errorf("predict CRDs: %w", err)
-	}
-	nsChange, missingNS, err := predictNamespace(ctx, cluster, prep.Operation, result.Namespace)
+	hasChartNS, err := chartContainsTargetNamespace(result.Manifest, result.Namespace)
 	if err != nil {
 		return semantic.Plan{}, nil, cleanup, err
 	}
-	if apiErr := checkRenderedAPIs([]string{result.Manifest, predInput.Previous}, surface); apiErr != nil {
+
+	crdChanges, surface, err := planCRDs(ctx, cluster, input.CRDs, input.CRDPolicy)
+	if err != nil {
+		return semantic.Plan{}, nil, cleanup, fmt.Errorf("plan CRDs: %w", err)
+	}
+	var nsChange semantic.ResourceChange
+	var hasNS bool
+	if !hasChartNS {
+		nsChange, hasNS, err = planNamespace(ctx, cluster, prep.Operation, result.Namespace)
+		if err != nil {
+			return semantic.Plan{}, nil, cleanup, err
+		}
+	}
+	if apiErr := checkRenderedAPIs([]string{result.Manifest, previousManifest}, surface); apiErr != nil {
 		return semantic.Plan{}, nil, cleanup, apiErr
 	}
 
-	wrapper := newPrereqCluster(cluster, missingNS, result.Namespace, surface)
-	results, err := predict.Predict(ctx, wrapper, predInput)
+	desired, err := loadPlannedObjects(cluster, surface, result.Manifest, result.Namespace, result.ReleaseName, result.Namespace)
 	if err != nil {
-		if len(surface.specChanged) > 0 {
-			return semantic.Plan{}, nil, cleanup, fmt.Errorf("predict resources: CRD spec changes before helm executes: %w", err)
-		}
-		return semantic.Plan{}, nil, cleanup, fmt.Errorf("predict resources: %w", err)
+		return semantic.Plan{}, nil, cleanup, fmt.Errorf("load desired resources: %w", err)
 	}
+	previous, err := loadPlannedObjects(cluster, surface, previousManifest, result.Namespace, result.ReleaseName, result.Namespace)
+	if err != nil {
+		return semantic.Plan{}, nil, cleanup, fmt.Errorf("load previous resources: %w", err)
+	}
+	pairs := pairHelmResources(previous, desired)
 
 	header := semantic.Header{
 		Project:      input.Resolved.Spec.Project,
@@ -154,26 +154,45 @@ func BuildSemanticPlan(
 			Namespace: header.Namespace,
 		},
 	}
-	helmChanges, diags, err := mapPredictResults(origin, results)
+
+	hookTasks, err := assembleHookTasks(input.Resolved, prep, result.Hooks)
 	if err != nil {
 		return semantic.Plan{}, nil, cleanup, fmt.Errorf("assemble semantic plan: %w", err)
 	}
-	diags = append(diags, limitationDiagnostics(wrapper, results)...)
-	if orderErr := stampHelmApplyOrder(helmChanges); orderErr != nil {
-		return semantic.Plan{}, nil, cleanup, fmt.Errorf("assemble semantic plan: %w", orderErr)
+	helmAction := deriveHelmAction(prep.Operation, helmResourcesChanged(pairs), hookTasks)
+
+	var helmChanges []semantic.ResourceChange
+	live := map[string]*unstructured.Unstructured{}
+	if helmAction != semantic.HelmNone || !header.FreshInstall {
+		live, err = liveByKey(ctx, cluster, pairs)
+		if err != nil {
+			return semantic.Plan{}, nil, cleanup, err
+		}
 	}
+	if helmAction != semantic.HelmNone {
+		helmChanges, err = helmResourceChanges(origin, pairs, live)
+		if err != nil {
+			return semantic.Plan{}, nil, cleanup, fmt.Errorf("assemble semantic plan: %w", err)
+		}
+	}
+	drift, err := helmDrift(header.FreshInstall, pairs, live)
+	if err != nil {
+		return semantic.Plan{}, nil, cleanup, fmt.Errorf("assemble semantic plan: %w", err)
+	}
+
+	scheduled, err := assembleScheduledTasks(input.Resolved, prep, helmChanges)
+	if err != nil {
+		return semantic.Plan{}, nil, cleanup, fmt.Errorf("assemble semantic plan: %w", err)
+	}
+	tasks := slices.Concat(hookTasks, scheduled)
+	applyHelmWillRun(tasks, helmAction)
+
 	changes := append([]semantic.ResourceChange{}, crdChanges...)
-	if nsChange != nil {
-		changes = append(changes, *nsChange)
+	if hasNS {
+		changes = append(changes, nsChange)
 	}
 	changes = append(changes, helmChanges...)
-	tasks, err := assembleTasks(input.Resolved, prep, result.Hooks, helmChanges)
-	if err != nil {
-		return semantic.Plan{}, nil, cleanup, fmt.Errorf("assemble semantic plan: %w", err)
-	}
-	helmAction := deriveHelmAction(prep.Operation, helmChanges, tasks)
-	applyHelmWillRun(tasks, helmAction)
-	p, err := semantic.New(header, helmAction, changes, tasks, diags)
+	p, err := semantic.New(header, helmAction, changes, tasks, drift)
 	if err != nil {
 		return semantic.Plan{}, nil, cleanup, fmt.Errorf("assemble semantic plan: %w", err)
 	}
@@ -190,6 +209,9 @@ func validateRenderPrep(result *render.RenderResult, prep helm.ReleasePrep) erro
 			return fmt.Errorf("prepared install but render used upgrade")
 		}
 	case helm.OperationUpgrade:
+		if prep.Current == nil {
+			return fmt.Errorf("upgrade prep requires a current release")
+		}
 		if !result.IsUpgrade {
 			return fmt.Errorf("prepared upgrade but render used install")
 		}

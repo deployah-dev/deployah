@@ -14,7 +14,7 @@
 
 package semantic
 
-// ResourceChange is one Live -> Predicted Kubernetes resource mutation.
+// ResourceChange is one Kubernetes resource mutation Deployah will attempt.
 type ResourceChange struct {
 	Resource ResourceRef
 	Origin   ResourceOrigin

@@ -47,6 +47,40 @@ func assembleTasks(
 	desiredHooks []*v1.Hook,
 	changes []semantic.ResourceChange,
 ) ([]semantic.TaskPlan, error) {
+	hooks, err := assembleHookTasks(resolved, prep, desiredHooks)
+	if err != nil {
+		return nil, err
+	}
+	scheduled, err := assembleScheduledTasks(resolved, prep, changes)
+	if err != nil {
+		return nil, err
+	}
+	return append(hooks, scheduled...), nil
+}
+
+func assembleHookTasks(
+	resolved *spec.ResolvedSpec,
+	prep helm.ReleasePrep,
+	desiredHooks []*v1.Hook,
+) ([]semantic.TaskPlan, error) {
+	return assembleTaskPlans(resolved, prep, desiredHooks, nil, true, false)
+}
+
+func assembleScheduledTasks(
+	resolved *spec.ResolvedSpec,
+	prep helm.ReleasePrep,
+	changes []semantic.ResourceChange,
+) ([]semantic.TaskPlan, error) {
+	return assembleTaskPlans(resolved, prep, nil, changes, false, true)
+}
+
+func assembleTaskPlans(
+	resolved *spec.ResolvedSpec,
+	prep helm.ReleasePrep,
+	desiredHooks []*v1.Hook,
+	changes []semantic.ResourceChange,
+	includeHooks, includeSchedule bool,
+) ([]semantic.TaskPlan, error) {
 	// WillRun stays false. Callers stamp it with applyHelmWillRun after
 	// deriveHelmAction. HelmAction is the source of truth for whether
 	// Helm executes.
@@ -93,11 +127,17 @@ func assembleTasks(
 		}
 		switch on {
 		case spec.TaskOnSchedule:
+			if !includeSchedule {
+				continue
+			}
 			task, ok := scheduleTask(name, hasCurrent, hasPrev, current, prev, changes, previous)
 			if ok {
 				tasks = append(tasks, task)
 			}
 		case spec.TaskOnPreDeploy, spec.TaskOnPostDeploy:
+			if !includeHooks {
+				continue
+			}
 			task, hookErr := hookTask(name, on, hasCurrent, hasPrev, current, prev, desiredDocs[name], previousDocs[name])
 			if hookErr != nil {
 				return nil, fmt.Errorf("task %s: %w", name, hookErr)

@@ -110,7 +110,9 @@ func TestNew_ActionRank(t *testing.T) {
 			Origin:   helmOrigin(),
 			Action:   semantic.Delete,
 			Before:   &semantic.ResourceSnapshot{Object: cm("app", "v1")},
-			Apply:    deleteApply(),
+			Apply: semantic.ApplySemantics{
+				Delete: &semantic.DeleteSemantics{Propagation: semantic.PropagationBackground},
+			},
 		},
 		{
 			Resource: res,
@@ -164,44 +166,31 @@ func TestNew_FieldChangeOrder(t *testing.T) {
 	})
 }
 
-func TestNew_DiagnosticOrder(t *testing.T) {
+func TestNew_DriftOrder(t *testing.T) {
 	t.Parallel()
 	app := ref("ConfigMap", "app")
 	web := ref("ConfigMap", "web")
-	p, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, nil, nil, []semantic.Diagnostic{
+	p, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, nil, nil, []semantic.ResourceDrift{
+		{Resource: web, Kind: semantic.DriftMissing},
+		{Resource: app, Kind: semantic.DriftMissing},
 		{
-			Severity: semantic.DiagnosticWarning,
-			Category: semantic.CategoryPredictionLimitation,
-			Message:  "z last",
-			Resource: &web,
-		},
-		{
-			Severity: semantic.DiagnosticWarning,
-			Category: semantic.CategoryPredictionLimitation,
-			Message:  "nil resource",
-		},
-		{
-			Severity: semantic.DiagnosticWarning,
-			Category: semantic.CategoryPredictionLimitation,
-			Message:  "b second",
-			Resource: &app,
-		},
-		{
-			Severity: semantic.DiagnosticWarning,
-			Category: semantic.CategoryPredictionLimitation,
-			Message:  "a first",
-			Resource: &app,
+			Resource: app,
+			Kind:     semantic.DriftModified,
+			Fields: []semantic.FieldChange{{
+				Path:   "/data/key",
+				Op:     semantic.FieldReplace,
+				Before: "1",
+				After:  "2",
+			}},
 		},
 	})
 	require.NoError(t, err)
-	require.Len(t, p.Diagnostics, 4)
-	assert.Nil(t, p.Diagnostics[0].Resource)
-	assert.Equal(t, "nil resource", p.Diagnostics[0].Message)
-	assert.Equal(t, "app", p.Diagnostics[1].Resource.Name)
-	assert.Equal(t, "a first", p.Diagnostics[1].Message)
-	assert.Equal(t, "app", p.Diagnostics[2].Resource.Name)
-	assert.Equal(t, "b second", p.Diagnostics[2].Message)
-	assert.Equal(t, "web", p.Diagnostics[3].Resource.Name)
+	require.Len(t, p.Drift, 3)
+	assert.Equal(t, "app", p.Drift[0].Resource.Name)
+	assert.Equal(t, semantic.DriftModified, p.Drift[0].Kind)
+	assert.Equal(t, "app", p.Drift[1].Resource.Name)
+	assert.Equal(t, semantic.DriftMissing, p.Drift[1].Kind)
+	assert.Equal(t, "web", p.Drift[2].Resource.Name)
 }
 
 func TestNew_OriginRankBeforeApplyOrder(t *testing.T) {

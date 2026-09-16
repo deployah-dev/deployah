@@ -87,19 +87,20 @@ func sortTasks(tasks []TaskPlan, changes []ResourceChange) {
 	}
 }
 
-func sortDiagnostics(diags []Diagnostic) {
-	slices.SortFunc(diags, func(a, b Diagnostic) int {
+func sortDrift(drift []ResourceDrift) {
+	slices.SortFunc(drift, func(a, b ResourceDrift) int {
 		return cmp.Or(
-			cmp.Compare(refKey(a.Resource), refKey(b.Resource)),
-			cmp.Compare(int(a.Category), int(b.Category)),
-			cmp.Compare(a.Message, b.Message),
+			cmp.Compare(a.Resource.APIVersion, b.Resource.APIVersion),
+			cmp.Compare(a.Resource.Kind, b.Resource.Kind),
+			cmp.Compare(a.Resource.Namespace, b.Resource.Namespace),
+			cmp.Compare(a.Resource.Name, b.Resource.Name),
+			cmp.Compare(a.Resource.GenerateName, b.Resource.GenerateName),
+			cmp.Compare(int(a.Kind), int(b.Kind)),
 		)
 	})
-}
-
-func refKey(r *ResourceRef) string {
-	if r == nil {
-		return ""
+	for i := range drift {
+		slices.SortFunc(drift[i].Fields, func(a, b FieldChange) int {
+			return cmp.Compare(a.Path, b.Path)
+		})
 	}
-	return r.identityKey()
 }

@@ -42,24 +42,22 @@ func TestPrepareRender_InvalidEnums(t *testing.T) {
 		wantErr string
 	}{
 		{
-			name:    "invalid completeness",
+			name:    "invalid helm action",
 			plan:    semantic.Plan{},
-			wantErr: "invalid completeness",
+			wantErr: "invalid helmAction",
 		},
 		{
 			name: "invalid action",
 			plan: semantic.Plan{
-				Completeness: semantic.CompletenessComplete,
-				HelmAction:   semantic.HelmUpgrade,
-				Changes:      []semantic.ResourceChange{{Origin: helmOrigin()}},
+				HelmAction: semantic.HelmUpgrade,
+				Changes:    []semantic.ResourceChange{{Origin: helmOrigin()}},
 			},
 			wantErr: "invalid change 0 action",
 		},
 		{
 			name: "invalid origin",
 			plan: semantic.Plan{
-				Completeness: semantic.CompletenessComplete,
-				HelmAction:   semantic.HelmUpgrade,
+				HelmAction: semantic.HelmUpgrade,
 				Changes: []semantic.ResourceChange{{
 					Action: semantic.Create,
 				}},
@@ -69,8 +67,7 @@ func TestPrepareRender_InvalidEnums(t *testing.T) {
 		{
 			name: "invalid write method",
 			plan: semantic.Plan{
-				Completeness: semantic.CompletenessComplete,
-				HelmAction:   semantic.HelmUpgrade,
+				HelmAction: semantic.HelmUpgrade,
 				Changes: []semantic.ResourceChange{{
 					Action: semantic.Create,
 					Origin: helmOrigin(),
@@ -82,8 +79,7 @@ func TestPrepareRender_InvalidEnums(t *testing.T) {
 		{
 			name: "invalid delete propagation",
 			plan: semantic.Plan{
-				Completeness: semantic.CompletenessComplete,
-				HelmAction:   semantic.HelmUpgrade,
+				HelmAction: semantic.HelmUpgrade,
 				Changes: []semantic.ResourceChange{{
 					Action: semantic.Delete,
 					Origin: helmOrigin(),
@@ -97,33 +93,28 @@ func TestPrepareRender_InvalidEnums(t *testing.T) {
 			plan: func() semantic.Plan {
 				c := validChange()
 				c.Fields = []semantic.FieldChange{{Path: "/data/key"}}
-				return semantic.Plan{Completeness: semantic.CompletenessComplete, HelmAction: semantic.HelmUpgrade, Changes: []semantic.ResourceChange{c}}
+				return semantic.Plan{HelmAction: semantic.HelmUpgrade, Changes: []semantic.ResourceChange{c}}
 			}(),
 			wantErr: "invalid change 0 field 0 op",
 		},
 		{
-			name: "invalid diagnostic severity",
+			name: "invalid drift kind",
 			plan: semantic.Plan{
-				Completeness: semantic.CompletenessComplete,
-				HelmAction:   semantic.HelmUpgrade,
-				Diagnostics: []semantic.Diagnostic{{
-					Category: semantic.CategoryPredictionLimitation,
-					Message:  "x",
-				}},
+				HelmAction: semantic.HelmUpgrade,
+				Drift:      []semantic.ResourceDrift{{}},
 			},
-			wantErr: "invalid diagnostic 0 severity",
+			wantErr: "invalid drift 0 kind",
 		},
 		{
-			name: "invalid diagnostic category",
+			name: "invalid drift field op",
 			plan: semantic.Plan{
-				Completeness: semantic.CompletenessComplete,
-				HelmAction:   semantic.HelmUpgrade,
-				Diagnostics: []semantic.Diagnostic{{
-					Severity: semantic.DiagnosticWarning,
-					Message:  "x",
+				HelmAction: semantic.HelmUpgrade,
+				Drift: []semantic.ResourceDrift{{
+					Kind:   semantic.DriftModified,
+					Fields: []semantic.FieldChange{{Path: "/data/key"}},
 				}},
 			},
-			wantErr: "invalid diagnostic 0 category",
+			wantErr: "invalid drift 0 field 0 op",
 		},
 	}
 	for _, tt := range tests {

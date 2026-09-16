@@ -15,6 +15,7 @@
 package view
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"strconv"
@@ -45,14 +46,6 @@ func WriteHuman(w io.Writer, p semantic.Plan, opts Options) error {
 	if herr := writeHumanHeader(w, prepared.Header, opts); herr != nil {
 		return herr
 	}
-	if prepared.Completeness == semantic.CompletenessPartial {
-		if werr := writeln(w, opts, theme.StatusWarning, "Warning: prediction is incomplete"); werr != nil {
-			return werr
-		}
-		if _, ferr := fmt.Fprintln(w); ferr != nil {
-			return ferr
-		}
-	}
 	owned := ownedResourceKeys(prepared.Tasks)
 	indexed := indexChanges(prepared.Changes)
 	wroteBody := false
@@ -72,13 +65,13 @@ func WriteHuman(w io.Writer, p semantic.Plan, opts Options) error {
 		}
 		wroteBody = true
 	}
-	if len(prepared.Diagnostics) > 0 {
+	if len(prepared.Drift) > 0 {
 		if wroteBody {
 			if berr := writeBlank(w); berr != nil {
 				return berr
 			}
 		}
-		if derr := writeHumanDiagnostics(w, prepared.Diagnostics, prepared.Header.Namespace, opts); derr != nil {
+		if derr := writeHumanDrift(w, prepared.Drift, prepared.Header.Namespace, opts); derr != nil {
 			return derr
 		}
 		wroteBody = true
@@ -405,30 +398,83 @@ func writeYAMLDiff(w io.Writer, beforeYAML, afterYAML, indent string, opts Optio
 	return nil
 }
 
-func writeHumanDiagnostics(w io.Writer, diags []semantic.Diagnostic, planNS string, opts Options) error {
-	if len(diags) == 0 {
+func writeHumanDrift(w io.Writer, drift []semantic.ResourceDrift, planNS string, opts Options) error {
+	if len(drift) == 0 {
 		return nil
 	}
-	if err := writeln(w, opts, theme.TextTitle, "Diagnostics"); err != nil {
+	if err := writeln(w, opts, theme.TextTitle, "Drift"); err != nil {
 		return err
 	}
 	if err := writeBlank(w); err != nil {
 		return err
 	}
-	for _, d := range diags {
-		ref := ""
-		if d.Resource != nil {
-			ref = " " + formatGVK(*d.Resource) + " " + quotedName(*d.Resource)
-			if d.Resource.Namespace != "" && d.Resource.Namespace != planNS {
-				ref += fmt.Sprintf(" in namespace %q", d.Resource.Namespace)
+	for i, d := range drift {
+		if i > 0 {
+			if err := writeBlank(w); err != nil {
+				return err
 			}
 		}
-		line := fmt.Sprintf("  %s %s%s: %s", d.Severity.String(), d.Category.String(), ref, d.Message)
-		if err := writeln(w, opts, theme.StatusWarning, line); err != nil {
+		if err := writeHumanDriftRow(w, d, planNS, opts); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func writeHumanDriftRow(w io.Writer, d semantic.ResourceDrift, planNS string, opts Options) error {
+	heading := driftHeading(d, planNS)
+	token := theme.StatusWarning
+	if d.Kind == semantic.DriftMissing {
+		token = theme.StatusError
+	}
+	if err := writeln(w, opts, token, "  "+heading); err != nil {
+		return err
+	}
+	if d.Kind != semantic.DriftModified {
+		return nil
+	}
+	for _, f := range d.Fields {
+		if err := writeln(w, opts, theme.TextPrimary, "      "+formatDriftField(f)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func driftHeading(d semantic.ResourceDrift, planNS string) string {
+	line := formatGVK(d.Resource) + " " + quotedName(d.Resource)
+	if d.Resource.Namespace != "" && d.Resource.Namespace != planNS {
+		line += fmt.Sprintf(" in namespace %q", d.Resource.Namespace)
+	}
+	switch d.Kind {
+	case semantic.DriftModified:
+		return "~ modified " + line
+	case semantic.DriftMissing:
+		return "missing " + line
+	default:
+		return d.Kind.String() + " " + line
+	}
+}
+
+func formatDriftField(f semantic.FieldChange) string {
+	switch f.Op {
+	case semantic.FieldAdd:
+		return f.Path + ": " + formatJSONValue(f.After)
+	case semantic.FieldRemove:
+		return f.Path + ": " + formatJSONValue(f.Before) + " ->"
+	case semantic.FieldReplace:
+		return f.Path + ": " + formatJSONValue(f.Before) + " -> " + formatJSONValue(f.After)
+	default:
+		return f.Path
+	}
+}
+
+func formatJSONValue(v any) string {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Sprint(v)
+	}
+	return string(b)
 }
 
 func writeHumanFooter(w io.Writer, p semantic.Plan, opts Options) error {

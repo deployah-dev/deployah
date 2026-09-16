@@ -24,11 +24,9 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	clienttesting "k8s.io/client-go/testing"
@@ -45,34 +43,9 @@ spec:
   replicas: 2
 `
 
-// interceptApply installs a "patch" reactor that decodes the incoming apply
-// body and returns it as-is as the "predicted" object without writing it
-// back into the tracker, since [k8s.io/client-go/testing.ObjectTracker]
-// (unlike a real API server) ignores metav1.PatchOptions.DryRun and would
-// otherwise silently overwrite the seeded live object.
-func interceptApply(client *dynamicfake.FakeDynamicClient, resource string) {
-	client.PrependReactor("patch", resource, func(action clienttesting.Action) (bool, runtime.Object, error) {
-		patchAction, ok := action.(clienttesting.PatchActionImpl)
-		if !ok {
-			return false, nil, nil
-		}
-		if patchAction.GetPatchType() != types.ApplyPatchType {
-			return false, nil, nil
-		}
-		obj := &unstructured.Unstructured{Object: map[string]any{}}
-		if err := sigsyaml.Unmarshal(patchAction.GetPatch(), &obj.Object); err != nil {
-			return true, nil, err
-		}
-		obj.SetName(patchAction.GetName())
-		obj.SetNamespace(patchAction.GetNamespace())
-		return true, obj, nil
-	})
-}
-
 func newTestClient(t *testing.T, liveObjects ...runtime.Object) *Client {
 	t.Helper()
 	fakeClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), liveObjects...)
-	interceptApply(fakeClient, "deployments")
 	mapper := testrestmapper.TestOnlyStaticRESTMapper(clientgoscheme.Scheme)
 	return newClient(fakeClient, mapper)
 }
@@ -91,51 +64,33 @@ func unstructuredDeployment(name, namespace string, replicas int64) *unstructure
 	}}
 }
 
-// TestClientPredict_ExistingResource_ReturnsPredictedAndLive verifies
-// [Client.Predict] resolves the resource's GVK through the REST mapper,
-// sends a server-side apply dry-run PATCH, and fetches the live object
-// separately, returning both as YAML.
-func TestClientPredict_ExistingResource_ReturnsPredictedAndLive(t *testing.T) {
+func TestClientLive_ExistingResource(t *testing.T) {
 	t.Parallel()
 	live := unstructuredDeployment("web", "default", 5)
 	c := newTestClient(t, live)
 
-	predicted, liveYAML, err := c.Predict(t.Context(), clientTestDeployment)
+	liveYAML, err := c.Live(t.Context(), clientTestDeployment)
 	require.NoError(t, err)
 
-	var predictedDoc, liveDoc map[string]any
-	require.NoError(t, sigsyaml.Unmarshal([]byte(predicted), &predictedDoc))
+	var liveDoc map[string]any
 	require.NoError(t, sigsyaml.Unmarshal([]byte(liveYAML), &liveDoc))
-
-	predictedSpec, ok := predictedDoc["spec"].(map[string]any)
-	require.True(t, ok)
 	liveSpec, ok := liveDoc["spec"].(map[string]any)
 	require.True(t, ok)
-	assert.InEpsilon(t, float64(2), predictedSpec["replicas"], 0, "predicted must reflect the desired manifest, not the live object")
-	assert.InEpsilon(t, float64(5), liveSpec["replicas"], 0, "live must reflect the pre-existing cluster object, unaffected by the dry-run patch")
+	assert.InEpsilon(t, float64(5), liveSpec["replicas"], 0)
 }
 
-// TestClientPredict_ResourceNotFound_ReturnsEmptyLive verifies a resource
-// that does not exist yet returns live="" with no error, matching the
-// [Predictor] contract that [ComputeDrift] relies on to skip resources
-// with no baseline to compare against.
-func TestClientPredict_ResourceNotFound_ReturnsEmptyLive(t *testing.T) {
+func TestClientLive_ResourceNotFound(t *testing.T) {
 	t.Parallel()
-	c := newTestClient(t) // no live objects seeded
+	c := newTestClient(t)
 
-	predicted, liveYAML, err := c.Predict(t.Context(), clientTestDeployment)
+	liveYAML, err := c.Live(t.Context(), clientTestDeployment)
 	require.NoError(t, err)
 	assert.Empty(t, liveYAML)
-	assert.NotEmpty(t, predicted)
 }
 
-// TestClientPredict_GetError_PropagatesAsError verifies a failure other
-// than "not found" while fetching the live object (e.g. an RBAC denial)
-// surfaces as an error rather than being treated as a missing resource.
-func TestClientPredict_GetError_PropagatesAsError(t *testing.T) {
+func TestClientLive_GetError(t *testing.T) {
 	t.Parallel()
 	fakeClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
-	interceptApply(fakeClient, "deployments")
 	fakeClient.PrependReactor("get", "deployments", func(_ clienttesting.Action) (bool, runtime.Object, error) {
 		return true, nil, apierrors.NewForbidden(
 			schema.GroupResource{Group: "apps", Resource: "deployments"}, "web", errors.New("cannot get resource"),
@@ -144,13 +99,26 @@ func TestClientPredict_GetError_PropagatesAsError(t *testing.T) {
 	mapper := testrestmapper.TestOnlyStaticRESTMapper(clientgoscheme.Scheme)
 	c := newClient(fakeClient, mapper)
 
-	_, _, err := c.Predict(t.Context(), clientTestDeployment)
+	_, err := c.Live(t.Context(), clientTestDeployment)
 	assert.Error(t, err)
 }
 
-// TestNewClient verifies [NewClient] builds a [Client] from a REST config
-// without contacting a server (dynamic and discovery client construction
-// is purely local), and that an invalid config surfaces as an error.
+func TestClientLive_DoesNotPatch(t *testing.T) {
+	t.Parallel()
+	fakeClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), unstructuredDeployment("web", "default", 5))
+	mapper := testrestmapper.TestOnlyStaticRESTMapper(clientgoscheme.Scheme)
+	c := newClient(fakeClient, mapper)
+
+	_, err := c.Live(t.Context(), clientTestDeployment)
+	require.NoError(t, err)
+	for _, a := range fakeClient.Actions() {
+		assert.NotEqual(t, "patch", a.GetVerb())
+		assert.NotEqual(t, "create", a.GetVerb())
+		assert.NotEqual(t, "update", a.GetVerb())
+		assert.NotEqual(t, "delete", a.GetVerb())
+	}
+}
+
 func TestNewClient(t *testing.T) {
 	t.Parallel()
 
@@ -166,9 +134,6 @@ func TestNewClient(t *testing.T) {
 		},
 		{
 			name: "invalid config returns error",
-			// Username/password and a bearer token are mutually
-			// exclusive auth methods; client-go rejects the config
-			// before ever dialing a server.
 			cfg: &rest.Config{
 				Host:        "https://example.invalid:6443",
 				Username:    "user",
@@ -198,21 +163,16 @@ func TestNewClient(t *testing.T) {
 	}
 }
 
-// TestClientPredict_DecodeError verifies malformed resourceYAML surfaces a
-// decode error instead of a panic or a silent no-op.
-func TestClientPredict_DecodeError(t *testing.T) {
+func TestClientLive_DecodeError(t *testing.T) {
 	t.Parallel()
 
 	c := newTestClient(t)
-	_, _, err := c.Predict(t.Context(), "not: valid: yaml: [")
+	_, err := c.Live(t.Context(), "not: valid: yaml: [")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "decode resource")
 }
 
-// TestClientPredict_UnmappedKind_ReturnsError verifies a resource whose
-// GroupVersionKind the REST mapper does not recognize surfaces a clear
-// "resolve resource mapping" error rather than a bare mapper error.
-func TestClientPredict_UnmappedKind_ReturnsError(t *testing.T) {
+func TestClientLive_UnmappedKind(t *testing.T) {
 	t.Parallel()
 
 	c := newTestClient(t)
@@ -222,14 +182,11 @@ kind: FrobnicatorWidget
 metadata:
   name: x
 `
-	_, _, err := c.Predict(t.Context(), unknownKindYAML)
+	_, err := c.Live(t.Context(), unknownKindYAML)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "resolve resource mapping")
 }
 
-// TestToYAML_MarshalError verifies an object that cannot be marshaled to
-// JSON (e.g. a channel value smuggled into the map) surfaces a wrapped
-// error rather than a panic.
 func TestToYAML_MarshalError(t *testing.T) {
 	t.Parallel()
 
@@ -240,43 +197,4 @@ func TestToYAML_MarshalError(t *testing.T) {
 	require.Error(t, err)
 	assert.Empty(t, s)
 	assert.Contains(t, err.Error(), "encode resource to YAML")
-}
-
-// TestClientPredict_DryRunAndForceOptionsAreSet verifies every predict
-// PATCH is sent with the field manager, dry-run, and force-ownership
-// options: without Force, a field another controller (e.g. an HPA driving
-// spec.replicas) already owns would make the dry-run fail with a conflict
-// instead of returning a prediction.
-func TestClientPredict_DryRunAndForceOptionsAreSet(t *testing.T) {
-	t.Parallel()
-	fakeClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), unstructuredDeployment("web", "default", 5))
-	var captured *metav1.PatchOptions
-	fakeClient.PrependReactor("patch", "deployments", func(action clienttesting.Action) (bool, runtime.Object, error) {
-		patchAction, ok := action.(clienttesting.PatchActionImpl)
-		if !ok {
-			return false, nil, nil
-		}
-		opts := patchAction.GetPatchOptions()
-		captured = &opts
-		if patchAction.GetPatchType() != types.ApplyPatchType {
-			return false, nil, nil
-		}
-		obj := &unstructured.Unstructured{Object: map[string]any{}}
-		if err := sigsyaml.Unmarshal(patchAction.GetPatch(), &obj.Object); err != nil {
-			return true, nil, err
-		}
-		obj.SetName(patchAction.GetName())
-		obj.SetNamespace(patchAction.GetNamespace())
-		return true, obj, nil
-	})
-	mapper := testrestmapper.TestOnlyStaticRESTMapper(clientgoscheme.Scheme)
-	c := newClient(fakeClient, mapper)
-
-	_, _, err := c.Predict(t.Context(), clientTestDeployment)
-	require.NoError(t, err)
-	require.NotNil(t, captured)
-	assert.Equal(t, FieldManager, captured.FieldManager)
-	assert.Equal(t, []string{metav1.DryRunAll}, captured.DryRun)
-	require.NotNil(t, captured.Force)
-	assert.True(t, *captured.Force)
 }

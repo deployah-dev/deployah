@@ -11,9 +11,8 @@
     "helmAction",
     "changes",
     "tasks",
-    "diagnostics",
-    "summary",
-    "completeness"
+    "drift",
+    "summary"
   ],
   "properties": {
     "schema": {
@@ -39,18 +38,14 @@
         "$ref": "#/$defs/Task"
       }
     },
-    "diagnostics": {
+    "drift": {
       "type": "array",
       "items": {
-        "$ref": "#/$defs/Diagnostic"
+        "$ref": "#/$defs/ResourceDrift"
       }
     },
     "summary": {
       "$ref": "#/$defs/Summary"
-    },
-    "completeness": {
-      "type": "string",
-      "enum": ["complete", "partial"]
     }
   },
   "allOf": [
@@ -584,26 +579,61 @@
         }
       ]
     },
-    "Diagnostic": {
+    "ResourceDrift": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["severity", "category", "message"],
+      "required": ["resource", "kind", "fields"],
       "properties": {
-        "severity": {
-          "type": "string",
-          "enum": ["warning"]
-        },
-        "category": {
-          "type": "string",
-          "enum": ["prediction_limitation"]
-        },
-        "message": {
-          "type": "string"
-        },
         "resource": {
           "$ref": "#/$defs/Resource"
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["modified", "missing"]
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FieldChange"
+          }
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "modified"
+              }
+            },
+            "required": ["kind"]
+          },
+          "then": {
+            "properties": {
+              "fields": {
+                "minItems": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "missing"
+              }
+            },
+            "required": ["kind"]
+          },
+          "then": {
+            "properties": {
+              "fields": {
+                "maxItems": 0
+              }
+            }
+          }
+        }
+      ]
     },
     "Summary": {
       "type": "object",

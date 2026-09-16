@@ -23,14 +23,13 @@ import (
 )
 
 type document struct {
-	Schema       string      `json:"schema"`
-	Header       headerDTO   `json:"header"`
-	HelmAction   string      `json:"helmAction"`
-	Changes      []changeDTO `json:"changes"`
-	Tasks        []taskDTO   `json:"tasks"`
-	Diagnostics  []diagDTO   `json:"diagnostics"`
-	Summary      summaryDTO  `json:"summary"`
-	Completeness string      `json:"completeness"`
+	Schema     string      `json:"schema"`
+	Header     headerDTO   `json:"header"`
+	HelmAction string      `json:"helmAction"`
+	Changes    []changeDTO `json:"changes"`
+	Tasks      []taskDTO   `json:"tasks"`
+	Drift      []driftDTO  `json:"drift"`
+	Summary    summaryDTO  `json:"summary"`
 }
 
 type headerDTO struct {
@@ -93,11 +92,10 @@ type fieldDTO struct {
 	After  *any   `json:"after,omitempty"`
 }
 
-type diagDTO struct {
-	Severity string       `json:"severity"`
-	Category string       `json:"category"`
-	Message  string       `json:"message"`
-	Resource *resourceDTO `json:"resource,omitempty"`
+type driftDTO struct {
+	Resource resourceDTO `json:"resource"`
+	Kind     string      `json:"kind"`
+	Fields   []fieldDTO  `json:"fields"`
 }
 
 type summaryDTO struct {
@@ -150,23 +148,22 @@ func newDocument(p semantic.Plan, opts Options) (document, error) {
 	for _, c := range prepared.Changes {
 		changes = append(changes, toChangeDTO(c))
 	}
-	diags := make([]diagDTO, 0, len(prepared.Diagnostics))
-	for _, d := range prepared.Diagnostics {
-		diags = append(diags, toDiagDTO(d))
+	drift := make([]driftDTO, 0, len(prepared.Drift))
+	for _, d := range prepared.Drift {
+		drift = append(drift, toDriftDTO(d))
 	}
 	tasks := make([]taskDTO, 0, len(prepared.Tasks))
 	for _, t := range prepared.Tasks {
 		tasks = append(tasks, toTaskDTO(t))
 	}
 	return document{
-		Schema:       SchemaV1ID,
-		Header:       toHeaderDTO(prepared.Header),
-		HelmAction:   prepared.HelmAction.String(),
-		Changes:      changes,
-		Tasks:        tasks,
-		Diagnostics:  diags,
-		Summary:      toSummaryDTO(prepared.Summary),
-		Completeness: prepared.Completeness.String(),
+		Schema:     SchemaV1ID,
+		Header:     toHeaderDTO(prepared.Header),
+		HelmAction: prepared.HelmAction.String(),
+		Changes:    changes,
+		Tasks:      tasks,
+		Drift:      drift,
+		Summary:    toSummaryDTO(prepared.Summary),
 	}, nil
 }
 
@@ -240,17 +237,16 @@ func toResourceDTO(r semantic.ResourceRef) resourceDTO {
 	}
 }
 
-func toDiagDTO(d semantic.Diagnostic) diagDTO {
-	dto := diagDTO{
-		Severity: d.Severity.String(),
-		Category: d.Category.String(),
-		Message:  d.Message,
+func toDriftDTO(d semantic.ResourceDrift) driftDTO {
+	fields := make([]fieldDTO, 0, len(d.Fields))
+	for _, f := range d.Fields {
+		fields = append(fields, toFieldDTO(f))
 	}
-	if d.Resource != nil {
-		r := toResourceDTO(*d.Resource)
-		dto.Resource = &r
+	return driftDTO{
+		Resource: toResourceDTO(d.Resource),
+		Kind:     d.Kind.String(),
+		Fields:   fields,
 	}
-	return dto
 }
 
 func toSummaryDTO(s semantic.Summary) summaryDTO {

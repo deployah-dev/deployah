@@ -268,24 +268,24 @@ func humanHeader() semantic.Header {
 	}
 }
 
-func mustPlan(tb testing.TB, helmAction semantic.HelmAction, changes []semantic.ResourceChange, diags []semantic.Diagnostic) semantic.Plan {
+func mustPlan(tb testing.TB, helmAction semantic.HelmAction, changes []semantic.ResourceChange, drift []semantic.ResourceDrift) semantic.Plan {
 	tb.Helper()
-	return mustPlanWithTasks(tb, helmAction, changes, nil, diags)
+	return mustPlanWithTasks(tb, helmAction, changes, nil, drift)
 }
 
-func mustPlanWithTasks(tb testing.TB, helmAction semantic.HelmAction, changes []semantic.ResourceChange, tasks []semantic.TaskPlan, diags []semantic.Diagnostic) semantic.Plan {
+func mustPlanWithTasks(tb testing.TB, helmAction semantic.HelmAction, changes []semantic.ResourceChange, tasks []semantic.TaskPlan, drift []semantic.ResourceDrift) semantic.Plan {
 	tb.Helper()
 	return mustPlanWithHeader(tb, semantic.Header{
 		Project:     "web",
 		Environment: "prod",
 		Release:     "web",
 		Namespace:   "prod",
-	}, helmAction, changes, tasks, diags)
+	}, helmAction, changes, tasks, drift)
 }
 
-func mustPlanWithHeader(tb testing.TB, header semantic.Header, helmAction semantic.HelmAction, changes []semantic.ResourceChange, tasks []semantic.TaskPlan, diags []semantic.Diagnostic) semantic.Plan {
+func mustPlanWithHeader(tb testing.TB, header semantic.Header, helmAction semantic.HelmAction, changes []semantic.ResourceChange, tasks []semantic.TaskPlan, drift []semantic.ResourceDrift) semantic.Plan {
 	tb.Helper()
-	p, err := semantic.New(header, helmAction, changes, tasks, diags)
+	p, err := semantic.New(header, helmAction, changes, tasks, drift)
 	require.NoError(tb, err)
 	return p
 }
