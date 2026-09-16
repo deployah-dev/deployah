@@ -27,8 +27,10 @@
 // semantic plan model.
 //
 // [BuildSemanticPlan] is the semantic pipeline: it renders through
-// [SemanticBuildClient.RenderManifestsWithPrep], predicts with
-// [deployah.dev/deployah/internal/predict.Predict], and returns a
+// [SemanticBuildClient.RenderManifestsWithPrep], predicts CRDs and the
+// install target Namespace on [predict.Cluster], then predicts Helm
+// resources with [deployah.dev/deployah/internal/predict.Predict] against
+// a plan-local wrapper. It returns a
 // [deployah.dev/deployah/internal/plan/semantic.Plan]. Semantic types
 // live in plan/semantic. New rendering lives in plan/view.
 //

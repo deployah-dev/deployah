@@ -1,0 +1,15 @@
+Plan for project "web" on environment "prod"
+
+Context:   production-eu
+Namespace: prod
+Release:   web
+Revision:  12
+
+Warning: prediction is incomplete
+
+Diagnostics
+
+  warning prediction_limitation example.com/v1/Widget "app": prediction is not exact: prediction used the currently installed CRD, but that CRD's spec changes before Helm executes
+
+Summary
+  Resources: 0 create, 0 update, 0 delete, 0 replace

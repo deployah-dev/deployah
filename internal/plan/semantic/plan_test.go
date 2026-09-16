@@ -914,52 +914,83 @@ func TestNew_OriginCRDAllowedWithEveryHelmAction(t *testing.T) {
 
 func TestNew_OriginPayload(t *testing.T) {
 	t.Parallel()
-	after := &semantic.ResourceSnapshot{Object: cm("app", "v1")}
 	tests := []struct {
 		name       string
 		header     semantic.Header
 		helmAction semantic.HelmAction
-		origin     semantic.ResourceOrigin
+		change     semantic.ResourceChange
 		wantErr    string
 	}{
-		{name: "helm with details", helmAction: semantic.HelmUpgrade, origin: helmOrigin()},
+		{
+			name:       "helm with details",
+			helmAction: semantic.HelmUpgrade,
+			change:     createChange("app", "v1"),
+		},
 		{
 			name:       "helm without details",
 			helmAction: semantic.HelmUpgrade,
-			origin:     semantic.ResourceOrigin{Kind: semantic.OriginHelm},
-			wantErr:    "helm origin requires helm details",
+			change: semantic.ResourceChange{
+				Resource: ref("ConfigMap", "app"),
+				Origin:   semantic.ResourceOrigin{Kind: semantic.OriginHelm},
+				Action:   semantic.Create,
+				After:    &semantic.ResourceSnapshot{Object: cm("app", "v1")},
+				Apply:    writeApply(),
+			},
+			wantErr: "helm origin requires helm details",
 		},
-		{name: "crd without helm", helmAction: semantic.HelmNone, origin: semantic.ResourceOrigin{Kind: semantic.OriginCRD}},
+		{
+			name:       "crd without helm",
+			helmAction: semantic.HelmNone,
+			change:     crdCreate("widgets.example.com"),
+		},
 		{
 			name:       "crd with helm",
 			helmAction: semantic.HelmNone,
-			origin:     semantic.ResourceOrigin{Kind: semantic.OriginCRD, Helm: helmOrigin().Helm},
-			wantErr:    "crd origin must not include helm details",
+			change: semantic.ResourceChange{
+				Resource: semantic.ResourceRef{
+					APIVersion: "apiextensions.k8s.io/v1",
+					Kind:       "CustomResourceDefinition",
+					Name:       "widgets.example.com",
+				},
+				Origin: semantic.ResourceOrigin{Kind: semantic.OriginCRD, Helm: helmOrigin().Helm},
+				Action: semantic.Create,
+				After: &semantic.ResourceSnapshot{Object: map[string]any{
+					"apiVersion": "apiextensions.k8s.io/v1",
+					"kind":       "CustomResourceDefinition",
+					"metadata":   map[string]any{"name": "widgets.example.com"},
+				}},
+				Apply: writeCreate(),
+			},
+			wantErr: "crd origin must not include helm details",
 		},
 		{
 			name:       "namespace without helm",
 			header:     semantic.Header{FreshInstall: true},
 			helmAction: semantic.HelmInstall,
-			origin:     semantic.ResourceOrigin{Kind: semantic.OriginNamespace},
+			change:     nsCreate("prod"),
 		},
 		{
 			name:       "namespace with helm",
 			header:     semantic.Header{FreshInstall: true},
 			helmAction: semantic.HelmInstall,
-			origin:     semantic.ResourceOrigin{Kind: semantic.OriginNamespace, Helm: helmOrigin().Helm},
-			wantErr:    "namespace origin must not include helm details",
+			change: semantic.ResourceChange{
+				Resource: semantic.ResourceRef{APIVersion: "v1", Kind: "Namespace", Name: "prod"},
+				Origin:   semantic.ResourceOrigin{Kind: semantic.OriginNamespace, Helm: helmOrigin().Helm},
+				Action:   semantic.Create,
+				After: &semantic.ResourceSnapshot{Object: map[string]any{
+					"apiVersion": "v1",
+					"kind":       "Namespace",
+					"metadata":   map[string]any{"name": "prod"},
+				}},
+				Apply: writeApply(),
+			},
+			wantErr: "namespace origin must not include helm details",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := semantic.New(tt.header, tt.helmAction, []semantic.ResourceChange{{
-				Resource: ref("ConfigMap", "app"),
-				Origin:   tt.origin,
-				Action:   semantic.Create,
-				After:    after,
-				Apply:    writeCreate(),
-			}}, nil, nil)
+			_, err := semantic.New(tt.header, tt.helmAction, []semantic.ResourceChange{tt.change}, nil, nil)
 			if tt.wantErr != "" {
 				require.Error(t, err)
 				assert.ErrorContains(t, err, tt.wantErr)
@@ -968,6 +999,199 @@ func TestNew_OriginPayload(t *testing.T) {
 			require.NoError(t, err)
 		})
 	}
+}
+
+func TestNew_OriginContracts(t *testing.T) {
+	t.Parallel()
+	crdAfter := &semantic.ResourceSnapshot{Object: map[string]any{
+		"apiVersion": "apiextensions.k8s.io/v1",
+		"kind":       "CustomResourceDefinition",
+		"metadata":   map[string]any{"name": "widgets.example.com"},
+	}}
+	nsAfter := &semantic.ResourceSnapshot{Object: map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Namespace",
+		"metadata":   map[string]any{"name": "prod"},
+	}}
+	tests := []struct {
+		name       string
+		header     semantic.Header
+		helmAction semantic.HelmAction
+		change     semantic.ResourceChange
+		wantErr    string
+	}{
+		{
+			name:       "crd wrong kind",
+			helmAction: semantic.HelmNone,
+			change: semantic.ResourceChange{
+				Resource: ref("ConfigMap", "app"),
+				Origin:   semantic.ResourceOrigin{Kind: semantic.OriginCRD},
+				Action:   semantic.Create,
+				After:    &semantic.ResourceSnapshot{Object: cm("app", "v1")},
+				Apply:    writeCreate(),
+			},
+			wantErr: "crd origin requires apiextensions.k8s.io/v1 CustomResourceDefinition",
+		},
+		{
+			name:       "crd namespaced",
+			helmAction: semantic.HelmNone,
+			change: semantic.ResourceChange{
+				Resource: semantic.ResourceRef{
+					APIVersion: "apiextensions.k8s.io/v1",
+					Kind:       "CustomResourceDefinition",
+					Namespace:  "prod",
+					Name:       "widgets.example.com",
+				},
+				Origin: semantic.ResourceOrigin{Kind: semantic.OriginCRD},
+				Action: semantic.Create,
+				After:  crdAfter,
+				Apply:  writeCreate(),
+			},
+			wantErr: "crd origin must be cluster-scoped",
+		},
+		{
+			name:       "crd delete forbidden",
+			helmAction: semantic.HelmNone,
+			change: semantic.ResourceChange{
+				Resource: semantic.ResourceRef{
+					APIVersion: "apiextensions.k8s.io/v1",
+					Kind:       "CustomResourceDefinition",
+					Name:       "widgets.example.com",
+				},
+				Origin: semantic.ResourceOrigin{Kind: semantic.OriginCRD},
+				Action: semantic.Delete,
+				Before: crdAfter,
+				Apply:  deleteApply(),
+			},
+			wantErr: "crd origin does not support delete",
+		},
+		{
+			name:       "crd create without force ssa",
+			helmAction: semantic.HelmNone,
+			change: semantic.ResourceChange{
+				Resource: semantic.ResourceRef{
+					APIVersion: "apiextensions.k8s.io/v1",
+					Kind:       "CustomResourceDefinition",
+					Name:       "widgets.example.com",
+				},
+				Origin: semantic.ResourceOrigin{Kind: semantic.OriginCRD},
+				Action: semantic.Create,
+				After:  crdAfter,
+				Apply:  writeApply(),
+			},
+			wantErr: "crd create server_side_apply requires force conflicts",
+		},
+		{
+			name:       "crd create with force ssa",
+			helmAction: semantic.HelmNone,
+			change: semantic.ResourceChange{
+				Resource: semantic.ResourceRef{
+					APIVersion: "apiextensions.k8s.io/v1",
+					Kind:       "CustomResourceDefinition",
+					Name:       "widgets.example.com",
+				},
+				Origin: semantic.ResourceOrigin{Kind: semantic.OriginCRD},
+				Action: semantic.Create,
+				After:  crdAfter,
+				Apply:  writeForceApply(),
+			},
+		},
+		{
+			name:       "crd update without force",
+			helmAction: semantic.HelmNone,
+			change: semantic.ResourceChange{
+				Resource: semantic.ResourceRef{
+					APIVersion: "apiextensions.k8s.io/v1",
+					Kind:       "CustomResourceDefinition",
+					Name:       "widgets.example.com",
+				},
+				Origin: semantic.ResourceOrigin{Kind: semantic.OriginCRD},
+				Action: semantic.Update,
+				Before: crdAfter,
+				After:  crdAfter,
+				Apply:  writeApply(),
+			},
+			wantErr: "crd update requires server_side_apply with force conflicts",
+		},
+		{
+			name:       "namespace write create forbidden",
+			header:     semantic.Header{FreshInstall: true},
+			helmAction: semantic.HelmInstall,
+			change: semantic.ResourceChange{
+				Resource: semantic.ResourceRef{APIVersion: "v1", Kind: "Namespace", Name: "prod"},
+				Origin:   semantic.ResourceOrigin{Kind: semantic.OriginNamespace},
+				Action:   semantic.Create,
+				After:    nsAfter,
+				Apply:    writeCreate(),
+			},
+			wantErr: "namespace origin requires server_side_apply",
+		},
+		{
+			name:       "namespace force forbidden",
+			header:     semantic.Header{FreshInstall: true},
+			helmAction: semantic.HelmInstall,
+			change: semantic.ResourceChange{
+				Resource: semantic.ResourceRef{APIVersion: "v1", Kind: "Namespace", Name: "prod"},
+				Origin:   semantic.ResourceOrigin{Kind: semantic.OriginNamespace},
+				Action:   semantic.Create,
+				After:    nsAfter,
+				Apply:    writeForceApply(),
+			},
+			wantErr: "namespace origin must not force conflicts",
+		},
+		{
+			name:       "namespace wrong kind",
+			header:     semantic.Header{FreshInstall: true},
+			helmAction: semantic.HelmInstall,
+			change: semantic.ResourceChange{
+				Resource: ref("ConfigMap", "app"),
+				Origin:   semantic.ResourceOrigin{Kind: semantic.OriginNamespace},
+				Action:   semantic.Create,
+				After:    &semantic.ResourceSnapshot{Object: cm("app", "v1")},
+				Apply:    writeApply(),
+			},
+			wantErr: "namespace origin requires v1 Namespace",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := semantic.New(tt.header, tt.helmAction, []semantic.ResourceChange{tt.change}, nil, nil)
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.ErrorContains(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestNew_CRDEmptyFieldsStillHasEffects(t *testing.T) {
+	t.Parallel()
+	obj := map[string]any{
+		"apiVersion": "apiextensions.k8s.io/v1",
+		"kind":       "CustomResourceDefinition",
+		"metadata":   map[string]any{"name": "widgets.example.com"},
+		"spec":       map[string]any{"group": "example.com"},
+	}
+	p, err := semantic.New(semantic.Header{}, semantic.HelmNone, []semantic.ResourceChange{{
+		Resource: semantic.ResourceRef{
+			APIVersion: "apiextensions.k8s.io/v1",
+			Kind:       "CustomResourceDefinition",
+			Name:       "widgets.example.com",
+		},
+		Origin: semantic.ResourceOrigin{Kind: semantic.OriginCRD},
+		Action: semantic.Update,
+		Before: &semantic.ResourceSnapshot{Object: obj},
+		After:  &semantic.ResourceSnapshot{Object: obj},
+		Apply:  writeForceApply(),
+	}}, nil, nil)
+	require.NoError(t, err)
+	require.Len(t, p.Changes, 1)
+	assert.Empty(t, p.Changes[0].Fields)
+	assert.True(t, p.HasEffects())
+	assert.Equal(t, semantic.CompletenessComplete, p.Completeness)
 }
 
 func TestNew_WriteSemantics(t *testing.T) {

@@ -19,7 +19,11 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
-func equalBookkeeping(live, predicted *unstructured.Unstructured) bool {
+// EqualPredictedState reports whether live and predicted represent the
+// same Kubernetes object after predictor bookkeeping fields are
+// stripped. Helm [Predict] uses this same comparison to emit
+// [ActionNoOp].
+func EqualPredictedState(live, predicted *unstructured.Unstructured) bool {
 	if live == nil || predicted == nil {
 		return false
 	}

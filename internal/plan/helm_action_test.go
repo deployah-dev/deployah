@@ -61,6 +61,7 @@ func TestDeriveHelmAction(t *testing.T) {
 		{name: "upgrade with hook create", op: helm.OperationUpgrade, tasks: []semantic.TaskPlan{hookCreate}, want: semantic.HelmUpgrade},
 		{name: "upgrade with hook delete", op: helm.OperationUpgrade, tasks: []semantic.TaskPlan{hookDelete}, want: semantic.HelmUpgrade},
 		{name: "crd change does not upgrade", op: helm.OperationUpgrade, changes: []semantic.ResourceChange{crdChange}, tasks: []semantic.TaskPlan{unchanged}, want: semantic.HelmNone},
+		{name: "crd plus helm upgrades", op: helm.OperationUpgrade, changes: []semantic.ResourceChange{crdChange, helmChange}, want: semantic.HelmUpgrade},
 		{name: "namespace change does not upgrade", op: helm.OperationUpgrade, changes: []semantic.ResourceChange{nsChange}, want: semantic.HelmNone},
 		{name: "schedule change does not upgrade", op: helm.OperationUpgrade, tasks: []semantic.TaskPlan{schedule}, want: semantic.HelmNone},
 		{name: "unchanged hooks none", op: helm.OperationUpgrade, tasks: []semantic.TaskPlan{unchanged}, want: semantic.HelmNone},
@@ -90,15 +91,24 @@ func TestApplyHelmWillRun_OriginCRDUnchangedHook(t *testing.T) {
 		Action: semantic.Create,
 	}}
 
-	none := deriveHelmAction(helm.OperationUpgrade, crd, unchanged)
-	assert.Equal(t, semantic.HelmNone, none)
-	idle := append([]semantic.TaskPlan(nil), unchanged...)
-	applyHelmWillRun(idle, none)
-	assert.False(t, idle[0].WillRun)
+	assert.Equal(t, semantic.HelmNone, deriveHelmAction(helm.OperationUpgrade, crd, unchanged))
 
-	upgrade := append([]semantic.TaskPlan(nil), unchanged...)
-	applyHelmWillRun(upgrade, semantic.HelmUpgrade)
-	assert.True(t, upgrade[0].WillRun)
+	tests := []struct {
+		name    string
+		action  semantic.HelmAction
+		wantRun bool
+	}{
+		{name: "none leaves idle", action: semantic.HelmNone},
+		{name: "upgrade will run", action: semantic.HelmUpgrade, wantRun: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			tasks := append([]semantic.TaskPlan(nil), unchanged...)
+			applyHelmWillRun(tasks, tt.action)
+			assert.Equal(t, tt.wantRun, tasks[0].WillRun)
+		})
+	}
 }
 
 func TestAssembleTasks_DoesNotStampWillRun(t *testing.T) {

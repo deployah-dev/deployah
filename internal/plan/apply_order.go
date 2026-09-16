@@ -24,9 +24,9 @@ import (
 )
 
 // stampHelmApplyOrder sets [semantic.ResourceChange.ApplyOrder] from Helm's
-// exported kind ordering. Create, update, and replace use InstallOrder.
-// Deletes use UninstallOrder and sort after applies. Identity remains the
-// [semantic.New] tie-break.
+// exported kind ordering on OriginHelm changes only. Create, update, and
+// replace use InstallOrder. Deletes use UninstallOrder and sort after
+// applies. Identity remains the [semantic.New] tie-break.
 func stampHelmApplyOrder(changes []semantic.ResourceChange) error {
 	if len(changes) == 0 {
 		return nil
@@ -36,6 +36,9 @@ func stampHelmApplyOrder(changes []semantic.ResourceChange) error {
 	applyIdx := make(map[string]int, len(changes))
 	deleteIdx := make(map[string]int, len(changes))
 	for i, c := range changes {
+		if c.Origin.Kind != semantic.OriginHelm {
+			continue
+		}
 		obj := snapshotMap(c.After)
 		if c.Action == semantic.Delete {
 			obj = snapshotMap(c.Before)
@@ -68,6 +71,9 @@ func stampHelmApplyOrder(changes []semantic.ResourceChange) error {
 	order = n
 	for i := range changes {
 		if _, ok := stamped[i]; ok {
+			continue
+		}
+		if changes[i].Origin.Kind != semantic.OriginHelm {
 			continue
 		}
 		changes[i].ApplyOrder = order

@@ -29,6 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
+	"deployah.dev/deployah/internal/extras"
 	"deployah.dev/deployah/internal/helm"
 	"deployah.dev/deployah/internal/plan"
 	"deployah.dev/deployah/internal/plan/semantic"
@@ -69,19 +70,49 @@ func (f *fakeBuildClient) RenderManifestsWithPrep(
 	return f.result, f.prep, f.cleanup, f.err
 }
 
+type recordedApply struct {
+	Obj  *unstructured.Unstructured
+	Opts predict.ApplyOptions
+}
+
 type fakeCluster struct {
-	objects  map[string]*unstructured.Unstructured
-	getErr   map[string]error
-	applyErr error
-	gotCtx   context.Context
-	gets     int
+	objects     map[string]*unstructured.Unstructured
+	getErr      map[string]error
+	mappingErr  map[schema.GroupVersionKind]error
+	applyErr    error
+	applyErrGVK map[schema.GroupVersionKind]error
+	createErr   error
+	gotCtx      context.Context
+	gets        int
+	creates     []*unstructured.Unstructured
+	applies     []recordedApply
+	deletes     []predict.Identity
 }
 
 func newFakeCluster() *fakeCluster {
 	return &fakeCluster{
-		objects: make(map[string]*unstructured.Unstructured),
-		getErr:  make(map[string]error),
+		objects:     make(map[string]*unstructured.Unstructured),
+		getErr:      make(map[string]error),
+		mappingErr:  make(map[schema.GroupVersionKind]error),
+		applyErrGVK: make(map[schema.GroupVersionKind]error),
 	}
+}
+
+func readyCluster() *fakeCluster {
+	cluster := newFakeCluster()
+	seedConvergedNamespace(cluster, "prod")
+	return cluster
+}
+
+func seedConvergedNamespace(cluster *fakeCluster, namespace string) {
+	cluster.store(&unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Namespace",
+		"metadata": map[string]any{
+			"name":   namespace,
+			"labels": map[string]any{"name": namespace},
+		},
+	}})
 }
 
 func (f *fakeCluster) store(obj *unstructured.Unstructured) {
@@ -101,12 +132,21 @@ func (f *fakeCluster) Get(ctx context.Context, id predict.Identity) (*unstructur
 	return obj.DeepCopy(), nil
 }
 
-func (f *fakeCluster) Create(context.Context, *unstructured.Unstructured) (*unstructured.Unstructured, error) {
-	return nil, f.applyErr
+func (f *fakeCluster) Create(ctx context.Context, obj *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+	f.gotCtx = ctx
+	f.creates = append(f.creates, obj.DeepCopy())
+	if f.createErr != nil {
+		return nil, f.createErr
+	}
+	return obj.DeepCopy(), nil
 }
 
-func (f *fakeCluster) Apply(ctx context.Context, obj *unstructured.Unstructured, _ predict.ApplyOptions) (*unstructured.Unstructured, error) {
+func (f *fakeCluster) Apply(ctx context.Context, obj *unstructured.Unstructured, opts predict.ApplyOptions) (*unstructured.Unstructured, error) {
 	f.gotCtx = ctx
+	f.applies = append(f.applies, recordedApply{Obj: obj.DeepCopy(), Opts: opts})
+	if err, ok := f.applyErrGVK[obj.GroupVersionKind()]; ok {
+		return nil, err
+	}
 	if f.applyErr != nil {
 		return nil, f.applyErr
 	}
@@ -117,15 +157,26 @@ func (f *fakeCluster) JSONPatch(context.Context, predict.Identity, []byte) error
 	return nil
 }
 
-func (f *fakeCluster) Delete(context.Context, predict.Identity) error {
+func (f *fakeCluster) Delete(_ context.Context, id predict.Identity) error {
+	f.deletes = append(f.deletes, id)
 	return nil
 }
 
 func (f *fakeCluster) Mapping(gvk schema.GroupVersionKind) (*meta.RESTMapping, error) {
+	if err, ok := f.mappingErr[gvk]; ok {
+		return nil, err
+	}
+	scope := meta.RESTScopeNamespace
+	if gvk.Group == "" && gvk.Kind == "Namespace" {
+		scope = meta.RESTScopeRoot
+	}
+	if gvk.Kind == "CustomResourceDefinition" {
+		scope = meta.RESTScopeRoot
+	}
 	return &meta.RESTMapping{
 		Resource:         schema.GroupVersionResource{Group: gvk.Group, Version: gvk.Version, Resource: strings.ToLower(gvk.Kind) + "s"},
 		GroupVersionKind: gvk,
-		Scope:            meta.RESTScopeNamespace,
+		Scope:            scope,
 	}, nil
 }
 
@@ -211,39 +262,69 @@ func hasFieldPath(fields []semantic.FieldChange, path string) bool {
 	return false
 }
 
-func registerCleanup(t *testing.T, cleanup func()) {
-	t.Helper()
-	require.NotNil(t, cleanup)
-	t.Cleanup(cleanup)
+func buildInput(clusterContext string, resolved *spec.ResolvedSpec, post postrenderer.PostRenderer) plan.SemanticBuildInput {
+	return plan.SemanticBuildInput{
+		ClusterContext: clusterContext,
+		Resolved:       resolved,
+		PostRenderer:   post,
+		CRDPolicy:      extras.PolicyCreate,
+	}
 }
 
 func TestBuildSemanticPlan_RequiresClient(t *testing.T) {
 	t.Parallel()
-	p, result, cleanup, err := plan.BuildSemanticPlan(t.Context(), nil, newFakeCluster(), "ctx", resolvedSpec(), nil)
-	registerCleanup(t, cleanup)
+
+	p, result, cleanup, err := plan.BuildSemanticPlan(t.Context(), nil, newFakeCluster(), buildInput("ctx", resolvedSpec(), nil))
+	t.Cleanup(cleanup)
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "semantic plan requires a helm client")
 	assert.Zero(t, p)
 	assert.Nil(t, result)
 }
 
-func TestBuildSemanticPlan_RequiresResolvedSpec(t *testing.T) {
+func TestBuildSemanticPlan_RequiresInput(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name     string
-		resolved *spec.ResolvedSpec
+		name    string
+		cluster predict.Cluster
+		in      plan.SemanticBuildInput
+		wantErr string
 	}{
-		{name: "nil resolved", resolved: nil},
-		{name: "nil spec", resolved: &spec.ResolvedSpec{}},
+		{
+			name:    "nil resolved",
+			cluster: newFakeCluster(),
+			in:      buildInput("ctx", nil, nil),
+			wantErr: "semantic plan requires resolved spec; call spec.Resolve first",
+		},
+		{
+			name:    "nil spec",
+			cluster: newFakeCluster(),
+			in:      buildInput("ctx", &spec.ResolvedSpec{}, nil),
+			wantErr: "semantic plan requires resolved spec; call spec.Resolve first",
+		},
+		{
+			name:    "unknown CRD policy",
+			cluster: newFakeCluster(),
+			in: plan.SemanticBuildInput{
+				ClusterContext: "ctx",
+				Resolved:       resolvedSpec(),
+			},
+			wantErr: "unknown CRD policy",
+		},
+		{
+			name:    "nil cluster",
+			in:      buildInput("ctx", resolvedSpec(), nil),
+			wantErr: "semantic plan requires a cluster",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			client := &fakeBuildClient{}
-			p, result, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, newFakeCluster(), "ctx", tt.resolved, nil)
-			registerCleanup(t, cleanup)
+			p, result, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, tt.cluster, tt.in)
+			t.Cleanup(cleanup)
 			require.Error(t, err)
-			assert.ErrorContains(t, err, "semantic plan requires resolved spec; call spec.Resolve first")
+			assert.ErrorContains(t, err, tt.wantErr)
 			assert.Zero(t, p)
 			assert.Nil(t, result)
 			assert.Equal(t, 0, client.calls)
@@ -253,6 +334,7 @@ func TestBuildSemanticPlan_RequiresResolvedSpec(t *testing.T) {
 
 func TestBuildSemanticPlan_FreshInstall(t *testing.T) {
 	t.Parallel()
+
 	result := installResult(configMapYAML("app", "prod", "v1"))
 	var post postrenderer.PostRenderer = &identityPostRenderer{}
 	var cleanups int
@@ -262,9 +344,9 @@ func TestBuildSemanticPlan_FreshInstall(t *testing.T) {
 		cleanup: func() { cleanups++ },
 	}
 	ctx := context.WithValue(t.Context(), ctxKey{}, "pipeline")
-	cluster := newFakeCluster()
+	cluster := readyCluster()
 
-	p, got, cleanup, err := plan.BuildSemanticPlan(ctx, client, cluster, "kind-dev", resolvedSpec(), post)
+	p, got, cleanup, err := plan.BuildSemanticPlan(ctx, client, cluster, buildInput("kind-dev", resolvedSpec(), post))
 	require.NotNil(t, cleanup)
 	t.Cleanup(func() {
 		if cleanups == 0 {
@@ -308,11 +390,11 @@ func TestBuildSemanticPlan_Upgrade(t *testing.T) {
 		},
 		cleanup: func() {},
 	}
-	cluster := newFakeCluster()
+	cluster := readyCluster()
 	cluster.store(ownedConfigMap("app", "prod", "web", "old"))
 
-	p, got, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, "kind-dev", resolvedSpec(), nil)
-	registerCleanup(t, cleanup)
+	p, got, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, buildInput("kind-dev", resolvedSpec(), nil))
+	t.Cleanup(cleanup)
 	require.NoError(t, err)
 	assert.Same(t, result, got)
 	assert.Equal(t, "kind-dev", p.Header.Context)
@@ -349,12 +431,12 @@ func TestBuildSemanticPlan_PreviousUsesCurrentNotNewest(t *testing.T) {
 		},
 		cleanup: func() {},
 	}
-	cluster := newFakeCluster()
+	cluster := readyCluster()
 	cluster.store(ownedConfigMap("removed", "prod", "web", "old"))
 	cluster.store(ownedConfigMap("app", "prod", "web", "keep"))
 
-	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, "kind-dev", resolvedSpec(), nil)
-	registerCleanup(t, cleanup)
+	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, buildInput("kind-dev", resolvedSpec(), nil))
+	t.Cleanup(cleanup)
 	require.NoError(t, err)
 	assert.Equal(t, 5, p.Header.Revision)
 	assert.False(t, p.Header.FreshInstall)
@@ -380,11 +462,11 @@ func TestBuildSemanticPlan_FailedOnlyHistoryIsUpgrade(t *testing.T) {
 		},
 		cleanup: func() {},
 	}
-	cluster := newFakeCluster()
+	cluster := readyCluster()
 	cluster.store(ownedConfigMap("app", "prod", "web", "old"))
 
-	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, "kind-dev", resolvedSpec(), nil)
-	registerCleanup(t, cleanup)
+	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, buildInput("kind-dev", resolvedSpec(), nil))
+	t.Cleanup(cleanup)
 	require.NoError(t, err)
 	assert.Equal(t, 2, p.Header.Revision)
 	assert.False(t, p.Header.FreshInstall)
@@ -444,9 +526,9 @@ func TestBuildSemanticPlan_PrepRenderMismatch(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			client := &fakeBuildClient{result: tt.result, prep: tt.prep, cleanup: func() {}}
-			cluster := newFakeCluster()
-			p, result, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, "ctx", resolvedSpec(), nil)
-			registerCleanup(t, cleanup)
+			cluster := readyCluster()
+			p, result, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, buildInput("ctx", resolvedSpec(), nil))
+			t.Cleanup(cleanup)
 			require.Error(t, err)
 			assert.ErrorContains(t, err, "render preparation:")
 			assert.ErrorContains(t, err, tt.want)
@@ -468,9 +550,9 @@ func TestBuildSemanticPlan_InvalidPrep(t *testing.T) {
 		},
 		cleanup: func() {},
 	}
-	cluster := newFakeCluster()
-	p, result, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, "ctx", resolvedSpec(), nil)
-	registerCleanup(t, cleanup)
+	cluster := readyCluster()
+	p, result, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, buildInput("ctx", resolvedSpec(), nil))
+	t.Cleanup(cleanup)
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "build prediction input:")
 	assert.ErrorContains(t, err, "upgrade prep requires a current release")
@@ -487,10 +569,10 @@ func TestBuildSemanticPlan_PredictFailureLeavesCleanup(t *testing.T) {
 		prep:    helm.ReleasePrep{Operation: helm.OperationInstall, NextRevision: 1},
 		cleanup: func() { cleanups++ },
 	}
-	cluster := newFakeCluster()
-	cluster.applyErr = errors.New("ssa dry-run failed")
+	cluster := readyCluster()
+	cluster.applyErrGVK[schema.GroupVersionKind{Version: "v1", Kind: "ConfigMap"}] = errors.New("ssa dry-run failed")
 
-	p, result, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, "ctx", resolvedSpec(), nil)
+	p, result, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, buildInput("ctx", resolvedSpec(), nil))
 	require.NotNil(t, cleanup)
 	t.Cleanup(func() {
 		if cleanups == 0 {
@@ -513,8 +595,9 @@ func TestBuildSemanticPlan_NilCleanup(t *testing.T) {
 		prep:    helm.ReleasePrep{Operation: helm.OperationInstall, NextRevision: 1},
 		cleanup: nil,
 	}
-	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, newFakeCluster(), "ctx", resolvedSpec(), nil)
-	registerCleanup(t, cleanup)
+	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, readyCluster(), buildInput("ctx", resolvedSpec(), nil))
+	require.NotNil(t, cleanup)
+	t.Cleanup(cleanup)
 	require.NoError(t, err)
 	require.NotEmpty(t, p.Changes)
 }
@@ -522,8 +605,8 @@ func TestBuildSemanticPlan_NilCleanup(t *testing.T) {
 func TestBuildSemanticPlan_RenderError(t *testing.T) {
 	t.Parallel()
 	client := &fakeBuildClient{err: errors.New("chart missing")}
-	p, result, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, newFakeCluster(), "ctx", resolvedSpec(), nil)
-	registerCleanup(t, cleanup)
+	p, result, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, newFakeCluster(), buildInput("ctx", resolvedSpec(), nil))
+	t.Cleanup(cleanup)
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "render manifests:")
 	assert.ErrorContains(t, err, "chart missing")
@@ -545,11 +628,11 @@ func TestBuildSemanticPlan_NoChange(t *testing.T) {
 		},
 		cleanup: func() {},
 	}
-	cluster := newFakeCluster()
+	cluster := readyCluster()
 	cluster.store(ownedConfigMap("app", "prod", "web", "same"))
 
-	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, "ctx", resolvedSpec(), nil)
-	registerCleanup(t, cleanup)
+	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, buildInput("ctx", resolvedSpec(), nil))
+	t.Cleanup(cleanup)
 	require.NoError(t, err)
 	assert.Empty(t, p.Changes)
 	assert.Equal(t, 0, p.Summary.Total())
@@ -573,8 +656,8 @@ func TestBuildSemanticPlan_InstallHookWillRun(t *testing.T) {
 		prep:    helm.ReleasePrep{Operation: helm.OperationInstall, NextRevision: 1},
 		cleanup: func() {},
 	}
-	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, newFakeCluster(), "ctx", resolved, nil)
-	registerCleanup(t, cleanup)
+	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, readyCluster(), buildInput("ctx", resolved, nil))
+	t.Cleanup(cleanup)
 	require.NoError(t, err)
 	assert.Equal(t, semantic.HelmInstall, p.HelmAction)
 	require.Len(t, p.Tasks, 1)
@@ -597,10 +680,10 @@ func TestBuildSemanticPlan_UnchangedHookNoHelmChange(t *testing.T) {
 		prep:    upgradePrepWithHook(manifest, 3, 4, hook),
 		cleanup: func() {},
 	}
-	cluster := newFakeCluster()
+	cluster := readyCluster()
 	cluster.store(ownedConfigMap("app", "prod", "web", "same"))
-	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, "ctx", resolved, nil)
-	registerCleanup(t, cleanup)
+	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, buildInput("ctx", resolved, nil))
+	t.Cleanup(cleanup)
 	require.NoError(t, err)
 	assert.Equal(t, semantic.HelmNone, p.HelmAction)
 	assert.Empty(t, p.Changes)
@@ -624,10 +707,10 @@ func TestBuildSemanticPlan_HelmChangeUnchangedHookWillRun(t *testing.T) {
 		prep:    upgradePrepWithHook(configMapYAML("app", "prod", "old"), 6, 7, hook),
 		cleanup: func() {},
 	}
-	cluster := newFakeCluster()
+	cluster := readyCluster()
 	cluster.store(ownedConfigMap("app", "prod", "web", "old"))
-	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, "ctx", resolved, nil)
-	registerCleanup(t, cleanup)
+	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, buildInput("ctx", resolved, nil))
+	t.Cleanup(cleanup)
 	require.NoError(t, err)
 	assert.Equal(t, semantic.HelmUpgrade, p.HelmAction)
 	require.Len(t, p.Changes, 1)
@@ -660,10 +743,10 @@ func TestBuildSemanticPlan_HookCreateWithoutResourceChange(t *testing.T) {
 		},
 		cleanup: func() {},
 	}
-	cluster := newFakeCluster()
+	cluster := readyCluster()
 	cluster.store(ownedConfigMap("app", "prod", "web", "same"))
-	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, "ctx", resolved, nil)
-	registerCleanup(t, cleanup)
+	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, buildInput("ctx", resolved, nil))
+	t.Cleanup(cleanup)
 	require.NoError(t, err)
 	assert.Empty(t, p.Changes)
 	assert.Equal(t, semantic.HelmUpgrade, p.HelmAction)
@@ -689,10 +772,10 @@ func TestBuildSemanticPlan_HookUpdateWithoutResourceChange(t *testing.T) {
 		prep:    upgradePrepWithHook(manifest, 3, 4, prev),
 		cleanup: func() {},
 	}
-	cluster := newFakeCluster()
+	cluster := readyCluster()
 	cluster.store(ownedConfigMap("app", "prod", "web", "same"))
-	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, "ctx", resolved, nil)
-	registerCleanup(t, cleanup)
+	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, buildInput("ctx", resolved, nil))
+	t.Cleanup(cleanup)
 	require.NoError(t, err)
 	assert.Empty(t, p.Changes)
 	assert.Equal(t, semantic.HelmUpgrade, p.HelmAction)
@@ -711,10 +794,10 @@ func TestBuildSemanticPlan_HookDeleteWithoutResourceChange(t *testing.T) {
 		prep:    upgradePrepWithHook(manifest, 3, 4, prev),
 		cleanup: func() {},
 	}
-	cluster := newFakeCluster()
+	cluster := readyCluster()
 	cluster.store(ownedConfigMap("app", "prod", "web", "same"))
-	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, "ctx", resolvedSpec(), nil)
-	registerCleanup(t, cleanup)
+	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, buildInput("ctx", resolvedSpec(), nil))
+	t.Cleanup(cleanup)
 	require.NoError(t, err)
 	assert.Empty(t, p.Changes)
 	assert.Equal(t, semantic.HelmUpgrade, p.HelmAction)
@@ -740,10 +823,10 @@ func TestBuildSemanticPlan_ScheduleCronJobChange(t *testing.T) {
 		},
 		cleanup: func() {},
 	}
-	cluster := newFakeCluster()
+	cluster := readyCluster()
 	cluster.store(ownedCronJob("cleanup", "prod", "web", "0 2 * * *"))
-	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, "ctx", resolvedSpec(), nil)
-	registerCleanup(t, cleanup)
+	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, buildInput("ctx", resolvedSpec(), nil))
+	t.Cleanup(cleanup)
 	require.NoError(t, err)
 	assert.Equal(t, semantic.HelmUpgrade, p.HelmAction)
 	require.Len(t, p.Changes, 1)

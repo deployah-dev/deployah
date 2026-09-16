@@ -262,6 +262,28 @@ func TestSchemaV1_AcceptsHelmActionOrigins(t *testing.T) {
 			}),
 			Apply: writeCreate(),
 		}}, nil)},
+		{name: "none with origin crd replace", plan: mustPlan(t, semantic.HelmNone, []semantic.ResourceChange{{
+			Resource: semantic.ResourceRef{
+				APIVersion: "apiextensions.k8s.io/v1",
+				Kind:       "CustomResourceDefinition",
+				Name:       "widgets.example.com",
+			},
+			Origin: semantic.ResourceOrigin{Kind: semantic.OriginCRD},
+			Action: semantic.Update,
+			Before: snap(map[string]any{
+				"apiVersion": "apiextensions.k8s.io/v1",
+				"kind":       "CustomResourceDefinition",
+				"metadata":   map[string]any{"name": "widgets.example.com"},
+				"spec":       map[string]any{"group": "example.com"},
+			}),
+			After: snap(map[string]any{
+				"apiVersion": "apiextensions.k8s.io/v1",
+				"kind":       "CustomResourceDefinition",
+				"metadata":   map[string]any{"name": "widgets.example.com"},
+				"spec":       map[string]any{"group": "example.com", "scope": "Namespaced"},
+			}),
+			Apply: writeForceApply(),
+		}}, nil)},
 		{name: "install with origin namespace", plan: mustPlanWithHeader(t, semantic.Header{
 			Project:      "web",
 			Environment:  "prod",
@@ -277,7 +299,7 @@ func TestSchemaV1_AcceptsHelmActionOrigins(t *testing.T) {
 				"kind":       "Namespace",
 				"metadata":   map[string]any{"name": "prod"},
 			}),
-			Apply: writeCreate(),
+			Apply: writeApply(),
 		}}, nil, nil)},
 	}
 	for _, tt := range tests {

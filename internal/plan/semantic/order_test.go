@@ -204,6 +204,22 @@ func TestNew_DiagnosticOrder(t *testing.T) {
 	assert.Equal(t, "web", p.Diagnostics[3].Resource.Name)
 }
 
+func TestNew_OriginRankBeforeApplyOrder(t *testing.T) {
+	t.Parallel()
+	helm := createChange("app", "v1")
+	helm.ApplyOrder = 1
+	ns := nsCreate("prod")
+	ns.ApplyOrder = 1
+	crd := crdCreate("widgets.example.com")
+	crd.ApplyOrder = 9
+	p, err := semantic.New(semantic.Header{FreshInstall: true}, semantic.HelmInstall, []semantic.ResourceChange{helm, ns, crd}, nil, nil)
+	require.NoError(t, err)
+	require.Len(t, p.Changes, 3)
+	assert.Equal(t, semantic.OriginCRD, p.Changes[0].Origin.Kind)
+	assert.Equal(t, semantic.OriginNamespace, p.Changes[1].Origin.Kind)
+	assert.Equal(t, semantic.OriginHelm, p.Changes[2].Origin.Kind)
+}
+
 func namedCreate(res semantic.ResourceRef) semantic.ResourceChange {
 	name := res.Name
 	if name == "" {
