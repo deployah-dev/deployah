@@ -27,7 +27,7 @@ Helm runs when this invocation is a Helm install, or when release
 intent changed (Previous vs Desired for Helm-managed resources,
 including hook definitions). Ordinary Live drift, including a missing
 Live object, does not by itself cause Helm to run. ADR-0005 defines
-how Resource changes and drift are shown once that choice is known.
+how resource consequences and drift are shown once that choice is known.
 
 CRD lifecycle and the availability of APIs introduced by CRDs are
 defined by ADR-0008.
@@ -73,6 +73,44 @@ CronJobs). A schedule task does not create an independent source of
 truth for whether Helm runs. The underlying resource change is release
 intent.
 
+Task-level action is separate from Kubernetes and hook-definition
+consequences (ADR-0005). Changing phase between Helm-managed phases is
+a Task Update. Examples: schedule and preDeploy, preDeploy and
+postDeploy.
+
+The underlying consequences follow the actual lifecycle. schedule to
+preDeploy may mean: previous CronJob Resource Delete, new preDeploy
+hook definition Create, task Update. preDeploy to schedule may mean:
+previous hook definition removed from the release, new CronJob
+Resource Create, task Update.
+
+Do not interpret removal of an old hook definition as a Kubernetes
+Delete of leftover runtime hook Jobs.
+
+Jobs or other objects created by executing `preDeploy` and
+`postDeploy` hooks are execution artifacts. Their existence, success,
+failure, or leftover presence is not declarative release drift. They
+do not independently trigger Helm. Semantic planning models the
+hook/task definition, the task-level action, and whether that hook
+will run in this invocation. It does not treat prior runtime hook
+executions as Desired release resources. Failed hook Jobs left for
+inspection stay outside Drift and resource consequences.
+
+A current manual task is outside the deploy semantic plan. It is not
+shown as a deploy Task by itself, has no release Resource entry merely
+because it exists in the spec, and does not trigger Helm. It is a
+one-time Deployah-controlled operation outside the Helm release
+lifecycle.
+
+Transitions that change the Helm-managed footprint are visible:
+
+- manual to schedule, preDeploy, or postDeploy: show creation of the
+  new Helm-managed footprint
+- schedule, preDeploy, or postDeploy to manual: show removal of the
+  previous Helm-managed footprint
+
+Do not model the resulting manual task as a Helm resource.
+
 A Desired resource with `metadata.generateName` (for example
 `migrate-`) is a Create that uses that generateName. Do not fabricate a
 runtime-generated final name. The unknown final name does not make the
@@ -87,6 +125,8 @@ semantic plan partial.
   Create.
 - Hook and schedule tasks are explained in Helm terms, not as a second
   controller.
+- Manual tasks stay outside the deploy plan except when a phase change
+  alters the Helm-managed footprint.
 
 ### Negative
 
@@ -94,3 +134,5 @@ semantic plan partial.
   server-side apply. They do not change on upgrade.
 - Raw Namespace manifests are rejected even when Kubernetes would
   accept them.
+- Leftover hook Jobs are not shown as Drift, even when they remain
+  Live after a failed hook.

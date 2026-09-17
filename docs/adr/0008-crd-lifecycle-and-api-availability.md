@@ -14,8 +14,9 @@ install. Docs and the executed lifecycle are not the same thing.
 Install-time CRD handling also decides whether a dependent custom
 resource API is available when Helm builds ordinary release resources.
 Logical identity across served versions (ADR-0005) is a different
-question from whether Helm can REST-map the Desired GVK at that build
-point. Those rules do not belong in the general Helm-lifecycle ADR.
+question from whether Helm can REST-map the Desired GVK, or the
+Previous/current release GVK, at the point Helm builds those
+resources. Those rules do not belong in the general Helm-lifecycle ADR.
 
 ## Decision
 
@@ -59,33 +60,62 @@ Desired apiVersion is not currently mappable.
 Helm must still REST-map the Desired GVK when it builds the ordinary
 target resource. That availability is required to construct the
 operation. It is not admission, webhook, quota, or write-feasibility
-prediction (ADR-0004, ADR-0007).
+prediction (ADR-0004, ADR-0007). Previous/current constructibility on
+a real upgrade is defined below.
 
 ### Install-time API availability
 
-On install, CRDs are applied before ordinary resources are built. If
-that apply will deterministically serve the Desired apiVersion,
-planning may proceed even when the Desired GVK is not yet
-discoverable.
+On install, Helm processes chart CRDs before it builds ordinary
+resources. If the Desired CRD declaration says the relevant version is
+served, the planner may reason from that declared intent even when the
+Desired GVK is not yet discoverable.
+
+This is not a prediction that the API server will accept the CRD, that
+the CRD schema is valid, that discovery will actually appear at
+runtime, or that a dependent resource will succeed. Those remain
+runtime concerns (ADR-0004, ADR-0007).
 
 - Entire CRD absent: the logical custom resource is known absent. If
-  install will create the CRD and serve the Desired version, show CRD
-  Create and a dependent Create.
+  the Desired CRD declaration says the Desired version is served, show
+  CRD Create and a dependent Create.
 - CRD already exists and another version is currently served: read
   Live through that served version. Live absent is Create. Live
   present is Update or no visible change from Live versus Desired.
 - CRD exists but no currently served or readable representation can
   establish required Live state: planning error.
-- Install-time CRD apply will not make the Desired apiVersion served:
-  planning error.
+- Desired CRD declaration does not say the Desired apiVersion is
+  served: planning error.
 
 ### Upgrade-time API availability
 
-On a real upgrade, chart CRDs are not applied. An unmappable Desired
-GVK is a planning error even if the same logical object can be read
-through another served version. Do not show a CRD Update. Reading Live
-through another version does not make a Desired GVK Helm cannot map
-constructible.
+On a real upgrade, chart CRDs are not applied. They cannot invent new
+API availability during that upgrade.
+
+Helm builds the current release manifest before it constructs the
+upgrade target. Both representations must be buildable:
+
+1. the Previous/current Helm release manifest must be REST-mappable by
+   Helm
+2. the Desired target must be REST-mappable at the point Helm builds
+   it
+
+An unmappable Desired GVK is a planning error even if the same logical
+object can be read through another served version. Do not show a CRD
+Update. Reading Live through another version does not make a Desired
+GVK Helm cannot map constructible.
+
+If a GVK in the current Helm release manifest is no longer served and
+Helm cannot build that current resource, planning fails. This remains
+true when the same logical Live object can be read through a newer
+served apiVersion. Do not rewrite Previous to a newer apiVersion. Do
+not migrate stored Helm release manifests (ADR-0004). The planning
+error must identify enough context to be actionable, such as the
+resource and the unavailable GVK.
+
+Example: Previous release is `example.com/v1` Widget/app. Live
+Widget/app is readable through `example.com/v2`. Desired uses `v2`.
+The cluster no longer serves `v1`. Result: planning error, because
+Helm cannot construct its current release resource set.
 
 Example: Live CRD serves `v1`, Widget/app is readable through `v1`,
 Desired uses `v2`, `v2` is not served, the operation is a real Helm
@@ -107,9 +137,9 @@ ADR-0007).
 - Logical identity and Desired GVK mapping stay separate, so a version
   transition is not mistaken for Create.
 - A custom resource whose Desired apiVersion is not yet served can
-  still be planned as Create when install will create the CRD that
-  serves it. A later apply or admission failure remains outside the
-  plan (ADR-0004).
+  still be planned as Create when the Desired CRD declaration says that
+  version is served and Helm's install path processes that CRD first.
+  The API server may still reject the CRD (ADR-0004).
 
 ### Negative
 
@@ -119,3 +149,6 @@ ADR-0007).
 - On a real upgrade, an unmappable Desired apiVersion fails planning
   even if the logical object exists through another served version.
   Adding a CRD version is not an upgrade effect.
+- On a real upgrade, an unconstructible Previous/current GVK fails
+  planning even if Live and Desired use a served version. Semantic
+  planning does not rewrite stored Helm release manifests.

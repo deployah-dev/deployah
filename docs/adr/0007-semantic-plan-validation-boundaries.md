@@ -51,9 +51,29 @@ thinks Kubernetes would prefer something else.
 A user may supply arbitrary cluster-scoped resources in raw manifests.
 Do not reject or rewrite them merely because they are unusual. Use
 discovery and scope internally only for resource identity and Live
-reads, not as generic manifest normalization. If that YAML later fails
-Kubernetes validation, that is an execution-time outcome unless it
-violated a Deployah invariant.
+reads, not as generic manifest normalization.
+
+If a cluster-scoped raw manifest includes `metadata.namespace`,
+Deployah does not rewrite or repair that field. For a cluster-scoped
+logical resource, namespace is not part of effective identity
+(ADR-0005). Live lookup uses that identity. The raw user manifest
+stays unmodified. Whether Kubernetes later accepts or rejects the
+namespace field is a runtime concern unless a Deployah invariant is
+violated.
+
+If that YAML later fails Kubernetes validation, that is an
+execution-time outcome unless it violated a Deployah invariant.
+
+Deployah may still validate its own input contract. Content placed in
+the CRD-specific Deployah location must actually be a CRD. Duplicate
+identities and Deployah-owned abstraction conflicts remain invalid.
+
+Semantic planning does not prove that Kubernetes will accept a CRD's
+schema or spec. It does not run OpenAPI feasibility checks, write
+dry-runs, CRD schema acceptance prediction, or admission prediction.
+If the Desired CRD declaration says an API version is served, planning
+may reason from that declared intent according to ADR-0008 lifecycle
+ordering. The API server may still reject the CRD later.
 
 If the planner needs discovery, REST mapping, or a Live GET to
 determine current state and the read fails, planning fails: discovery
@@ -89,3 +109,8 @@ outside this semantic plan.
   (ADR-0005).
 - Invalid Kubernetes YAML that does not break a Deployah rule can pass
   planning and fail at deploy.
+- A cluster-scoped raw manifest may still carry `metadata.namespace`.
+  Deployah leaves that field in the user YAML. Kubernetes may reject
+  it later.
+- A Desired CRD may still be refused by the API server after planning
+  reasoned from its declared served versions.

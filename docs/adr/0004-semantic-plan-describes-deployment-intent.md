@@ -45,11 +45,28 @@ REST mapping are allowed. CREATE, UPDATE, PATCH, DELETE, and any
 dry-run form of those writes are not. Dry-run mutation is not part of
 Previous, Live, or Desired.
 
+A semantic `deployah plan` requires the release and cluster state
+needed to construct Previous and Live (ADR-0005). There is no offline
+semantic plan. When that state is unavailable, the planner must not
+fabricate Previous, Live, Drift, HelmAction, or resource consequences.
+
+A Desired-only render or validation capability may exist separately.
+It is not a semantic deployment plan.
+
+Semantic planning does not migrate or repair. It does not rewrite a
+Previous manifest to a newer apiVersion, migrate stored Helm release
+manifests, or modify the cluster so planning can succeed. When a
+required historical or current API representation cannot be
+constructed, planning fails with enough context to act on (ADR-0008).
+Migration and repair are a separate future capability.
+
 Planning fails when it cannot determine the deployment intent or the
 required current state. Examples: discovery or REST mapping fails, a
 required Live GET fails, resource identity is ambiguous, or Deployah
 configuration contradicts itself. That is not a prediction that the
 deploy will fail.
+
+User-visible redaction of sensitive values is ADR-0009.
 
 ## Consequences
 
@@ -71,3 +88,7 @@ deploy will fail.
   rejects values above `20`.
 - Operators who want "will this deploy work?" need a different
   capability. This plan does not promise that.
+- A semantic plan cannot be produced without the release and cluster
+  state needed for Previous and Live.
+- An unconstructible Previous or current API representation fails
+  planning instead of being rewritten.
