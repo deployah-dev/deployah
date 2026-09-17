@@ -1,4 +1,4 @@
-# ADR-0007: Semantic plan validation boundaries
+# ADR-0007: Deployah validates its contract, not Kubernetes feasibility
 
 ## Status
 
@@ -8,10 +8,8 @@ Accepted
 
 Planning can fail in two different ways: Deployah cannot tell what it
 is supposed to do, or Kubernetes might later refuse a write. Treating
-those as the same thing either rejects valid intent (admission, quotas,
-immutable fields) or accepts contradictory Deployah input (duplicate
-identities, competing namespace owners, hook annotations on raw
-manifests).
+those as the same thing either rejects valid intent or accepts
+contradictory Deployah input.
 
 managedFields and write dry-runs look like a way to prove ownership
 and schema validity before deploy. They pull semantic planning back
@@ -42,30 +40,29 @@ Those are Deployah contract violations.
 
 If a raw manifest does not conflict with that model, Deployah does not
 need to prove Kubernetes will accept it. Generic schema validity,
-admission policy, quotas, write permissions, immutable-field rules,
+admission, quotas, write permissions, immutable-field rules,
 server-side apply ownership, webhooks, controllers, and other
 API-server feasibility checks stay at runtime. Do not silently repair
-arbitrary raw manifests. Do not rewrite user fields because Deployah
-thinks Kubernetes would prefer something else.
+arbitrary raw manifests.
 
 A user may supply arbitrary cluster-scoped resources in raw manifests.
-Do not reject or rewrite them merely because they are unusual. Use
-discovery and scope internally only for resource identity and Live
-reads, not as generic manifest normalization. If that YAML later fails
-Kubernetes validation, that is an execution-time outcome unless it
-violated a Deployah invariant.
+Do not reject or rewrite them merely because they are unusual.
+Discovery determines effective scope and identity (ADR-0005). For a
+cluster-scoped resource, namespace is not part of effective identity.
+If that YAML includes `metadata.namespace`, Deployah does not rewrite
+the field. Later Kubernetes rejection is a runtime concern unless a
+Deployah invariant was violated.
+
+Content placed in the CRD-specific Deployah location must actually be
+a CRD. Semantic planning does not prove that Kubernetes will accept
+the CRD schema or spec. It does not run OpenAPI feasibility checks,
+write dry-runs, or admission prediction for CRDs. Declared CRD intent
+and Helm constructibility are ADR-0008 and ADR-0013.
 
 If the planner needs discovery, REST mapping, or a Live GET to
-determine current state and the read fails, planning fails: discovery
-unavailable, mapping unresolved, GET forbidden, cluster unavailable.
-That is missing information needed to construct the plan, not
-prediction. CRD lifecycle and custom-resource API availability are
-defined by ADR-0008.
-
-Do not use managedFields as the semantic source of truth for Deployah
-ownership. Previous and Desired define the declared surface (ADR-0005).
-managedFields may matter to a future feasibility capability. They are
-outside this semantic plan.
+determine current state and the read fails, planning fails. That is
+missing information, not prediction. Do not use managedFields as the
+semantic source of truth for Deployah ownership.
 
 ## Consequences
 
@@ -74,18 +71,10 @@ outside this semantic plan.
 - Contradictory Deployah input fails in planning, before Helm runs.
 - Generic Kubernetes refusal does not have to be anticipated in the
   plan.
-- Cluster-scoped extras remain expressible without a Deployah
-  allowlist of "normal" kinds.
 
 ### Negative
 
-- Live replicas `4` and Desired replicas `3` still plan as `4 -> 3`
-  when another field manager owns replicas. A later server-side apply
-  conflict is outside the plan.
-- Desired replicas `100` still plans with that value if admission will
-  reject it.
-- Mutating webhooks that inject sidecars, labels, annotations, or
-  defaults are not predicted. They may appear later as Live-only state
-  (ADR-0005).
 - Invalid Kubernetes YAML that does not break a Deployah rule can pass
   planning and fail at deploy.
+- A cluster-scoped raw manifest may still carry `metadata.namespace`.
+  Kubernetes may reject it later.

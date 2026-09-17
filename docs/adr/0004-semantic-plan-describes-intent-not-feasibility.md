@@ -1,4 +1,4 @@
-# ADR-0004: Semantic plan describes deployment intent
+# ADR-0004: Semantic plan describes intent, not feasibility
 
 ## Status
 
@@ -23,10 +23,6 @@ if this deployment runs. It is not an execution-feasibility engine and
 not a Kubernetes state prediction engine. A plan may be correct even
 when the later deploy fails.
 
-The plan answers what operations Deployah intends to perform. It does
-not answer whether Kubernetes will accept them, whether the deploy will
-succeed, or what exact objects the API server will store afterward.
-
 These concerns are outside semantic planning:
 
 - admission controllers and validating or mutating webhooks
@@ -45,11 +41,9 @@ REST mapping are allowed. CREATE, UPDATE, PATCH, DELETE, and any
 dry-run form of those writes are not. Dry-run mutation is not part of
 Previous, Live, or Desired.
 
-Planning fails when it cannot determine the deployment intent or the
-required current state. Examples: discovery or REST mapping fails, a
-required Live GET fails, resource identity is ambiguous, or Deployah
-configuration contradicts itself. That is not a prediction that the
-deploy will fail.
+Required release and cluster state is ADR-0010. Resource consequences
+are ADR-0011. API constructibility and migration are ADR-0013. Secret
+presentation is ADR-0009. Deployah contract validation is ADR-0007.
 
 ## Consequences
 
@@ -59,8 +53,6 @@ deploy will fail.
   success.
 - Planning cannot depend on write dry-runs or managedFields
   reconstruction.
-- Later feasibility work can exist without folding prediction back into
-  the semantic plan.
 
 ### Negative
 
@@ -70,4 +62,4 @@ deploy will fail.
 - Desired replicas `100` remains valid intent even if admission later
   rejects values above `20`.
 - Operators who want "will this deploy work?" need a different
-  capability. This plan does not promise that.
+  capability.

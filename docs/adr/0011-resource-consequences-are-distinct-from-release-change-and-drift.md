@@ -1,0 +1,71 @@
+# ADR-0011: Resource consequences are distinct from release change and drift
+
+## Status
+
+Accepted
+
+## Context
+
+Release change, Drift, and the writes Helm will perform can disagree.
+Collapsing them into one action invents Updates because Helm runs, or
+Deletes of objects that no longer exist.
+
+The three states are defined in ADR-0005. This ADR owns the visible
+resource consequence when this invocation actually performs the
+relevant write.
+
+## Decision
+
+Visible resource consequences use this vocabulary:
+
+- Create: the relevant object does not exist Live and this invocation
+  will create it.
+- Update: the relevant Live object exists, differs from Desired, and
+  this invocation will write Desired.
+- Delete: the object exists Live, leaves Desired/release state, and
+  Helm will delete it.
+- Retain: the object leaves Desired/release state, but Helm lifecycle
+  policy intentionally leaves it Live.
+
+None is the absence of a consequence. It is not a stored action or a
+required output row. Do not add Replace. Immutable-field rejection and
+replacement feasibility are outside semantic planning (ADR-0004).
+
+Human-readable Create output shows the complete intended manifest. An
+Update starts from Live when this invocation will write.
+
+Retain's primary case is Live `helm.sh/resource-policy: keep`. When
+that policy suppresses deletion, report Retain, not Delete. If
+Previous declared keep and Live no longer has it, that removal is
+drift. If keep exists only in Live, that Live-only field itself is not
+drift (ADR-0005); Helm still honors it, so a leaving resource is
+Retain.
+
+Representative combinations:
+
+1. Previous differs from Desired, Live already equals Desired: release
+   change exists, Drift may exist, no resource consequence. Do not
+   invent an Update merely because Helm runs.
+2. Previous present, Desired absent, Live absent: release change and
+   missing-resource drift, no Delete.
+3. Previous present, Live absent, Desired unchanged: missing-resource
+   drift only. Missing Live state alone does not trigger Helm
+   (ADR-0006).
+4. If Helm is already running for another release-intent change and a
+   Desired resource that existed in Previous is missing Live, show
+   Create plus missing-resource drift.
+
+Adoption is ADR-0012.
+
+## Consequences
+
+### Positive
+
+- Operators can see Helm recording release intent even when Live
+  already matches Desired.
+- Keep policy is Retain: the object leaves the release and stays Live.
+
+### Negative
+
+- A missing Live object is not recreated until Helm runs for a
+  declared release-intent reason.
