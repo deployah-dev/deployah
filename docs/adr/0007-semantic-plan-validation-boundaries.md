@@ -58,21 +58,9 @@ violated a Deployah invariant.
 If the planner needs discovery, REST mapping, or a Live GET to
 determine current state and the read fails, planning fails: discovery
 unavailable, mapping unresolved, GET forbidden, cluster unavailable.
-For a custom resource, Live lookup may use a currently served version
-of the same group and kind (ADR-0005, ADR-0006). That decides Create
-versus Update. It does not replace Desired GVK availability.
-
-Helm must REST-map the Desired GVK when it builds ordinary resources.
-On install, that mapping may come from Helm's CRD apply if that apply
-will deterministically serve the Desired apiVersion before those
-resources are built. If the CRD apply will not serve it, planning
-fails. On a real upgrade, chart CRDs are not applied, so an unmappable
-Desired GVK is a planning error even if Live can be read through
-another served version. If the CRD exists but no served or readable
-representation allows Live to be established, planning fails. If the
-CRD is entirely absent and install will serve the Desired version,
-Live is known absent. This is required to describe an operation Helm
-can construct, not prediction.
+That is missing information needed to construct the plan, not
+prediction. CRD lifecycle and custom-resource API availability are
+defined by ADR-0008.
 
 Do not use managedFields as the semantic source of truth for Deployah
 ownership. Previous and Desired define the declared surface (ADR-0005).

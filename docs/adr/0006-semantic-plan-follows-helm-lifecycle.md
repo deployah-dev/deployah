@@ -11,12 +11,10 @@ Helm. A parallel Kubernetes lifecycle (forced CRD upgrades, install-time
 namespace creation on upgrade, planner-invented recreates) makes the
 plan describe operations Helm would not attempt.
 
-Helm documentation still says existing CRDs are skipped. Deployah's
-Helm 4.3.0 install path sets `CreateNamespace` and server-side apply.
-Helm then creates those objects with server-side apply enabled, and
-that create path is an apply PATCH. Existing namespaces and CRDs can
-therefore change on install. The plan follows the lifecycle Deployah
-actually runs, not the skip-if-present wording alone.
+Deployah's Helm 4.3.0 install path sets `CreateNamespace` and
+server-side apply. Helm then creates that implicit Namespace through
+an apply PATCH. An existing target namespace can therefore change on
+install. The plan follows the lifecycle Deployah actually runs.
 
 ## Decision
 
@@ -30,6 +28,9 @@ intent changed (Previous vs Desired for Helm-managed resources,
 including hook definitions). Ordinary Live drift, including a missing
 Live object, does not by itself cause Helm to run. ADR-0005 defines
 how Resource changes and drift are shown once that choice is known.
+
+CRD lifecycle and the availability of APIs introduced by CRDs are
+defined by ADR-0008.
 
 ### Namespace
 
@@ -60,55 +61,6 @@ lifecycle belongs to Deployah's Helm configuration. An independent raw
 Namespace is a Deployah contract violation. Do not merge it with the
 implicit Helm namespace operation.
 
-### CRDs
-
-Follow the CRD lifecycle Helm actually performs on Deployah's path.
-Helm applies chart `crds/` objects only on install, before ordinary
-release resources. With server-side apply enabled, that Create can
-apply or update an existing CRD instead of returning AlreadyExists.
-
-On install:
-
-- CRD absent: Create
-- CRD exists and declarative CRD state differs: Update using Helm's
-  server-side apply install behavior
-- CRD already converged: no visible change
-
-On a real upgrade, chart CRDs are not installed or upgraded. On
-uninstall, Helm does not prune CRDs. Do not invent either.
-
-A Deployah-specific `create-replace` CRD path is rejected. It is a
-lifecycle beyond Helm: it would update CRDs on upgrade, and it would
-force conflicts. Helm's install server-side apply path does not do
-those things.
-
-Live lookup and Desired GVK availability are different.
-
-Live lookup may use any currently served version of the same group and
-kind (ADR-0005). That decides whether the logical object already exists
-and whether the visible consequence is Create or Update. Do not infer
-Create solely because the Desired apiVersion is not currently
-mappable.
-
-Helm must REST-map the Desired GVK when it builds ordinary release
-resources. If that mapping is not available at that point, planning
-fails. This is required to describe an operation Helm can construct,
-not prediction or admission (ADR-0004).
-
-On install, Helm applies CRDs before it builds ordinary resources. If
-that apply will deterministically serve the Desired apiVersion,
-planning may proceed even when the Desired GVK is not yet
-discoverable. If the entire CRD is absent, the dependent custom
-resource is known absent (Create). If the CRD already existed, read
-Live through another currently served version when one is readable.
-If no served or readable representation allows Live to be established,
-planning fails. If the CRD apply will not serve the Desired apiVersion,
-planning fails.
-
-On a real upgrade, chart CRDs are not applied. An unmappable Desired
-GVK is a planning error even if Live can be read through another
-served version. Do not invent a CRD Update on upgrade.
-
 ### Tasks and generateName
 
 `preDeploy` and `postDeploy` tasks are Helm hooks. A change to those
@@ -138,14 +90,7 @@ semantic plan partial.
 
 ### Negative
 
-- Implicit Namespace fields and chart CRDs can change on install
-  through Helm server-side apply. They do not change on upgrade.
-  Operators who need a CRD change after the first install cannot get it
-  from a Helm upgrade.
-- On a real upgrade, an unmappable Desired apiVersion fails planning
-  even if the logical object exists through another served version.
-  Adding a CRD version is not an upgrade effect.
+- Implicit Namespace fields can change on install through Helm
+  server-side apply. They do not change on upgrade.
 - Raw Namespace manifests are rejected even when Kubernetes would
   accept them.
-- Deleted Live objects whose Desired YAML did not change are not
-  recreated until Helm runs for some other release-intent reason.
