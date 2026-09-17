@@ -1,4 +1,4 @@
-# ADR-0009: Semantic plan sensitive-value presentation
+# ADR-0009: Semantic plan redacts secrets by default
 
 ## Status
 
@@ -17,19 +17,16 @@ Semantic planning may retain the full unredacted values required to
 compare Previous, Live, and Desired correctly. Presentation is
 separate.
 
-By default, user-visible and machine-readable semantic-plan output
-must redact sensitive Secret values. This applies to Create
-full-manifest output, Update diffs, Drift output, task and hook
-definition output where a Kubernetes Secret is represented, and
-machine-readable output unless that format is explicitly designed
-otherwise.
+All human-readable and machine-readable semantic-plan output is
+redacted by default. This includes Create full-manifest output, Update
+diffs, Drift output, and task or hook definition output where a
+Kubernetes Secret is represented.
 
 The structural shape may remain visible while sensitive values are
 masked.
 
-The architecture must support an explicit user opt-in to reveal
-sensitive values. Default is redacted. Reveal is opt-in. Reveal must
-not change semantic comparison or deployment behavior.
+Revealing sensitive values always requires explicit user opt-in.
+Reveal must not change semantic comparison or deployment behavior.
 
 ## Consequences
 
