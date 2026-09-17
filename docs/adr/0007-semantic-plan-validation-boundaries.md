@@ -59,9 +59,10 @@ If the planner needs discovery, REST mapping, or a Live GET to
 determine current state and the read fails, planning fails: discovery
 unavailable, mapping unresolved, GET forbidden, cluster unavailable.
 REST mapping is also required to identify a Desired resource Helm would
-apply, except where Helm's own install CRD step would serve that
-apiVersion (ADR-0006). That is missing information needed to describe
-intent, not prediction.
+apply, except where Helm's install-time CRD apply would serve that
+apiVersion (ADR-0006). A real upgrade does not apply chart CRDs, so an
+unmappable Desired apiVersion remains a planning error. That is missing
+information needed to describe intent, not prediction.
 
 Do not use managedFields as the semantic source of truth for Deployah
 ownership. Previous and Desired define the declared surface (ADR-0005).
