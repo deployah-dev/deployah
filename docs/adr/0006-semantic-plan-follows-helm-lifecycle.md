@@ -82,19 +82,25 @@ lifecycle beyond Helm: it would update CRDs on upgrade, and it would
 force conflicts. Helm's install server-side apply path does not do
 those things.
 
-On install, Helm applies CRDs before dependent custom resources. When
-that apply would serve the Desired apiVersion (a missing CRD, or an
-existing CRD whose applied spec adds the version), the plan may show
-the CRD change and the dependent Create together. That does not require
-a Kubernetes write dry-run, and it does not require the custom resource
-API to already be discoverable.
+On install, Helm applies CRDs before dependent custom resources. That
+does not require a Kubernetes write dry-run. The dependent object is
+the same logical resource across served apiVersions (ADR-0005). Helm's
+install-time CRD apply may make the Desired version served. Do not
+infer Create solely because that Desired version was previously
+unmappable.
 
-If the Desired custom resource apiVersion is not served, and this
-operation's Helm CRD apply would not make it served, planning fails.
-A real upgrade does not apply chart CRDs, so an unmappable Desired GVK
-remains a planning error. Do not invent a CRD Update on upgrade. Do not
-show a custom-resource write. Failure is "required REST mapping cannot
-be established" (ADR-0004), not a predicted admission error.
+- Entire CRD absent: the dependent custom resource is known absent.
+  Show the CRD Create and a dependent Create. The Desired custom
+  resource API need not already be discoverable.
+- CRD exists and a currently served version can establish Live: read
+  the logical object through that served version. Emit Create or Update
+  from actual Live existence and state.
+- CRD exists but no currently served or readable representation allows
+  Live to be established: planning fails. That is missing current state
+  (ADR-0004, ADR-0007), not a predicted admission error.
+
+A real upgrade does not apply chart CRDs. Do not invent a CRD Update
+on upgrade. Dependent custom resources still use the Live rules above.
 
 ### Tasks and generateName
 
@@ -129,9 +135,9 @@ semantic plan partial.
   through Helm server-side apply. They do not change on upgrade.
   Operators who need a CRD change after the first install cannot get it
   from a Helm upgrade.
-- A Desired custom resource version that this operation will not make
-  served fails planning, even though the YAML may be the intended
-  future API.
+- An unserved Desired apiVersion does not, by itself, fail planning
+  when Live can be read through another served version of the same
+  group and kind. The later apply may still fail (ADR-0004).
 - Raw Namespace manifests are rejected even when Kubernetes would
   accept them.
 - Deleted Live objects whose Desired YAML did not change are not
