@@ -22,10 +22,26 @@ Deployah follows the lifecycle Helm actually performs. The semantic
 plan describes the operations Deployah's real Helm execution path
 would attempt.
 
-Helm runs when this invocation is a Helm install, or when release
-intent changed (Previous vs Desired for Helm-managed resources,
-including hook definitions). Ordinary Live drift, including a missing
-Live object, does not by itself cause Helm to run.
+Helm runs when this invocation is a Helm install, when release intent
+changed (Previous vs Desired for Helm-managed resources, including
+hook definitions), or when the operator supplies explicit Helm
+re-execution intent. Ordinary Live drift, including a missing Live
+object, does not by itself cause Helm to run.
+
+Explicit re-execution exists because Deployah may otherwise skip Helm
+when release intent is unchanged. It is not a new HelmAction.
+HelmAction remains Install, Upgrade, or None. Once Helm upgrade is
+invoked, Helm performs an ordinary upgrade.
+
+For an existing release, Previous equal to Desired plus explicit
+re-execution intent is HelmAction Upgrade. If no release exists,
+HelmAction remains Install. There is no second upgrade after that
+install.
+
+That Upgrade does not invent resource consequences. Previous equal to
+Desired and Live equal to Desired still has none (ADR-0011). Drift
+stays independent (ADR-0005). Unchanged hook tasks still run because
+Helm is upgrading (ADR-0014).
 
 CRD lifecycle is ADR-0008. Resource consequences are ADR-0011. Task
 semantics are ADR-0014.
@@ -67,3 +83,6 @@ unknown final name does not make the semantic plan partial.
   server-side apply. They do not change on upgrade.
 - Raw Namespace manifests are rejected even when Kubernetes would
   accept them.
+- Explicit Helm re-execution upgrades an existing release even when
+  Previous, Live, and Desired already match. There are no fabricated
+  resource Updates.
