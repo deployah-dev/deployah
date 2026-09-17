@@ -22,13 +22,22 @@ Deployah follows the lifecycle Helm actually performs. The semantic
 plan describes the operations Deployah's real Helm execution path
 would attempt.
 
-Helm runs when this invocation is a Helm install, or when release
-intent changed (Previous vs Desired for Helm-managed resources,
-including hook definitions). Ordinary Live drift, including a missing
-Live object, does not by itself cause Helm to run.
+Helm runs when this invocation is a Helm install, when Helm-managed
+release intent changed (Previous vs Desired, including hook
+definitions), or when the operator supplies explicit Helm re-execution
+intent. Ordinary Live drift, including a missing Live object, does not
+by itself cause Helm to run.
 
-CRD lifecycle is ADR-0008. Resource consequences are ADR-0011. Task
-semantics are ADR-0014.
+Explicit re-execution exists because Deployah may otherwise skip Helm
+when release intent is unchanged. It is not a new HelmAction:
+HelmAction remains Install, Upgrade, or None. On an existing release
+it is an ordinary Upgrade; with no release it remains Install, with no
+second upgrade after that install. Helm running does not fabricate
+resource consequences (ADR-0011). Drift stays independent (ADR-0005).
+Unchanged preDeploy and postDeploy hooks still run on that upgrade
+(ADR-0014).
+
+CRD lifecycle is ADR-0008.
 
 Namespace lifecycle comes from Helm install `CreateNamespace`, not a
 chart Namespace manifest. Deployah enables that flag together with
