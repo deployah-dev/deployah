@@ -21,10 +21,9 @@ import "fmt"
 type Action int
 
 const (
-	// Create is a resource that would exist after apply and does not exist
-	// live.
+	// Create is a resource that does not exist live and will be written.
 	Create Action = iota + 1
-	// Update is an in-place write to a live resource.
+	// Update is an in-place write to a live resource. After is required.
 	Update
 	// Delete is a prune of a live resource.
 	Delete
@@ -72,27 +71,47 @@ func actionRank(a Action) int {
 	}
 }
 
-// Completeness says whether every predicted After is exact. The zero
-// value is invalid.
-type Completeness int
+// DriftKind classifies one [ResourceDrift] row. The zero value is invalid.
+type DriftKind int
 
 const (
-	// CompletenessComplete means every resource change has an exact
-	// prediction.
-	CompletenessComplete Completeness = iota + 1
-	// CompletenessPartial means at least one prediction is not exact.
-	CompletenessPartial
+	// DriftModified means Live exists and declared-surface fields differ
+	// from effective Previous.
+	DriftModified DriftKind = iota + 1
+	// DriftMissing means Previous has the identity and Live is NotFound.
+	DriftMissing
 )
 
-func (c Completeness) String() string {
-	switch c {
-	case CompletenessComplete:
-		return "complete"
-	case CompletenessPartial:
-		return "partial"
+func (k DriftKind) String() string {
+	switch k {
+	case DriftModified:
+		return "modified"
+	case DriftMissing:
+		return "missing"
 	default:
-		return fmt.Sprintf("Completeness(%d)", int(c))
+		return fmt.Sprintf("DriftKind(%d)", int(k))
 	}
+}
+
+func (k DriftKind) valid() bool {
+	switch k {
+	case DriftModified, DriftMissing:
+		return true
+	default:
+		return false
+	}
+}
+
+// ResourceDrift is informational Previous-vs-Live drift. It is not a
+// resource mutation and does not affect HelmAction, HasEffects,
+// Task.WillRun, or IsNoOp.
+type ResourceDrift struct {
+	Resource ResourceRef
+	Kind     DriftKind
+	// Fields is Previous -> Live on the declared surface of effective
+	// Previous. It is required and nonempty for DriftModified and must
+	// be empty for DriftMissing.
+	Fields []FieldChange
 }
 
 // HelmAction is whether Helm will install, upgrade, or do neither. The
@@ -174,7 +193,7 @@ func (r ResourceRef) String() string {
 type OriginKind int
 
 const (
-	// OriginHelm is a Helm-predicted resource.
+	// OriginHelm is a Helm release resource.
 	OriginHelm OriginKind = iota + 1
 	// OriginCRD is a CustomResourceDefinition applied outside Helm.
 	OriginCRD
@@ -286,7 +305,7 @@ type DeleteSemantics struct {
 	Propagation DeletePropagation
 }
 
-// ApplySemantics is the mutation semantics that produced a prediction.
+// ApplySemantics is the mutation semantics for a resource change.
 // Create and Update set Write only. Delete sets Delete only. Replace
 // sets both.
 type ApplySemantics struct {

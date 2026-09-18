@@ -273,7 +273,8 @@ func runOnline(c *nabat.Context, sess *session.Session, platform *spec.PlatformC
 // so it takes effect no matter which renderer outputPlan picks. On a fresh
 // install there's no live release to compare against, so it reports that
 // via c.Info (stderr, not the stdout diff body) and leaves DriftChecked
-// false.
+// false. The semantic plan has no drift mode. This flag stays on the
+// legacy spec-edit plan.
 func checkDrift(c *nabat.Context, cluster *session.Cluster, p *planengine.Plan, currentManifest string) error {
 	if p.Header.FreshInstall {
 		c.Info("--drift is a no-op on a fresh install; there is no live release to compare against.")
@@ -284,12 +285,12 @@ func checkDrift(c *nabat.Context, cluster *session.Cluster, p *planengine.Plan, 
 	if err != nil {
 		return fmt.Errorf("kubernetes config: %w", err)
 	}
-	predictor, err := drift.NewClient(cfg)
+	reader, err := drift.NewClient(cfg)
 	if err != nil {
 		return fmt.Errorf("drift client: %w", err)
 	}
 
-	result, err := drift.ComputeDrift(c, predictor, p, currentManifest)
+	result, err := drift.ComputeDrift(c, reader, p, currentManifest)
 	if err != nil {
 		return fmt.Errorf("compute drift: %w", err)
 	}

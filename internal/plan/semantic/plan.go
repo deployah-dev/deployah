@@ -19,26 +19,24 @@ import (
 	"slices"
 )
 
-// Plan is the Live -> Predicted semantic result. Construct it with [New].
-// Snapshots and field values are unredacted. This type is not a JSON
-// rendering contract.
+// Plan is the Previous/Live/Desired semantic result. Construct it with
+// [New]. Snapshots and field values are unredacted. This type is not a
+// JSON rendering contract.
 type Plan struct {
-	Header       Header
-	HelmAction   HelmAction
-	Changes      []ResourceChange
-	Tasks        []TaskPlan
-	Diagnostics  []Diagnostic
-	Summary      Summary
-	Completeness Completeness
+	Header     Header
+	HelmAction HelmAction
+	Changes    []ResourceChange
+	Drift      []ResourceDrift
+	Tasks      []TaskPlan
+	Summary    Summary
 }
 
-// New validates helmAction, header, changes, tasks, and diagnostics,
-// sorts them, derives [Summary] and [Completeness], and returns a plan
-// whose slices are non-nil. Task references to [ResourceChange] values
-// must be consistent; it fails closed on dangling or duplicate
-// ownership. helmAction is stored as provided; [New] does not derive or
-// mutate it.
-func New(header Header, helmAction HelmAction, changes []ResourceChange, tasks []TaskPlan, diagnostics []Diagnostic) (Plan, error) {
+// New validates helmAction, header, changes, drift, and tasks, sorts
+// them, derives [Summary], and returns a plan whose slices are
+// non-nil. Task references to [ResourceChange] values must be
+// consistent; it fails closed on dangling or duplicate ownership.
+// helmAction is stored as provided; [New] does not derive or mutate it.
+func New(header Header, helmAction HelmAction, changes []ResourceChange, tasks []TaskPlan, drift []ResourceDrift) (Plan, error) {
 	if !helmAction.valid() {
 		return Plan{}, fmt.Errorf("invalid helm action %s", helmAction)
 	}
@@ -51,18 +49,13 @@ func New(header Header, helmAction HelmAction, changes []ResourceChange, tasks [
 		copiedChanges = []ResourceChange{}
 	}
 	copiedTasks := copyTasks(tasks)
-	copiedDiags := copyDiagnostics(diagnostics)
-	if copiedDiags == nil {
-		copiedDiags = []Diagnostic{}
+	copiedDrift := copyDrift(drift)
+	if copiedDrift == nil {
+		copiedDrift = []ResourceDrift{}
 	}
 
-	for i := range copiedDiags {
-		if err := validateDiagnostic(copiedDiags[i]); err != nil {
-			return Plan{}, err
-		}
-	}
 	for i := range copiedChanges {
-		if err := validateChange(copiedChanges[i], copiedDiags); err != nil {
+		if err := validateChange(copiedChanges[i]); err != nil {
 			return Plan{}, fmt.Errorf("resource %s: %w", copiedChanges[i].Resource, err)
 		}
 		normalized, nerr := normalizeChange(copiedChanges[i])
@@ -70,6 +63,15 @@ func New(header Header, helmAction HelmAction, changes []ResourceChange, tasks [
 			return Plan{}, fmt.Errorf("resource %s: %w", copiedChanges[i].Resource, nerr)
 		}
 		copiedChanges[i] = normalized
+	}
+	for i := range copiedDrift {
+		if err := validateDrift(copiedDrift[i]); err != nil {
+			return Plan{}, fmt.Errorf("drift %s: %w", copiedDrift[i].Resource, err)
+		}
+		copiedDrift[i].Fields = copyFields(copiedDrift[i].Fields)
+		if copiedDrift[i].Fields == nil {
+			copiedDrift[i].Fields = []FieldChange{}
+		}
 	}
 	for i := range copiedTasks {
 		normalized, nerr := normalizeTask(copiedTasks[i])
@@ -87,21 +89,20 @@ func New(header Header, helmAction HelmAction, changes []ResourceChange, tasks [
 
 	sortChanges(copiedChanges)
 	sortTasks(copiedTasks, copiedChanges)
-	sortDiagnostics(copiedDiags)
+	sortDrift(copiedDrift)
 
 	return Plan{
-		Header:       header,
-		HelmAction:   helmAction,
-		Changes:      copiedChanges,
-		Tasks:        copiedTasks,
-		Diagnostics:  copiedDiags,
-		Summary:      Summarize(copiedChanges),
-		Completeness: deriveCompleteness(copiedChanges, copiedDiags),
+		Header:     header,
+		HelmAction: helmAction,
+		Changes:    copiedChanges,
+		Drift:      copiedDrift,
+		Tasks:      copiedTasks,
+		Summary:    Summarize(copiedChanges),
 	}, nil
 }
 
 // HasEffects reports whether the plan lists a known resource mutation or
-// a task that would change or run. Diagnostics and [HelmAction] are not
+// a task that would change or run. Drift and [HelmAction] are not
 // effects.
 func (p Plan) HasEffects() bool {
 	if len(p.Changes) > 0 {
@@ -115,13 +116,10 @@ func (p Plan) HasEffects() bool {
 	return false
 }
 
-// IsNoOp reports whether the plan is a complete, non-install HelmNone
-// with no known effects. Keep this expression verbatim.
+// IsNoOp reports whether the plan is a non-install HelmNone with no
+// known effects. Drift is ignored. Keep this expression verbatim.
 func (p Plan) IsNoOp() bool {
-	return !p.Header.FreshInstall &&
-		p.Completeness == CompletenessComplete &&
-		p.HelmAction == HelmNone &&
-		!p.HasEffects()
+	return !p.Header.FreshInstall && p.HelmAction == HelmNone && !p.HasEffects()
 }
 
 func normalizeChange(c ResourceChange) (ResourceChange, error) {
@@ -286,21 +284,7 @@ func validateDefinition(d HookDefinition) error {
 	return nil
 }
 
-func deriveCompleteness(changes []ResourceChange, diags []Diagnostic) Completeness {
-	for _, d := range diags {
-		if d.Category == CategoryPredictionLimitation {
-			return CompletenessPartial
-		}
-	}
-	for _, c := range changes {
-		if c.Action == Update && c.After == nil {
-			return CompletenessPartial
-		}
-	}
-	return CompletenessComplete
-}
-
-func validateChange(c ResourceChange, diags []Diagnostic) error {
+func validateChange(c ResourceChange) error {
 	if !c.Action.valid() {
 		return fmt.Errorf("invalid action %s", c.Action)
 	}
@@ -316,7 +300,7 @@ func validateChange(c ResourceChange, diags []Diagnostic) error {
 	if err := validateOriginApply(c); err != nil {
 		return err
 	}
-	return validateSnapshots(c, diags)
+	return validateSnapshots(c)
 }
 
 func validateOrigin(o ResourceOrigin) error {
@@ -512,7 +496,7 @@ func validateDelete(d DeleteSemantics) error {
 	return nil
 }
 
-func validateSnapshots(c ResourceChange, diags []Diagnostic) error {
+func validateSnapshots(c ResourceChange) error {
 	switch c.Action {
 	case Create:
 		if c.Before != nil {
@@ -525,8 +509,8 @@ func validateSnapshots(c ResourceChange, diags []Diagnostic) error {
 		if c.Before == nil {
 			return fmt.Errorf("update requires a before snapshot")
 		}
-		if c.After == nil && !hasLimitation(c.Resource, diags) {
-			return fmt.Errorf("update without after requires a prediction-limitation diagnostic")
+		if c.After == nil {
+			return fmt.Errorf("update requires an after snapshot")
 		}
 	case Delete:
 		if c.Before == nil {
@@ -546,27 +530,19 @@ func validateSnapshots(c ResourceChange, diags []Diagnostic) error {
 	return nil
 }
 
-func hasLimitation(ref ResourceRef, diags []Diagnostic) bool {
-	for _, d := range diags {
-		if d.Category != CategoryPredictionLimitation || d.Resource == nil {
-			continue
+func validateDrift(d ResourceDrift) error {
+	if !d.Kind.valid() {
+		return fmt.Errorf("invalid drift kind %s", d.Kind)
+	}
+	switch d.Kind {
+	case DriftModified:
+		if len(d.Fields) == 0 {
+			return fmt.Errorf("modified drift requires fields")
 		}
-		if *d.Resource == ref {
-			return true
+	case DriftMissing:
+		if len(d.Fields) > 0 {
+			return fmt.Errorf("missing drift must not have fields")
 		}
-	}
-	return false
-}
-
-func validateDiagnostic(d Diagnostic) error {
-	if !d.Severity.valid() {
-		return fmt.Errorf("invalid diagnostic severity %s", d.Severity)
-	}
-	if !d.Category.valid() {
-		return fmt.Errorf("invalid diagnostic category %s", d.Category)
-	}
-	if d.Message == "" {
-		return fmt.Errorf("diagnostic message is required")
 	}
 	return nil
 }

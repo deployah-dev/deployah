@@ -69,7 +69,7 @@ func TestDeriveHelmAction(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, tt.want, deriveHelmAction(tt.op, tt.changes, tt.tasks))
+			assert.Equal(t, tt.want, deriveHelmAction(tt.op, helmChanged(tt.changes), tt.tasks))
 		})
 	}
 }
@@ -91,7 +91,7 @@ func TestApplyHelmWillRun_OriginCRDUnchangedHook(t *testing.T) {
 		Action: semantic.Create,
 	}}
 
-	assert.Equal(t, semantic.HelmNone, deriveHelmAction(helm.OperationUpgrade, crd, unchanged))
+	assert.Equal(t, semantic.HelmNone, deriveHelmAction(helm.OperationUpgrade, helmChanged(crd), unchanged))
 
 	tests := []struct {
 		name    string
@@ -109,6 +109,15 @@ func TestApplyHelmWillRun_OriginCRDUnchangedHook(t *testing.T) {
 			assert.Equal(t, tt.wantRun, tasks[0].WillRun)
 		})
 	}
+}
+
+func helmChanged(changes []semantic.ResourceChange) bool {
+	for _, c := range changes {
+		if c.Origin.Kind == semantic.OriginHelm {
+			return true
+		}
+	}
+	return false
 }
 
 func TestAssembleTasks_DoesNotStampWillRun(t *testing.T) {

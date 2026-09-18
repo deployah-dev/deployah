@@ -54,15 +54,14 @@ func TestWriteJSON_SchemaAndTasks(t *testing.T) {
 		"helmAction": "none",
 		"changes": [],
 		"tasks": [],
-		"diagnostics": [],
+		"drift": [],
 		"summary": {
 			"create": 0,
 			"update": 0,
 			"delete": 0,
 			"replace": 0,
 			"total": 0
-		},
-		"completeness": "complete"
+		}
 	}`, buf.String())
 	assertNoJSONKeysFromBytes(t, buf.Bytes())
 	validatePlanSchema(t, buf.Bytes())
@@ -134,9 +133,8 @@ func TestWriteJSON_TasksContract(t *testing.T) {
 			}],
 			"resources": []
 		}],
-		"diagnostics": [],
-		"summary": {"create": 0, "update": 0, "delete": 0, "replace": 0, "total": 0},
-		"completeness": "complete"
+		"drift": [],
+		"summary": {"create": 0, "update": 0, "delete": 0, "replace": 0, "total": 0}
 	}`, buf.String())
 	validatePlanSchema(t, buf.Bytes())
 	assertNoJSONKeysFromBytes(t, buf.Bytes())
@@ -212,7 +210,7 @@ func TestWriteJSON_InvalidZero(t *testing.T) {
 	t.Parallel()
 	err := view.WriteJSON(&bytes.Buffer{}, semantic.Plan{}, view.Options{})
 	require.Error(t, err)
-	assert.ErrorContains(t, err, "invalid completeness")
+	assert.ErrorContains(t, err, "invalid helmAction")
 }
 
 func TestWriteJSON_ShowSecrets(t *testing.T) {
@@ -344,8 +342,18 @@ func TestWriteJSON_MatchesSchemaForRepresentativePlans(t *testing.T) {
 			Origin:   helmOrigin(),
 			Action:   semantic.Update,
 			Before:   snap(cm("app", "v1")),
+			After:    snap(cm("app", "v2")),
 			Apply:    writeApply(),
-		}}, []semantic.Diagnostic{limitationFor(res)})},
+		}}, []semantic.ResourceDrift{{
+			Resource: res,
+			Kind:     semantic.DriftModified,
+			Fields: []semantic.FieldChange{{
+				Path:   "/data/key",
+				Op:     semantic.FieldReplace,
+				Before: "live",
+				After:  "cluster",
+			}},
+		}})},
 		{name: "replace", plan: mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 			Resource: res,
 			Origin:   helmOrigin(),
@@ -464,12 +472,51 @@ func TestWriteJSON_SnapshotMayUseProtocolKeyNames(t *testing.T) {
 	validatePlanSchema(t, buf.Bytes())
 }
 
-func limitationFor(res semantic.ResourceRef) semantic.Diagnostic {
-	return semantic.Diagnostic{
-		Severity: semantic.DiagnosticWarning,
-		Category: semantic.CategoryPredictionLimitation,
-		Message:  "prediction is not exact: managed-fields-migration",
-		Resource: &res,
+func TestWriteJSON_DriftKinds(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		plan         semantic.Plan
+		wantKind     string
+		fieldsPath   []any
+		wantFieldsAt string
+	}{
+		{
+			name: "modified",
+			plan: mustPlan(t, semantic.HelmNone, nil, []semantic.ResourceDrift{{
+				Resource: ref("ConfigMap", "app"),
+				Kind:     semantic.DriftModified,
+				Fields: []semantic.FieldChange{{
+					Path:   "/data/key",
+					Op:     semantic.FieldReplace,
+					Before: "old",
+					After:  "live",
+				}},
+			}}),
+			wantKind:     `"modified"`,
+			fieldsPath:   []any{"drift", 0, "fields", 0, "op"},
+			wantFieldsAt: `"replace"`,
+		},
+		{
+			name: "missing",
+			plan: mustPlan(t, semantic.HelmNone, nil, []semantic.ResourceDrift{{
+				Resource: ref("ConfigMap", "gone"),
+				Kind:     semantic.DriftMissing,
+			}}),
+			wantKind:     `"missing"`,
+			fieldsPath:   []any{"drift", 0, "fields"},
+			wantFieldsAt: `[]`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var buf bytes.Buffer
+			require.NoError(t, view.WriteJSON(&buf, tt.plan, view.Options{}))
+			assertJSONAt(t, buf.Bytes(), tt.wantKind, "drift", 0, "kind")
+			assertJSONAt(t, buf.Bytes(), tt.wantFieldsAt, tt.fieldsPath...)
+			validatePlanSchema(t, buf.Bytes())
+		})
 	}
 }
 
@@ -504,6 +551,7 @@ func assertNoJSONKeysFromBytes(t *testing.T, raw []byte) {
 	require.NoError(t, json.Unmarshal(raw, &doc))
 	assertNoJSONKeys(t, doc)
 	assert.Contains(t, doc, "helmAction")
+	assert.Contains(t, doc, "drift")
 	if header := jsonObject(doc["header"]); header != nil {
 		assertNoJSONKeys(t, header)
 	}
@@ -516,8 +564,8 @@ func assertNoJSONKeysFromBytes(t *testing.T, raw []byte) {
 	for _, item := range jsonObjects(t, doc["tasks"]) {
 		assertNoJSONTaskKeys(t, item)
 	}
-	for _, item := range jsonObjects(t, doc["diagnostics"]) {
-		assertNoJSONDiagKeys(t, item)
+	for _, item := range jsonObjects(t, doc["drift"]) {
+		assertNoJSONDriftKeys(t, item)
 	}
 }
 
@@ -580,12 +628,11 @@ func assertNoJSONTaskKeys(t *testing.T, task map[string]any) {
 	}
 }
 
-func assertNoJSONDiagKeys(t *testing.T, diag map[string]any) {
+func assertNoJSONDriftKeys(t *testing.T, drift map[string]any) {
 	t.Helper()
-	assertNoJSONKeys(t, diag)
-	if res := diag["resource"]; res != nil {
-		assertNoJSONResourceKeys(t, res)
-	}
+	assertNoJSONKeys(t, drift)
+	assertNoJSONResourceKeys(t, drift["resource"])
+	assertNoJSONFieldKeys(t, drift["fields"])
 }
 
 func assertNoJSONResourceKeys(t *testing.T, raw any) {

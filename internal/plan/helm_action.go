@@ -19,29 +19,20 @@ import (
 	"deployah.dev/deployah/internal/plan/semantic"
 )
 
-func deriveHelmAction(op helm.Operation, changes []semantic.ResourceChange, tasks []semantic.TaskPlan) semantic.HelmAction {
+func deriveHelmAction(op helm.Operation, resourcesChanged bool, hookTasks []semantic.TaskPlan) semantic.HelmAction {
 	if op == helm.OperationInstall {
 		return semantic.HelmInstall
 	}
-	if requiresHelmUpgrade(changes, tasks) {
+	if resourcesChanged {
 		return semantic.HelmUpgrade
 	}
-	return semantic.HelmNone
-}
-
-func requiresHelmUpgrade(changes []semantic.ResourceChange, tasks []semantic.TaskPlan) bool {
-	for _, c := range changes {
-		if c.Origin.Kind == semantic.OriginHelm {
-			return true
-		}
-	}
-	for _, t := range tasks {
+	for _, t := range hookTasks {
 		if t.Phase == semantic.TaskSchedule {
 			continue
 		}
 		if t.Action != semantic.TaskUnchanged {
-			return true
+			return semantic.HelmUpgrade
 		}
 	}
-	return false
+	return semantic.HelmNone
 }

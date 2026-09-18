@@ -21,25 +21,31 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCheckInstallNamespaceOverlap_Errors(t *testing.T) {
+func TestChartContainsTargetNamespace(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name      string
 		manifest  string
 		namespace string
+		want      bool
 		wantErr   string
 	}{
 		{
 			name:      "bare target namespace",
 			manifest:  "apiVersion: v1\nkind: Namespace\nmetadata:\n  name: prod\n",
 			namespace: "prod",
-			wantErr:   "cannot plan target namespace",
+			want:      true,
 		},
 		{
 			name:      "list item target namespace",
 			manifest:  "apiVersion: v1\nkind: List\nitems:\n- apiVersion: v1\n  kind: Namespace\n  metadata:\n    name: prod\n",
 			namespace: "prod",
-			wantErr:   "cannot plan target namespace",
+			want:      true,
+		},
+		{
+			name:      "other namespace",
+			manifest:  "apiVersion: v1\nkind: Namespace\nmetadata:\n  name: extra\n",
+			namespace: "prod",
 		},
 		{
 			name:      "invalid yaml",
@@ -51,18 +57,14 @@ func TestCheckInstallNamespaceOverlap_Errors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			err := checkInstallNamespaceOverlap(tt.manifest, tt.namespace)
-			require.Error(t, err)
-			assert.ErrorContains(t, err, tt.wantErr)
+			got, err := chartContainsTargetNamespace(tt.manifest, tt.namespace)
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.ErrorContains(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
 		})
 	}
-}
-
-func TestCheckInstallNamespaceOverlap_OtherNamespace(t *testing.T) {
-	t.Parallel()
-	err := checkInstallNamespaceOverlap(
-		"apiVersion: v1\nkind: Namespace\nmetadata:\n  name: extra\n",
-		"prod",
-	)
-	require.NoError(t, err)
 }

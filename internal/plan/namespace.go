@@ -18,43 +18,16 @@ import (
 	"context"
 	"fmt"
 
-	"helm.sh/helm/v4/pkg/kube"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"deployah.dev/deployah/internal/helm"
 	"deployah.dev/deployah/internal/plan/semantic"
-	"deployah.dev/deployah/internal/predict"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
-func predictNamespace(ctx context.Context, cluster predict.Cluster, op helm.Operation, name string) (*semantic.ResourceChange, bool, error) {
-	id := predict.Identity{Version: "v1", Kind: "Namespace", Name: name}
-	if op == helm.OperationUpgrade {
-		_, err := cluster.Get(ctx, id)
-		if apierrors.IsNotFound(err) {
-			return nil, false, fmt.Errorf("upgrade requires namespace %q to exist", name)
-		}
-		if err != nil {
-			return nil, false, fmt.Errorf("get namespace %s: %w", name, err)
-		}
-		return nil, false, nil
-	}
-	if op != helm.OperationInstall {
-		return nil, false, nil
-	}
-
-	live, err := cluster.Get(ctx, id)
-	missing := apierrors.IsNotFound(err)
-	if missing {
-		live = nil
-		err = nil
-	}
-	if err != nil {
-		return nil, false, fmt.Errorf("get namespace %s: %w", name, err)
-	}
-
-	desired := &unstructured.Unstructured{Object: map[string]any{
+func implicitNamespace(name string) *unstructured.Unstructured {
+	return &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "v1",
 		"kind":       "Namespace",
 		"metadata": map[string]any{
@@ -62,49 +35,76 @@ func predictNamespace(ctx context.Context, cluster predict.Cluster, op helm.Oper
 			"labels": map[string]any{"name": name},
 		},
 	}}
-	predicted, err := cluster.Apply(ctx, desired, predict.ApplyOptions{
-		FieldManager:   kube.ManagedFieldsManager,
-		ForceConflicts: false,
-	})
+}
+
+func namespaceLocator(name string, cluster ClusterReader) (ResourceLocator, error) {
+	id := ResourceIdentity{Version: "v1", Kind: "Namespace", Name: name}
+	mapping, err := cluster.Mapping(id.GroupVersionKind())
 	if err != nil {
-		return nil, missing, fmt.Errorf("predict namespace %s: %w", name, err)
+		return ResourceLocator{}, fmt.Errorf("resolve namespace mapping for %s: %w", name, err)
+	}
+	return locatorFromMapping(id, mapping), nil
+}
+
+func planNamespace(ctx context.Context, cluster ClusterReader, op helm.Operation, name string) (semantic.ResourceChange, bool, error) {
+	if op != helm.OperationInstall {
+		return semantic.ResourceChange{}, false, nil
+	}
+	loc, err := namespaceLocator(name, cluster)
+	if err != nil {
+		return semantic.ResourceChange{}, false, err
 	}
 
+	live, err := cluster.Get(ctx, loc)
+	if apierrors.IsNotFound(err) {
+		live = nil
+		err = nil
+	}
+	if err != nil {
+		return semantic.ResourceChange{}, false, fmt.Errorf("get namespace %s: %w", name, err)
+	}
+
+	desired := implicitNamespace(name)
 	ref := semantic.ResourceRef{APIVersion: "v1", Kind: "Namespace", Name: name}
 	origin := semantic.ResourceOrigin{Kind: semantic.OriginNamespace}
 	if live == nil {
-		return &semantic.ResourceChange{
+		return semantic.ResourceChange{
 			Resource:   ref,
 			Origin:     origin,
 			Action:     semantic.Create,
-			After:      snapshotOf(predicted),
+			After:      snapshotOf(desired),
 			Apply:      writeApply(),
 			ApplyOrder: 1,
 		}, true, nil
 	}
-	if predict.EqualPredictedState(live, predicted) {
-		return nil, false, nil
+	projected, projErr := semantic.ProjectOntoDeclared(live.Object, desired.Object)
+	if projErr != nil {
+		return semantic.ResourceChange{}, false, fmt.Errorf("namespace %s: %w", name, projErr)
 	}
-	return &semantic.ResourceChange{
+	before := &unstructured.Unstructured{Object: projected}
+	if equalObjects(before, desired) {
+		return semantic.ResourceChange{}, false, nil
+	}
+	return semantic.ResourceChange{
 		Resource:   ref,
 		Origin:     origin,
 		Action:     semantic.Update,
-		Before:     snapshotOf(live),
-		After:      snapshotOf(predicted),
+		Before:     snapshotOf(before),
+		After:      snapshotOf(desired),
 		Apply:      writeApply(),
 		ApplyOrder: 1,
-	}, false, nil
+	}, true, nil
 }
 
-func checkInstallNamespaceOverlap(manifest, namespace string) error {
-	objs, err := predict.FlattenManifest(manifest)
+func chartContainsTargetNamespace(manifest, namespace string) (bool, error) {
+	objs, err := flattenManifest(manifest)
 	if err != nil {
-		return err
+		return false, err
 	}
 	for _, obj := range objs {
 		if obj.GetAPIVersion() == "v1" && obj.GetKind() == "Namespace" && obj.GetName() == namespace {
-			return fmt.Errorf("install cannot plan target namespace %q: helm CreateNamespace and the rendered manifest both write it, and those sequential server-side applies cannot be composed", namespace)
+			return true, nil
 		}
 	}
-	return nil
+	return false, nil
 }

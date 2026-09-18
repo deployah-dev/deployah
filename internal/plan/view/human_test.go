@@ -101,23 +101,27 @@ func TestWriteHuman_CreateUpdateDeleteReplace(t *testing.T) {
 	assert.NotContains(t, text, "@@")
 }
 
-func TestWriteHuman_NoOpLimitationDiagnosticsOnly(t *testing.T) {
+func TestWriteHuman_DriftOnlyNoOp(t *testing.T) {
 	t.Parallel()
 	widget := semantic.ResourceRef{APIVersion: "example.com/v1", Kind: "Widget", Namespace: "prod", Name: "app"}
-	p := mustPlanWithHeader(t, humanHeader(), semantic.HelmUpgrade, nil, nil, []semantic.Diagnostic{{
-		Severity: semantic.DiagnosticWarning,
-		Category: semantic.CategoryPredictionLimitation,
-		Message:  "prediction is not exact: prediction used the currently installed CRD, but that CRD's spec changes before Helm executes",
-		Resource: &widget,
+	p := mustPlanWithHeader(t, humanHeader(), semantic.HelmNone, nil, nil, []semantic.ResourceDrift{{
+		Resource: widget,
+		Kind:     semantic.DriftModified,
+		Fields: []semantic.FieldChange{{
+			Path:   "/spec/color",
+			Op:     semantic.FieldReplace,
+			Before: "blue",
+			After:  "green",
+		}},
 	}})
-	assert.Equal(t, semantic.CompletenessPartial, p.Completeness)
-	assert.False(t, p.IsNoOp())
+	assert.True(t, p.IsNoOp())
 	text := writeHuman(t, p)
-	assertGolden(t, "human_noop_limitation", text)
-	assert.Contains(t, text, "Warning: prediction is incomplete")
-	assert.Contains(t, text, "Diagnostics")
-	assert.Contains(t, text, `example.com/v1/Widget "app"`)
+	assertGolden(t, "human_noop_drift", text)
+	assert.Contains(t, text, "Drift")
+	assert.Contains(t, text, `~ modified example.com/v1/Widget "app"`)
+	assert.Contains(t, text, `/spec/color: "blue" -> "green"`)
 	assert.NotContains(t, text, "\nResources\n")
+	assert.NotContains(t, text, "Diagnostics")
 }
 
 func TestWriteHuman_Prerequisites(t *testing.T) {
@@ -171,56 +175,49 @@ func TestWriteHuman_Prerequisites(t *testing.T) {
 			Apply:      writeApply(),
 			ApplyOrder: 1,
 		},
-	}, nil, []semantic.Diagnostic{{
-		Severity: semantic.DiagnosticWarning,
-		Category: semantic.CategoryPredictionLimitation,
-		Message:  "prediction is not exact: API example.com/v1/Widget becomes available after CRD widgets.example.com is created earlier in this deployment",
-		Resource: &widgetRef,
-	}})
+	}, nil, nil)
 	text := writeHuman(t, p)
 	assertGolden(t, "human_prerequisites", text)
 	assert.Contains(t, text, `+ create apiextensions.k8s.io/v1/CustomResourceDefinition "widgets.example.com"`)
 	assert.Contains(t, text, `+ create v1/Namespace "prod"`)
 	assert.Contains(t, text, `+ create example.com/v1/Widget "app"`)
-	assert.Contains(t, text, "Diagnostics")
+	assert.NotContains(t, text, "Diagnostics")
 }
 
-func TestWriteHuman_DiagnosticPartial(t *testing.T) {
+func TestWriteHuman_DriftModified(t *testing.T) {
 	t.Parallel()
 	res := ref("ConfigMap", "web")
 	p := mustPlanWithHeader(t, humanHeader(), semantic.HelmUpgrade, []semantic.ResourceChange{
 		knownConfigMapUpdate(res),
-	}, nil, []semantic.Diagnostic{predictionLimitation(res)})
-	assert.Equal(t, semantic.CompletenessPartial, p.Completeness)
+	}, nil, []semantic.ResourceDrift{modifiedDrift(res)})
 	text := writeHuman(t, p)
-	assertGolden(t, "human_partial", text) // full-output contract; Contains below are invariants only
-	assert.Contains(t, text, "Warning: prediction is incomplete")
+	assertGolden(t, "human_partial", text)
 	assert.Contains(t, text, `~ update v1/ConfigMap "web"`)
 	assert.Contains(t, text, "-   key: v1")
 	assert.Contains(t, text, "+   key: v2")
-	assert.Contains(t, text, "prediction_limitation")
+	assert.Contains(t, text, "Drift")
+	assert.Contains(t, text, `~ modified v1/ConfigMap "web"`)
+	assert.Contains(t, text, `/data/key: "live" -> "cluster"`)
 	assert.NotContains(t, text, "completeness:")
 	assert.NotContains(t, text, "Actions:")
+	assert.NotContains(t, text, "Diagnostics")
 }
 
-func TestWriteHuman_PartialPreservesKnownDetails(t *testing.T) {
+func TestWriteHuman_DriftDoesNotChangeResources(t *testing.T) {
 	t.Parallel()
 	header, changes, tasks := allActionsInputs()
-	complete := mustPlanWithHeader(t, header, semantic.HelmUpgrade, changes, tasks, nil)
-	partial := mustPlanWithHeader(t, header, semantic.HelmUpgrade, changes, tasks, []semantic.Diagnostic{
-		predictionLimitation(ref("ConfigMap", "web")),
+	plain := mustPlanWithHeader(t, header, semantic.HelmUpgrade, changes, tasks, nil)
+	withDrift := mustPlanWithHeader(t, header, semantic.HelmUpgrade, changes, tasks, []semantic.ResourceDrift{
+		modifiedDrift(ref("ConfigMap", "web")),
 	})
-	assert.Equal(t, semantic.CompletenessComplete, complete.Completeness)
-	assert.Equal(t, semantic.CompletenessPartial, partial.Completeness)
-	assert.Equal(t, complete.Summary, partial.Summary)
+	assert.Equal(t, plain.Summary, withDrift.Summary)
+	assert.Equal(t, plain.Changes, withDrift.Changes)
 
-	completeText := writeHuman(t, complete)
-	partialText := writeHuman(t, partial)
-	assert.Contains(t, partialText, "Warning: prediction is incomplete")
-	assert.Contains(t, partialText, "Diagnostics")
-	assert.NotContains(t, completeText, "Warning: prediction is incomplete")
-	assert.NotContains(t, completeText, "Diagnostics")
-	require.Equal(t, completeText, stripPartialPresentation(t, partialText))
+	plainText := writeHuman(t, plain)
+	driftText := writeHuman(t, withDrift)
+	assert.Contains(t, driftText, "Drift")
+	assert.NotContains(t, plainText, "\nDrift\n")
+	require.Equal(t, plainText, stripDriftSection(t, driftText))
 }
 
 func TestWriteHuman_DeterministicMapOrder(t *testing.T) {
@@ -269,7 +266,7 @@ func TestWriteHuman_InvalidZero(t *testing.T) {
 	t.Parallel()
 	err := view.WriteHuman(&bytes.Buffer{}, semantic.Plan{}, view.Options{})
 	require.Error(t, err)
-	assert.ErrorContains(t, err, "invalid completeness")
+	assert.ErrorContains(t, err, "invalid helmAction")
 }
 
 func TestWriteHuman_DoesNotMutatePlan(t *testing.T) {
@@ -443,19 +440,18 @@ func TestWriteHuman_HeaderMetadata(t *testing.T) {
 	}
 }
 
-func TestWriteHuman_DiagnosticWithoutResource(t *testing.T) {
+func TestWriteHuman_DriftMissing(t *testing.T) {
 	t.Parallel()
-	p, err := semantic.New(semantic.Header{Release: "web"}, semantic.HelmNone, nil, nil, []semantic.Diagnostic{{
-		Severity: semantic.DiagnosticWarning,
-		Category: semantic.CategoryPredictionLimitation,
-		Message:  "prediction is not exact: cluster-scoped",
+	p, err := semantic.New(semantic.Header{Release: "web"}, semantic.HelmNone, nil, nil, []semantic.ResourceDrift{{
+		Resource: ref("ConfigMap", "gone"),
+		Kind:     semantic.DriftMissing,
 	}})
 	require.NoError(t, err)
 	var buf bytes.Buffer
 	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
 	text := buf.String()
-	assert.Contains(t, text, "warning prediction_limitation: prediction is not exact: cluster-scoped")
-	assert.NotContains(t, text, "ConfigMap/")
+	assert.Contains(t, text, `missing v1/ConfigMap "gone"`)
+	assert.NotContains(t, text, "/data")
 }
 
 func TestWriteHuman_BookkeepingOnlyUpdateKeepsResource(t *testing.T) {
@@ -1234,25 +1230,26 @@ func knownConfigMapUpdate(res semantic.ResourceRef) semantic.ResourceChange {
 	}
 }
 
-func predictionLimitation(res semantic.ResourceRef) semantic.Diagnostic {
-	return semantic.Diagnostic{
-		Severity: semantic.DiagnosticWarning,
-		Category: semantic.CategoryPredictionLimitation,
-		Message:  "prediction is not exact: managed-fields-migration",
-		Resource: new(res),
+func modifiedDrift(res semantic.ResourceRef) semantic.ResourceDrift {
+	return semantic.ResourceDrift{
+		Resource: res,
+		Kind:     semantic.DriftModified,
+		Fields: []semantic.FieldChange{{
+			Path:   "/data/key",
+			Op:     semantic.FieldReplace,
+			Before: "live",
+			After:  "cluster",
+		}},
 	}
 }
 
-func stripPartialPresentation(t *testing.T, text string) string {
+func stripDriftSection(t *testing.T, text string) string {
 	t.Helper()
-	const warning = "Warning: prediction is incomplete\n\n"
-	require.Contains(t, text, warning)
-	text = strings.Replace(text, warning, "", 1)
-	diagStart := strings.Index(text, "\nDiagnostics\n")
+	driftStart := strings.Index(text, "\nDrift\n")
 	summaryStart := strings.Index(text, "\nSummary\n")
-	require.Greater(t, diagStart, -1)
-	require.Greater(t, summaryStart, diagStart)
-	return text[:diagStart] + text[summaryStart:]
+	require.Greater(t, driftStart, -1)
+	require.Greater(t, summaryStart, driftStart)
+	return text[:driftStart] + text[summaryStart:]
 }
 
 func assertHumanHeaderMetadata(t *testing.T, text, kubeContext string, revision int) {

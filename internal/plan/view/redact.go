@@ -44,11 +44,11 @@ func copyPlan(p semantic.Plan) semantic.Plan {
 			c.Apply.Delete = &d
 		}
 	}
-	out.Diagnostics = slices.Clone(p.Diagnostics)
-	for i := range out.Diagnostics {
-		if out.Diagnostics[i].Resource != nil {
-			r := *out.Diagnostics[i].Resource
-			out.Diagnostics[i].Resource = &r
+	out.Drift = slices.Clone(p.Drift)
+	for i := range out.Drift {
+		out.Drift[i].Fields = copyFields(out.Drift[i].Fields)
+		if out.Drift[i].Fields == nil {
+			out.Drift[i].Fields = []semantic.FieldChange{}
 		}
 	}
 	out.Tasks = slices.Clone(p.Tasks)
@@ -151,6 +151,19 @@ func redactPlan(p *semantic.Plan) {
 			}
 			c.Fields[j].Before = redactSecretValue(c.Fields[j].Before)
 			c.Fields[j].After = redactSecretValue(c.Fields[j].After)
+		}
+	}
+	for i := range p.Drift {
+		d := &p.Drift[i]
+		if !isCoreSecret(d.Resource) {
+			continue
+		}
+		for j := range d.Fields {
+			if !isSecretDataPath(d.Fields[j].Path) {
+				continue
+			}
+			d.Fields[j].Before = redactSecretValue(d.Fields[j].Before)
+			d.Fields[j].After = redactSecretValue(d.Fields[j].After)
 		}
 	}
 	for i := range p.Tasks {

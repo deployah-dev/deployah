@@ -18,22 +18,19 @@ import (
 	"context"
 	"fmt"
 
-	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"deployah.dev/deployah/internal/extras"
 	"deployah.dev/deployah/internal/plan/semantic"
-	"deployah.dev/deployah/internal/predict"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
 type crdSurface struct {
-	served      map[schema.GroupVersionKind]apiDesc
-	unserved    map[schema.GroupVersionKind]string
-	byGVR       map[schema.GroupVersionResource]apiDesc
-	specChanged map[schema.GroupVersionKind]struct{}
+	served   map[schema.GroupVersionKind]apiDesc
+	unserved map[schema.GroupVersionKind]string
+	byGVR    map[schema.GroupVersionResource]apiDesc
 }
 
 type apiDesc struct {
@@ -56,20 +53,18 @@ type crdAPI struct {
 
 func newCRDSurface() *crdSurface {
 	return &crdSurface{
-		served:      make(map[schema.GroupVersionKind]apiDesc),
-		unserved:    make(map[schema.GroupVersionKind]string),
-		byGVR:       make(map[schema.GroupVersionResource]apiDesc),
-		specChanged: make(map[schema.GroupVersionKind]struct{}),
+		served:   make(map[schema.GroupVersionKind]apiDesc),
+		unserved: make(map[schema.GroupVersionKind]string),
+		byGVR:    make(map[schema.GroupVersionResource]apiDesc),
 	}
 }
 
-func predictCRDs(ctx context.Context, cluster predict.Cluster, crds []extras.Object, policy extras.Policy) ([]semantic.ResourceChange, *crdSurface, error) {
+func planCRDs(ctx context.Context, cluster ClusterReader, crds []extras.Object, policy extras.Policy) ([]semantic.ResourceChange, *crdSurface, error) {
 	surface := newCRDSurface()
 	if len(crds) == 0 {
 		return nil, surface, nil
 	}
 	changes := make([]semantic.ResourceChange, 0, len(crds))
-	var previouslyServed []apiDesc
 	origin := semantic.ResourceOrigin{Kind: semantic.OriginCRD}
 	order := 1
 	for _, o := range crds {
@@ -77,13 +72,17 @@ func predictCRDs(ctx context.Context, cluster predict.Cluster, crds []extras.Obj
 		if err != nil {
 			return nil, nil, err
 		}
-		id := predict.Identity{
+		id := ResourceIdentity{
 			Group:   "apiextensions.k8s.io",
 			Version: "v1",
 			Kind:    "CustomResourceDefinition",
 			Name:    typed.Name,
 		}
-		live, err := cluster.Get(ctx, id)
+		mapping, mapErr := cluster.Mapping(id.GroupVersionKind())
+		if mapErr != nil {
+			return nil, nil, fmt.Errorf("resolve CRD mapping for %s: %w", typed.Name, mapErr)
+		}
+		live, err := cluster.Get(ctx, locatorFromMapping(id, mapping))
 		if err != nil && !apierrors.IsNotFound(err) {
 			return nil, nil, fmt.Errorf("get CRD %s: %w", typed.Name, err)
 		}
@@ -100,11 +99,7 @@ func predictCRDs(ctx context.Context, cluster predict.Cluster, crds []extras.Obj
 			if createErr != nil {
 				return nil, nil, createErr
 			}
-			predicted, createErr := cluster.Create(ctx, body)
-			if createErr != nil {
-				return nil, nil, fmt.Errorf("create CRD %s: %w", typed.Name, createErr)
-			}
-			final = predicted
+			final = body
 			change = &semantic.ResourceChange{
 				Resource: semantic.ResourceRef{
 					APIVersion: "apiextensions.k8s.io/v1",
@@ -113,7 +108,7 @@ func predictCRDs(ctx context.Context, cluster predict.Cluster, crds []extras.Obj
 				},
 				Origin:     origin,
 				Action:     semantic.Create,
-				After:      snapshotOf(predicted),
+				After:      snapshotOf(body),
 				Apply:      writeCreate(),
 				ApplyOrder: order,
 			}
@@ -124,14 +119,7 @@ func predictCRDs(ctx context.Context, cluster predict.Cluster, crds []extras.Obj
 			if applyErr != nil {
 				return nil, nil, applyErr
 			}
-			predicted, applyErr := cluster.Apply(ctx, body, predict.ApplyOptions{
-				FieldManager:   extras.CRDFieldManager,
-				ForceConflicts: true,
-			})
-			if applyErr != nil {
-				return nil, nil, fmt.Errorf("apply CRD %s: %w", typed.Name, applyErr)
-			}
-			final = predicted
+			final = body
 			ref := semantic.ResourceRef{
 				APIVersion: "apiextensions.k8s.io/v1",
 				Kind:       "CustomResourceDefinition",
@@ -142,28 +130,23 @@ func predictCRDs(ctx context.Context, cluster predict.Cluster, crds []extras.Obj
 					Resource:   ref,
 					Origin:     origin,
 					Action:     semantic.Create,
-					After:      snapshotOf(predicted),
+					After:      snapshotOf(body),
 					Apply:      writeCRDApply(),
 					ApplyOrder: order,
 				}
 			} else {
+				projected, projErr := semantic.ProjectOntoDeclared(live.Object, body.Object)
+				if projErr != nil {
+					return nil, nil, fmt.Errorf("CRD %s: %w", typed.Name, projErr)
+				}
 				change = &semantic.ResourceChange{
 					Resource:   ref,
 					Origin:     origin,
 					Action:     semantic.Update,
-					Before:     snapshotOf(live),
-					After:      snapshotOf(predicted),
+					Before:     snapshotOf(&unstructured.Unstructured{Object: projected}),
+					After:      snapshotOf(body),
 					Apply:      writeCRDApply(),
 					ApplyOrder: order,
-				}
-				changed, changeErr := specChanged(live, predicted)
-				if changeErr != nil {
-					return nil, nil, changeErr
-				}
-				if changed {
-					if markErr := surface.markSpecChanged(live, predicted, typed.Name); markErr != nil {
-						return nil, nil, markErr
-					}
 				}
 			}
 		}
@@ -178,65 +161,11 @@ func predictCRDs(ctx context.Context, cluster predict.Cluster, crds []extras.Obj
 		if addErr := surface.add(api, missing); addErr != nil {
 			return nil, nil, addErr
 		}
-		if live != nil {
-			liveAPI, liveErr := crdAPIFromObject(live, typed.Name)
-			if liveErr != nil {
-				return nil, nil, liveErr
-			}
-			for _, ver := range liveAPI.Versions {
-				previouslyServed = append(previouslyServed, apiDesc{
-					gvk:     schema.GroupVersionKind{Group: liveAPI.Group, Version: ver, Kind: liveAPI.Kind},
-					crdName: liveAPI.Name,
-				})
-			}
-		}
-	}
-	// Discovery still exposes the live CRD while prediction runs. Record APIs
-	// removed by the final CRD set so Helm resources cannot be planned against
-	// endpoints that disappear before Helm executes.
-	for _, previous := range previouslyServed {
-		if _, ok := surface.served[previous.gvk]; ok {
-			continue
-		}
-		if err := surface.addUnserved(previous.gvk, previous.crdName); err != nil {
-			return nil, nil, err
-		}
 	}
 	return changes, surface, nil
 }
 
-func specChanged(live, predicted *unstructured.Unstructured) (bool, error) {
-	if live == nil || predicted == nil {
-		return false, nil
-	}
-	liveSpec, _, err := unstructured.NestedMap(live.Object, "spec")
-	if err != nil {
-		return false, fmt.Errorf("live CRD spec: %w", err)
-	}
-	predSpec, _, err := unstructured.NestedMap(predicted.Object, "spec")
-	if err != nil {
-		return false, fmt.Errorf("predicted CRD spec: %w", err)
-	}
-	return !equality.Semantic.DeepEqual(liveSpec, predSpec), nil
-}
-
-func (s *crdSurface) markSpecChanged(live, predicted *unstructured.Unstructured, name string) error {
-	for _, obj := range []*unstructured.Unstructured{live, predicted} {
-		api, err := crdAPIFromObject(obj, name)
-		if err != nil {
-			return err
-		}
-		for _, ver := range append(append([]string{}, api.Versions...), api.Unserved...) {
-			gvk := schema.GroupVersionKind{Group: api.Group, Version: ver, Kind: api.Kind}
-			s.specChanged[gvk] = struct{}{}
-		}
-	}
-	return nil
-}
-
 func (s *crdSurface) add(api crdAPI, missingEntire bool) error {
-	// A CRD may keep versions with served=false only. That contributes
-	// no REST APIs; do not invent a served mapping.
 	for _, ver := range api.Versions {
 		gvk := schema.GroupVersionKind{Group: api.Group, Version: ver, Kind: api.Kind}
 		gvr := schema.GroupVersionResource{Group: api.Group, Version: ver, Resource: api.Plural}
@@ -260,20 +189,24 @@ func (s *crdSurface) add(api crdAPI, missingEntire bool) error {
 }
 
 func (s *crdSurface) addServed(d apiDesc) error {
-	// GVK -> REST mapping must be unique. Two CRDs cannot serve the same
-	// group/version/kind with different plurals, scopes, or CRD names.
 	if existing, ok := s.served[d.gvk]; ok && (existing.gvr != d.gvr || existing.cluster != d.cluster || existing.crdName != d.crdName) {
 		return fmt.Errorf("conflicting CRD API %s/%s/%s: CRD %s and %s", d.gvk.Group, d.gvk.Version, d.gvk.Kind, existing.crdName, d.crdName)
 	}
-	// GVR -> kind must be unique. Two CRDs cannot share group/version/plural
-	// with different kinds, scopes, or CRD names (Widget vs Gadget both
-	// serving example.com/v1/objects).
 	if existing, ok := s.byGVR[d.gvr]; ok && (existing.gvk != d.gvk || existing.cluster != d.cluster || existing.crdName != d.crdName) {
 		return fmt.Errorf("conflicting CRD resource %s/%s/%s: CRD %s and %s", d.gvr.Group, d.gvr.Version, d.gvr.Resource, existing.crdName, d.crdName)
 	}
 	s.served[d.gvk] = d
 	s.byGVR[d.gvr] = d
 	return nil
+}
+
+func (s *crdSurface) crdForKind(gvk schema.GroupVersionKind) (string, bool) {
+	for served, d := range s.served {
+		if served.Group == gvk.Group && served.Kind == gvk.Kind {
+			return d.crdName, true
+		}
+	}
+	return "", false
 }
 
 func (s *crdSurface) addUnserved(gvk schema.GroupVersionKind, crdName string) error {
@@ -364,13 +297,19 @@ func checkRenderedAPIs(manifests []string, surface *crdSurface) error {
 		return nil
 	}
 	for _, manifest := range manifests {
-		objs, err := predict.FlattenManifest(manifest)
+		objs, err := flattenManifest(manifest)
 		if err != nil {
 			return err
 		}
 		for _, obj := range objs {
 			gvk := obj.GroupVersionKind()
 			if name, ok := surface.unserved[gvk]; ok {
+				return fmt.Errorf("API %s/%s/%s is not served by CRD %s after this deployment", gvk.Group, gvk.Version, gvk.Kind, name)
+			}
+			if _, ok := surface.served[gvk]; ok {
+				continue
+			}
+			if name, ok := surface.crdForKind(gvk); ok {
 				return fmt.Errorf("API %s/%s/%s is not served by CRD %s after this deployment", gvk.Group, gvk.Version, gvk.Kind, name)
 			}
 		}

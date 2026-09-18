@@ -33,7 +33,6 @@ import (
 	"deployah.dev/deployah/internal/helm"
 	"deployah.dev/deployah/internal/plan"
 	"deployah.dev/deployah/internal/plan/semantic"
-	"deployah.dev/deployah/internal/predict"
 	"deployah.dev/deployah/internal/render"
 	"deployah.dev/deployah/internal/spec"
 
@@ -70,31 +69,20 @@ func (f *fakeBuildClient) RenderManifestsWithPrep(
 	return f.result, f.prep, f.cleanup, f.err
 }
 
-type recordedApply struct {
-	Obj  *unstructured.Unstructured
-	Opts predict.ApplyOptions
-}
-
 type fakeCluster struct {
-	objects     map[string]*unstructured.Unstructured
-	getErr      map[string]error
-	mappingErr  map[schema.GroupVersionKind]error
-	applyErr    error
-	applyErrGVK map[schema.GroupVersionKind]error
-	createErr   error
-	gotCtx      context.Context
-	gets        int
-	creates     []*unstructured.Unstructured
-	applies     []recordedApply
-	deletes     []predict.Identity
+	objects    map[string]*unstructured.Unstructured
+	getErr     map[string]error
+	mappingErr map[schema.GroupVersionKind]error
+	gotCtx     context.Context
+	methods    []string
+	gets       []plan.ResourceLocator
 }
 
 func newFakeCluster() *fakeCluster {
 	return &fakeCluster{
-		objects:     make(map[string]*unstructured.Unstructured),
-		getErr:      make(map[string]error),
-		mappingErr:  make(map[schema.GroupVersionKind]error),
-		applyErrGVK: make(map[schema.GroupVersionKind]error),
+		objects:    make(map[string]*unstructured.Unstructured),
+		getErr:     make(map[string]error),
+		mappingErr: make(map[schema.GroupVersionKind]error),
 	}
 }
 
@@ -119,9 +107,11 @@ func (f *fakeCluster) store(obj *unstructured.Unstructured) {
 	f.objects[clusterKey(identityOf(obj))] = obj.DeepCopy()
 }
 
-func (f *fakeCluster) Get(ctx context.Context, id predict.Identity) (*unstructured.Unstructured, error) {
+func (f *fakeCluster) Get(ctx context.Context, loc plan.ResourceLocator) (*unstructured.Unstructured, error) {
 	f.gotCtx = ctx
-	f.gets++
+	f.methods = append(f.methods, "Get")
+	f.gets = append(f.gets, loc)
+	id := loc.Identity
 	if err, ok := f.getErr[clusterKey(id)]; ok {
 		return nil, err
 	}
@@ -132,37 +122,22 @@ func (f *fakeCluster) Get(ctx context.Context, id predict.Identity) (*unstructur
 	return obj.DeepCopy(), nil
 }
 
-func (f *fakeCluster) Create(ctx context.Context, obj *unstructured.Unstructured) (*unstructured.Unstructured, error) {
-	f.gotCtx = ctx
-	f.creates = append(f.creates, obj.DeepCopy())
-	if f.createErr != nil {
-		return nil, f.createErr
+func assertReadOnly(t *testing.T, cluster *fakeCluster) {
+	t.Helper()
+	for _, m := range cluster.methods {
+		assert.True(t, m == "Get" || m == "Mapping", "unexpected cluster method %s", m)
 	}
-	return obj.DeepCopy(), nil
 }
 
-func (f *fakeCluster) Apply(ctx context.Context, obj *unstructured.Unstructured, opts predict.ApplyOptions) (*unstructured.Unstructured, error) {
-	f.gotCtx = ctx
-	f.applies = append(f.applies, recordedApply{Obj: obj.DeepCopy(), Opts: opts})
-	if err, ok := f.applyErrGVK[obj.GroupVersionKind()]; ok {
-		return nil, err
+func assertNoGetKind(t *testing.T, cluster *fakeCluster, kind string) {
+	t.Helper()
+	for _, loc := range cluster.gets {
+		assert.NotEqual(t, kind, loc.Identity.Kind)
 	}
-	if f.applyErr != nil {
-		return nil, f.applyErr
-	}
-	return obj.DeepCopy(), nil
-}
-
-func (f *fakeCluster) JSONPatch(context.Context, predict.Identity, []byte) error {
-	return nil
-}
-
-func (f *fakeCluster) Delete(_ context.Context, id predict.Identity) error {
-	f.deletes = append(f.deletes, id)
-	return nil
 }
 
 func (f *fakeCluster) Mapping(gvk schema.GroupVersionKind) (*meta.RESTMapping, error) {
+	f.methods = append(f.methods, "Mapping")
 	if err, ok := f.mappingErr[gvk]; ok {
 		return nil, err
 	}
@@ -180,14 +155,14 @@ func (f *fakeCluster) Mapping(gvk schema.GroupVersionKind) (*meta.RESTMapping, e
 	}, nil
 }
 
-func clusterKey(id predict.Identity) string {
+func clusterKey(id plan.ResourceIdentity) string {
 	gv := schema.GroupVersion{Group: id.Group, Version: id.Version}
 	return fmt.Sprintf("%s/%s/%s/%s", gv.String(), id.Kind, id.Namespace, id.Name)
 }
 
-func identityOf(obj *unstructured.Unstructured) predict.Identity {
+func identityOf(obj *unstructured.Unstructured) plan.ResourceIdentity {
 	gvk := obj.GroupVersionKind()
-	return predict.Identity{
+	return plan.ResourceIdentity{
 		Group:     gvk.Group,
 		Version:   gvk.Version,
 		Kind:      gvk.Kind,
@@ -203,7 +178,7 @@ metadata:
   name: %s
   namespace: %s
 data:
-  key: %s
+  key: %q
 `, name, namespace, data)
 }
 
@@ -286,7 +261,7 @@ func TestBuildSemanticPlan_RequiresInput(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name    string
-		cluster predict.Cluster
+		cluster plan.ClusterReader
 		in      plan.SemanticBuildInput
 		wantErr string
 	}{
@@ -534,7 +509,7 @@ func TestBuildSemanticPlan_PrepRenderMismatch(t *testing.T) {
 			assert.ErrorContains(t, err, tt.want)
 			assert.Zero(t, p)
 			assert.Nil(t, result)
-			assert.Equal(t, 0, cluster.gets)
+			assert.Equal(t, 0, len(cluster.gets))
 		})
 	}
 }
@@ -554,14 +529,14 @@ func TestBuildSemanticPlan_InvalidPrep(t *testing.T) {
 	p, result, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, buildInput("ctx", resolvedSpec(), nil))
 	t.Cleanup(cleanup)
 	require.Error(t, err)
-	assert.ErrorContains(t, err, "build prediction input:")
+	assert.ErrorContains(t, err, "render preparation:")
 	assert.ErrorContains(t, err, "upgrade prep requires a current release")
 	assert.Zero(t, p)
 	assert.Nil(t, result)
-	assert.Equal(t, 0, cluster.gets)
+	assert.Equal(t, 0, len(cluster.gets))
 }
 
-func TestBuildSemanticPlan_PredictFailureLeavesCleanup(t *testing.T) {
+func TestBuildSemanticPlan_GetFailureLeavesCleanup(t *testing.T) {
 	t.Parallel()
 	var cleanups int
 	client := &fakeBuildClient{
@@ -570,7 +545,7 @@ func TestBuildSemanticPlan_PredictFailureLeavesCleanup(t *testing.T) {
 		cleanup: func() { cleanups++ },
 	}
 	cluster := readyCluster()
-	cluster.applyErrGVK[schema.GroupVersionKind{Version: "v1", Kind: "ConfigMap"}] = errors.New("ssa dry-run failed")
+	cluster.getErr[clusterKey(plan.ResourceIdentity{Version: "v1", Kind: "ConfigMap", Namespace: "prod", Name: "app"})] = errors.New("get configmap failed")
 
 	p, result, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, buildInput("ctx", resolvedSpec(), nil))
 	require.NotNil(t, cleanup)
@@ -580,7 +555,7 @@ func TestBuildSemanticPlan_PredictFailureLeavesCleanup(t *testing.T) {
 		}
 	})
 	require.Error(t, err)
-	assert.ErrorContains(t, err, "predict resources:")
+	assert.ErrorContains(t, err, "get ConfigMap")
 	assert.Zero(t, p)
 	assert.Nil(t, result)
 	assert.Equal(t, 0, cleanups)
@@ -636,7 +611,6 @@ func TestBuildSemanticPlan_NoChange(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, p.Changes)
 	assert.Equal(t, 0, p.Summary.Total())
-	assert.Equal(t, semantic.CompletenessComplete, p.Completeness)
 	assert.Equal(t, semantic.HelmNone, p.HelmAction)
 	assert.False(t, p.HasEffects())
 	assert.True(t, p.IsNoOp())

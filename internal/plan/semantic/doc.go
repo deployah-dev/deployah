@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package semantic is Deployah's unredacted domain model for a Live ->
-// Predicted plan.
+// Package semantic is Deployah's unredacted domain model for a
+// Previous/Live/Desired intent plan.
 //
 // This package is not the deployah plan command and is not a JSON API.
 // Snapshots and field values stay complete. Serialization and secret
