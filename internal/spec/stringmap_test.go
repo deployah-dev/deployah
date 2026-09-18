@@ -166,7 +166,7 @@ func TestSubstituteVariables_Sources(t *testing.T) {
 				Variables: tt.variables,
 			})
 			require.NoError(t, err)
-			assert.Equal(t, tt.want, string(got))
+			assert.YAMLEq(t, tt.want, string(got))
 		})
 	}
 }

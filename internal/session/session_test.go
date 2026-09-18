@@ -35,6 +35,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
 
+	"deployah.dev/deployah/internal/extras"
 	"deployah.dev/deployah/internal/render"
 	"deployah.dev/deployah/internal/spec"
 	"deployah.dev/deployah/internal/target"
@@ -75,14 +76,14 @@ func (m *MockHelmClient) IsReachable() error {
 }
 
 // InstallApp implements [HelmClient].
-func (m *MockHelmClient) InstallApp(ctx context.Context, dryRun bool, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) error {
-	args := m.Called(ctx, dryRun, resolved, postRenderer)
+func (m *MockHelmClient) InstallApp(ctx context.Context, dryRun bool, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer, crds []extras.Object, skipCRDs bool) error {
+	args := m.Called(ctx, dryRun, resolved, postRenderer, crds, skipCRDs)
 	return args.Error(0)
 }
 
 // RenderManifests implements [HelmClient].
-func (m *MockHelmClient) RenderManifests(ctx context.Context, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) (*render.RenderResult, func(), error) {
-	args := m.Called(ctx, resolved, postRenderer)
+func (m *MockHelmClient) RenderManifests(ctx context.Context, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer, crds []extras.Object) (*render.RenderResult, func(), error) {
+	args := m.Called(ctx, resolved, postRenderer, crds)
 	if err := args.Error(2); err != nil {
 		return nil, func() {}, err
 	}
@@ -101,8 +102,8 @@ func (m *MockHelmClient) RenderManifests(ctx context.Context, resolved *spec.Res
 }
 
 // RenderOffline implements [HelmClient].
-func (m *MockHelmClient) RenderOffline(ctx context.Context, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) (*render.RenderResult, func(), error) {
-	args := m.Called(ctx, resolved, postRenderer)
+func (m *MockHelmClient) RenderOffline(ctx context.Context, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer, crds []extras.Object) (*render.RenderResult, func(), error) {
+	args := m.Called(ctx, resolved, postRenderer, crds)
 	if err := args.Error(2); err != nil {
 		return nil, func() {}, err
 	}
@@ -1160,7 +1161,7 @@ users:
 func TestIntegrationWithMocks(t *testing.T) {
 	t.Run("full workflow with mock helm client", func(t *testing.T) {
 		mockHelm := &MockHelmClient{}
-		mockHelm.On("InstallApp", mock.Anything, false, mock.Anything, mock.Anything).Return(nil)
+		mockHelm.On("InstallApp", mock.Anything, false, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 		sess := New(WithHelmFactory(func(*target.Target, HelmConfig) (HelmClient, error) {
 			return mockHelm, nil
@@ -1172,7 +1173,7 @@ func TestIntegrationWithMocks(t *testing.T) {
 		helmClient, err := cluster.Helm()
 		assert.NoError(t, err)
 
-		err = helmClient.InstallApp(t.Context(), false, nil, nil)
+		err = helmClient.InstallApp(t.Context(), false, nil, nil, nil, false)
 		assert.NoError(t, err)
 		mockHelm.AssertExpectations(t)
 	})

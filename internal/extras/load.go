@@ -68,8 +68,9 @@ type LoadConfig struct {
 }
 
 // Load reads .deployah/manifests and .deployah/crds under SpecDir, validates
-// them, merges Deployah identity metadata, and returns a deploy-ready Bundle.
-// Missing directories yield an empty Bundle with a nil error.
+// them, and returns a deploy-ready Bundle. It merges Deployah identity
+// metadata into extra manifests only. CRDs keep the caller's object
+// semantics. Missing directories yield an empty Bundle with a nil error.
 func Load(cfg LoadConfig) (*Bundle, error) {
 	if cfg.Scope == nil {
 		return nil, errors.New("extras: ScopeResolver is required")
@@ -147,16 +148,11 @@ func Load(cfg LoadConfig) (*Bundle, error) {
 			return nil, mergeErr
 		}
 	}
-	for i := range crds {
-		if mergeErr := mergeIdentity(&crds[i], cfg.Project, "", "", "", spec.SourceCRDs, "", false); mergeErr != nil {
-			return nil, mergeErr
-		}
-	}
 
 	if dupErr := checkDuplicateIdentities(manifests); dupErr != nil {
 		return nil, dupErr
 	}
-	if dupErr := checkDuplicateIdentities(crds); dupErr != nil {
+	if dupErr := checkDuplicateCRDs(crds); dupErr != nil {
 		return nil, dupErr
 	}
 
@@ -171,6 +167,28 @@ func checkDuplicateIdentities(objs []Object) error {
 			return fmt.Errorf("duplicate object %s in %s and %s", id, prev, objs[i].Path)
 		}
 		seen[id.Key()] = objs[i].Path
+	}
+	return nil
+}
+
+// crdLogicalIdentity is the cluster-scoped identity used for CRD duplicate
+// detection. A CRD's effective namespace is empty even when the raw YAML
+// sets metadata.namespace; that field is preserved on the object and is
+// not part of identity.
+func crdLogicalIdentity(o Object) Identity {
+	id := o.Identity()
+	id.Namespace = ""
+	return id
+}
+
+func checkDuplicateCRDs(crds []Object) error {
+	seen := make(map[string]string, len(crds))
+	for i := range crds {
+		id := crdLogicalIdentity(crds[i])
+		if prev, ok := seen[id.Key()]; ok {
+			return fmt.Errorf("duplicate object %s in %s and %s", id, prev, crds[i].Path)
+		}
+		seen[id.Key()] = crds[i].Path
 	}
 	return nil
 }

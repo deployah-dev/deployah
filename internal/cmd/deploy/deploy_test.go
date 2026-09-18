@@ -17,6 +17,7 @@ import (
 	"nabat.dev/nabat"
 	"nabat.dev/nabat/nabattest"
 
+	"deployah.dev/deployah/internal/extras"
 	"deployah.dev/deployah/internal/helm"
 	"deployah.dev/deployah/internal/k8s"
 	"deployah.dev/deployah/internal/render"
@@ -43,16 +44,20 @@ type stubHelmClient struct {
 
 	installErr       error
 	installCallCount int
+	lastCRDs         []extras.Object
+	lastSkipCRDs     bool
 }
 
 func (s *stubHelmClient) IsReachable() error { return nil }
 
-func (s *stubHelmClient) InstallApp(context.Context, bool, *spec.ResolvedSpec, postrenderer.PostRenderer) error {
+func (s *stubHelmClient) InstallApp(_ context.Context, _ bool, _ *spec.ResolvedSpec, _ postrenderer.PostRenderer, crds []extras.Object, skipCRDs bool) error {
 	s.installCallCount++
+	s.lastCRDs = crds
+	s.lastSkipCRDs = skipCRDs
 	return s.installErr
 }
 
-func (s *stubHelmClient) RenderManifests(context.Context, *spec.ResolvedSpec, postrenderer.PostRenderer) (*render.RenderResult, func(), error) {
+func (s *stubHelmClient) RenderManifests(context.Context, *spec.ResolvedSpec, postrenderer.PostRenderer, []extras.Object) (*render.RenderResult, func(), error) {
 	if s.renderErr != nil {
 		return nil, func() {}, s.renderErr
 	}
@@ -64,7 +69,7 @@ func (s *stubHelmClient) RenderManifests(context.Context, *spec.ResolvedSpec, po
 	return s.renderResults[i], func() {}, nil
 }
 
-func (s *stubHelmClient) RenderOffline(context.Context, *spec.ResolvedSpec, postrenderer.PostRenderer) (*render.RenderResult, func(), error) {
+func (s *stubHelmClient) RenderOffline(context.Context, *spec.ResolvedSpec, postrenderer.PostRenderer, []extras.Object) (*render.RenderResult, func(), error) {
 	panic("unexpected RenderOffline call")
 }
 

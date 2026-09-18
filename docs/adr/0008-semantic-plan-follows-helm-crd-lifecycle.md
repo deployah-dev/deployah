@@ -20,6 +20,16 @@ Helm applies chart `crds/` objects only on install, before ordinary
 release resources. With server-side apply enabled, that Create can
 apply an existing CRD rather than returning AlreadyExists.
 
+Deployah loads `.deployah/crds/` without mutating CRD metadata, copies
+those files into the per-invocation chart `crds/` directory, and lets
+Helm 4.3 Install process them. `--skip-crds` maps to Helm
+`Install.SkipCRDs`. Skip leaves the files in the chart. It is not a
+new HelmAction and invents no CRD lifecycle. Deployah does not
+Create, Apply, Replace, Patch, or Delete chart CRDs itself. Origin is
+tracked internally from `.deployah/crds/` / `Bundle.CRDs`. Deployah
+does not inject Deployah identity labels or annotations into chart
+CRDs.
+
 On install:
 
 - CRD absent: visible Create
@@ -52,3 +62,5 @@ ADR-0013.
 - Chart CRDs can change on install through Helm server-side apply.
   They do not change on upgrade. Operators who need a CRD change after
   the first install cannot get it from a Helm upgrade.
+- A first install with skip leaves chart CRDs uninstalled. Later
+  ordinary upgrades will not install them.

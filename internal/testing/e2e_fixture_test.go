@@ -127,8 +127,8 @@ parallel: false
 steps:
   - deploy:
       spec: deployah.yaml
-      args: [--crds, create]
-    stderrContains: already present
+      args: [--skip-crds]
+    stderrContains: Deployed
   - run:
       task: backfill
   - logs:

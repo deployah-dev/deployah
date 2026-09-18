@@ -91,17 +91,17 @@ func TestRenderOffline_RejectsNilResolved(t *testing.T) {
 	client, err := NewClient(WithNamespace("default"))
 	require.NoError(t, err)
 
-	_, _, err = client.RenderOffline(t.Context(), nil, nil)
+	_, _, err = client.RenderOffline(t.Context(), nil, nil, nil)
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "render requires resolved spec")
 
-	_, _, err = client.RenderOffline(t.Context(), &spec.ResolvedSpec{}, nil)
+	_, _, err = client.RenderOffline(t.Context(), &spec.ResolvedSpec{}, nil, nil)
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "render requires resolved spec source")
 
 	_, _, err = client.RenderOffline(t.Context(), &spec.ResolvedSpec{
 		Spec: &spec.Spec{Project: "shop"},
-	}, nil)
+	}, nil, nil)
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "spec.Resolve")
 }
@@ -119,7 +119,7 @@ func TestRenderOffline_ChartAndReleaseAgree(t *testing.T) {
 
 	client, err := NewClient(WithNamespace("default"))
 	require.NoError(t, err)
-	result, cleanup, err := client.RenderOffline(t.Context(), resolved, nil)
+	result, cleanup, err := client.RenderOffline(t.Context(), resolved, nil, nil)
 	require.NoError(t, err)
 	if cleanup != nil {
 		t.Cleanup(cleanup)
@@ -148,7 +148,7 @@ func TestPrepareChart_UsesResolvedEnvironment(t *testing.T) {
 	require.NoError(t, err)
 
 	cache := NewChartCache(time.Hour)
-	chartDir, err := PrepareChart(t.Context(), resolved, cache)
+	chartDir, err := PrepareChart(t.Context(), resolved, cache, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { removeChartDirs(t, cache, resolved, "staging", chartDir) })
 
@@ -177,7 +177,7 @@ func TestRenderOffline_WildcardEnvironmentLabels(t *testing.T) {
 
 	client, err := NewClient(WithNamespace("default"))
 	require.NoError(t, err)
-	result, cleanup, err := client.RenderOffline(t.Context(), resolved, nil)
+	result, cleanup, err := client.RenderOffline(t.Context(), resolved, nil, nil)
 	require.NoError(t, err)
 	if cleanup != nil {
 		t.Cleanup(cleanup)
@@ -235,17 +235,17 @@ func TestInstallApp_RejectsNilResolved(t *testing.T) {
 	client, err := NewClient(WithNamespace("default"))
 	require.NoError(t, err)
 
-	err = client.InstallApp(t.Context(), false, nil, nil)
+	err = client.InstallApp(t.Context(), false, nil, nil, nil, false)
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "render requires resolved spec")
 
-	err = client.InstallApp(t.Context(), false, &spec.ResolvedSpec{}, nil)
+	err = client.InstallApp(t.Context(), false, &spec.ResolvedSpec{}, nil, nil, false)
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "render requires resolved spec source")
 
 	err = client.InstallApp(t.Context(), false, &spec.ResolvedSpec{
 		Spec: &spec.Spec{Project: "shop"},
-	}, nil)
+	}, nil, nil, false)
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "spec.Resolve")
 }

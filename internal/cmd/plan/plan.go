@@ -178,7 +178,7 @@ func runOffline(c *nabat.Context, sess *session.Session, platform *spec.Platform
 	}
 	postRenderer := bundle.PostRendererFor()
 
-	result, cleanup, err := helmClient.RenderOffline(c, resolvedSpec, postRenderer)
+	result, cleanup, err := helmClient.RenderOffline(c, resolvedSpec, postRenderer, bundle.CRDs)
 	if cleanup != nil {
 		defer cleanup()
 	}
@@ -193,7 +193,7 @@ func runOffline(c *nabat.Context, sess *session.Session, platform *spec.Platform
 
 	c.Println(fmt.Sprintf("Rendered %d resources for environment '%s' (no cluster comparison).", count, opts.Environment))
 	if n := len(bundle.CRDs); n > 0 {
-		c.Printf("CRDs: %d pending from .deployah/crds/ (not applied in plan)\n", n)
+		c.Printf("CRDs: %d from .deployah/crds/\n", n)
 	}
 	c.Println("validation: OK")
 	return nil
@@ -249,14 +249,14 @@ func runOnline(c *nabat.Context, sess *session.Session, platform *spec.PlatformC
 	}
 	postRenderer := bundle.PostRendererFor()
 
-	p, result, cleanup, err := planengine.BuildPlan(c, helmClient, cluster.Context(), resolvedSpec, postRenderer)
+	p, result, cleanup, err := planengine.BuildPlan(c, helmClient, cluster.Context(), resolvedSpec, postRenderer, bundle.CRDs)
 	defer cleanup()
 	if err != nil {
 		return fmt.Errorf("%w%s", err, cmdopts.ClusterHint(err))
 	}
 
 	if n := len(bundle.CRDs); n > 0 {
-		c.Printf("CRDs: %d pending from .deployah/crds/ (not applied in plan)\n", n)
+		c.Printf("CRDs: %d from .deployah/crds/\n", n)
 	}
 
 	if opts.Drift {

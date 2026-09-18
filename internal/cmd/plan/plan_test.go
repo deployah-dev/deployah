@@ -32,6 +32,7 @@ import (
 	"nabat.dev/nabat"
 	"nabat.dev/nabat/nabattest"
 
+	"deployah.dev/deployah/internal/extras"
 	"deployah.dev/deployah/internal/helm"
 	"deployah.dev/deployah/internal/render"
 	"deployah.dev/deployah/internal/session"
@@ -62,14 +63,14 @@ type stubHelmClient struct {
 
 func (s *stubHelmClient) IsReachable() error { return s.reachableErr }
 
-func (s *stubHelmClient) RenderManifests(context.Context, *spec.ResolvedSpec, postrenderer.PostRenderer) (*render.RenderResult, func(), error) {
+func (s *stubHelmClient) RenderManifests(context.Context, *spec.ResolvedSpec, postrenderer.PostRenderer, []extras.Object) (*render.RenderResult, func(), error) {
 	if s.renderErr != nil {
 		return nil, nil, s.renderErr
 	}
 	return s.renderResult, func() {}, nil
 }
 
-func (s *stubHelmClient) RenderOffline(context.Context, *spec.ResolvedSpec, postrenderer.PostRenderer) (*render.RenderResult, func(), error) {
+func (s *stubHelmClient) RenderOffline(context.Context, *spec.ResolvedSpec, postrenderer.PostRenderer, []extras.Object) (*render.RenderResult, func(), error) {
 	if s.offlineErr != nil {
 		return nil, nil, s.offlineErr
 	}
@@ -83,7 +84,7 @@ func (s *stubHelmClient) GetReleaseHistory(context.Context, string, string) ([]*
 	return s.history, nil
 }
 
-func (s *stubHelmClient) InstallApp(context.Context, bool, *spec.ResolvedSpec, postrenderer.PostRenderer) error {
+func (s *stubHelmClient) InstallApp(context.Context, bool, *spec.ResolvedSpec, postrenderer.PostRenderer, []extras.Object, bool) error {
 	panic("unexpected InstallApp call")
 }
 
@@ -410,8 +411,8 @@ func writePlanExtras(t *testing.T, dir, relative, content string) {
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
 }
 
-// TestRunOffline_PrintsPendingCRDs notes CRDs that plan will not apply.
-func TestRunOffline_PrintsPendingCRDs(t *testing.T) {
+// TestRunOffline_PrintsCRDs notes CRDs loaded from .deployah/crds/.
+func TestRunOffline_PrintsCRDs(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	specPath := filepath.Join(dir, "deployah.yaml")
@@ -448,7 +449,8 @@ spec:
 
 	err := runOffline(c, sess, nil, testManifest(), opts, nil)
 	require.NoError(t, err)
-	assert.Contains(t, out.String(), "CRDs: 1 pending from .deployah/crds/")
+	assert.Contains(t, out.String(), "CRDs: 1 from .deployah/crds/")
+	assert.NotContains(t, out.String(), "pending")
 }
 
 // TestRunOffline_LoadExtrasError fails when .deployah YAML is invalid.
@@ -474,8 +476,8 @@ func TestRunOffline_LoadExtrasError(t *testing.T) {
 	assert.Contains(t, err.Error(), "load extras")
 }
 
-// TestRunOnline_PrintsPendingCRDs notes CRDs ahead of the plan diff.
-func TestRunOnline_PrintsPendingCRDs(t *testing.T) {
+// TestRunOnline_PrintsCRDs notes CRDs ahead of the plan diff.
+func TestRunOnline_PrintsCRDs(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	specPath := filepath.Join(dir, "deployah.yaml")
@@ -514,7 +516,8 @@ spec:
 
 	err := runOnline(c, sess, nil, testManifest(), testOptions(), testResolved(nil))
 	require.NoError(t, err)
-	assert.Contains(t, out.String(), "CRDs: 1 pending from .deployah/crds/")
+	assert.Contains(t, out.String(), "CRDs: 1 from .deployah/crds/")
+	assert.NotContains(t, out.String(), "pending")
 }
 
 func TestRunOnline_MetricsRequiresPrometheusOperatorAPI(t *testing.T) {

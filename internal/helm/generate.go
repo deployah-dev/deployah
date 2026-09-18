@@ -20,6 +20,7 @@ import (
 	"go.yaml.in/yaml/v3"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
+	"deployah.dev/deployah/internal/extras"
 	"deployah.dev/deployah/internal/spec"
 
 	sprig "github.com/Masterminds/sprig/v3"
@@ -186,11 +187,15 @@ func releaseIdentity(resolved *spec.ResolvedSpec) (string, map[string]string, er
 // returns the chart root. Identical charts are reused via cache. A nil or
 // unresolved spec is an error; cache must be non-nil.
 //
+// crds are written into the returned copy under crds/, using each object's
+// source file name. The cached backing chart stays CRD-free. A nil or empty
+// crds slice writes no crds/ directory.
+//
 // If ctx is already canceled, PrepareChart returns [context.Canceled] or
 // [context.DeadlineExceeded] immediately. On a cache miss, every 10th
 // entry may start a background goroutine that removes expired cache
 // directories.
-func PrepareChart(ctx context.Context, resolved *spec.ResolvedSpec, cache *ChartCache) (string, error) {
+func PrepareChart(ctx context.Context, resolved *spec.ResolvedSpec, cache *ChartCache, crds []extras.Object) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -209,8 +214,7 @@ func PrepareChart(ctx context.Context, resolved *spec.ResolvedSpec, cache *Chart
 	}
 
 	if cachedPath, found := cache.get(cacheKey); found {
-		// Return a copy of the cached chart to avoid conflicts with cleanup
-		return createChartCopy(cachedPath)
+		return copyChartWithCRDs(cachedPath, crds)
 	}
 
 	// Cleanup expired cache entries periodically (every 10th call)
@@ -334,7 +338,7 @@ func PrepareChart(ctx context.Context, resolved *spec.ResolvedSpec, cache *Chart
 	// entry survives caller cleanup.
 	cache.set(cacheKey, tmpDir)
 
-	return createChartCopy(tmpDir)
+	return copyChartWithCRDs(tmpDir, crds)
 }
 
 // createComponentSubCharts writes a sub-chart for each name. Names not in

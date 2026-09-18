@@ -217,32 +217,72 @@ func TestDiscoveryResolver_MapperHitAndFallback(t *testing.T) {
 	assert.True(t, known, "unknown to mapper still known via table CRDScope")
 }
 
-// TestGroupVersionsFromCRDs_MalformedSkipped ignores incomplete CRD objects.
-func TestGroupVersionsFromCRDs_MalformedSkipped(t *testing.T) {
+// TestGroupVersionsFromCRDs_IgnoresUnserved skips malformed versions and
+// counts only boolean served:true entries.
+func TestGroupVersionsFromCRDs_IgnoresUnserved(t *testing.T) {
 	t.Parallel()
-	crds := []extras.Object{
-		{Obj: &unstructured.Unstructured{Object: map[string]any{
-			"spec": map[string]any{"group": "example.com"},
-		}}},
-		{Obj: &unstructured.Unstructured{Object: map[string]any{
-			"spec": map[string]any{
-				"group":    "example.com",
-				"versions": []any{"v1", map[string]any{"name": ""}},
+	tests := []struct {
+		name string
+		crds []extras.Object
+		want map[string]struct{}
+	}{
+		{
+			name: "malformed skipped",
+			crds: []extras.Object{
+				{Obj: &unstructured.Unstructured{Object: map[string]any{
+					"spec": map[string]any{"group": "example.com"},
+				}}},
+				{Obj: &unstructured.Unstructured{Object: map[string]any{
+					"spec": map[string]any{
+						"group":    "example.com",
+						"versions": []any{"v1", map[string]any{"name": ""}},
+					},
+				}}},
+				{Obj: &unstructured.Unstructured{Object: map[string]any{
+					"spec": map[string]any{
+						"group": "ok.io",
+						"versions": []any{
+							map[string]any{"name": "v1"},
+							map[string]any{"name": "v2beta1"},
+						},
+					},
+				}}},
 			},
-		}}},
-		{Obj: &unstructured.Unstructured{Object: map[string]any{
-			"spec": map[string]any{
-				"group": "ok.io",
-				"versions": []any{
-					map[string]any{"name": "v1"},
-					map[string]any{"name": "v2beta1"},
-				},
+			want: map[string]struct{}{},
+		},
+		{
+			name: "boolean served true only",
+			crds: []extras.Object{
+				{Obj: &unstructured.Unstructured{Object: map[string]any{
+					"spec": map[string]any{
+						"group": "example.com",
+						"versions": []any{
+							map[string]any{"name": "v1", "served": true},
+							map[string]any{"name": "v1beta1", "served": false, "storage": true},
+						},
+					},
+				}}},
+				{Obj: &unstructured.Unstructured{Object: map[string]any{
+					"spec": map[string]any{
+						"group": "other.io",
+						"versions": []any{
+							map[string]any{"name": "v2", "served": true},
+							map[string]any{"name": "v2alpha1", "served": "true"},
+							map[string]any{"name": "v2beta1"},
+						},
+					},
+				}}},
 			},
-		}}},
+			want: map[string]struct{}{
+				"example.com/v1": {},
+				"other.io/v2":    {},
+			},
+		},
 	}
-	gvs := extras.GroupVersionsFromCRDs(crds)
-	assert.Equal(t, map[string]struct{}{
-		"ok.io/v1":      {},
-		"ok.io/v2beta1": {},
-	}, gvs)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, extras.GroupVersionsFromCRDs(tc.crds))
+		})
+	}
 }

@@ -174,7 +174,7 @@ func TestPrepareChart_ChartYAMLImportsOnlySubCharts(t *testing.T) {
 	cache := NewChartCache(time.Hour)
 	const environment = "dev"
 	resolved := resolveChart(t, m, environment)
-	chartDir, err := PrepareChart(t.Context(), resolved, cache)
+	chartDir, err := PrepareChart(t.Context(), resolved, cache, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { removeChartDirs(t, cache, resolved, environment, chartDir) })
 
@@ -552,7 +552,7 @@ func renderHookJob(t *testing.T, manifest *spec.Spec, env, taskName string) *bat
 
 	client, err := NewClient(WithNamespace("default"))
 	require.NoError(t, err)
-	result, cleanup, err := client.RenderOffline(t.Context(), resolved, nil)
+	result, cleanup, err := client.RenderOffline(t.Context(), resolved, nil, nil)
 	require.NoError(t, err)
 	if cleanup != nil {
 		t.Cleanup(cleanup)

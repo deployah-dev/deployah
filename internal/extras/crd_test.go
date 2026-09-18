@@ -15,117 +15,13 @@
 package extras
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
-	"sync"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/rest"
-
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
-
-type fakeCRDClient struct {
-	mu       sync.Mutex
-	objects  map[string]*apiextensionsv1.CustomResourceDefinition
-	creates  int
-	applies  int
-	getCalls int
-	// establishAfterNGets makes Established true after N Get calls per name.
-	establishAfterNGets int
-	getsPerName         map[string]int
-	// failGetAfter, when > 0, makes Get return an API error after that many calls.
-	failGetAfter int
-	lastPatch    []byte
-	createErr    error
-	applyErr     error
-	getErr       error
-}
-
-func newFakeCRDClient() *fakeCRDClient {
-	return &fakeCRDClient{
-		objects:     make(map[string]*apiextensionsv1.CustomResourceDefinition),
-		getsPerName: make(map[string]int),
-	}
-}
-
-func (f *fakeCRDClient) Create(_ context.Context, crd *apiextensionsv1.CustomResourceDefinition, _ metav1.CreateOptions) (*apiextensionsv1.CustomResourceDefinition, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.createErr != nil {
-		return nil, f.createErr
-	}
-	if _, ok := f.objects[crd.Name]; ok {
-		return nil, apierrors.NewAlreadyExists(schema.GroupResource{Group: "apiextensions.k8s.io", Resource: "customresourcedefinitions"}, crd.Name)
-	}
-	cp := crd.DeepCopy()
-	f.objects[crd.Name] = cp
-	f.creates++
-	return cp.DeepCopy(), nil
-}
-
-func (f *fakeCRDClient) Apply(_ context.Context, name string, patch []byte) (*apiextensionsv1.CustomResourceDefinition, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.applyErr != nil {
-		return nil, f.applyErr
-	}
-	var obj map[string]any
-	if err := json.Unmarshal(patch, &obj); err != nil {
-		return nil, err
-	}
-	if _, hasStatus := obj["status"]; hasStatus {
-		return nil, errors.New("apply patch must not include status")
-	}
-	if meta, ok := obj["metadata"].(map[string]any); ok {
-		if _, has := meta["managedFields"]; has {
-			return nil, errors.New("apply patch must not include managedFields")
-		}
-		if _, has := meta["resourceVersion"]; has {
-			return nil, errors.New("apply patch must not include resourceVersion")
-		}
-	}
-	f.lastPatch = append([]byte(nil), patch...)
-	crd := &apiextensionsv1.CustomResourceDefinition{
-		Name: name,
-	}
-	f.objects[name] = crd
-	f.applies++
-	return crd.DeepCopy(), nil
-}
-
-func (f *fakeCRDClient) Get(_ context.Context, name string, _ metav1.GetOptions) (*apiextensionsv1.CustomResourceDefinition, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.getCalls++
-	if f.getErr != nil {
-		return nil, f.getErr
-	}
-	if f.failGetAfter > 0 && f.getCalls > f.failGetAfter {
-		return nil, errors.New("api unavailable")
-	}
-	obj, ok := f.objects[name]
-	if !ok {
-		return nil, apierrors.NewNotFound(schema.GroupResource{Group: "apiextensions.k8s.io", Resource: "customresourcedefinitions"}, name)
-	}
-	cp := obj.DeepCopy()
-	f.getsPerName[name]++
-	if f.establishAfterNGets <= 0 || f.getsPerName[name] >= f.establishAfterNGets {
-		cp.Status.Conditions = []apiextensionsv1.CustomResourceDefinitionCondition{{
-			Type:   apiextensionsv1.Established,
-			Status: apiextensionsv1.ConditionTrue,
-		}}
-	}
-	return cp, nil
-}
 
 func sampleCRDObject(t *testing.T, name string) Object {
 	t.Helper()
@@ -168,171 +64,37 @@ func sampleCRDObject(t *testing.T, name string) Object {
 	return o
 }
 
-// TestApplyCRDs_CreateIfMissing exercises extras package behavior.
-func TestApplyCRDs_CreateIfMissing(t *testing.T) {
-	t.Parallel()
-
-	client := newFakeCRDClient()
-	client.establishAfterNGets = 1
-	existing := &apiextensionsv1.CustomResourceDefinition{
-		Name: "existing.example.com", ResourceVersion: "1",
-	}
-	client.objects[existing.Name] = existing
-
-	stats, err := applyCRDs(t.Context(), client, []Object{
-		sampleCRDObject(t, "existing.example.com"),
-		sampleCRDObject(t, "new.example.com"),
-	}, PolicyCreate, 2*time.Second)
-	require.NoError(t, err)
-	assert.Equal(t, 1, client.creates)
-	assert.Equal(t, 0, client.applies)
-	assert.Equal(t, 1, stats.Created)
-	assert.Equal(t, 0, stats.Replaced)
-	assert.Equal(t, 2, stats.Ready)
-	assert.Contains(t, client.objects, "new.example.com")
-}
-
-// TestApplyCRDs_CreateReplace exercises extras package behavior.
-func TestApplyCRDs_CreateReplace(t *testing.T) {
+func TestDecodeCRD_RejectsInvalidYAMLAndEmptyName(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name    string
-		objects map[string]*apiextensionsv1.CustomResourceDefinition
-		want    CRDStats
+		obj     Object
+		wantErr string
 	}{
 		{
-			name: "existing CRD",
-			objects: map[string]*apiextensionsv1.CustomResourceDefinition{
-				"widgets.example.com": {
-					ObjectMeta: metav1.ObjectMeta{Name: "widgets.example.com", ResourceVersion: "7"},
-				},
-			},
-			want: CRDStats{Replaced: 1, Ready: 1},
+			name:    "invalid yaml",
+			obj:     Object{Path: "bad.yaml", Raw: []byte("not: [valid")},
+			wantErr: "decode CRD",
 		},
 		{
-			name:    "missing CRD",
-			objects: make(map[string]*apiextensionsv1.CustomResourceDefinition),
-			want:    CRDStats{Created: 1, Ready: 1},
+			name: "empty metadata.name",
+			obj: Object{Path: "noname.yaml", Raw: []byte(`apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata: {}
+spec:
+  group: example.com
+`)},
+			wantErr: "metadata.name is empty",
 		},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			client := newFakeCRDClient()
-			client.establishAfterNGets = 1
-			client.objects = tt.objects
-
-			stats, err := applyCRDs(t.Context(), client, []Object{
-				sampleCRDObject(t, "widgets.example.com"),
-			}, PolicyCreateReplace, 2*time.Second)
-			require.NoError(t, err)
-			assert.Equal(t, 0, client.creates)
-			assert.Equal(t, 1, client.applies)
-			assert.Equal(t, tt.want, stats)
-			assert.Contains(t, client.objects, "widgets.example.com")
-			require.NotEmpty(t, client.lastPatch)
-			assert.NotContains(t, string(client.lastPatch), `"status"`)
-			assert.NotContains(t, string(client.lastPatch), `"managedFields"`)
-			assert.NotContains(t, string(client.lastPatch), `"resourceVersion"`)
+			_, err := DecodeCRD(tc.obj)
+			require.Error(t, err)
+			assert.ErrorContains(t, err, tc.wantErr)
 		})
 	}
-}
-
-// TestApplyCRDs_WaitsForEstablished exercises extras package behavior.
-func TestApplyCRDs_WaitsForEstablished(t *testing.T) {
-	t.Parallel()
-
-	client := newFakeCRDClient()
-	client.establishAfterNGets = 3
-
-	_, err := applyCRDs(t.Context(), client, []Object{
-		sampleCRDObject(t, "slow.example.com"),
-	}, PolicyCreate, 2*time.Second)
-	require.NoError(t, err)
-	assert.GreaterOrEqual(t, client.getsPerName["slow.example.com"], 3)
-}
-
-// TestApplyCRDs_Timeout exercises extras package behavior.
-func TestApplyCRDs_Timeout(t *testing.T) {
-	t.Parallel()
-
-	client := newFakeCRDClient()
-	client.establishAfterNGets = 1_000_000
-
-	_, err := applyCRDs(t.Context(), client, []Object{
-		sampleCRDObject(t, "never.example.com"),
-	}, PolicyCreate, 300*time.Millisecond)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "timed out")
-}
-
-// TestApplyCRDs_WaitAPIError exercises extras package behavior.
-func TestApplyCRDs_WaitAPIError(t *testing.T) {
-	t.Parallel()
-
-	client := newFakeCRDClient()
-	client.objects["broken.example.com"] = &apiextensionsv1.CustomResourceDefinition{
-		Name: "broken.example.com",
-	}
-	client.failGetAfter = 1
-
-	_, err := applyCRDs(t.Context(), client, []Object{
-		sampleCRDObject(t, "broken.example.com"),
-	}, PolicyCreate, time.Second)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "wait for CRD")
-	assert.NotContains(t, err.Error(), "timed out")
-}
-
-// TestApplyCRDs_Canceled exercises extras package behavior.
-func TestApplyCRDs_Canceled(t *testing.T) {
-	t.Parallel()
-
-	client := newFakeCRDClient()
-	client.establishAfterNGets = 1_000_000
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-
-	_, err := applyCRDs(ctx, client, []Object{
-		sampleCRDObject(t, "cancel.example.com"),
-	}, PolicyCreate, time.Second)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "canceled")
-	assert.NotContains(t, err.Error(), "timed out")
-}
-
-// TestApplyCRDs_EmptyNoop exercises extras package behavior.
-func TestApplyCRDs_EmptyNoop(t *testing.T) {
-	t.Parallel()
-
-	client := newFakeCRDClient()
-	stats, err := applyCRDs(t.Context(), client, nil, PolicyCreate, time.Second)
-	require.NoError(t, err)
-	assert.Equal(t, 0, client.creates)
-	assert.Equal(t, CRDStats{}, stats)
-}
-
-// TestSSAPatchFromObject_StripsServerFields exercises extras package behavior.
-func TestSSAPatchFromObject_StripsServerFields(t *testing.T) {
-	t.Parallel()
-
-	o := sampleCRDObject(t, "widgets.example.com")
-	patch, err := ssaPatchFromObject(o)
-	require.NoError(t, err)
-	var obj map[string]any
-	require.NoError(t, json.Unmarshal(patch, &obj))
-	_, hasStatus := obj["status"]
-	assert.False(t, hasStatus)
-	meta, ok := obj["metadata"].(map[string]any)
-	require.True(t, ok)
-	_, hasMF := meta["managedFields"]
-	assert.False(t, hasMF)
-	_, hasRV := meta["resourceVersion"]
-	assert.False(t, hasRV)
-	assert.Equal(t, "widgets.example.com", meta["name"])
-	spec, ok := obj["spec"].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "example.com", spec["group"])
 }
 
 func TestApplyObject_StripsServerFields(t *testing.T) {
@@ -341,24 +103,24 @@ func TestApplyObject_StripsServerFields(t *testing.T) {
 	o := sampleCRDObject(t, "widgets.example.com")
 	u, err := ApplyObject(o)
 	require.NoError(t, err)
-	_, hasStatus := u.Object["status"]
-	assert.False(t, hasStatus)
-	meta, ok := u.Object["metadata"].(map[string]any)
-	require.True(t, ok)
-	_, hasMF := meta["managedFields"]
-	assert.False(t, hasMF)
-	_, hasRV := meta["resourceVersion"]
-	assert.False(t, hasRV)
-	assert.Equal(t, "widgets.example.com", meta["name"])
-	spec, ok := u.Object["spec"].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "example.com", spec["group"])
-
-	patch, err := json.Marshal(u.Object)
+	got, err := json.Marshal(u.Object)
 	require.NoError(t, err)
-	fromHelper, err := ssaPatchFromObject(o)
-	require.NoError(t, err)
-	assert.JSONEq(t, string(patch), string(fromHelper))
+	assert.JSONEq(t, `{
+		"apiVersion": "apiextensions.k8s.io/v1",
+		"kind": "CustomResourceDefinition",
+		"metadata": {"name": "widgets.example.com"},
+		"spec": {
+			"group": "example.com",
+			"scope": "Namespaced",
+			"names": {"kind": "Widget", "plural": "widgets"},
+			"versions": [{
+				"name": "v1",
+				"served": true,
+				"storage": true,
+				"schema": {"openAPIV3Schema": {"type": "object"}}
+			}]
+		}
+	}`, string(got))
 }
 
 func TestCreateObject_UsesTypedDecode(t *testing.T) {
@@ -373,127 +135,4 @@ func TestCreateObject_UsesTypedDecode(t *testing.T) {
 	assert.Equal(t, "CustomResourceDefinition", u.GetKind())
 	assert.Equal(t, typed.Name, u.GetName())
 	assert.Equal(t, "deployah", CRDFieldManager)
-}
-
-func TestApplyCRDs_EmptyExportedNoop(t *testing.T) {
-	t.Parallel()
-	stats, err := ApplyCRDs(t.Context(), nil, nil, PolicyCreate, time.Second)
-	require.NoError(t, err)
-	assert.Equal(t, CRDStats{}, stats)
-}
-
-// TestApplyCRDs_ExportedGuardErrors covers the public ApplyCRDs errors that
-// occur before constructing a Kubernetes client.
-func TestApplyCRDs_ExportedGuardErrors(t *testing.T) {
-	t.Parallel()
-	crd := sampleCRDObject(t, "widgets.example.com")
-	tests := []struct {
-		name    string
-		config  *rest.Config
-		objects []Object
-		policy  Policy
-		wantErr string
-	}{
-		{
-			name:    "missing cluster configuration",
-			objects: []Object{crd},
-			policy:  PolicyCreate,
-			wantErr: "cluster configuration is required",
-		},
-		{
-			name:    "unknown policy",
-			config:  &rest.Config{Host: "https://127.0.0.1:1"},
-			objects: []Object{crd},
-			policy:  Policy("nope"),
-			wantErr: "unknown CRD policy",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			_, err := ApplyCRDs(t.Context(), tt.config, tt.objects, tt.policy, time.Second)
-			require.Error(t, err)
-			assert.ErrorContains(t, err, tt.wantErr)
-		})
-	}
-}
-
-// TestApplyCRDs_DecodeAndClientErrors covers decode/get/create/apply failures.
-func TestApplyCRDs_DecodeAndClientErrors(t *testing.T) {
-	t.Parallel()
-
-	t.Run("decode error", func(t *testing.T) {
-		t.Parallel()
-		client := newFakeCRDClient()
-		_, err := applyCRDs(t.Context(), client, []Object{{
-			Path: "bad.yaml",
-			Raw:  []byte("not: [valid"),
-		}}, PolicyCreate, time.Second)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "decode CRD")
-	})
-
-	t.Run("empty name", func(t *testing.T) {
-		t.Parallel()
-
-		client := newFakeCRDClient()
-		_, err := applyCRDs(t.Context(), client, []Object{{
-			Path: "noname.yaml",
-			Raw: []byte(`apiVersion: apiextensions.k8s.io/v1
-kind: CustomResourceDefinition
-metadata: {}
-spec:
-  group: example.com
-`),
-		}}, PolicyCreate, time.Second)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "metadata.name is empty")
-	})
-
-	t.Run("get error", func(t *testing.T) {
-		t.Parallel()
-		client := newFakeCRDClient()
-		client.getErr = errors.New("forbidden")
-		_, err := applyCRDs(t.Context(), client, []Object{
-			sampleCRDObject(t, "widgets.example.com"),
-		}, PolicyCreate, time.Second)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "get CRD")
-	})
-
-	t.Run("create error", func(t *testing.T) {
-		t.Parallel()
-		client := newFakeCRDClient()
-		client.createErr = errors.New("quota exceeded")
-		_, err := applyCRDs(t.Context(), client, []Object{
-			sampleCRDObject(t, "widgets.example.com"),
-		}, PolicyCreate, time.Second)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "create CRD")
-	})
-
-	t.Run("apply error on missing", func(t *testing.T) {
-		t.Parallel()
-		client := newFakeCRDClient()
-		client.applyErr = errors.New("ssa rejected")
-		_, err := applyCRDs(t.Context(), client, []Object{
-			sampleCRDObject(t, "widgets.example.com"),
-		}, PolicyCreateReplace, time.Second)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "apply CRD")
-	})
-
-	t.Run("replace error on existing", func(t *testing.T) {
-		t.Parallel()
-		client := newFakeCRDClient()
-		client.objects["widgets.example.com"] = &apiextensionsv1.CustomResourceDefinition{
-			Name: "widgets.example.com",
-		}
-		client.applyErr = errors.New("ssa rejected")
-		_, err := applyCRDs(t.Context(), client, []Object{
-			sampleCRDObject(t, "widgets.example.com"),
-		}, PolicyCreateReplace, time.Second)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "replace CRD")
-	})
 }

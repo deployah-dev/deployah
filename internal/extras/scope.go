@@ -231,9 +231,10 @@ func scopeFromCRDObjects(crds []Object) map[string]bool {
 	return out
 }
 
-// GroupVersionsFromCRDs returns the set of "group/version" strings declared by
-// the given CRD objects (every entry under spec.versions). Used to skip
-// required-API checks for APIs this deploy is about to install.
+// GroupVersionsFromCRDs returns the set of "group/version" strings a Helm
+// install could supply from the given CRD objects. Only spec.versions
+// entries with boolean served=true are included. Missing, non-boolean, or
+// false served values do not count. storage is ignored.
 func GroupVersionsFromCRDs(crds []Object) map[string]struct{} {
 	out := make(map[string]struct{})
 	for i := range crds {
@@ -252,6 +253,10 @@ func GroupVersionsFromCRDs(crds []Object) map[string]struct{} {
 			}
 			name, isString := vm["name"].(string)
 			if !isString || name == "" {
+				continue
+			}
+			served, isBool := vm["served"].(bool)
+			if !isBool || !served {
 				continue
 			}
 			out[group+"/"+name] = struct{}{}

@@ -21,6 +21,7 @@ import (
 
 	"helm.sh/helm/v4/pkg/postrenderer"
 
+	"deployah.dev/deployah/internal/extras"
 	"deployah.dev/deployah/internal/render"
 	"deployah.dev/deployah/internal/spec"
 
@@ -34,7 +35,7 @@ import (
 // internal/session and tests can inject a minimal fake.
 type BuildClient interface {
 	historyClient
-	RenderManifests(ctx context.Context, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) (*render.RenderResult, func(), error)
+	RenderManifests(ctx context.Context, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer, crds []extras.Object) (*render.RenderResult, func(), error)
 }
 
 // BuildPlan renders [spec.ResolvedSpec] via client and diffs the result
@@ -48,14 +49,15 @@ type BuildClient interface {
 // result.ChartPath (same contract as [helm.Client.RenderManifests]). On
 // error, cleanup is still returned when a chart was prepared and must be
 // called. postRenderer, when non-nil, is forwarded to RenderManifests so
-// extras appear in the diff.
-func BuildPlan(ctx context.Context, client BuildClient, clusterContext string, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) (*Plan, *render.RenderResult, func(), error) {
+// extras appear in the diff. crds are written into the per-invocation
+// chart copy so Helm sees the same files as apply.
+func BuildPlan(ctx context.Context, client BuildClient, clusterContext string, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer, crds []extras.Object) (*Plan, *render.RenderResult, func(), error) {
 	if resolved == nil || resolved.Spec == nil {
 		return nil, nil, func() {}, fmt.Errorf("plan requires resolved spec; call spec.Resolve first")
 	}
 	manifest := resolved.Spec
 	environment := resolved.Env.Original
-	result, cleanup, err := client.RenderManifests(ctx, resolved, postRenderer)
+	result, cleanup, err := client.RenderManifests(ctx, resolved, postRenderer, crds)
 	if cleanup == nil {
 		cleanup = func() {}
 	}

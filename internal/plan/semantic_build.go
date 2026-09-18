@@ -38,6 +38,7 @@ type SemanticBuildClient interface {
 		ctx context.Context,
 		resolved *spec.ResolvedSpec,
 		postRenderer postrenderer.PostRenderer,
+		crds []extras.Object,
 	) (*render.RenderResult, helm.ReleasePrep, func(), error)
 }
 
@@ -94,7 +95,7 @@ func BuildSemanticPlan(
 		return semantic.Plan{}, nil, cleanup, fmt.Errorf("semantic plan requires a cluster")
 	}
 
-	result, prep, renderCleanup, err := client.RenderManifestsWithPrep(ctx, input.Resolved, input.PostRenderer)
+	result, prep, renderCleanup, err := client.RenderManifestsWithPrep(ctx, input.Resolved, input.PostRenderer, input.CRDs)
 	if renderCleanup != nil {
 		cleanup = renderCleanup
 	}

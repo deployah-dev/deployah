@@ -43,10 +43,34 @@ func TestNewInstallAction_ServerSideApply(t *testing.T) {
 		namespace: "default",
 		timeout:   time.Minute,
 	}
-	got := c.newInstallAction("web-production", nil, nil)
+	got := c.newInstallAction("web-production", nil, nil, false)
 	assert.True(t, got.ServerSideApply)
 	assert.False(t, got.ForceConflicts)
 	assert.False(t, got.TakeOwnership)
+	assert.False(t, got.SkipCRDs)
+}
+
+func TestNewInstallAction_SkipCRDs(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		skip bool
+	}{
+		{name: "skip false"},
+		{name: "skip true", skip: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c := &Client{
+				config:    new(action.Configuration),
+				namespace: "default",
+				timeout:   time.Minute,
+			}
+			got := c.newInstallAction("web-production", nil, nil, tc.skip)
+			assert.Equal(t, tc.skip, got.SkipCRDs)
+		})
+	}
 }
 
 func TestNewUpgradeAction_ServerSideApply(t *testing.T) {
@@ -61,6 +85,7 @@ func TestNewUpgradeAction_ServerSideApply(t *testing.T) {
 	assert.Equal(t, "true", got.ServerSideApply)
 	assert.False(t, got.ForceConflicts)
 	assert.False(t, got.TakeOwnership)
+	assert.False(t, got.SkipCRDs)
 }
 
 func TestInstallApp_RejectsUnsupportedCSAHistory(t *testing.T) {
@@ -69,7 +94,7 @@ func TestInstallApp_RejectsUnsupportedCSAHistory(t *testing.T) {
 	c, cfg, resolved, releaseName := memoryHelmApp(t, "csa-app")
 	seedRelease(t, cfg, releaseName, 1, common.StatusDeployed, applyCSA)
 
-	err := c.InstallApp(t.Context(), false, resolved, nil)
+	err := c.InstallApp(t.Context(), false, resolved, nil, nil, false)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUnsupportedReleaseApplyMethod)
 	assert.Equal(t, 1, historyLen(t, cfg, releaseName))
@@ -81,7 +106,7 @@ func TestRenderManifests_RejectsUnsupportedCSAHistory(t *testing.T) {
 	c, cfg, resolved, releaseName := memoryHelmApp(t, "csa-render")
 	seedRelease(t, cfg, releaseName, 1, common.StatusDeployed, applyCSA)
 
-	_, cleanup, err := c.RenderManifests(t.Context(), resolved, nil)
+	_, cleanup, err := c.RenderManifests(t.Context(), resolved, nil, nil)
 	if cleanup != nil {
 		t.Cleanup(cleanup)
 	}
@@ -96,7 +121,7 @@ func TestInstallApp_NewestSSACurrentCSAIsRejected(t *testing.T) {
 	seedRelease(t, cfg, releaseName, 1, common.StatusDeployed, applyCSA)
 	seedRelease(t, cfg, releaseName, 2, common.StatusFailed, applySSA)
 
-	err := c.InstallApp(t.Context(), false, resolved, nil)
+	err := c.InstallApp(t.Context(), false, resolved, nil, nil, false)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUnsupportedReleaseApplyMethod)
 	assert.Equal(t, 2, historyLen(t, cfg, releaseName))
@@ -109,7 +134,7 @@ func TestRenderManifests_NewestSSACurrentCSAIsRejected(t *testing.T) {
 	seedRelease(t, cfg, releaseName, 1, common.StatusDeployed, applyCSA)
 	seedRelease(t, cfg, releaseName, 2, common.StatusFailed, applySSA)
 
-	_, cleanup, err := c.RenderManifests(t.Context(), resolved, nil)
+	_, cleanup, err := c.RenderManifests(t.Context(), resolved, nil, nil)
 	if cleanup != nil {
 		t.Cleanup(cleanup)
 	}
@@ -126,7 +151,7 @@ func TestInstallApp_HistoryErrorIsNotInstall(t *testing.T) {
 	failing.Out = io.Discard
 	cfg.KubeClient = failing
 
-	err := c.InstallApp(t.Context(), false, resolved, nil)
+	err := c.InstallApp(t.Context(), false, resolved, nil, nil, false)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, histErr)
 	assert.NotErrorIs(t, err, ErrUnsupportedReleaseApplyMethod)
@@ -143,7 +168,7 @@ func TestRenderManifests_HistoryErrorIsNotInstall(t *testing.T) {
 	failing.Out = io.Discard
 	cfg.KubeClient = failing
 
-	_, cleanup, err := c.RenderManifests(t.Context(), resolved, nil)
+	_, cleanup, err := c.RenderManifests(t.Context(), resolved, nil, nil)
 	if cleanup != nil {
 		t.Cleanup(cleanup)
 	}
@@ -158,7 +183,7 @@ func TestInstallApp_MissingReleaseIsInstall(t *testing.T) {
 
 	c, cfg, resolved, releaseName := memoryHelmApp(t, "fresh-app")
 
-	require.NoError(t, c.InstallApp(t.Context(), false, resolved, nil))
+	require.NoError(t, c.InstallApp(t.Context(), false, resolved, nil, nil, false))
 	assert.Equal(t, 1, historyLen(t, cfg, releaseName))
 	rel, err := cfg.Releases.Last(releaseName)
 	require.NoError(t, err)
@@ -172,7 +197,7 @@ func TestRenderManifests_MissingReleaseIsInstall(t *testing.T) {
 
 	c, _, resolved, _ := memoryHelmApp(t, "fresh-render")
 
-	result, cleanup, err := c.RenderManifests(t.Context(), resolved, nil)
+	result, cleanup, err := c.RenderManifests(t.Context(), resolved, nil, nil)
 	if cleanup != nil {
 		t.Cleanup(cleanup)
 	}
@@ -186,7 +211,7 @@ func TestRenderManifestsWithPrep_FreshInstall(t *testing.T) {
 	t.Parallel()
 
 	c, _, resolved, _ := memoryHelmApp(t, "fresh-prep")
-	result, prep, cleanup, err := c.RenderManifestsWithPrep(t.Context(), resolved, nil)
+	result, prep, cleanup, err := c.RenderManifestsWithPrep(t.Context(), resolved, nil, nil)
 	if cleanup != nil {
 		t.Cleanup(cleanup)
 	}
@@ -205,7 +230,7 @@ func TestRenderManifestsWithPrep_Upgrade(t *testing.T) {
 	c, cfg, resolved, releaseName := memoryHelmApp(t, "upgrade-prep")
 	seedRelease(t, cfg, releaseName, 2, common.StatusDeployed, applySSA)
 
-	result, prep, cleanup, err := c.RenderManifestsWithPrep(t.Context(), resolved, nil)
+	result, prep, cleanup, err := c.RenderManifestsWithPrep(t.Context(), resolved, nil, nil)
 	if cleanup != nil {
 		t.Cleanup(cleanup)
 	}
@@ -226,7 +251,7 @@ func TestRenderManifestsWithPrep_NewestDiffersFromCurrent(t *testing.T) {
 	seedRelease(t, cfg, releaseName, 3, common.StatusDeployed, applySSA)
 	seedRelease(t, cfg, releaseName, 4, common.StatusFailed, applySSA)
 
-	result, prep, cleanup, err := c.RenderManifestsWithPrep(t.Context(), resolved, nil)
+	result, prep, cleanup, err := c.RenderManifestsWithPrep(t.Context(), resolved, nil, nil)
 	if cleanup != nil {
 		t.Cleanup(cleanup)
 	}
@@ -248,13 +273,13 @@ func TestRenderManifests_MatchesWithPrepResult(t *testing.T) {
 	c, cfg, resolved, releaseName := memoryHelmApp(t, "compat-render")
 	seedRelease(t, cfg, releaseName, 1, common.StatusDeployed, applySSA)
 
-	withPrep, prep, cleanup, err := c.RenderManifestsWithPrep(t.Context(), resolved, nil)
+	withPrep, prep, cleanup, err := c.RenderManifestsWithPrep(t.Context(), resolved, nil, nil)
 	if cleanup != nil {
 		t.Cleanup(cleanup)
 	}
 	require.NoError(t, err)
 
-	wrapped, wrappedCleanup, err := c.RenderManifests(t.Context(), resolved, nil)
+	wrapped, wrappedCleanup, err := c.RenderManifests(t.Context(), resolved, nil, nil)
 	if wrappedCleanup != nil {
 		t.Cleanup(wrappedCleanup)
 	}
