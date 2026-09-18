@@ -46,12 +46,12 @@ func (c *semanticPlanClient) RenderManifestsWithPrep(
 	_ context.Context,
 	_ *spec.ResolvedSpec,
 	_ postrenderer.PostRenderer,
-	_ []extras.Object,
+	_ []extras.RawFile,
 ) (*render.RenderResult, helm.ReleasePrep, func(), error) {
 	return c.result, c.prep, func() {}, nil
 }
 
-func semanticPlanCRD(t *testing.T, name string) extras.Object {
+func semanticPlanCRD(t *testing.T, name string) extras.RawFile {
 	t.Helper()
 	obj := &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "apiextensions.k8s.io/v1",
@@ -75,8 +75,7 @@ func semanticPlanCRD(t *testing.T, name string) extras.Object {
 	o := extras.Object{Path: name + ".yaml", Obj: obj}
 	raw, err := o.MarshalYAML()
 	require.NoError(t, err)
-	o.Raw = raw
-	return o
+	return extras.RawFile{Path: o.Path, Raw: raw}
 }
 
 func (s *E2ESuite) TestSemanticPlanPrerequisites() {
@@ -96,7 +95,7 @@ func (s *E2ESuite) TestSemanticPlanPrerequisites() {
 	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, plan.SemanticBuildInput{
 		ClusterContext: kindContext,
 		Resolved:       &spec.ResolvedSpec{Spec: &spec.Spec{Project: "shop"}, Env: spec.EnvIdentity{Original: "dev"}},
-		CRDs:           []extras.Object{semanticPlanCRD(t, crdName)},
+		CRDs:           []extras.RawFile{semanticPlanCRD(t, crdName)},
 		CRDPolicy:      extras.PolicyCreate,
 	})
 	require.NotNil(t, cleanup)

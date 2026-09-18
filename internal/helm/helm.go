@@ -179,7 +179,7 @@ func (c *Client) IsReachable() error {
 // touching the cluster. crds are written into the per-invocation chart
 // copy. skipCRDs is forwarded to Helm Install.SkipCRDs on a fresh install
 // only. A nil or unresolved spec is an error.
-func (c *Client) InstallApp(ctx context.Context, dryRun bool, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer, crds []extras.Object, skipCRDs bool) error {
+func (c *Client) InstallApp(ctx context.Context, dryRun bool, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer, crds []extras.RawFile, skipCRDs bool) error {
 	if dryRun {
 		_, cleanup, err := c.RenderManifests(ctx, resolved, postRenderer, crds)
 		if cleanup != nil {

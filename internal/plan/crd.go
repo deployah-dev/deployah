@@ -63,10 +63,17 @@ func newCRDSurface() *crdSurface {
 	}
 }
 
-func predictCRDs(ctx context.Context, cluster predict.Cluster, crds []extras.Object, policy extras.Policy) ([]semantic.ResourceChange, *crdSurface, error) {
+// predictCRDs converts each source file to one [extras.Object] and
+// decodes the first YAML document only. Later documents in a multi-doc
+// file are not predicted; Helm still receives the whole file.
+func predictCRDs(ctx context.Context, cluster predict.Cluster, files []extras.RawFile, policy extras.Policy) ([]semantic.ResourceChange, *crdSurface, error) {
 	surface := newCRDSurface()
-	if len(crds) == 0 {
+	if len(files) == 0 {
 		return nil, surface, nil
+	}
+	crds := make([]extras.Object, 0, len(files))
+	for i := range files {
+		crds = append(crds, extras.Object{Path: files[i].Path, Raw: files[i].Raw})
 	}
 	changes := make([]semantic.ResourceChange, 0, len(crds))
 	var previouslyServed []apiDesc

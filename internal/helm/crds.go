@@ -15,13 +15,10 @@
 package helm
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
-	"maps"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	"deployah.dev/deployah/internal/extras"
@@ -29,7 +26,7 @@ import (
 
 const chartCRDsDir = "crds"
 
-func copyChartWithCRDs(backing string, crds []extras.Object) (string, error) {
+func copyChartWithCRDs(backing string, crds []extras.RawFile) (string, error) {
 	copyDir, err := createChartCopy(backing)
 	if err != nil {
 		return "", err
@@ -44,43 +41,9 @@ func copyChartWithCRDs(backing string, crds []extras.Object) (string, error) {
 	return copyDir, nil
 }
 
-func materializeChartCRDs(chartDir string, crds []extras.Object) error {
+func materializeChartCRDs(chartDir string, crds []extras.RawFile) error {
 	if len(crds) == 0 {
 		return nil
-	}
-
-	type group struct {
-		path string
-		raws [][]byte
-	}
-	order := make([]string, 0)
-	groups := make(map[string]*group)
-	for i := range crds {
-		path := crds[i].Path
-		g, ok := groups[path]
-		if !ok {
-			g = &group{path: path}
-			groups[path] = g
-			order = append(order, path)
-		}
-		if len(bytes.TrimSpace(crds[i].Raw)) == 0 {
-			return fmt.Errorf("chart crd %s: empty document", path)
-		}
-		g.raws = append(g.raws, crds[i].Raw)
-	}
-
-	dests := make(map[string]string, len(groups))
-	files := make(map[string][]byte, len(groups))
-	for _, path := range order {
-		name, err := crdFileName(path)
-		if err != nil {
-			return err
-		}
-		if prev, ok := dests[name]; ok {
-			return fmt.Errorf("chart crd %s: destination %s collides with %s", path, name, prev)
-		}
-		dests[name] = path
-		files[name] = joinCRDDocuments(groups[path].raws)
 	}
 
 	crdsDir := filepath.Join(chartDir, chartCRDsDir)
@@ -88,12 +51,21 @@ func materializeChartCRDs(chartDir string, crds []extras.Object) error {
 		return fmt.Errorf("create chart crds directory: %w", err)
 	}
 
-	for _, name := range slices.Sorted(maps.Keys(files)) {
+	dests := make(map[string]string, len(crds))
+	for i := range crds {
+		name, err := crdFileName(crds[i].Path)
+		if err != nil {
+			return err
+		}
+		if prev, ok := dests[name]; ok {
+			return fmt.Errorf("chart crd %s: destination %s collides with %s", crds[i].Path, name, prev)
+		}
+		dests[name] = crds[i].Path
 		destPath := filepath.Join(crdsDir, name)
 		if filepath.Dir(destPath) != crdsDir {
-			return fmt.Errorf("chart crd %s: destination escapes %s", dests[name], crdsDir)
+			return fmt.Errorf("chart crd %s: destination escapes %s", crds[i].Path, crdsDir)
 		}
-		if err := os.WriteFile(destPath, files[name], 0o600); err != nil {
+		if err = os.WriteFile(destPath, crds[i].Raw, 0o600); err != nil {
 			return fmt.Errorf("write chart crd %s: %w", destPath, err)
 		}
 	}
@@ -113,18 +85,4 @@ func crdFileName(path string) (string, error) {
 		return "", fmt.Errorf("chart crd %q: file name must end in .yaml or .yml", path)
 	}
 	return name, nil
-}
-
-func joinCRDDocuments(raws [][]byte) []byte {
-	var b bytes.Buffer
-	for i, raw := range raws {
-		if i > 0 {
-			b.WriteString("---\n")
-		}
-		b.Write(raw)
-		if !bytes.HasSuffix(raw, []byte("\n")) {
-			b.WriteByte('\n')
-		}
-	}
-	return b.Bytes()
 }

@@ -76,13 +76,13 @@ func (m *MockHelmClient) IsReachable() error {
 }
 
 // InstallApp implements [HelmClient].
-func (m *MockHelmClient) InstallApp(ctx context.Context, dryRun bool, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer, crds []extras.Object, skipCRDs bool) error {
+func (m *MockHelmClient) InstallApp(ctx context.Context, dryRun bool, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer, crds []extras.RawFile, skipCRDs bool) error {
 	args := m.Called(ctx, dryRun, resolved, postRenderer, crds, skipCRDs)
 	return args.Error(0)
 }
 
 // RenderManifests implements [HelmClient].
-func (m *MockHelmClient) RenderManifests(ctx context.Context, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer, crds []extras.Object) (*render.RenderResult, func(), error) {
+func (m *MockHelmClient) RenderManifests(ctx context.Context, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer, crds []extras.RawFile) (*render.RenderResult, func(), error) {
 	args := m.Called(ctx, resolved, postRenderer, crds)
 	if err := args.Error(2); err != nil {
 		return nil, func() {}, err
@@ -102,7 +102,7 @@ func (m *MockHelmClient) RenderManifests(ctx context.Context, resolved *spec.Res
 }
 
 // RenderOffline implements [HelmClient].
-func (m *MockHelmClient) RenderOffline(ctx context.Context, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer, crds []extras.Object) (*render.RenderResult, func(), error) {
+func (m *MockHelmClient) RenderOffline(ctx context.Context, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer, crds []extras.RawFile) (*render.RenderResult, func(), error) {
 	args := m.Called(ctx, resolved, postRenderer, crds)
 	if err := args.Error(2); err != nil {
 		return nil, func() {}, err

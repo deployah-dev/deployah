@@ -21,7 +21,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/api/meta"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"deployah.dev/deployah/internal/extras"
@@ -74,43 +73,6 @@ func TestTableResolver_OperatorAllowlistUsesRealGroups(t *testing.T) {
 	known, err = r.Known(schema.GroupVersionKind{Group: "monitoring.coreos.com", Version: "v1", Kind: "PrometheusRule"})
 	require.NoError(t, err)
 	assert.True(t, known)
-}
-
-// TestGroupVersionsFromCRDs extracts group/version pairs from CRD YAML.
-func TestGroupVersionsFromCRDs(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, ".deployah", "crds", "cert.yaml"), `
-apiVersion: apiextensions.k8s.io/v1
-kind: CustomResourceDefinition
-metadata:
-  name: certificates.cert-manager.io
-spec:
-  group: cert-manager.io
-  scope: Namespaced
-  names:
-    kind: Certificate
-    plural: certificates
-  versions:
-    - name: v1
-      served: true
-      storage: true
-      schema:
-        openAPIV3Schema:
-          type: object
-`)
-	bundle, err := extras.Load(extras.LoadConfig{
-		SpecDir:          dir,
-		Project:          "demo",
-		Environment:      "prod",
-		DeclaredEnvs:     []string{"prod"},
-		ReleaseNamespace: "default",
-		Scope:            &extras.TableResolver{},
-	})
-	require.NoError(t, err)
-	gvs := extras.GroupVersionsFromCRDs(bundle.CRDs)
-	_, ok := gvs["cert-manager.io/v1"]
-	assert.True(t, ok)
 }
 
 // TestTableResolver_KnownFromCRDScope exercises extras package behavior.
@@ -215,74 +177,4 @@ func TestDiscoveryResolver_MapperHitAndFallback(t *testing.T) {
 	known, err = r.Known(schema.GroupVersionKind{Group: "other.io", Version: "v1", Kind: "Thing"})
 	require.NoError(t, err)
 	assert.True(t, known, "unknown to mapper still known via table CRDScope")
-}
-
-// TestGroupVersionsFromCRDs_IgnoresUnserved skips malformed versions and
-// counts only boolean served:true entries.
-func TestGroupVersionsFromCRDs_IgnoresUnserved(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name string
-		crds []extras.Object
-		want map[string]struct{}
-	}{
-		{
-			name: "malformed skipped",
-			crds: []extras.Object{
-				{Obj: &unstructured.Unstructured{Object: map[string]any{
-					"spec": map[string]any{"group": "example.com"},
-				}}},
-				{Obj: &unstructured.Unstructured{Object: map[string]any{
-					"spec": map[string]any{
-						"group":    "example.com",
-						"versions": []any{"v1", map[string]any{"name": ""}},
-					},
-				}}},
-				{Obj: &unstructured.Unstructured{Object: map[string]any{
-					"spec": map[string]any{
-						"group": "ok.io",
-						"versions": []any{
-							map[string]any{"name": "v1"},
-							map[string]any{"name": "v2beta1"},
-						},
-					},
-				}}},
-			},
-			want: map[string]struct{}{},
-		},
-		{
-			name: "boolean served true only",
-			crds: []extras.Object{
-				{Obj: &unstructured.Unstructured{Object: map[string]any{
-					"spec": map[string]any{
-						"group": "example.com",
-						"versions": []any{
-							map[string]any{"name": "v1", "served": true},
-							map[string]any{"name": "v1beta1", "served": false, "storage": true},
-						},
-					},
-				}}},
-				{Obj: &unstructured.Unstructured{Object: map[string]any{
-					"spec": map[string]any{
-						"group": "other.io",
-						"versions": []any{
-							map[string]any{"name": "v2", "served": true},
-							map[string]any{"name": "v2alpha1", "served": "true"},
-							map[string]any{"name": "v2beta1"},
-						},
-					},
-				}}},
-			},
-			want: map[string]struct{}{
-				"example.com/v1": {},
-				"other.io/v2":    {},
-			},
-		},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tc.want, extras.GroupVersionsFromCRDs(tc.crds))
-		})
-	}
 }

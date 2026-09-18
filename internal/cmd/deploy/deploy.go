@@ -195,11 +195,7 @@ func runDeploy(c *nabat.Context) error {
 	defer plan.cleanup()
 
 	if n := len(bundle.CRDs); n > 0 {
-		msg := fmt.Sprintf("CRDs: %d from .deployah/crds/", n)
-		if opts.SkipCRDs && !plan.result.IsUpgrade {
-			msg += " (install-time CRDs skipped)"
-		}
-		c.Println(msg)
+		c.Println(extras.CRDLifecycleNote(n, plan.result.IsUpgrade, opts.SkipCRDs))
 	}
 
 	textOpts := planengine.TextOptions{Mode: planengine.ModeCompact, Theme: c.Theme()}
@@ -234,20 +230,7 @@ func runDeploy(c *nabat.Context) error {
 		return skipDeploy(c, k8sClient, k8sErr, plan)
 	}
 
-	// Required-API check runs before confirmation: a missing CRD/API is a
-	// precondition failure the user shouldn't have to confirm past first.
-	// Chart CRDs cover required APIs only on a fresh install that will let
-	// Helm process them (served:true versions, SkipCRDs false).
 	if k8sErr == nil {
-		reqs := k8s.RequiredAPIs(manifest, opts.Environment, resolvedSpec)
-		if chartCRDsCoverRequiredAPIs(plan.result.IsUpgrade, opts.SkipCRDs) {
-			reqs = filterCoveredAPIs(reqs, extras.GroupVersionsFromCRDs(bundle.CRDs))
-		}
-		if len(reqs) > 0 {
-			if capErr := k8s.CheckAPIRequirements(k8sClient, reqs); capErr != nil {
-				return capErr
-			}
-		}
 		if hasStatefulWithPersistence(manifest, opts.Environment) {
 			if verErr := k8s.CheckMinimumVersion(
 				k8sClient,
@@ -281,13 +264,6 @@ func skipHelmApply(isUpgrade, hasChanges, reapply bool) bool {
 	return isUpgrade && !hasChanges && !reapply
 }
 
-// chartCRDsCoverRequiredAPIs reports whether Helm will process chart CRDs
-// on this invocation, so served versions from .deployah/crds/ can cover
-// required APIs. Upgrades and --skip-crds do not install chart CRDs.
-func chartCRDsCoverRequiredAPIs(isUpgrade, skipCRDs bool) bool {
-	return !isUpgrade && !skipCRDs
-}
-
 // confirmApply gates the real apply behind --yes or an interactive prompt.
 // proceed is false with a nil error on a clean "no"; err is non-nil when
 // non-interactive without --yes ([nabat.ErrConfirmationRequired]), or the
@@ -306,7 +282,7 @@ func confirmApply(c *nabat.Context, opts *Options, prompt string) (proceed bool,
 // computePlan renders the chart client-side and diffs it against the last
 // successful release. It never mutates the cluster or Helm's release history.
 // The caller must invoke deployPlan.cleanup when finished with the result.
-func computePlan(c *nabat.Context, helmClient session.HelmClient, cluster *session.Cluster, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer, crds []extras.Object) (*deployPlan, error) {
+func computePlan(c *nabat.Context, helmClient session.HelmClient, cluster *session.Cluster, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer, crds []extras.RawFile) (*deployPlan, error) {
 	p, result, cleanup, err := planengine.BuildPlan(c, helmClient, cluster.Context(), resolved, postRenderer, crds)
 	if err != nil {
 		cleanup()
@@ -523,29 +499,6 @@ func buildSummaryMsg(w *DeployWatcher) string {
 		return ""
 	}
 	return " (" + summary + ")"
-}
-
-// filterCoveredAPIs drops requirements that Helm will satisfy by installing
-// chart CRDs on this fresh install (any one matching group/version is
-// enough, matching [k8s.CheckAPIRequirements]).
-func filterCoveredAPIs(reqs []k8s.APIRequirement, covered map[string]struct{}) []k8s.APIRequirement {
-	if len(covered) == 0 || len(reqs) == 0 {
-		return reqs
-	}
-	out := make([]k8s.APIRequirement, 0, len(reqs))
-	for _, req := range reqs {
-		pending := false
-		for _, gv := range req.GroupVersions {
-			if _, ok := covered[gv]; ok {
-				pending = true
-				break
-			}
-		}
-		if !pending {
-			out = append(out, req)
-		}
-	}
-	return out
 }
 
 // warnContextMismatch emits a warning when the --context flag overrides the

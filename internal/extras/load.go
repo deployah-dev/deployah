@@ -35,16 +35,13 @@ import (
 	yamlutil "k8s.io/apimachinery/pkg/util/yaml"
 )
 
-// crdAPIVersion is the only CustomResourceDefinition apiVersion Deployah
-// accepts. apiextensions.k8s.io/v1beta1 was removed in Kubernetes 1.22.
-const crdAPIVersion = "apiextensions.k8s.io/v1"
-
 // Bundle holds the deploy-ready extras for one environment.
 type Bundle struct {
 	// Manifests are objects from .deployah/manifests/ for the selected environment.
 	Manifests []Object
-	// CRDs are CustomResourceDefinition objects from .deployah/crds/.
-	CRDs []Object
+	// CRDs are one entry per source file under .deployah/crds/. Bytes are
+	// the exact file contents; they are never parsed or rewritten for Helm.
+	CRDs []RawFile
 }
 
 // LoadConfig configures [Load].
@@ -67,10 +64,10 @@ type LoadConfig struct {
 	Offline bool
 }
 
-// Load reads .deployah/manifests and .deployah/crds under SpecDir, validates
-// them, and returns a deploy-ready Bundle. It merges Deployah identity
-// metadata into extra manifests only. CRDs keep the caller's object
-// semantics. Missing directories yield an empty Bundle with a nil error.
+// Load reads .deployah/manifests and .deployah/crds under SpecDir and
+// returns a deploy-ready Bundle. It validates extra manifests and merges
+// Deployah identity metadata into them. Chart CRDs are loaded as opaque
+// source files. Missing directories yield an empty Bundle with a nil error.
 func Load(cfg LoadConfig) (*Bundle, error) {
 	if cfg.Scope == nil {
 		return nil, errors.New("extras: ScopeResolver is required")
@@ -111,24 +108,16 @@ func Load(cfg LoadConfig) (*Bundle, error) {
 		manifests = append(manifests, objs...)
 	}
 
-	var crds []Object
+	var crds []RawFile
 	for _, path := range crdFiles {
-		objs, loadErr := loadFile(path, false)
-		if loadErr != nil {
-			return nil, loadErr
+		raw, readErr := os.ReadFile(path) // #nosec G304 -- path from extras dir listing under SpecDir
+		if readErr != nil {
+			return nil, fmt.Errorf("read %s: %w", path, readErr)
 		}
-		for i := range objs {
-			if objs[i].Obj.GetKind() != "CustomResourceDefinition" {
-				return nil, fmt.Errorf("%s: only CustomResourceDefinition objects are allowed under .deployah/crds/ (found %s)", objs[i].Path, objs[i].Obj.GetKind())
-			}
-			if av := objs[i].Obj.GetAPIVersion(); av != crdAPIVersion {
-				return nil, fmt.Errorf("%s: CustomResourceDefinition must use apiVersion %s (found %s)", objs[i].Path, crdAPIVersion, av)
-			}
-			crds = append(crds, objs[i])
-		}
+		crds = append(crds, RawFile{Path: path, Raw: raw})
 	}
 
-	crdScope := scopeFromCRDObjects(crds)
+	crdScope := scopeFromCRDFiles(crds)
 	scope := withCRDScope(cfg.Scope, crdScope)
 
 	for i := range manifests {
@@ -152,9 +141,6 @@ func Load(cfg LoadConfig) (*Bundle, error) {
 	if dupErr := checkDuplicateIdentities(manifests); dupErr != nil {
 		return nil, dupErr
 	}
-	if dupErr := checkDuplicateCRDs(crds); dupErr != nil {
-		return nil, dupErr
-	}
 
 	return &Bundle{Manifests: manifests, CRDs: crds}, nil
 }
@@ -171,26 +157,35 @@ func checkDuplicateIdentities(objs []Object) error {
 	return nil
 }
 
-// crdLogicalIdentity is the cluster-scoped identity used for CRD duplicate
-// detection. A CRD's effective namespace is empty even when the raw YAML
-// sets metadata.namespace; that field is preserved on the object and is
-// not part of identity.
-func crdLogicalIdentity(o Object) Identity {
-	id := o.Identity()
-	id.Namespace = ""
-	return id
+// scopeFromCRDFiles extracts group/kind -> namespaced from raw CRD source
+// files. Inspection is read-only: parse failures skip that file and never
+// fail Load, and nothing is written back into the source bytes.
+func scopeFromCRDFiles(files []RawFile) map[string]bool {
+	out := make(map[string]bool)
+	for i := range files {
+		inspectCRDScope(files[i].Raw, out)
+	}
+	return out
 }
 
-func checkDuplicateCRDs(crds []Object) error {
-	seen := make(map[string]string, len(crds))
-	for i := range crds {
-		id := crdLogicalIdentity(crds[i])
-		if prev, ok := seen[id.Key()]; ok {
-			return fmt.Errorf("duplicate object %s in %s and %s", id, prev, crds[i].Path)
+func inspectCRDScope(raw []byte, out map[string]bool) {
+	decoder := yamlutil.NewYAMLOrJSONDecoder(bytes.NewReader(raw), 4096)
+	for {
+		var obj map[string]any
+		if err := decoder.Decode(&obj); err != nil {
+			return
 		}
-		seen[id.Key()] = crds[i].Path
+		if len(obj) == 0 {
+			continue
+		}
+		group, _ := unstructuredNestedString(obj, "spec", "group")
+		kind, _ := unstructuredNestedString(obj, "spec", "names", "kind")
+		scope, _ := unstructuredNestedString(obj, "spec", "scope")
+		if group == "" || kind == "" {
+			continue
+		}
+		out[crdScopeKey(group, kind)] = !strings.EqualFold(scope, "Cluster")
 	}
-	return nil
 }
 
 // withCRDScope returns a resolver that prefers CRD-derived scopes.

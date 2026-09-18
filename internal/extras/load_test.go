@@ -423,78 +423,27 @@ spec:
           type: object
 `
 
-const widgetCRDBodyNamespacedFoo = `
-apiVersion: apiextensions.k8s.io/v1
-kind: CustomResourceDefinition
-metadata:
-  name: widgets.example.com
-  namespace: foo
-spec:
-  group: example.com
-  scope: Namespaced
-  names:
-    kind: Widget
-    plural: widgets
-  versions:
-    - name: v1
-      served: true
-      storage: true
-      schema:
-        openAPIV3Schema:
-          type: object
-`
-
-const widgetCRDBodyNamespacedBar = `
-apiVersion: apiextensions.k8s.io/v1
-kind: CustomResourceDefinition
-metadata:
-  name: widgets.example.com
-  namespace: bar
-spec:
-  group: example.com
-  scope: Namespaced
-  names:
-    kind: Widget
-    plural: widgets
-  versions:
-    - name: v1
-      served: true
-      storage: true
-      schema:
-        openAPIV3Schema:
-          type: object
-`
-
-func TestLoad_CRDUserMetadata(t *testing.T) {
+func TestLoad_CRDsKeepExactSourceBytes(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name            string
-		body            string
-		wantNS          string
-		wantLabels      map[string]string
-		wantAnnotations map[string]string
-		absentLabelKeys []string
+		name string
+		body string
 	}{
+		{name: "valid crd", body: widgetCRDBody},
 		{
-			name: "no extra metadata stays empty",
-			body: widgetCRDBody,
-		},
-		{
-			name: "user keys kept and nothing injected",
+			name: "user metadata unchanged",
 			body: `
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   name: widgets.example.com
+  namespace: foo
   labels:
     keep: custom
-    deployah.dev/environment: user-env
-    deployah.dev/managed-by: user-managed
     deployah.dev/source: user-source
   annotations:
     note: keep
     deployah.dev/project: user-project
-    deployah.dev/source: user-source
 spec:
   group: example.com
   scope: Namespaced
@@ -509,30 +458,27 @@ spec:
         openAPIV3Schema:
           type: object
 `,
-			wantLabels: map[string]string{
-				"keep":                "custom",
-				spec.LabelEnvironment: "user-env",
-				spec.LabelManagedBy:   "user-managed",
-				spec.AnnotationSource: "user-source",
-			},
-			wantAnnotations: map[string]string{
-				"note":                 "keep",
-				spec.AnnotationProject: "user-project",
-				spec.AnnotationSource:  "user-source",
-			},
-			absentLabelKeys: []string{spec.LabelProject, spec.LabelInstance},
 		},
 		{
-			name:   "raw metadata.namespace preserved",
-			body:   widgetCRDBodyNamespacedFoo,
-			wantNS: "foo",
+			name: "non-crd yaml still loads",
+			body: `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nope
+`,
+		},
+		{
+			name: "invalid yaml still loads",
+			body: "not: [valid\n",
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
-			writeFile(t, filepath.Join(dir, ".deployah", "crds", "widget.yaml"), tc.body)
+			path := filepath.Join(dir, ".deployah", "crds", "widget.yaml")
+			writeFile(t, path, tc.body)
 			bundle, err := extras.Load(extras.LoadConfig{
 				SpecDir:          dir,
 				Project:          "demo",
@@ -543,70 +489,29 @@ spec:
 			})
 			require.NoError(t, err)
 			require.Len(t, bundle.CRDs, 1)
-			obj := bundle.CRDs[0].Obj
-			assert.Equal(t, tc.wantNS, obj.GetNamespace())
-			assert.Equal(t, tc.wantLabels, obj.GetLabels())
-			assert.Equal(t, tc.wantAnnotations, obj.GetAnnotations())
-			for _, key := range tc.absentLabelKeys {
-				assert.NotContains(t, obj.GetLabels(), key)
-			}
-			assert.YAMLEq(t, tc.body, string(bundle.CRDs[0].Raw))
+			assert.Equal(t, path, bundle.CRDs[0].Path)
+			assert.Equal(t, tc.body, string(bundle.CRDs[0].Raw))
 		})
 	}
 }
 
-func TestLoad_DuplicateCRDNameFails(t *testing.T) {
+func TestLoad_CRDSnapshotIgnoresLaterDiskWrites(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		name         string
-		files        map[string]string
-		wantContains []string
-	}{
-		{
-			name: "same name in two files",
-			files: map[string]string{
-				"one.yaml": widgetCRDBody,
-				"two.yaml": widgetCRDBody,
-			},
-			wantContains: []string{"one.yaml", "two.yaml"},
-		},
-		{
-			name: "plain and namespaced documents collide",
-			files: map[string]string{
-				"plain.yaml":      widgetCRDBody,
-				"namespaced.yaml": widgetCRDBodyNamespacedFoo,
-			},
-		},
-		{
-			name: "different raw namespaces still collide",
-			files: map[string]string{
-				"foo.yaml": widgetCRDBodyNamespacedFoo,
-				"bar.yaml": widgetCRDBodyNamespacedBar,
-			},
-		},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			dir := t.TempDir()
-			for name, body := range tc.files {
-				writeFile(t, filepath.Join(dir, ".deployah", "crds", name), body)
-			}
-			_, err := extras.Load(extras.LoadConfig{
-				SpecDir:          dir,
-				Project:          "demo",
-				Environment:      "prod",
-				DeclaredEnvs:     []string{"prod"},
-				ReleaseNamespace: "default",
-				Scope:            &extras.TableResolver{},
-			})
-			require.Error(t, err)
-			assert.Contains(t, err.Error(), "duplicate object")
-			for _, want := range tc.wantContains {
-				assert.Contains(t, err.Error(), want)
-			}
-		})
-	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".deployah", "crds", "widget.yaml")
+	writeFile(t, path, widgetCRDBody)
+	bundle, err := extras.Load(extras.LoadConfig{
+		SpecDir:          dir,
+		Project:          "demo",
+		Environment:      "prod",
+		DeclaredEnvs:     []string{"prod"},
+		ReleaseNamespace: "default",
+		Scope:            &extras.TableResolver{},
+	})
+	require.NoError(t, err)
+	require.Len(t, bundle.CRDs, 1)
+	writeFile(t, path, widgetCRDBody+"# mutated\n")
+	assert.Equal(t, widgetCRDBody, string(bundle.CRDs[0].Raw))
 }
 
 // TestLoad_MissingRequiredFieldsFails exercises extras package behavior.
@@ -707,66 +612,21 @@ metadata:
 	assert.Equal(t, "apps", bundle.Manifests[0].Obj.GetNamespace())
 }
 
-// TestLoad_RejectsInvalidCRDs rejects files under .deployah/crds/ that
-// are not v1 CustomResourceDefinition documents at the directory root.
-func TestLoad_RejectsInvalidCRDs(t *testing.T) {
+// TestLoad_CRDsRejectSubdirectories keeps the flat .deployah/crds/ contract.
+func TestLoad_CRDsRejectSubdirectories(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		name         string
-		rel          string
-		body         string
-		wantContains []string
-	}{
-		{
-			name: "wrong apiVersion",
-			rel:  "old.yaml",
-			body: `
-apiVersion: example.com/v1
-kind: CustomResourceDefinition
-metadata:
-  name: widgets.example.com
-spec:
-  group: example.com
-`,
-			wantContains: []string{"apiextensions.k8s.io/v1", "example.com/v1"},
-		},
-		{
-			name: "non-CRD under crds",
-			rel:  "cm.yaml",
-			body: `
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: nope
-`,
-			wantContains: []string{"only CustomResourceDefinition"},
-		},
-		{
-			name:         "subdirectory",
-			rel:          filepath.Join("nested", "x.yaml"),
-			body:         widgetCRDBody,
-			wantContains: []string{"subdirectories are not allowed"},
-		},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			dir := t.TempDir()
-			writeFile(t, filepath.Join(dir, ".deployah", "crds", tc.rel), tc.body)
-			_, err := extras.Load(extras.LoadConfig{
-				SpecDir:          dir,
-				Project:          "demo",
-				Environment:      "prod",
-				DeclaredEnvs:     []string{"prod"},
-				ReleaseNamespace: "default",
-				Scope:            &extras.TableResolver{},
-			})
-			require.Error(t, err)
-			for _, want := range tc.wantContains {
-				assert.Contains(t, err.Error(), want)
-			}
-		})
-	}
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".deployah", "crds", "nested", "x.yaml"), widgetCRDBody)
+	_, err := extras.Load(extras.LoadConfig{
+		SpecDir:          dir,
+		Project:          "demo",
+		Environment:      "prod",
+		DeclaredEnvs:     []string{"prod"},
+		ReleaseNamespace: "default",
+		Scope:            &extras.TableResolver{},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "subdirectories are not allowed")
 }
 
 // TestLoad_RequiresScopeAndProject rejects incomplete LoadConfig.

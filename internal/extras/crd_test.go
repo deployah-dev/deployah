@@ -97,6 +97,33 @@ spec:
 	}
 }
 
+func TestDecodeCRD_FirstDocumentOnly(t *testing.T) {
+	t.Parallel()
+	raw := []byte(`apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: widgets.example.com
+spec:
+  group: example.com
+  names:
+    kind: Widget
+    plural: widgets
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: gadgets.example.com
+spec:
+  group: example.com
+  names:
+    kind: Gadget
+    plural: gadgets
+`)
+	crd, err := DecodeCRD(Object{Path: "multi.yaml", Raw: raw})
+	require.NoError(t, err)
+	assert.Equal(t, "widgets.example.com", crd.Name)
+}
+
 func TestApplyObject_StripsServerFields(t *testing.T) {
 	t.Parallel()
 

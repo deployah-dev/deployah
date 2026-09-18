@@ -27,8 +27,6 @@ import (
 	"helm.sh/helm/v4/pkg/postrenderer"
 	"helm.sh/helm/v4/pkg/release/common"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/kubernetes/fake"
 	"nabat.dev/nabat"
 	"nabat.dev/nabat/nabattest"
 
@@ -41,7 +39,6 @@ import (
 
 	planengine "deployah.dev/deployah/internal/plan"
 	v1 "helm.sh/helm/v4/pkg/release/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // stubHelmClient implements [session.HelmClient] for plan command tests.
@@ -63,14 +60,14 @@ type stubHelmClient struct {
 
 func (s *stubHelmClient) IsReachable() error { return s.reachableErr }
 
-func (s *stubHelmClient) RenderManifests(context.Context, *spec.ResolvedSpec, postrenderer.PostRenderer, []extras.Object) (*render.RenderResult, func(), error) {
+func (s *stubHelmClient) RenderManifests(context.Context, *spec.ResolvedSpec, postrenderer.PostRenderer, []extras.RawFile) (*render.RenderResult, func(), error) {
 	if s.renderErr != nil {
 		return nil, nil, s.renderErr
 	}
 	return s.renderResult, func() {}, nil
 }
 
-func (s *stubHelmClient) RenderOffline(context.Context, *spec.ResolvedSpec, postrenderer.PostRenderer, []extras.Object) (*render.RenderResult, func(), error) {
+func (s *stubHelmClient) RenderOffline(context.Context, *spec.ResolvedSpec, postrenderer.PostRenderer, []extras.RawFile) (*render.RenderResult, func(), error) {
 	if s.offlineErr != nil {
 		return nil, nil, s.offlineErr
 	}
@@ -84,7 +81,7 @@ func (s *stubHelmClient) GetReleaseHistory(context.Context, string, string) ([]*
 	return s.history, nil
 }
 
-func (s *stubHelmClient) InstallApp(context.Context, bool, *spec.ResolvedSpec, postrenderer.PostRenderer, []extras.Object, bool) error {
+func (s *stubHelmClient) InstallApp(context.Context, bool, *spec.ResolvedSpec, postrenderer.PostRenderer, []extras.RawFile, bool) error {
 	panic("unexpected InstallApp call")
 }
 
@@ -119,29 +116,6 @@ func sessionWithStub(stub *stubHelmClient) *session.Session {
 	return session.New(session.WithHelmFactory(func(*target.Target, session.HelmConfig) (session.HelmClient, error) {
 		return stub, nil
 	}))
-}
-
-// sessionWithStubAndK8s builds a session with Helm and Kubernetes stubs so
-// runOnline can exercise API capability checks.
-func sessionWithStubAndK8s(stub *stubHelmClient, k8sClient kubernetes.Interface) *session.Session {
-	return session.New(
-		session.WithHelmFactory(func(*target.Target, session.HelmConfig) (session.HelmClient, error) {
-			return stub, nil
-		}),
-		session.WithKubernetesFactory(func(*target.Target) (kubernetes.Interface, error) {
-			return k8sClient, nil
-		}),
-	)
-}
-
-func fakeClientWithAPIs(groupVersions ...string) *fake.Clientset {
-	cs := fake.NewClientset()
-	resources := make([]*metav1.APIResourceList, 0, len(groupVersions))
-	for _, gv := range groupVersions {
-		resources = append(resources, &metav1.APIResourceList{GroupVersion: gv})
-	}
-	cs.Resources = resources
-	return cs
 }
 
 func releaseAt(version int, status common.Status, manifest string) *v1.Release {
@@ -449,7 +423,7 @@ spec:
 
 	err := runOffline(c, sess, nil, testManifest(), opts, nil)
 	require.NoError(t, err)
-	assert.Contains(t, out.String(), "CRDs: 1 from .deployah/crds/")
+	assert.Contains(t, out.String(), extras.CRDLifecycleNote(1, false, false))
 	assert.NotContains(t, out.String(), "pending")
 }
 
@@ -516,48 +490,6 @@ spec:
 
 	err := runOnline(c, sess, nil, testManifest(), testOptions(), testResolved(nil))
 	require.NoError(t, err)
-	assert.Contains(t, out.String(), "CRDs: 1 from .deployah/crds/")
+	assert.Contains(t, out.String(), extras.CRDLifecycleNote(1, false, false))
 	assert.NotContains(t, out.String(), "pending")
-}
-
-func TestRunOnline_MetricsRequiresPrometheusOperatorAPI(t *testing.T) {
-	t.Parallel()
-
-	manifest := &spec.Spec{
-		Project:    "shop",
-		APIVersion: spec.CurrentManifestVersion,
-		Components: map[string]spec.Component{
-			"api": {
-				Role:    spec.ComponentRoleService,
-				Image:   "api:1",
-				Port:    8080,
-				Metrics: &spec.ComponentMetrics{},
-			},
-		},
-	}
-	t.Run("missing monitoring API fails plan", func(t *testing.T) {
-		t.Parallel()
-		stub := &stubHelmClient{
-			historyErr:   helm.ErrReleaseNotFound,
-			renderResult: renderResult(deploymentV1),
-		}
-		sess := sessionWithStubAndK8s(stub, fakeClientWithAPIs("v1"))
-		c, _ := nabatContext(t)
-		err := runOnline(c, sess, nil, manifest, testOptions(), testResolved(manifest))
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "monitoring.coreos.com/v1")
-	})
-
-	t.Run("monitoring API present allows plan", func(t *testing.T) {
-		t.Parallel()
-		stub := &stubHelmClient{
-			historyErr:   helm.ErrReleaseNotFound,
-			renderResult: renderResult(deploymentV1),
-		}
-		sess := sessionWithStubAndK8s(stub, fakeClientWithAPIs("v1", "monitoring.coreos.com/v1"))
-		c, out := nabatContext(t)
-		err := runOnline(c, sess, nil, manifest, testOptions(), testResolved(manifest))
-		require.NoError(t, err)
-		assert.NotEmpty(t, out.String())
-	})
 }

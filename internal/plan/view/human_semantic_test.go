@@ -396,7 +396,7 @@ func (c *fakeBuildClient) RenderManifestsWithPrep(
 	_ context.Context,
 	_ *spec.ResolvedSpec,
 	_ postrenderer.PostRenderer,
-	_ []extras.Object,
+	_ []extras.RawFile,
 ) (*render.RenderResult, helm.ReleasePrep, func(), error) {
 	return c.result, c.prep, func() {}, nil
 }

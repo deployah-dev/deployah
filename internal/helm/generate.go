@@ -187,15 +187,15 @@ func releaseIdentity(resolved *spec.ResolvedSpec) (string, map[string]string, er
 // returns the chart root. Identical charts are reused via cache. A nil or
 // unresolved spec is an error; cache must be non-nil.
 //
-// crds are written into the returned copy under crds/, using each object's
-// source file name. The cached backing chart stays CRD-free. A nil or empty
+// Each [extras.RawFile] is written to crds/<basename> using the exact
+// source bytes. The cached backing chart stays CRD-free. A nil or empty
 // crds slice writes no crds/ directory.
 //
 // If ctx is already canceled, PrepareChart returns [context.Canceled] or
 // [context.DeadlineExceeded] immediately. On a cache miss, every 10th
 // entry may start a background goroutine that removes expired cache
 // directories.
-func PrepareChart(ctx context.Context, resolved *spec.ResolvedSpec, cache *ChartCache, crds []extras.Object) (string, error) {
+func PrepareChart(ctx context.Context, resolved *spec.ResolvedSpec, cache *ChartCache, crds []extras.RawFile) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}

@@ -15,6 +15,7 @@
 package extras
 
 import (
+	"fmt"
 	"path/filepath"
 
 	"helm.sh/helm/v4/pkg/postrenderer"
@@ -50,4 +51,23 @@ func (b *Bundle) PostRendererFor() postrenderer.PostRenderer {
 		return nil
 	}
 	return &PostRenderer{Manifests: b.Manifests}
+}
+
+// CRDLifecycleNote describes Helm's install-only processing of n loaded
+// .deployah/crds/ source files. upgrade is true for an existing release.
+// skipInstall is true when this invocation disables install-time CRD
+// processing. The files stay in the chart either way.
+func CRDLifecycleNote(n int, upgrade, skipInstall bool) string {
+	if n <= 0 {
+		return ""
+	}
+	base := fmt.Sprintf("CRDs: %d from .deployah/crds/", n)
+	switch {
+	case upgrade:
+		return base + " (Helm does not install or update chart CRDs on upgrade, including newly added files)"
+	case skipInstall:
+		return base + " (install-time CRD processing disabled; files stay in the chart)"
+	default:
+		return base + " (Helm processes chart CRDs on install)"
+	}
 }

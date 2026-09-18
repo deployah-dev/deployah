@@ -26,7 +26,6 @@ import (
 	"nabat.dev/nabat/nabattest"
 
 	"deployah.dev/deployah/internal/extras"
-	"deployah.dev/deployah/internal/k8s"
 	"deployah.dev/deployah/internal/render"
 	"deployah.dev/deployah/internal/session"
 	"deployah.dev/deployah/internal/spec"
@@ -229,59 +228,6 @@ func TestSkipHelmApply(t *testing.T) {
 	}
 }
 
-// TestChartCRDsCoverRequiredAPIs covers required APIs only on install
-// with skip false. Served filtering lives in GroupVersionsFromCRDs.
-func TestChartCRDsCoverRequiredAPIs(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name      string
-		isUpgrade bool
-		skipCRDs  bool
-		want      bool
-	}{
-		{name: "fresh install", want: true},
-		{name: "fresh install skip", skipCRDs: true},
-		{name: "upgrade", isUpgrade: true},
-		{name: "upgrade skip", isUpgrade: true, skipCRDs: true},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tc.want, chartCRDsCoverRequiredAPIs(tc.isUpgrade, tc.skipCRDs))
-		})
-	}
-}
-
-// TestFilterCoveredAPIs drops requirements satisfied by served chart CRDs.
-func TestFilterCoveredAPIs(t *testing.T) {
-	t.Parallel()
-	reqs := []k8s.APIRequirement{
-		{GroupVersions: []string{"cert-manager.io/v1"}, Reason: "tls"},
-		{GroupVersions: []string{"autoscaling/v2", "autoscaling/v2beta2"}, Reason: "hpa"},
-	}
-	tests := []struct {
-		name    string
-		covered map[string]struct{}
-		want    []k8s.APIRequirement
-	}{
-		{
-			name:    "drops served chart CRD APIs",
-			covered: map[string]struct{}{"cert-manager.io/v1": {}},
-			want:    []k8s.APIRequirement{reqs[1]},
-		},
-		{
-			name: "nil covered keeps all",
-			want: reqs,
-		},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tc.want, filterCoveredAPIs(reqs, tc.covered))
-		})
-	}
-}
-
 // TestApplyDeploy_PassesCRDsToInstall forwards loaded CRDs to Helm
 // install and maps Options.SkipCRDs onto Install.SkipCRDs.
 func TestApplyDeploy_PassesCRDsToInstall(t *testing.T) {
@@ -309,7 +255,7 @@ func TestApplyDeploy_PassesCRDsToInstall(t *testing.T) {
 			}
 			c, _, _, stderr := nabatContextWithIO(t)
 			opts := &Options{Environment: "production", SkipCRDs: tc.skipCRDs}
-			bundle := &extras.Bundle{CRDs: []extras.Object{{Path: "widget.yaml"}}}
+			bundle := &extras.Bundle{CRDs: []extras.RawFile{{Path: "widget.yaml"}}}
 
 			err := applyDeploy(c, sess, cluster, stub, nil, &spec.Spec{Project: "web"}, opts, nil, planned, nil, assertNever{}, bundle, nil, nil)
 			require.NoError(t, err)

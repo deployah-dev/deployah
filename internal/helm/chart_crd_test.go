@@ -18,7 +18,6 @@ import (
 	"crypto/rand"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -43,7 +42,7 @@ func resolvedForChartCRDs(t *testing.T) *spec.ResolvedSpec {
 	return resolved
 }
 
-func prepareChartWithCRDs(t *testing.T, crds []extras.Object) (chartDir, backing string) {
+func prepareChartWithCRDs(t *testing.T, crds []extras.RawFile) (chartDir, backing string) {
 	t.Helper()
 	cache := NewChartCache(time.Hour)
 	resolved := resolvedForChartCRDs(t)
@@ -73,10 +72,10 @@ func TestPrepareChart_OmitsCRDsDir(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name string
-		crds []extras.Object
+		crds []extras.RawFile
 	}{
 		{name: "nil slice"},
-		{name: "empty slice", crds: []extras.Object{}},
+		{name: "empty slice", crds: []extras.RawFile{}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -96,19 +95,19 @@ func TestPrepareChart_WritesSourceFiles(t *testing.T) {
 	userBody := widgetCRD("widgets.example.com", userMeta)
 	tests := []struct {
 		name      string
-		crds      []extras.Object
+		crds      []extras.RawFile
 		wantFiles map[string]string
 	}{
 		{
 			name: "one source file keeps basename",
-			crds: []extras.Object{{Path: "/abs/.deployah/crds/widgets.yaml", Raw: []byte(widgets)}},
+			crds: []extras.RawFile{{Path: "/abs/.deployah/crds/widgets.yaml", Raw: []byte(widgets)}},
 			wantFiles: map[string]string{
 				"widgets.yaml": widgets,
 			},
 		},
 		{
 			name: "multiple source files keep basenames",
-			crds: []extras.Object{
+			crds: []extras.RawFile{
 				{Path: ".deployah/crds/widgets.yaml", Raw: []byte(widgets)},
 				{Path: ".deployah/crds/gadgets.yaml", Raw: []byte(gadgets)},
 			},
@@ -119,7 +118,7 @@ func TestPrepareChart_WritesSourceFiles(t *testing.T) {
 		},
 		{
 			name: "yaml and yml extensions preserved",
-			crds: []extras.Object{
+			crds: []extras.RawFile{
 				{Path: "widgets.yaml", Raw: []byte(widgets)},
 				{Path: "gadgets.yml", Raw: []byte(gadgets)},
 			},
@@ -129,18 +128,17 @@ func TestPrepareChart_WritesSourceFiles(t *testing.T) {
 			},
 		},
 		{
-			name: "multi-doc groups into one file",
-			crds: []extras.Object{
-				{Path: ".deployah/crds/types.yaml", Raw: []byte(widgets)},
-				{Path: ".deployah/crds/types.yaml", Raw: []byte(gadgets)},
+			name: "multi-doc stays one file",
+			crds: []extras.RawFile{
+				{Path: ".deployah/crds/types.yaml", Raw: []byte(widgets + "---\n" + gadgets)},
 			},
 			wantFiles: map[string]string{
-				"types.yaml": string(joinCRDDocuments([][]byte{[]byte(widgets), []byte(gadgets)})),
+				"types.yaml": widgets + "---\n" + gadgets,
 			},
 		},
 		{
 			name: "user metadata preserved without injected keys",
-			crds: []extras.Object{{Path: "widgets.yaml", Raw: []byte(userBody)}},
+			crds: []extras.RawFile{{Path: "widgets.yaml", Raw: []byte(userBody)}},
 			wantFiles: map[string]string{
 				"widgets.yaml": userBody,
 			},
@@ -154,12 +152,7 @@ func TestPrepareChart_WritesSourceFiles(t *testing.T) {
 			for name, want := range tc.wantFiles {
 				got, err := os.ReadFile(filepath.Join(chartDir, chartCRDsDir, name)) // #nosec G304 -- path under test-controlled chart copy
 				require.NoError(t, err)
-				wantDocs := strings.Split(strings.TrimSpace(want), "\n---\n")
-				gotDocs := strings.Split(strings.TrimSpace(string(got)), "\n---\n")
-				require.Len(t, gotDocs, len(wantDocs), name)
-				for i := range wantDocs {
-					assert.YAMLEq(t, wantDocs[i], gotDocs[i], name)
-				}
+				assert.Equal(t, want, string(got), name)
 			}
 		})
 	}
@@ -168,12 +161,12 @@ func TestPrepareChart_WritesSourceFiles(t *testing.T) {
 func TestPrepareChart_TemplateTextStaysLiteralAndOffTemplates(t *testing.T) {
 	t.Parallel()
 	body := widgetCRD("widgets.example.com", "  annotations:\n    note: \"{{ .Release.Name }}\"\n")
-	chartDir, _ := prepareChartWithCRDs(t, []extras.Object{
+	chartDir, _ := prepareChartWithCRDs(t, []extras.RawFile{
 		{Path: "widgets.yaml", Raw: []byte(body)},
 	})
 	got, err := os.ReadFile(filepath.Join(chartDir, chartCRDsDir, "widgets.yaml")) // #nosec G304 -- path under test-controlled chart copy
 	require.NoError(t, err)
-	assert.YAMLEq(t, body, string(got))
+	assert.Equal(t, body, string(got))
 	assert.Contains(t, string(got), "{{ .Release.Name }}")
 
 	ch, err := loader.Load(chartDir)
@@ -189,12 +182,12 @@ func TestPrepareChart_HelmCRDObjects(t *testing.T) {
 	gadgets := widgetCRD("gadgets.example.com", "")
 	tests := []struct {
 		name     string
-		crds     []extras.Object
+		crds     []extras.RawFile
 		wantYAML map[string]string
 	}{
 		{
 			name: "one file per source basename",
-			crds: []extras.Object{
+			crds: []extras.RawFile{
 				{Path: "widgets.yaml", Raw: []byte(widgets)},
 				{Path: "gadgets.yml", Raw: []byte(gadgets)},
 			},
@@ -204,13 +197,12 @@ func TestPrepareChart_HelmCRDObjects(t *testing.T) {
 			},
 		},
 		{
-			name: "multi-doc is file oriented",
-			crds: []extras.Object{
-				{Path: "types.yaml", Raw: []byte(widgets)},
-				{Path: "types.yaml", Raw: []byte(gadgets)},
+			name: "multi-doc is one helm crd file",
+			crds: []extras.RawFile{
+				{Path: "types.yaml", Raw: []byte(widgets + "---\n" + gadgets)},
 			},
 			wantYAML: map[string]string{
-				"crds/types.yaml": string(joinCRDDocuments([][]byte{[]byte(widgets), []byte(gadgets)})),
+				"crds/types.yaml": widgets + "---\n" + gadgets,
 			},
 		},
 	}
@@ -227,12 +219,7 @@ func TestPrepareChart_HelmCRDObjects(t *testing.T) {
 				names = append(names, crd.Name)
 				want, ok := tc.wantYAML[crd.Name]
 				require.True(t, ok, crd.Name)
-				wantDocs := strings.Split(strings.TrimSpace(want), "\n---\n")
-				gotDocs := strings.Split(strings.TrimSpace(string(crd.File.Data)), "\n---\n")
-				require.Len(t, gotDocs, len(wantDocs), crd.Name)
-				for i := range wantDocs {
-					assert.YAMLEq(t, wantDocs[i], gotDocs[i], crd.Name)
-				}
+				assert.Equal(t, want, string(crd.File.Data), crd.Name)
 			}
 			wantNames := make([]string, 0, len(tc.wantYAML))
 			for name := range tc.wantYAML {
@@ -248,27 +235,27 @@ func TestPrepareChart_RejectsInvalidCRDs(t *testing.T) {
 	body := widgetCRD("widgets.example.com", "")
 	tests := []struct {
 		name    string
-		crds    []extras.Object
+		crds    []extras.RawFile
 		wantErr string
 	}{
 		{
 			name:    "parent directory",
-			crds:    []extras.Object{{Path: "..", Raw: []byte(body)}},
+			crds:    []extras.RawFile{{Path: "..", Raw: []byte(body)}},
 			wantErr: "unsafe file name",
 		},
 		{
 			name:    "missing extension",
-			crds:    []extras.Object{{Path: "widgets", Raw: []byte(body)}},
+			crds:    []extras.RawFile{{Path: "widgets", Raw: []byte(body)}},
 			wantErr: "file name must end in .yaml or .yml",
 		},
 		{
 			name:    "non yaml extension",
-			crds:    []extras.Object{{Path: "widgets.txt", Raw: []byte(body)}},
+			crds:    []extras.RawFile{{Path: "widgets.txt", Raw: []byte(body)}},
 			wantErr: "file name must end in .yaml or .yml",
 		},
 		{
 			name: "destination collision",
-			crds: []extras.Object{
+			crds: []extras.RawFile{
 				{Path: "a/widgets.yaml", Raw: []byte(body)},
 				{Path: "b/widgets.yaml", Raw: []byte(widgetCRD("gadgets.example.com", ""))},
 			},
@@ -302,9 +289,9 @@ func TestPrepareChart_ChangedCRDBytesNewCopyBackingStaysClean(t *testing.T) {
 	firstBody := widgetCRD("widgets.example.com", "  labels:\n    v: one\n")
 	secondBody := widgetCRD("widgets.example.com", "  labels:\n    v: two\n")
 
-	first, err := PrepareChart(t.Context(), resolved, cache, []extras.Object{{Path: "widgets.yaml", Raw: []byte(firstBody)}})
+	first, err := PrepareChart(t.Context(), resolved, cache, []extras.RawFile{{Path: "widgets.yaml", Raw: []byte(firstBody)}})
 	require.NoError(t, err)
-	second, err := PrepareChart(t.Context(), resolved, cache, []extras.Object{{Path: "widgets.yaml", Raw: []byte(secondBody)}})
+	second, err := PrepareChart(t.Context(), resolved, cache, []extras.RawFile{{Path: "widgets.yaml", Raw: []byte(secondBody)}})
 	require.NoError(t, err)
 	assert.NotEqual(t, first, second)
 
@@ -323,8 +310,8 @@ func TestPrepareChart_ChangedCRDBytesNewCopyBackingStaysClean(t *testing.T) {
 	require.NoError(t, err)
 	gotSecond, err := os.ReadFile(filepath.Join(second, chartCRDsDir, "widgets.yaml")) // #nosec G304 -- path under test-controlled chart copy
 	require.NoError(t, err)
-	assert.YAMLEq(t, firstBody, string(gotFirst))
-	assert.YAMLEq(t, secondBody, string(gotSecond))
+	assert.Equal(t, firstBody, string(gotFirst))
+	assert.Equal(t, secondBody, string(gotSecond))
 }
 
 func TestPrepareChart_DifferentCRDSetsDoNotLeak(t *testing.T) {
@@ -332,11 +319,11 @@ func TestPrepareChart_DifferentCRDSetsDoNotLeak(t *testing.T) {
 	cache := NewChartCache(time.Hour)
 	resolved := resolvedForChartCRDs(t)
 
-	withWidgets, err := PrepareChart(t.Context(), resolved, cache, []extras.Object{
+	withWidgets, err := PrepareChart(t.Context(), resolved, cache, []extras.RawFile{
 		{Path: "widgets.yaml", Raw: []byte(widgetCRD("widgets.example.com", ""))},
 	})
 	require.NoError(t, err)
-	withGadgets, err := PrepareChart(t.Context(), resolved, cache, []extras.Object{
+	withGadgets, err := PrepareChart(t.Context(), resolved, cache, []extras.RawFile{
 		{Path: "gadgets.yaml", Raw: []byte(widgetCRD("gadgets.example.com", ""))},
 	})
 	require.NoError(t, err)
@@ -362,7 +349,7 @@ func TestPrepareChart_MaterializeFailureRemovesCopyLeavesBacking(t *testing.T) {
 	t.Parallel()
 	cache := NewChartCache(time.Hour)
 	resolved := resolvedForChartCRDs(t)
-	ok, err := PrepareChart(t.Context(), resolved, cache, []extras.Object{
+	ok, err := PrepareChart(t.Context(), resolved, cache, []extras.RawFile{
 		{Path: "widgets.yaml", Raw: []byte(widgetCRD("widgets.example.com", ""))},
 	})
 	require.NoError(t, err)
@@ -377,11 +364,11 @@ func TestPrepareChart_MaterializeFailureRemovesCopyLeavesBacking(t *testing.T) {
 	marker := "marker-" + t.Name() + "-" + rand.Text()
 	require.NoError(t, os.WriteFile(filepath.Join(backing, "marker.txt"), []byte(marker), 0o600))
 
-	_, err = PrepareChart(t.Context(), resolved, cache, []extras.Object{
-		{Path: "broken.yaml", Raw: []byte("")},
+	_, err = PrepareChart(t.Context(), resolved, cache, []extras.RawFile{
+		{Path: "..", Raw: []byte(widgetCRD("widgets.example.com", ""))},
 	})
 	require.Error(t, err)
-	assert.ErrorContains(t, err, "empty document")
+	assert.ErrorContains(t, err, "unsafe file name")
 
 	_, stillFound := cache.get(key)
 	assert.True(t, stillFound)
@@ -405,7 +392,7 @@ func TestRenderOffline_ChartCRDObjectsMatchPassedFiles(t *testing.T) {
 	client, err := NewClient(WithNamespace("default"))
 	require.NoError(t, err)
 	resolved := resolvedForChartCRDs(t)
-	crds := []extras.Object{
+	crds := []extras.RawFile{
 		{Path: "widgets.yaml", Raw: []byte(widgetCRD("widgets.example.com", ""))},
 		{Path: "types.yaml", Raw: []byte(widgetCRD("gadgets.example.com", ""))},
 	}
@@ -424,8 +411,8 @@ func TestRenderOffline_ChartCRDObjectsMatchPassedFiles(t *testing.T) {
 	for _, crd := range got {
 		byName[crd.Name] = string(crd.File.Data)
 	}
-	assert.YAMLEq(t, widgetCRD("widgets.example.com", ""), byName["crds/widgets.yaml"])
-	assert.YAMLEq(t, widgetCRD("gadgets.example.com", ""), byName["crds/types.yaml"])
+	assert.Equal(t, widgetCRD("widgets.example.com", ""), byName["crds/widgets.yaml"])
+	assert.Equal(t, widgetCRD("gadgets.example.com", ""), byName["crds/types.yaml"])
 }
 
 func TestCrdFileName(t *testing.T) {
