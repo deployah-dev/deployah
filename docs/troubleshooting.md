@@ -84,10 +84,13 @@ An object in `.deployah/manifests/` has the same apiVersion, kind, namespace,
 and name as something the chart already generates. Rename the extra, or stop
 generating that resource from the spec.
 
-**CRD must use `apiVersion: apiextensions.k8s.io/v1`.**
+**Helm or Kubernetes rejected a chart CRD.**
 
-Older `apiextensions.k8s.io/v1beta1` CRDs are rejected. Convert the document to
-v1.
+Deployah copies `.deployah/crds/` files as-is. It does not require
+`apiextensions.k8s.io/v1` or validate CRD document semantics. If Helm or the
+API server rejects a file, fix the YAML and retry. A later ordinary deploy is
+an upgrade and will not install a newly added CRD. See
+[Custom manifests and CRDs](custom-manifests-and-crds.md).
 
 ## Deploy succeeds but the app returns 503 / times out over HTTPS
 

@@ -356,7 +356,7 @@ func applyDeploy(c *nabat.Context, sess *session.Session, cluster *session.Clust
 	title := fmt.Sprintf("Deploying to '%s'%s...", opts.Environment, ctxSuffix)
 
 	// k8sClient/k8sErr come from runDeploy's single cluster.Kubernetes()
-	// call; the required-API check already ran there, before confirmation.
+	// call.
 	var watcher *DeployWatcher
 	if k8sErr != nil {
 		// K8s client is best-effort: skip the event watcher rather than

@@ -41,9 +41,10 @@ const (
 )
 
 // DecodeCRD decodes o as a typed CustomResourceDefinition for the
-// semantic plan predictor. It unmarshals the first YAML document only;
-// later documents in a multi-doc file are ignored. Helm still receives
-// the whole source file. It does not mutate chart CRD source bytes.
+// semantic plan predictor. It unmarshals the first YAML document only.
+// Callers that inspect multi-document files must split first. Helm
+// still receives the whole source file. It does not mutate chart CRD
+// source bytes.
 func DecodeCRD(o Object) (*apiextensionsv1.CustomResourceDefinition, error) {
 	var crd apiextensionsv1.CustomResourceDefinition
 	if err := sigsyaml.Unmarshal(o.Raw, &crd); err != nil {

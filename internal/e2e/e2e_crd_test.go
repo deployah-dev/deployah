@@ -18,6 +18,7 @@ package e2e_test
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -112,6 +113,91 @@ func (s *E2ESuite) TestCRDLifecycle() {
 	_, err := ext.ApiextensionsV1().CustomResourceDefinitions().Get(
 		t.Context(), crdLifecycleName, metav1.GetOptions{})
 	require.NoError(t, err, "CRD must survive deployah delete")
+}
+
+const (
+	crdAddedName = "addedwidgets.example.com"
+	crdAddedYAML = `apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: addedwidgets.example.com
+spec:
+  group: example.com
+  scope: Namespaced
+  names:
+    kind: AddedWidget
+    plural: addedwidgets
+    singular: addedwidget
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+`
+)
+
+// TestCRDNewlyAddedOnUpgrade checks that a CRD file added after the
+// first install is not installed by an ordinary Helm Upgrade.
+func (s *E2ESuite) TestCRDNewlyAddedOnUpgrade() {
+	t := s.T()
+	src := filepath.Join(s.scenariosDir, "crd-lifecycle")
+	require.DirExists(t, src)
+
+	dir := t.TempDir()
+	copyTree(t, src, dir)
+
+	ns := fixtureNamespace("crd-added")
+	s.createNamespace(t, ns)
+
+	restCfg := kubeRESTConfig(t, s.kcPath, kindContext)
+	ext := newApiextensionsClient(t, restCfg)
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		for _, name := range []string{crdLifecycleName, crdAddedName} {
+			if delCRDErr := ext.ApiextensionsV1().CustomResourceDefinitions().Delete(
+				cleanupCtx, name, metav1.DeleteOptions{}); delCRDErr != nil {
+				t.Logf("cleanup CRD delete failed (non-fatal): %v", delCRDErr)
+			}
+		}
+		if _, _, delErr := runInErrContext(t, cleanupCtx, dir, "delete", "crd-lifecycle", "dev",
+			"--yes", "--wait", "--allow-missing-platform",
+			"--context", kindContext, "--namespace", ns); delErr != nil {
+			t.Logf("cleanup delete failed (non-fatal): %v", delErr)
+		}
+		s.deleteNamespace(t, ns)
+	})
+
+	runIn(t, dir, "deploy", "dev", "--context", kindContext, "--yes",
+		"--namespace", ns)
+	waitCRDEstablished(t, ext, crdLifecycleName)
+	assertReleaseExists(t, dir, ns, "crd-lifecycle", "dev")
+
+	require.NoError(t, os.WriteFile(
+		filepath.Join(dir, ".deployah", "crds", "addedwidget.yaml"),
+		[]byte(crdAddedYAML), 0o600))
+	runIn(t, dir, "deploy", "dev", "--context", kindContext, "--yes",
+		"--namespace", ns, "--reapply")
+
+	_, err := ext.ApiextensionsV1().CustomResourceDefinitions().Get(
+		t.Context(), crdAddedName, metav1.GetOptions{})
+	require.True(t, apierrors.IsNotFound(err),
+		"Helm upgrade must not install a CRD added after first install, got: %v", err)
+}
+
+func assertReleaseExists(t *testing.T, dir, ns, project, env string) {
+	t.Helper()
+	stdout, _ := runIn(t, dir, "status", project,
+		"--environment", env,
+		"--output", "json",
+		"--context", kindContext,
+		"--namespace", ns)
+	var rows []map[string]any
+	require.NoError(t, json.Unmarshal([]byte(stdout), &rows), stdout)
+	require.NotEmpty(t, rows, stdout)
+	require.NotEmpty(t, rows[0]["release"], stdout)
 }
 
 func assertCRDUserMetadata(t *testing.T, crd *apiextensionsv1.CustomResourceDefinition) {

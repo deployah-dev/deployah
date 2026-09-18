@@ -629,6 +629,40 @@ func TestBuildSemanticPlan_DistinctCRDs(t *testing.T) {
 	assert.Equal(t, 2, crdCreates)
 }
 
+func TestBuildSemanticPlan_MultiDocCRDFile(t *testing.T) {
+	t.Parallel()
+	client := &fakeBuildClient{
+		result:  installResult(configMapYAML("app", "prod", "v1")),
+		prep:    helm.ReleasePrep{Operation: helm.OperationInstall, NextRevision: 1},
+		cleanup: func() {},
+	}
+	widget := widgetCRDObject(t, nil)
+	gadget := extraCRD(t, "gadgets.other.com", "Gadget", "gadgets")
+	nonCRD := []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: not-a-crd\n")
+	nameOnly := []byte("metadata:\n  name: ignored.example.com\n")
+	combined := append([]byte{}, widget.Raw...)
+	combined = append(combined, []byte("---\n")...)
+	combined = append(combined, nonCRD...)
+	combined = append(combined, []byte("---\n")...)
+	combined = append(combined, nameOnly...)
+	combined = append(combined, []byte("---\n")...)
+	combined = append(combined, gadget.Raw...)
+	rawCopy := append([]byte(nil), combined...)
+	in := buildInput("ctx", resolvedSpec(), nil)
+	in.CRDs = []extras.RawFile{{Path: "both.yaml", Raw: combined}}
+	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, readyCluster(), in)
+	t.Cleanup(cleanup)
+	require.NoError(t, err)
+	assert.Equal(t, rawCopy, in.CRDs[0].Raw)
+	var names []string
+	for _, c := range p.Changes {
+		if c.Origin.Kind == semantic.OriginCRD {
+			names = append(names, c.Resource.Name)
+		}
+	}
+	assert.ElementsMatch(t, []string{"widgets.example.com", "gadgets.other.com"}, names)
+}
+
 func TestBuildSemanticPlan_SpecChangeNoOpLimitation(t *testing.T) {
 	t.Parallel()
 	live := &unstructured.Unstructured{Object: map[string]any{

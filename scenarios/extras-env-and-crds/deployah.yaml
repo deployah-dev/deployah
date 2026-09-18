@@ -4,7 +4,7 @@ project: extras-env-and-crds
 components:
   web:
     image: nginx:latest
-    port: 8080
+    port: 80
     environments: [dev, prod]
     resourcePreset: small
 environments:

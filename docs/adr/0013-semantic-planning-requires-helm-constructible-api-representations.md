@@ -28,14 +28,8 @@ On install, Helm processes chart CRDs before dependent ordinary
 resources (ADR-0008). If Desired CRD intent declares the required
 version served (`served: true`), semantic planning may reason from
 that declared intent even when the Desired GVK is not yet
-discoverable. Missing or non-boolean `served` does not count. That
-exception applies only when this invocation will let Helm install
-those CRDs. If install-time CRD installation is skipped, a Desired CRD
-must not invent API availability for that invocation. That skip
-constraint is not a semantic-planning rule. Semantic planning does
-not take `--skip-crds` / `Install.SkipCRDs`. The transitional
-predictor is skip-unaware. Skip is Helm install behavior (ADR-0008).
-This does not guarantee that Kubernetes will accept the CRD, that
+discoverable. Missing or non-boolean `served` does not count. This
+does not guarantee that Kubernetes will accept the CRD, that
 discovery appears at runtime, or that a dependent resource succeeds.
 
 - Entire CRD absent: the logical custom resource is known absent. If
@@ -79,5 +73,3 @@ Recovery of unserved stored APIs is future work: GitHub issue
 
 - On a real upgrade, an unconstructible Previous or Desired GVK fails
   planning even if Live is readable through another served version.
-- Semantic planning can still reason from Desired CRD served intent on
-  a skipped first install. `--skip-crds` is not a plan input.
