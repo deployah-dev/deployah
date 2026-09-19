@@ -201,10 +201,6 @@ func TestSchemaV1_RejectsMalformedDocuments(t *testing.T) {
 			require.NotEmpty(t, defs)
 			asObject(t, defs[0])["apply"] = map[string]any{"write": ssaWrite}
 		})},
-		{name: "crd origin with helm", raw: patched(t, update, func(d map[string]any) {
-			origin := asObject(t, firstChange(t, d)["origin"])
-			origin["kind"] = "crd"
-		})},
 		{name: "namespace origin with helm", raw: patched(t, update, func(d map[string]any) {
 			origin := asObject(t, firstChange(t, d)["origin"])
 			origin["kind"] = "namespace"
@@ -247,43 +243,6 @@ func TestSchemaV1_AcceptsHelmActionOrigins(t *testing.T) {
 		name string
 		plan semantic.Plan
 	}{
-		{name: "none with origin crd", plan: mustPlan(t, semantic.HelmNone, []semantic.ResourceChange{{
-			Resource: semantic.ResourceRef{
-				APIVersion: "apiextensions.k8s.io/v1",
-				Kind:       "CustomResourceDefinition",
-				Name:       "widgets.example.com",
-			},
-			Origin: semantic.ResourceOrigin{Kind: semantic.OriginCRD},
-			Action: semantic.Create,
-			After: snap(map[string]any{
-				"apiVersion": "apiextensions.k8s.io/v1",
-				"kind":       "CustomResourceDefinition",
-				"metadata":   map[string]any{"name": "widgets.example.com"},
-			}),
-			Apply: writeCreate(),
-		}}, nil)},
-		{name: "none with origin crd replace", plan: mustPlan(t, semantic.HelmNone, []semantic.ResourceChange{{
-			Resource: semantic.ResourceRef{
-				APIVersion: "apiextensions.k8s.io/v1",
-				Kind:       "CustomResourceDefinition",
-				Name:       "widgets.example.com",
-			},
-			Origin: semantic.ResourceOrigin{Kind: semantic.OriginCRD},
-			Action: semantic.Update,
-			Before: snap(map[string]any{
-				"apiVersion": "apiextensions.k8s.io/v1",
-				"kind":       "CustomResourceDefinition",
-				"metadata":   map[string]any{"name": "widgets.example.com"},
-				"spec":       map[string]any{"group": "example.com"},
-			}),
-			After: snap(map[string]any{
-				"apiVersion": "apiextensions.k8s.io/v1",
-				"kind":       "CustomResourceDefinition",
-				"metadata":   map[string]any{"name": "widgets.example.com"},
-				"spec":       map[string]any{"group": "example.com", "scope": "Namespaced"},
-			}),
-			Apply: writeForceApply(),
-		}}, nil)},
 		{name: "install with origin namespace", plan: mustPlanWithHeader(t, semantic.Header{
 			Project:      "web",
 			Environment:  "prod",

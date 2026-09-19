@@ -274,7 +274,7 @@ func TestBuildSemanticPlan_CRDFilesDoNotProduceResourceChanges(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, rawCopy, in.CRDs[0].Raw)
 	for _, c := range p.Changes {
-		assert.NotEqual(t, semantic.OriginCRD, c.Origin.Kind)
+		assert.True(t, c.Origin.Kind == semantic.OriginHelm || c.Origin.Kind == semantic.OriginNamespace)
 	}
 }
 
@@ -367,7 +367,6 @@ func TestBuildSemanticPlan_PruneSyntheticGetNoLimitation(t *testing.T) {
 	t.Cleanup(cleanup)
 	require.NoError(t, err)
 	for _, c := range p.Changes {
-		assert.NotEqual(t, semantic.OriginCRD, c.Origin.Kind)
 		assert.NotEqual(t, "old", c.Resource.Name)
 	}
 	for _, d := range p.Diagnostics {

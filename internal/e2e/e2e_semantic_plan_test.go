@@ -76,9 +76,6 @@ func (s *E2ESuite) TestSemanticPlanPrerequisites() {
 	assert.Equal(t, semantic.OriginHelm, p.Changes[1].Origin.Kind)
 	assert.Equal(t, "ConfigMap", p.Changes[1].Resource.Kind)
 	assert.Equal(t, semantic.Create, p.Changes[1].Action)
-	for _, c := range p.Changes {
-		assert.NotEqual(t, semantic.OriginCRD, c.Origin.Kind)
-	}
 	assert.Equal(t, semantic.CompletenessPartial, p.Completeness)
 	require.NotEmpty(t, p.Diagnostics)
 

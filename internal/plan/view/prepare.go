@@ -48,7 +48,7 @@ func validateRenderable(p semantic.Plan) error {
 			return err
 		}
 		if err := requireEnum(fmt.Sprintf("change %d origin", i), c.Origin.Kind.String(),
-			semantic.OriginHelm.String(), semantic.OriginCRD.String(), semantic.OriginNamespace.String()); err != nil {
+			semantic.OriginHelm.String(), semantic.OriginNamespace.String()); err != nil {
 			return err
 		}
 		if c.Apply.Write != nil {

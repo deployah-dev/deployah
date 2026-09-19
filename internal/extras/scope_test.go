@@ -75,28 +75,6 @@ func TestTableResolver_OperatorAllowlistUsesRealGroups(t *testing.T) {
 	assert.True(t, known)
 }
 
-// TestTableResolver_KnownFromCRDScope exercises extras package behavior.
-func TestTableResolver_KnownFromCRDScope(t *testing.T) {
-	t.Parallel()
-	r := &extras.TableResolver{CRDScope: map[string]bool{
-		"example.com/widget": true,
-	}}
-	known, err := r.Known(schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "Widget"})
-	require.NoError(t, err)
-	assert.True(t, known)
-}
-
-// TestTableResolver_CRDScopeOverridesDefault exercises extras package behavior.
-func TestTableResolver_CRDScopeOverridesDefault(t *testing.T) {
-	t.Parallel()
-	r := &extras.TableResolver{CRDScope: map[string]bool{
-		"example.com/clusterwidget": false,
-	}}
-	ns, err := r.Namespaced(schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "ClusterWidget"})
-	require.NoError(t, err)
-	assert.False(t, ns)
-}
-
 func TestLoad_CRDContentDoesNotAffectManifestScope(t *testing.T) {
 	t.Parallel()
 	clusterCRD := `
@@ -149,11 +127,15 @@ metadata:
 // TestNewDiscoveryResolver_NilConfig returns a table-only resolver.
 func TestNewDiscoveryResolver_NilConfig(t *testing.T) {
 	t.Parallel()
-	scope, err := extras.NewDiscoveryResolver(nil, map[string]bool{"example.com/widget": true})
+	scope, err := extras.NewDiscoveryResolver(nil)
 	require.NoError(t, err)
-	known, err := scope.Known(schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "Widget"})
+	known, err := scope.Known(schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"})
 	require.NoError(t, err)
 	assert.True(t, known)
+
+	known, err = scope.Known(schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "Widget"})
+	require.NoError(t, err)
+	assert.False(t, known)
 }
 
 // TestDiscoveryResolver_MapperHitAndFallback covers mapper hits and table
@@ -166,7 +148,7 @@ func TestDiscoveryResolver_MapperHitAndFallback(t *testing.T) {
 
 	r := &extras.DiscoveryResolver{
 		Mapper: mapper,
-		Table:  extras.TableResolver{CRDScope: map[string]bool{"other.io/thing": true}},
+		Table:  extras.TableResolver{},
 	}
 
 	known, err := r.Known(schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "Widget"})
@@ -181,7 +163,11 @@ func TestDiscoveryResolver_MapperHitAndFallback(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, ns)
 
+	known, err = r.Known(schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"})
+	require.NoError(t, err)
+	assert.True(t, known)
+
 	known, err = r.Known(schema.GroupVersionKind{Group: "other.io", Version: "v1", Kind: "Thing"})
 	require.NoError(t, err)
-	assert.True(t, known, "unknown to mapper still known via table CRDScope")
+	assert.False(t, known)
 }

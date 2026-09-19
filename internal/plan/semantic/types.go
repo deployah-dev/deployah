@@ -176,9 +176,6 @@ type OriginKind int
 const (
 	// OriginHelm is a Helm-predicted resource.
 	OriginHelm OriginKind = iota + 1
-	// OriginCRD is a CustomResourceDefinition-origin change. Chart CRD
-	// source files are not parsed into this origin.
-	OriginCRD
 	// OriginNamespace is the target Namespace created as part of a
 	// Helm install. It is invalid with [HelmNone] or [HelmUpgrade].
 	OriginNamespace
@@ -188,8 +185,6 @@ func (k OriginKind) String() string {
 	switch k {
 	case OriginHelm:
 		return "helm"
-	case OriginCRD:
-		return "crd"
 	case OriginNamespace:
 		return "namespace"
 	default:
@@ -199,7 +194,7 @@ func (k OriginKind) String() string {
 
 func (k OriginKind) valid() bool {
 	switch k {
-	case OriginHelm, OriginCRD, OriginNamespace:
+	case OriginHelm, OriginNamespace:
 		return true
 	default:
 		return false
@@ -207,8 +202,7 @@ func (k OriginKind) valid() bool {
 }
 
 // ResourceOrigin names the producer of a [ResourceChange]. Helm details
-// are required for [OriginHelm] and forbidden for [OriginCRD] and
-// [OriginNamespace].
+// are required for [OriginHelm] and forbidden for [OriginNamespace].
 type ResourceOrigin struct {
 	Kind OriginKind
 	Helm *HelmOrigin

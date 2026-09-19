@@ -43,14 +43,12 @@ func compareChange(a, b ResourceChange) int {
 
 func originRank(k OriginKind) int {
 	switch k {
-	case OriginCRD:
-		return 1
 	case OriginNamespace:
-		return 2
+		return 1
 	case OriginHelm:
-		return 3
+		return 2
 	default:
-		return 4
+		return 3
 	}
 }
 

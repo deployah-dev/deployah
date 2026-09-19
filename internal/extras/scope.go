@@ -29,8 +29,8 @@ import (
 
 // ScopeResolver reports whether a GVK is known and whether it is namespaced.
 type ScopeResolver interface {
-	// Known reports whether gvk is a built-in kind, present in live
-	// discovery, or listed in an injected extra-scope table.
+	// Known reports whether gvk is a built-in kind or present in live
+	// discovery.
 	Known(gvk schema.GroupVersionKind) (bool, error)
 	// Namespaced reports whether gvk is namespaced. When Known is false and
 	// discovery is unavailable, callers may still use this; unknown kinds
@@ -136,37 +136,20 @@ var builtInScope = map[string]bool{
 	"monitoring.coreos.com/alertmanagerconfig": true,
 }
 
-// TableResolver resolves scope from a built-in group/kind table and an
-// optional extra-scope table. Unknown kinds are not Known; Namespaced
-// defaults them to namespaced when called anyway.
-type TableResolver struct {
-	// CRDScope maps "group/kind" (lowercase) to namespaced. Callers may
-	// inject extra known types. Load does not populate this from
-	// .deployah/crds/ files.
-	CRDScope map[string]bool
-}
+// TableResolver resolves scope from a built-in group/kind table.
+// Unknown kinds are not Known; Namespaced defaults them to namespaced
+// when called anyway.
+type TableResolver struct{}
 
 // Known implements ScopeResolver.
 func (r *TableResolver) Known(gvk schema.GroupVersionKind) (bool, error) {
-	key := crdScopeKey(gvk.Group, gvk.Kind)
-	if r != nil && r.CRDScope != nil {
-		if _, ok := r.CRDScope[key]; ok {
-			return true, nil
-		}
-	}
-	_, ok := builtInScope[key]
+	_, ok := builtInScope[scopeKey(gvk.Group, gvk.Kind)]
 	return ok, nil
 }
 
 // Namespaced implements ScopeResolver.
 func (r *TableResolver) Namespaced(gvk schema.GroupVersionKind) (bool, error) {
-	key := crdScopeKey(gvk.Group, gvk.Kind)
-	if r != nil && r.CRDScope != nil {
-		if ns, ok := r.CRDScope[key]; ok {
-			return ns, nil
-		}
-	}
-	if ns, ok := builtInScope[key]; ok {
+	if ns, ok := builtInScope[scopeKey(gvk.Group, gvk.Kind)]; ok {
 		return ns, nil
 	}
 	return true, nil
@@ -180,8 +163,8 @@ type DiscoveryResolver struct {
 
 // NewDiscoveryResolver builds a ScopeResolver from a rest.Config. When cfg
 // is nil, it returns a table-only resolver.
-func NewDiscoveryResolver(cfg *rest.Config, crdScope map[string]bool) (ScopeResolver, error) {
-	table := TableResolver{CRDScope: crdScope}
+func NewDiscoveryResolver(cfg *rest.Config) (ScopeResolver, error) {
+	table := TableResolver{}
 	if cfg == nil {
 		return &table, nil
 	}
@@ -214,6 +197,6 @@ func (r *DiscoveryResolver) Namespaced(gvk schema.GroupVersionKind) (bool, error
 	return r.Table.Namespaced(gvk)
 }
 
-func crdScopeKey(group, kind string) string {
+func scopeKey(group, kind string) string {
 	return strings.ToLower(group) + "/" + strings.ToLower(kind)
 }

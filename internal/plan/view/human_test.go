@@ -133,22 +133,6 @@ func TestWriteHuman_Prerequisites(t *testing.T) {
 		FreshInstall: true,
 	}, semantic.HelmInstall, []semantic.ResourceChange{
 		{
-			Resource: semantic.ResourceRef{
-				APIVersion: "apiextensions.k8s.io/v1",
-				Kind:       "CustomResourceDefinition",
-				Name:       "widgets.example.com",
-			},
-			Origin: semantic.ResourceOrigin{Kind: semantic.OriginCRD},
-			Action: semantic.Create,
-			After: snap(map[string]any{
-				"apiVersion": "apiextensions.k8s.io/v1",
-				"kind":       "CustomResourceDefinition",
-				"metadata":   map[string]any{"name": "widgets.example.com"},
-			}),
-			Apply:      writeCreate(),
-			ApplyOrder: 1,
-		},
-		{
 			Resource: semantic.ResourceRef{APIVersion: "v1", Kind: "Namespace", Name: "prod"},
 			Origin:   semantic.ResourceOrigin{Kind: semantic.OriginNamespace},
 			Action:   semantic.Create,
@@ -174,12 +158,11 @@ func TestWriteHuman_Prerequisites(t *testing.T) {
 	}, nil, []semantic.Diagnostic{{
 		Severity: semantic.DiagnosticWarning,
 		Category: semantic.CategoryPredictionLimitation,
-		Message:  "prediction is not exact: API example.com/v1/Widget becomes available after CRD widgets.example.com is created earlier in this deployment",
+		Message:  "target namespace is created earlier in this deployment",
 		Resource: &widgetRef,
 	}})
 	text := writeHuman(t, p)
 	assertGolden(t, "human_prerequisites", text)
-	assert.Contains(t, text, `+ create apiextensions.k8s.io/v1/CustomResourceDefinition "widgets.example.com"`)
 	assert.Contains(t, text, `+ create v1/Namespace "prod"`)
 	assert.Contains(t, text, `+ create example.com/v1/Widget "app"`)
 	assert.Contains(t, text, "Diagnostics")

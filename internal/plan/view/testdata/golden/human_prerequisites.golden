@@ -9,12 +9,6 @@ Warning: prediction is incomplete
 
 Resources
 
-  + create apiextensions.k8s.io/v1/CustomResourceDefinition "widgets.example.com"
-  + apiVersion: apiextensions.k8s.io/v1
-  + kind: CustomResourceDefinition
-  + metadata:
-  +   name: widgets.example.com
-
   + create v1/Namespace "prod"
   + apiVersion: v1
   + kind: Namespace
@@ -35,7 +29,7 @@ Resources
 
 Diagnostics
 
-  warning prediction_limitation example.com/v1/Widget "app": prediction is not exact: API example.com/v1/Widget becomes available after CRD widgets.example.com is created earlier in this deployment
+  warning prediction_limitation example.com/v1/Widget "app": target namespace is created earlier in this deployment
 
 Summary
-  Resources: 3 create, 0 update, 0 delete, 0 replace
+  Resources: 2 create, 0 update, 0 delete, 0 replace

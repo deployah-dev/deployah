@@ -30,7 +30,7 @@ import (
 // not rejected. Scope comes from the built-in table and live discovery, not
 // from .deployah/crds/ content.
 func LoadFromSpec(specPath string, spc *spec.Spec, platform *spec.PlatformConfig, environment, releaseNamespace string, cfg *rest.Config) (*Bundle, error) {
-	scope, err := NewDiscoveryResolver(cfg, nil)
+	scope, err := NewDiscoveryResolver(cfg)
 	if err != nil {
 		return nil, err
 	}
