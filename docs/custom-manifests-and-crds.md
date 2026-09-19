@@ -113,9 +113,10 @@ later.
 - Duplicate extra **manifests** (same apiVersion/kind/namespace/name) fail
   the load.
 - `.deployah/crds/` is an opaque Helm-chart file set. Deployah checks the
-  filesystem rules above. It does not require a CRD `apiVersion`, reject
-  duplicate CRD logical identity, or validate CRD document semantics. Helm
-  and Kubernetes decide whether those files are acceptable CRDs.
+  filesystem rules above. It does not require a CRD `apiVersion` or reject
+  duplicate CRD logical identity. Deployah does not validate CRD document
+  semantics. Helm and Kubernetes process the files at runtime and may
+  reject invalid or unsupported content.
 - An extra that collides with a generated chart object fails the render
   (Deployah will not overwrite chart resources).
 - Custom resource kinds must be known: put their CRD under `.deployah/crds/`,
@@ -130,8 +131,8 @@ later.
 ## Plan vs deploy
 
 - `deployah plan` includes extra manifests in the rendered diff. It does not
-  apply CRDs. When `.deployah/crds/` is non-empty it prints how many CRDs
-  were loaded (`CRDs: N from .deployah/crds/`).
+  apply CRDs. When `.deployah/crds/` is non-empty it prints how many CRD
+  files were loaded (`CRD files: N from .deployah/crds/`).
 - `deployah deploy` copies those CRD files into the generated chart, then
   runs Helm. On a fresh install Helm processes `crds/` before ordinary
   resources. On upgrade Helm leaves chart CRDs alone, including CRDs added
@@ -147,13 +148,24 @@ deployah deploy prod --skip-crds      # fresh install: Helm skips chart CRDs
 `--skip-crds` maps to Helm `Install.SkipCRDs`. The files stay in the chart.
 Skip is not a Deployah CRD writer, and it does not apply on upgrade.
 
-Helm installs chart CRDs only on a first install (unless you skip). Existing
-chart CRDs are not updated on Upgrade. CRDs are not installed on rollback.
-Uninstall does not delete them. Extra manifests leave with the release.
+Helm 4.3 install-time CRD handling, with server-side apply enabled, works
+like this:
 
-If a Helm release already exists and the user later adds a NEW CRD file
-under `.deployah/crds/`, a normal `deployah deploy` performs a Helm Upgrade
-and that new CRD is NOT installed.
+- Fresh install: Helm processes chart CRDs unless you pass `--skip-crds`.
+- Existing chart CRD: the install path may apply changes to it. Helm's
+  Create call uses server-side apply, so an already-present CRD can be
+  updated during that first install.
+- Upgrade: Helm does not process chart CRDs.
+- Rollback: chart CRDs are not reprocessed.
+- Uninstall: chart CRDs remain.
+- CRD added after the first install: an ordinary Upgrade does not install
+  it.
+
+Extra manifests leave with the release.
+
+If a Helm release already exists and you later add a new CRD file under
+`.deployah/crds/`, a normal `deployah deploy` performs a Helm Upgrade and
+that new CRD is not installed.
 
 If you skip CRDs on the first install, later ordinary upgrades will not
 install them either. Use a first install without `--skip-crds` when the

@@ -139,6 +139,89 @@ metadata:
 	assert.Empty(t, bundle.Manifests[0].Obj.GetNamespace())
 }
 
+func TestLoad_CRDScopeInspectionRequiresCRDKind(t *testing.T) {
+	t.Parallel()
+	const clusterWidget = `
+apiVersion: example.com/v1
+kind: ClusterWidget
+metadata:
+  name: one
+`
+	validCRD := `
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: clusterwidgets.example.com
+spec:
+  group: example.com
+  scope: Cluster
+  names:
+    kind: ClusterWidget
+    plural: clusterwidgets
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+`
+	tests := []struct {
+		name          string
+		crdBody       string
+		wantNamespace string
+	}{
+		{
+			name:          "valid CRD contributes cluster scope",
+			crdBody:       validCRD,
+			wantNamespace: "",
+		},
+		{
+			name: "non-CRD with CRD-shaped spec contributes no scope",
+			crdBody: `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fake
+spec:
+  group: example.com
+  scope: Cluster
+  names:
+    kind: ClusterWidget
+`,
+			wantNamespace: "apps",
+		},
+		{
+			name:          "malformed content is non-fatal and contributes no scope",
+			crdBody:       "not: [valid\n",
+			wantNamespace: "apps",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			crdPath := filepath.Join(dir, ".deployah", "crds", "widget.yaml")
+			writeFile(t, crdPath, tc.crdBody)
+			writeFile(t, filepath.Join(dir, ".deployah", "manifests", "cw.yaml"), clusterWidget)
+			bundle, err := extras.Load(extras.LoadConfig{
+				SpecDir:          dir,
+				Project:          "demo",
+				Environment:      "prod",
+				DeclaredEnvs:     []string{"prod"},
+				ReleaseNamespace: "apps",
+				Scope:            &extras.TableResolver{},
+				Offline:          true,
+			})
+			require.NoError(t, err)
+			require.Len(t, bundle.CRDs, 1)
+			assert.Equal(t, tc.crdBody, string(bundle.CRDs[0].Raw))
+			require.Len(t, bundle.Manifests, 1)
+			assert.Equal(t, tc.wantNamespace, bundle.Manifests[0].Obj.GetNamespace())
+		})
+	}
+}
+
 // TestNewDiscoveryResolver_NilConfig returns a table-only resolver.
 func TestNewDiscoveryResolver_NilConfig(t *testing.T) {
 	t.Parallel()

@@ -175,9 +175,9 @@ const (
 	// TLSModeSecretName uses a pre-existing Kubernetes TLS secret. The secret
 	// must exist in the deployment namespace.
 	TLSModeSecretName TLSMode = "secretName"
-	// TLSModeCertManager provisions a certificate via cert-manager. A
-	// pre-flight check verifies that the cert-manager.io/v1 API group exists
-	// and that the referenced ClusterIssuer or Issuer object is present.
+	// TLSModeCertManager provisions a certificate via cert-manager. The
+	// cert-manager.io/v1 API and the referenced ClusterIssuer or Issuer
+	// must be available when Kubernetes processes the Certificate.
 	TLSModeCertManager TLSMode = "certManager"
 )
 

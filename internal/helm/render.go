@@ -28,13 +28,8 @@ import (
 	"deployah.dev/deployah/internal/render"
 	"deployah.dev/deployah/internal/spec"
 
-	chartcommon "helm.sh/helm/v4/pkg/chart/common"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 )
-
-// offlineMonitorAPIVersion lets ServiceMonitor/PodMonitor templates
-// render when there is no discovery client.
-const offlineMonitorAPIVersion = "monitoring.coreos.com/v1"
 
 // RenderManifests renders the chart from [spec.ResolvedSpec] client-side.
 // The cluster must be reachable. Use [Client.RenderOffline] when there is
@@ -175,9 +170,6 @@ func (c *Client) renderInstall(ctx context.Context, releaseName string, ch *char
 	install := c.newInstallAction(releaseName, labels, postRenderer, false)
 	install.DryRunStrategy = action.DryRunClient
 	install.DisableOpenAPIValidation = true
-	// Client dry-run sees only built-in APIs. Add the monitor GV so
-	// ServiceMonitor templates still render.
-	install.APIVersions = chartcommon.VersionSet{offlineMonitorAPIVersion}
 
 	rel, runErr := install.RunWithContext(ctx, ch, values)
 	if runErr != nil {

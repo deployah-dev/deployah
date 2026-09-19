@@ -61,7 +61,7 @@ func CRDLifecycleNote(n int, upgrade, skipInstall bool) string {
 	if n <= 0 {
 		return ""
 	}
-	base := fmt.Sprintf("CRDs: %d from .deployah/crds/", n)
+	base := fmt.Sprintf("CRD files: %d from .deployah/crds/", n)
 	switch {
 	case upgrade:
 		return base + " (Helm does not install or update chart CRDs on upgrade, including newly added files)"

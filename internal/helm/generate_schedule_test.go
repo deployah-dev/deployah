@@ -402,7 +402,6 @@ func renderScheduled(t *testing.T, manifest *spec.Spec, env, releaseName, kubeVe
 	install.DryRunStrategy = action.DryRunClient
 	install.DisableOpenAPIValidation = true
 	install.Labels = labels
-	install.APIVersions = chartcommon.VersionSet{offlineMonitorAPIVersion}
 	if kubeVersion != "" {
 		kv, parseErr := chartcommon.ParseKubeVersion(kubeVersion)
 		require.NoError(t, parseErr)

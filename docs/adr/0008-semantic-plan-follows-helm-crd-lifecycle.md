@@ -28,7 +28,7 @@ apply an existing CRD rather than returning AlreadyExists.
 Install-time CRD processing may be explicitly disabled by execution
 intent. Disabling it does not remove files from the chart. Deployah
 does not Create, Apply, Replace, Patch, or Delete chart CRDs itself.
-Origin is tracked internally from `.deployah/crds/` / `Bundle.CRDs`.
+Origin is derived from the CRD source location, not from object metadata.
 Deployah does not inject Deployah identity labels or annotations into
 chart CRDs.
 

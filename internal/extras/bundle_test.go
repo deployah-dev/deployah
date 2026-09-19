@@ -36,26 +36,26 @@ func TestCRDLifecycleNote(t *testing.T) {
 		{
 			name: "install",
 			n:    2,
-			want: "CRDs: 2 from .deployah/crds/ (Helm processes chart CRDs on install)",
+			want: "CRD files: 2 from .deployah/crds/ (Helm processes chart CRDs on install)",
 		},
 		{
 			name:    "upgrade",
 			n:       1,
 			upgrade: true,
-			want:    "CRDs: 1 from .deployah/crds/ (Helm does not install or update chart CRDs on upgrade, including newly added files)",
+			want:    "CRD files: 1 from .deployah/crds/ (Helm does not install or update chart CRDs on upgrade, including newly added files)",
 		},
 		{
 			name:        "skip on install",
 			n:           3,
 			skipInstall: true,
-			want:        "CRDs: 3 from .deployah/crds/ (install-time CRD processing disabled; files stay in the chart)",
+			want:        "CRD files: 3 from .deployah/crds/ (install-time CRD processing disabled; files stay in the chart)",
 		},
 		{
 			name:        "upgrade wins over skip",
 			n:           1,
 			upgrade:     true,
 			skipInstall: true,
-			want:        "CRDs: 1 from .deployah/crds/ (Helm does not install or update chart CRDs on upgrade, including newly added files)",
+			want:        "CRD files: 1 from .deployah/crds/ (Helm does not install or update chart CRDs on upgrade, including newly added files)",
 		},
 	}
 	for _, tc := range tests {

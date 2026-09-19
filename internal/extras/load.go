@@ -159,7 +159,8 @@ func checkDuplicateIdentities(objs []Object) error {
 
 // scopeFromCRDFiles extracts group/kind -> namespaced from raw CRD source
 // files. Inspection is read-only: parse failures skip that file and never
-// fail Load, and nothing is written back into the source bytes.
+// fail Load, and nothing is written back into the source bytes. Documents
+// that are not kind CustomResourceDefinition contribute no scope hint.
 func scopeFromCRDFiles(files []RawFile) map[string]bool {
 	out := make(map[string]bool)
 	for i := range files {
@@ -178,13 +179,17 @@ func inspectCRDScope(raw []byte, out map[string]bool) {
 		if len(obj) == 0 {
 			continue
 		}
-		group, _ := unstructuredNestedString(obj, "spec", "group")
-		kind, _ := unstructuredNestedString(obj, "spec", "names", "kind")
-		scope, _ := unstructuredNestedString(obj, "spec", "scope")
-		if group == "" || kind == "" {
+		kind, _ := unstructuredNestedString(obj, "kind")
+		if kind != "CustomResourceDefinition" {
 			continue
 		}
-		out[crdScopeKey(group, kind)] = !strings.EqualFold(scope, "Cluster")
+		group, _ := unstructuredNestedString(obj, "spec", "group")
+		crdKind, _ := unstructuredNestedString(obj, "spec", "names", "kind")
+		scope, _ := unstructuredNestedString(obj, "spec", "scope")
+		if group == "" || crdKind == "" {
+			continue
+		}
+		out[crdScopeKey(group, crdKind)] = !strings.EqualFold(scope, "Cluster")
 	}
 }
 
