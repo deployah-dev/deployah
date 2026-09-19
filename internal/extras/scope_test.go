@@ -97,11 +97,9 @@ func TestTableResolver_CRDScopeOverridesDefault(t *testing.T) {
 	assert.False(t, ns)
 }
 
-// TestLoad_UsesCRDScopeForCustomResources exercises extras package behavior.
-func TestLoad_UsesCRDScopeForCustomResources(t *testing.T) {
+func TestLoad_CRDContentDoesNotAffectManifestScope(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, ".deployah", "crds", "widget.yaml"), `
+	clusterCRD := `
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
@@ -112,20 +110,26 @@ spec:
   names:
     kind: ClusterWidget
     plural: clusterwidgets
-  versions:
-    - name: v1
-      served: true
-      storage: true
-      schema:
-        openAPIV3Schema:
-          type: object
-`)
+`
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".deployah", "crds", "widget.yaml"), clusterCRD)
 	writeFile(t, filepath.Join(dir, ".deployah", "manifests", "cw.yaml"), `
 apiVersion: example.com/v1
 kind: ClusterWidget
 metadata:
   name: one
 `)
+	_, err := extras.Load(extras.LoadConfig{
+		SpecDir:          dir,
+		Project:          "demo",
+		Environment:      "prod",
+		DeclaredEnvs:     []string{"prod"},
+		ReleaseNamespace: "apps",
+		Scope:            &extras.TableResolver{},
+	})
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "unknown type")
+
 	bundle, err := extras.Load(extras.LoadConfig{
 		SpecDir:          dir,
 		Project:          "demo",
@@ -133,143 +137,13 @@ metadata:
 		DeclaredEnvs:     []string{"prod"},
 		ReleaseNamespace: "apps",
 		Scope:            &extras.TableResolver{},
+		Offline:          true,
 	})
 	require.NoError(t, err)
+	require.Len(t, bundle.CRDs, 1)
+	assert.Equal(t, clusterCRD, string(bundle.CRDs[0].Raw))
 	require.Len(t, bundle.Manifests, 1)
-	assert.Empty(t, bundle.Manifests[0].Obj.GetNamespace())
-}
-
-func TestLoad_CRDScopeInspection_ValidScope(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name          string
-		scope         string
-		wantNamespace string
-	}{
-		{name: "scope Cluster contributes cluster hint", scope: "Cluster", wantNamespace: ""},
-		{name: "scope Namespaced contributes namespaced hint", scope: "Namespaced", wantNamespace: "apps"},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			body := clusterWidgetCRDBody(tc.scope)
-			bundle := loadClusterWidgetExtras(t, body, false)
-			require.Len(t, bundle.CRDs, 1)
-			assert.Equal(t, body, string(bundle.CRDs[0].Raw))
-			require.Len(t, bundle.Manifests, 1)
-			assert.Equal(t, tc.wantNamespace, bundle.Manifests[0].Obj.GetNamespace())
-		})
-	}
-}
-
-func TestLoad_CRDScopeInspection_InvalidScopeUnknownType(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name    string
-		crdBody string
-	}{
-		{name: "missing scope contributes no hint", crdBody: clusterWidgetCRDBody("")},
-		{name: "invalid scope Clustr contributes no hint", crdBody: clusterWidgetCRDBody("Clustr")},
-		{name: "lowercase cluster contributes no hint", crdBody: clusterWidgetCRDBody("cluster")},
-		{name: "lowercase namespaced contributes no hint", crdBody: clusterWidgetCRDBody("namespaced")},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			_, err := loadClusterWidgetExtrasErr(t, tc.crdBody, false)
-			require.Error(t, err)
-			assert.ErrorContains(t, err, "unknown type")
-		})
-	}
-}
-
-func TestLoad_CRDScopeInspection_OpaqueNoHint(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name    string
-		crdBody string
-	}{
-		{name: "malformed YAML is non-fatal and contributes no hint", crdBody: "not: [valid\n"},
-		{
-			name: "non-CRD with CRD-shaped spec contributes no hint",
-			crdBody: `
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: fake
-spec:
-  group: example.com
-  scope: Cluster
-  names:
-    kind: ClusterWidget
-`,
-		},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			bundle := loadClusterWidgetExtras(t, tc.crdBody, true)
-			require.Len(t, bundle.CRDs, 1)
-			assert.Equal(t, tc.crdBody, string(bundle.CRDs[0].Raw))
-			require.Len(t, bundle.Manifests, 1)
-			assert.Equal(t, "apps", bundle.Manifests[0].Obj.GetNamespace())
-		})
-	}
-}
-
-const clusterWidgetManifest = `
-apiVersion: example.com/v1
-kind: ClusterWidget
-metadata:
-  name: one
-`
-
-func clusterWidgetCRDBody(scope string) string {
-	scopeLine := ""
-	if scope != "" {
-		scopeLine = "  scope: " + scope + "\n"
-	}
-	return `
-apiVersion: apiextensions.k8s.io/v1
-kind: CustomResourceDefinition
-metadata:
-  name: clusterwidgets.example.com
-spec:
-  group: example.com
-` + scopeLine + `  names:
-    kind: ClusterWidget
-    plural: clusterwidgets
-  versions:
-    - name: v1
-      served: true
-      storage: true
-      schema:
-        openAPIV3Schema:
-          type: object
-`
-}
-
-func loadClusterWidgetExtras(t *testing.T, crdBody string, offline bool) *extras.Bundle {
-	t.Helper()
-	bundle, err := loadClusterWidgetExtrasErr(t, crdBody, offline)
-	require.NoError(t, err)
-	return bundle
-}
-
-func loadClusterWidgetExtrasErr(t *testing.T, crdBody string, offline bool) (*extras.Bundle, error) {
-	t.Helper()
-	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, ".deployah", "crds", "widget.yaml"), crdBody)
-	writeFile(t, filepath.Join(dir, ".deployah", "manifests", "cw.yaml"), clusterWidgetManifest)
-	return extras.Load(extras.LoadConfig{
-		SpecDir:          dir,
-		Project:          "demo",
-		Environment:      "prod",
-		DeclaredEnvs:     []string{"prod"},
-		ReleaseNamespace: "apps",
-		Scope:            &extras.TableResolver{},
-		Offline:          offline,
-	})
+	assert.Equal(t, "apps", bundle.Manifests[0].Obj.GetNamespace())
 }
 
 // TestNewDiscoveryResolver_NilConfig returns a table-only resolver.

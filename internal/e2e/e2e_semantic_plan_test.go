@@ -18,12 +18,10 @@ package e2e_test
 
 import (
 	"context"
-	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"helm.sh/helm/v4/pkg/postrenderer"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"deployah.dev/deployah/internal/extras"
 	"deployah.dev/deployah/internal/helm"
@@ -32,7 +30,6 @@ import (
 	"deployah.dev/deployah/internal/render"
 	"deployah.dev/deployah/internal/spec"
 
-	apiextensionsclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -51,43 +48,15 @@ func (c *semanticPlanClient) RenderManifestsWithPrep(
 	return c.result, c.prep, func() {}, nil
 }
 
-func semanticPlanCRD(t *testing.T, name string) extras.RawFile {
-	t.Helper()
-	obj := &unstructured.Unstructured{Object: map[string]any{
-		"apiVersion": "apiextensions.k8s.io/v1",
-		"kind":       "CustomResourceDefinition",
-		"metadata":   map[string]any{"name": name},
-		"spec": map[string]any{
-			"group": "plan.example.com",
-			"scope": "Namespaced",
-			"names": map[string]any{
-				"kind":   "PlanWidget",
-				"plural": "planwidgets",
-			},
-			"versions": []any{map[string]any{
-				"name":    "v1",
-				"served":  true,
-				"storage": true,
-				"schema":  map[string]any{"openAPIV3Schema": map[string]any{"type": "object"}},
-			}},
-		},
-	}}
-	o := extras.Object{Path: name + ".yaml", Obj: obj}
-	raw, err := o.MarshalYAML()
-	require.NoError(t, err)
-	return extras.RawFile{Path: o.Path, Raw: raw}
-}
-
 func (s *E2ESuite) TestSemanticPlanPrerequisites() {
 	t := s.T()
 	ns := fixtureNamespace("semantic-plan-prereq")
-	crdName := "planwidgets.plan.example.com"
 	cluster := s.predictCluster(t)
 	client := &semanticPlanClient{
 		result: &render.RenderResult{
 			ReleaseName: "web",
 			Namespace:   ns,
-			Manifest:    "apiVersion: plan.example.com/v1\nkind: PlanWidget\nmetadata:\n  name: app\n  namespace: " + ns + "\nspec:\n  color: blue\n",
+			Manifest:    "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: app\n  namespace: " + ns + "\ndata:\n  k: v\n",
 			Revision:    1,
 		},
 		prep: helm.ReleasePrep{Operation: helm.OperationInstall, NextRevision: 1},
@@ -95,33 +64,23 @@ func (s *E2ESuite) TestSemanticPlanPrerequisites() {
 	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, plan.SemanticBuildInput{
 		ClusterContext: kindContext,
 		Resolved:       &spec.ResolvedSpec{Spec: &spec.Spec{Project: "shop"}, Env: spec.EnvIdentity{Original: "dev"}},
-		CRDs:           []extras.RawFile{semanticPlanCRD(t, crdName)},
-		CRDPolicy:      extras.PolicyCreate,
+		CRDs:           []extras.RawFile{{Path: "widgets.yaml", Raw: []byte("not a crd\n")}},
 	})
 	require.NotNil(t, cleanup)
 	t.Cleanup(cleanup)
 	require.NoError(t, err)
 
-	require.Len(t, p.Changes, 3)
-	assert.Equal(t, semantic.OriginCRD, p.Changes[0].Origin.Kind)
+	require.GreaterOrEqual(t, len(p.Changes), 2)
+	assert.Equal(t, semantic.OriginNamespace, p.Changes[0].Origin.Kind)
 	assert.Equal(t, semantic.Create, p.Changes[0].Action)
-	assert.Equal(t, semantic.OriginNamespace, p.Changes[1].Origin.Kind)
+	assert.Equal(t, semantic.OriginHelm, p.Changes[1].Origin.Kind)
+	assert.Equal(t, "ConfigMap", p.Changes[1].Resource.Kind)
 	assert.Equal(t, semantic.Create, p.Changes[1].Action)
-	assert.Equal(t, semantic.OriginHelm, p.Changes[2].Origin.Kind)
-	assert.Equal(t, "PlanWidget", p.Changes[2].Resource.Kind)
-	assert.Equal(t, semantic.Create, p.Changes[2].Action)
+	for _, c := range p.Changes {
+		assert.NotEqual(t, semantic.OriginCRD, c.Origin.Kind)
+	}
 	assert.Equal(t, semantic.CompletenessPartial, p.Completeness)
 	require.NotEmpty(t, p.Diagnostics)
-	for _, d := range p.Diagnostics {
-		require.NotNil(t, d.Resource)
-		assert.Equal(t, "PlanWidget", d.Resource.Kind)
-		assert.Contains(t, d.Message, "prediction is not exact:")
-	}
-
-	ext, err := apiextensionsclient.NewForConfig(s.client.RESTConfig())
-	require.NoError(t, err)
-	_, err = ext.ApiextensionsV1().CustomResourceDefinitions().Get(t.Context(), crdName, metav1.GetOptions{})
-	require.True(t, apierrors.IsNotFound(err), "CRD %s should still be absent: %v", crdName, err)
 
 	cs, _ := s.kubeClients(t)
 	_, err = cs.CoreV1().Namespaces().Get(t.Context(), ns, metav1.GetOptions{})

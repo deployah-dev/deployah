@@ -143,6 +143,13 @@ func TestPrepareChart_WritesSourceFiles(t *testing.T) {
 				"widgets.yaml": userBody,
 			},
 		},
+		{
+			name: "malformed yaml stays exact bytes",
+			crds: []extras.RawFile{{Path: "broken.yaml", Raw: []byte("not: [valid\n")}},
+			wantFiles: map[string]string{
+				"broken.yaml": "not: [valid\n",
+			},
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

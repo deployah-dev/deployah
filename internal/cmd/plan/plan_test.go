@@ -385,31 +385,28 @@ func writePlanExtras(t *testing.T, dir, relative, content string) {
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
 }
 
-// TestRunOffline_PrintsCRDs notes CRDs loaded from .deployah/crds/.
+func writeOpaqueCRDFile(t *testing.T, dir, name, body string) extras.RawFile {
+	t.Helper()
+	rel := filepath.Join(".deployah", "crds", name)
+	writePlanExtras(t, dir, rel, body)
+	return extras.RawFile{Path: filepath.Join(dir, rel), Raw: []byte(body)}
+}
+
+func assertCRDLifecycleNote(t *testing.T, out string, files []extras.RawFile, upgrade, skipInstall bool) {
+	t.Helper()
+	note := extras.CRDLifecycleNote(files, upgrade, skipInstall)
+	require.NotEmpty(t, note)
+	assert.Contains(t, out, note)
+	assert.NotContains(t, out, "CustomResourceDefinition/")
+}
+
+// TestRunOffline_PrintsCRDs notes CRD source files from .deployah/crds/.
 func TestRunOffline_PrintsCRDs(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	specPath := filepath.Join(dir, "deployah.yaml")
 	writePlanExtras(t, dir, "deployah.yaml", "apiVersion: deployah.dev/v1-alpha.4\nproject: web\n")
-	writePlanExtras(t, dir, ".deployah/crds/widget.yaml", `
-apiVersion: apiextensions.k8s.io/v1
-kind: CustomResourceDefinition
-metadata:
-  name: widgets.example.com
-spec:
-  group: example.com
-  scope: Namespaced
-  names:
-    kind: Widget
-    plural: widgets
-  versions:
-    - name: v1
-      served: true
-      storage: true
-      schema:
-        openAPIV3Schema:
-          type: object
-`)
+	crd := writeOpaqueCRDFile(t, dir, "widget.yaml", "not: [valid\n")
 	stub := &stubHelmClient{offlineResult: renderResult(deploymentV1)}
 	sess := session.New(
 		session.WithSpecPath(specPath),
@@ -423,7 +420,7 @@ spec:
 
 	err := runOffline(c, sess, nil, testManifest(), opts, nil)
 	require.NoError(t, err)
-	assert.Contains(t, out.String(), extras.CRDLifecycleNote(1, false, false))
+	assertCRDLifecycleNote(t, out.String(), []extras.RawFile{crd}, false, false)
 	assert.NotContains(t, out.String(), "pending")
 }
 
@@ -450,31 +447,13 @@ func TestRunOffline_LoadExtrasError(t *testing.T) {
 	assert.Contains(t, err.Error(), "load extras")
 }
 
-// TestRunOnline_PrintsCRDs notes CRDs ahead of the plan diff.
+// TestRunOnline_PrintsCRDs notes CRD source files ahead of the plan diff.
 func TestRunOnline_PrintsCRDs(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	specPath := filepath.Join(dir, "deployah.yaml")
 	writePlanExtras(t, dir, "deployah.yaml", "apiVersion: deployah.dev/v1-alpha.4\nproject: web\n")
-	writePlanExtras(t, dir, ".deployah/crds/widget.yaml", `
-apiVersion: apiextensions.k8s.io/v1
-kind: CustomResourceDefinition
-metadata:
-  name: widgets.example.com
-spec:
-  group: example.com
-  scope: Namespaced
-  names:
-    kind: Widget
-    plural: widgets
-  versions:
-    - name: v1
-      served: true
-      storage: true
-      schema:
-        openAPIV3Schema:
-          type: object
-`)
+	crd := writeOpaqueCRDFile(t, dir, "widget.yaml", "not: [valid\n")
 	stub := &stubHelmClient{
 		historyErr:   helm.ErrReleaseNotFound,
 		renderResult: renderResult(deploymentV1),
@@ -490,6 +469,60 @@ spec:
 
 	err := runOnline(c, sess, nil, testManifest(), testOptions(), testResolved(nil))
 	require.NoError(t, err)
-	assert.Contains(t, out.String(), extras.CRDLifecycleNote(1, false, false))
+	assertCRDLifecycleNote(t, out.String(), []extras.RawFile{crd}, false, false)
 	assert.NotContains(t, out.String(), "pending")
+}
+
+func TestRunOnline_PrintsCRDsOnUpgrade(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		file    string
+		history []*v1.Release
+	}{
+		{
+			name:    "existing file",
+			file:    "widget.yaml",
+			history: []*v1.Release{releaseAt(3, common.StatusDeployed, deploymentV1)},
+		},
+		{
+			name:    "newly added file",
+			file:    "new.yaml",
+			history: []*v1.Release{releaseAt(3, common.StatusDeployed, deploymentV1)},
+		},
+		{
+			name:    "failed-only history",
+			file:    "widget.yaml",
+			history: []*v1.Release{releaseAt(1, common.StatusFailed, deploymentV1)},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			specPath := filepath.Join(dir, "deployah.yaml")
+			writePlanExtras(t, dir, "deployah.yaml", "apiVersion: deployah.dev/v1-alpha.4\nproject: web\n")
+			crd := writeOpaqueCRDFile(t, dir, tc.file, "not: [valid\n")
+			result := renderResult(deploymentV1)
+			result.IsUpgrade = true
+			stub := &stubHelmClient{
+				history:      tc.history,
+				renderResult: result,
+			}
+			sess := session.New(
+				session.WithSpecPath(specPath),
+				session.WithHelmFactory(func(*target.Target, session.HelmConfig) (session.HelmClient, error) {
+					return stub, nil
+				}),
+			)
+			c, out := nabatContext(t)
+			c.SetContext(session.WithContext(c.Context(), sess))
+
+			err := runOnline(c, sess, nil, testManifest(), testOptions(), testResolved(nil))
+			require.NoError(t, err)
+			got := out.String()
+			assertCRDLifecycleNote(t, got, []extras.RawFile{crd}, true, false)
+			assert.NotContains(t, got, "CRD files to process on install:")
+		})
+	}
 }

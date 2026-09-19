@@ -6,10 +6,13 @@ a `NetworkPolicy`, or a CRD your app needs): drop manifests into
 `.deployah/manifests/` and CRDs into `.deployah/crds/`.
 
 Extra **manifests** join the same Helm release as your generated resources
-(via a Helm post-renderer). Extra **CRDs** are copied into the generated
-chart's `crds/` directory. Helm installs them on a fresh release, before
-ordinary resources. Deployah does not apply, patch, or delete those CRDs
-itself.
+(via a Helm post-renderer). Extra **CRDs** are copied literally into the
+generated chart's `crds/` directory. Deployah does not inspect or
+validate CRD document semantics, and it does not use CRD content to
+decide custom-resource scope. Helm and Kubernetes process the files at
+runtime. Helm installs them on a fresh release, before ordinary
+resources, unless you skip install-time processing. Deployah does not
+apply, patch, or delete those CRDs itself.
 
 ## Layout
 
@@ -119,20 +122,22 @@ later.
   reject invalid or unsupported content.
 - An extra that collides with a generated chart object fails the render
   (Deployah will not overwrite chart resources).
-- Custom resource kinds must be known: put their CRD under `.deployah/crds/`,
-  or have the type installed on the cluster. A small offline allowlist covers
-  common operator APIs (cert-manager and prometheus-operator). With
-  `deployah plan --offline`, unknown kinds are allowed so you can still
-  preview; scope defaults to namespaced unless an in-repo CRD says otherwise.
+- Custom resource kinds must be known to Deployah's built-in table or
+  live cluster discovery. A small offline allowlist covers common
+  operator APIs (cert-manager and prometheus-operator). Deployah does
+  not read `.deployah/crds/` to learn a custom resource's type or
+  scope. With `deployah plan --offline`, unknown kinds are allowed so
+  you can still preview; scope defaults to namespaced.
 - Helm hook annotations (`helm.sh/hook`, `helm.sh/hook-weight`,
   `helm.sh/hook-delete-policy`) are not supported on custom manifests. Use a
   Deployah `preDeploy` or `postDeploy` task for deploy hooks.
 
 ## Plan vs deploy
 
-- `deployah plan` includes extra manifests in the rendered diff. It does not
-  apply CRDs. When `.deployah/crds/` is non-empty it prints how many CRD
-  files were loaded (`CRD files: N from .deployah/crds/`).
+- `deployah plan` includes extra manifests in the rendered diff. It does
+  not apply CRDs. When `.deployah/crds/` is non-empty it lists the source
+  files and Helm's install-only lifecycle for them. It does not parse
+  those files to invent Kubernetes object names.
 - `deployah deploy` copies those CRD files into the generated chart, then
   runs Helm. On a fresh install Helm processes `crds/` before ordinary
   resources. On upgrade Helm leaves chart CRDs alone, including CRDs added

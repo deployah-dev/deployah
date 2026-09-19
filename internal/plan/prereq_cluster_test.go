@@ -31,9 +31,8 @@ import (
 )
 
 type prereqFake struct {
-	mappingErr map[schema.GroupVersionKind]error
-	gets       []predict.Identity
-	applies    []*unstructured.Unstructured
+	gets    []predict.Identity
+	applies []*unstructured.Unstructured
 }
 
 func (f *prereqFake) Get(_ context.Context, id predict.Identity) (*unstructured.Unstructured, error) {
@@ -55,9 +54,6 @@ func (f *prereqFake) JSONPatch(context.Context, predict.Identity, []byte) error 
 func (f *prereqFake) Delete(context.Context, predict.Identity) error { return nil }
 
 func (f *prereqFake) Mapping(gvk schema.GroupVersionKind) (*meta.RESTMapping, error) {
-	if err, ok := f.mappingErr[gvk]; ok {
-		return nil, err
-	}
 	scope := meta.RESTScopeNamespace
 	if gvk.Kind == "Namespace" && gvk.Group == "" {
 		scope = meta.RESTScopeRoot
@@ -71,18 +67,11 @@ func (f *prereqFake) Mapping(gvk schema.GroupVersionKind) (*meta.RESTMapping, er
 
 func TestPrereqCluster_GenerateNameApplyWithoutGet(t *testing.T) {
 	t.Parallel()
-	gvk := schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "Widget"}
-	inner := &prereqFake{mappingErr: map[schema.GroupVersionKind]error{
-		gvk: &meta.NoKindMatchError{GroupKind: gvk.GroupKind()},
-	}}
-	surface := newCRDSurface()
-	require.NoError(t, surface.add(crdAPI{
-		Name: "widgets.example.com", Group: "example.com", Kind: "Widget", Plural: "widgets", Versions: []string{"v1"},
-	}, true))
-	wrapped := newPrereqCluster(inner, true, "prod", surface)
+	inner := &prereqFake{}
+	wrapped := newPrereqCluster(inner, true, "prod")
 	obj := &unstructured.Unstructured{Object: map[string]any{
-		"apiVersion": "example.com/v1",
-		"kind":       "Widget",
+		"apiVersion": "v1",
+		"kind":       "ConfigMap",
 		"metadata": map[string]any{
 			"generateName": "app-",
 			"namespace":    "prod",
@@ -96,18 +85,11 @@ func TestPrereqCluster_GenerateNameApplyWithoutGet(t *testing.T) {
 	assert.Empty(t, inner.gets)
 }
 
-func TestPrereqCluster_SyntheticGetIsNotFound(t *testing.T) {
+func TestPrereqCluster_MissingTargetNamespaceGetIsNotFound(t *testing.T) {
 	t.Parallel()
-	gvk := schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "Widget"}
-	inner := &prereqFake{mappingErr: map[schema.GroupVersionKind]error{
-		gvk: &meta.NoKindMatchError{GroupKind: gvk.GroupKind()},
-	}}
-	surface := newCRDSurface()
-	require.NoError(t, surface.add(crdAPI{
-		Name: "widgets.example.com", Group: "example.com", Kind: "Widget", Plural: "widgets", Versions: []string{"v1"},
-	}, true))
-	wrapped := newPrereqCluster(inner, false, "prod", surface)
-	_, err := wrapped.Get(t.Context(), predict.Identity{Group: "example.com", Version: "v1", Kind: "Widget", Name: "app", Namespace: "prod"})
+	inner := &prereqFake{}
+	wrapped := newPrereqCluster(inner, true, "prod")
+	_, err := wrapped.Get(t.Context(), predict.Identity{Version: "v1", Kind: "ConfigMap", Name: "app", Namespace: "prod"})
 	require.Error(t, err)
 	assert.True(t, apierrors.IsNotFound(err))
 	assert.Empty(t, inner.gets)

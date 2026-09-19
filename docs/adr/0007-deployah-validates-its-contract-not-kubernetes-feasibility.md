@@ -54,12 +54,9 @@ the field. Later Kubernetes rejection is a runtime concern unless a
 Deployah invariant was violated.
 
 `.deployah/crds/` is an opaque Helm-chart file boundary. Deployah
-validates the filesystem and source contract it owns. CRD document
-semantics and Kubernetes acceptance belong to Helm and Kubernetes.
-Semantic planning does not prove that Kubernetes will accept the CRD
-schema or spec. It does not run OpenAPI feasibility checks, write
-dry-runs, or admission prediction for CRDs. Declared CRD intent and
-Helm constructibility are ADR-0008 and ADR-0013.
+validates only the CRD source and file contract it owns. It does not
+inspect CRD document semantics. Kubernetes acceptance belongs to Helm
+and Kubernetes.
 
 If the planner needs discovery, REST mapping, or a Live GET to
 determine current state and the read fails, planning fails. That is

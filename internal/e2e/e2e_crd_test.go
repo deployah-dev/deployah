@@ -85,10 +85,17 @@ func (s *E2ESuite) TestCRDLifecycle() {
 		s.deleteNamespace(t, ns)
 	})
 
+	widget := hideExtrasManifest(t, dir, "widget.yaml")
 	runIn(t, dir, "deploy", "dev", "--context", kindContext, "--yes",
 		"--namespace", ns)
 	crd := waitCRDEstablished(t, ext, crdLifecycleName)
 	assertCRDUserMetadata(t, crd)
+
+	require.NoError(t, os.WriteFile(
+		filepath.Join(dir, ".deployah", "manifests", "widget.yaml"),
+		[]byte(widget), 0o600))
+	runIn(t, dir, "deploy", "dev", "--context", kindContext, "--yes",
+		"--namespace", ns)
 	waitClusterResource(t, dyn, crdLifecycleGVR, crdLifecycleWidget)
 
 	patched := strings.Replace(
@@ -170,6 +177,7 @@ func (s *E2ESuite) TestCRDNewlyAddedOnUpgrade() {
 		s.deleteNamespace(t, ns)
 	})
 
+	hideExtrasManifest(t, dir, "widget.yaml")
 	runIn(t, dir, "deploy", "dev", "--context", kindContext, "--yes",
 		"--namespace", ns)
 	waitCRDEstablished(t, ext, crdLifecycleName)
@@ -206,6 +214,18 @@ func assertCRDUserMetadata(t *testing.T, crd *apiextensionsv1.CustomResourceDefi
 	assert.Empty(t, crd.Labels[spec.LabelProject])
 	assert.Empty(t, crd.Annotations[spec.AnnotationSource])
 	assert.Empty(t, crd.Annotations[spec.AnnotationProject])
+}
+
+// hideExtrasManifest removes a custom manifest so the first install can
+// process chart CRDs. Deployah does not read .deployah/crds/ to learn a
+// custom resource type, so an unknown kind cannot load until that API
+// exists on the cluster.
+func hideExtrasManifest(t *testing.T, dir, name string) string {
+	t.Helper()
+	path := filepath.Join(dir, spec.DeployahConfigDir, spec.ManifestsDir, name)
+	raw := readFixtureFile(t, path)
+	require.NoError(t, os.Remove(path))
+	return raw
 }
 
 func copyTree(tb testing.TB, src, dst string) {

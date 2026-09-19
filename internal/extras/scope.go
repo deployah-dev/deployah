@@ -29,8 +29,8 @@ import (
 
 // ScopeResolver reports whether a GVK is known and whether it is namespaced.
 type ScopeResolver interface {
-	// Known reports whether gvk is a built-in kind, declared by an in-repo
-	// CRD, or present in live discovery.
+	// Known reports whether gvk is a built-in kind, present in live
+	// discovery, or listed in an injected extra-scope table.
 	Known(gvk schema.GroupVersionKind) (bool, error)
 	// Namespaced reports whether gvk is namespaced. When Known is false and
 	// discovery is unavailable, callers may still use this; unknown kinds
@@ -136,11 +136,13 @@ var builtInScope = map[string]bool{
 	"monitoring.coreos.com/alertmanagerconfig": true,
 }
 
-// TableResolver resolves scope from a built-in group/kind table and optional
-// CRD-provided scopes. Unknown kinds are not Known; Namespaced defaults
-// them to namespaced when called anyway.
+// TableResolver resolves scope from a built-in group/kind table and an
+// optional extra-scope table. Unknown kinds are not Known; Namespaced
+// defaults them to namespaced when called anyway.
 type TableResolver struct {
-	// CRDScope maps "group/kind" (lowercase) to namespaced, from .deployah/crds.
+	// CRDScope maps "group/kind" (lowercase) to namespaced. Callers may
+	// inject extra known types. Load does not populate this from
+	// .deployah/crds/ files.
 	CRDScope map[string]bool
 }
 
@@ -214,20 +216,4 @@ func (r *DiscoveryResolver) Namespaced(gvk schema.GroupVersionKind) (bool, error
 
 func crdScopeKey(group, kind string) string {
 	return strings.ToLower(group) + "/" + strings.ToLower(kind)
-}
-
-func unstructuredNestedString(obj map[string]any, fields ...string) (string, bool) {
-	cur := any(obj)
-	for _, f := range fields {
-		m, ok := cur.(map[string]any)
-		if !ok {
-			return "", false
-		}
-		cur, ok = m[f]
-		if !ok {
-			return "", false
-		}
-	}
-	s, ok := cur.(string)
-	return s, ok
 }

@@ -379,7 +379,6 @@ func buildSemanticPlan(t *testing.T, client plan.SemanticBuildClient, cluster pr
 	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, plan.SemanticBuildInput{
 		ClusterContext: productClusterContext,
 		Resolved:       resolved,
-		CRDPolicy:      extras.PolicyCreate,
 	})
 	require.NotNil(t, cleanup)
 	t.Cleanup(cleanup)

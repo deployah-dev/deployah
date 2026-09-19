@@ -46,7 +46,6 @@ var _ SemanticBuildClient = (*helm.Client)(nil)
 
 // SemanticBuildInput is the caller-supplied input to [BuildSemanticPlan].
 // CRDs must already be loaded; this struct does not read files.
-// CRDPolicy is required even when CRDs is empty.
 type SemanticBuildInput struct {
 	// ClusterContext is the kubeconfig context name stored on the plan header.
 	ClusterContext string
@@ -55,9 +54,8 @@ type SemanticBuildInput struct {
 	// PostRenderer, when non-nil, is forwarded once to the render client.
 	PostRenderer postrenderer.PostRenderer
 	// CRDs are already-loaded opaque source files from .deployah/crds/.
+	// They are forwarded to Helm chart materialization only.
 	CRDs []extras.RawFile
-	// CRDPolicy is extras.PolicyCreate or extras.PolicyCreateReplace.
-	CRDPolicy extras.Policy
 }
 
 // BuildSemanticPlan renders [spec.ResolvedSpec], predicts Live to
@@ -66,9 +64,10 @@ type SemanticBuildInput struct {
 // and does not look up Helm history itself. PostRenderer, when non-nil,
 // is forwarded once to the render client.
 //
-// CRDs and the install target Namespace are predicted on cluster first.
-// Helm [predict.Predict] then runs against a plan-local wrapper so
-// same-deploy missing APIs and namespaces are not fatal.
+// The install target Namespace is predicted on cluster first. Helm
+// [predict.Predict] then runs against a plan-local wrapper so a
+// same-deploy missing target namespace is not fatal. Chart CRD files
+// are forwarded to Helm only; they are not parsed into resource changes.
 //
 // The caller must invoke the returned cleanup func once. Cleanup is
 // always non-nil. On error the plan is empty and the render result is
@@ -85,11 +84,6 @@ func BuildSemanticPlan(
 	}
 	if input.Resolved == nil || input.Resolved.Spec == nil {
 		return semantic.Plan{}, nil, cleanup, fmt.Errorf("semantic plan requires resolved spec; call spec.Resolve first")
-	}
-	switch input.CRDPolicy {
-	case extras.PolicyCreate, extras.PolicyCreateReplace:
-	default:
-		return semantic.Plan{}, nil, cleanup, fmt.Errorf("unknown CRD policy %q", input.CRDPolicy)
 	}
 	if cluster == nil {
 		return semantic.Plan{}, nil, cleanup, fmt.Errorf("semantic plan requires a cluster")
@@ -118,29 +112,14 @@ func BuildSemanticPlan(
 		}
 	}
 
-	var crdChanges []semantic.ResourceChange
-	surface := newCRDSurface()
-	if prep.Operation == helm.OperationInstall {
-		var crdErr error
-		crdChanges, surface, crdErr = predictCRDs(ctx, cluster, input.CRDs, input.CRDPolicy)
-		if crdErr != nil {
-			return semantic.Plan{}, nil, cleanup, fmt.Errorf("predict CRDs: %w", crdErr)
-		}
-	}
 	nsChange, missingNS, err := predictNamespace(ctx, cluster, prep.Operation, result.Namespace)
 	if err != nil {
 		return semantic.Plan{}, nil, cleanup, err
 	}
-	if apiErr := checkRenderedAPIs([]string{result.Manifest, predInput.Previous}, surface); apiErr != nil {
-		return semantic.Plan{}, nil, cleanup, apiErr
-	}
 
-	wrapper := newPrereqCluster(cluster, missingNS, result.Namespace, surface)
+	wrapper := newPrereqCluster(cluster, missingNS, result.Namespace)
 	results, err := predict.Predict(ctx, wrapper, predInput)
 	if err != nil {
-		if len(surface.specChanged) > 0 {
-			return semantic.Plan{}, nil, cleanup, fmt.Errorf("predict resources: CRD spec changes before helm executes: %w", err)
-		}
 		return semantic.Plan{}, nil, cleanup, fmt.Errorf("predict resources: %w", err)
 	}
 
@@ -168,7 +147,7 @@ func BuildSemanticPlan(
 	if orderErr := stampHelmApplyOrder(helmChanges); orderErr != nil {
 		return semantic.Plan{}, nil, cleanup, fmt.Errorf("assemble semantic plan: %w", orderErr)
 	}
-	changes := append([]semantic.ResourceChange{}, crdChanges...)
+	var changes []semantic.ResourceChange
 	if nsChange != nil {
 		changes = append(changes, *nsChange)
 	}

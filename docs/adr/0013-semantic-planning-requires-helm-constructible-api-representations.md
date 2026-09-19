@@ -22,26 +22,8 @@ mappable.
 
 Helm must REST-map the GVK it actually builds. That is required to
 construct the operation. It is not admission, webhook, quota, or
-write-feasibility prediction (ADR-0004).
-
-On install, Helm processes chart CRDs before dependent ordinary
-resources (ADR-0008). If Desired CRD intent declares the required
-version served (`served: true`), semantic planning may reason from
-that declared intent even when the Desired GVK is not yet
-discoverable. Missing or non-boolean `served` does not count. This
-does not guarantee that Kubernetes will accept the CRD, that
-discovery appears at runtime, or that a dependent resource succeeds.
-
-- Entire CRD absent: the logical custom resource is known absent. If
-  Desired CRD intent declares the Desired version served, show CRD
-  Create and a dependent Create.
-- CRD already exists and another version is currently served: read
-  Live through that served version. Live absent is Create. Live
-  present follows ADR-0011.
-- CRD exists but no currently served or readable representation can
-  establish required Live state: planning error.
-- Desired CRD intent does not declare the Desired apiVersion served:
-  planning error.
+write-feasibility prediction (ADR-0004). Semantic planning does not
+parse `.deployah/crds/` to invent API availability.
 
 On a real upgrade, chart CRDs are not applied (ADR-0008). They cannot
 invent new API availability. Helm must be able to build:

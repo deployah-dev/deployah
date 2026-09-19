@@ -20,14 +20,12 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"maps"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"deployah.dev/deployah/internal/spec"
 
@@ -59,8 +57,8 @@ type LoadConfig struct {
 	// Scope resolves namespaced vs cluster-scoped. Required.
 	Scope ScopeResolver
 	// Offline is true when cluster discovery is unavailable (plan --offline
-	// or missing rest config). Unknown types are then allowed; scope defaults
-	// to namespaced unless an in-repo CRD declares otherwise.
+	// or missing rest config). Unknown types are then allowed; scope
+	// defaults to namespaced.
 	Offline bool
 }
 
@@ -117,19 +115,16 @@ func Load(cfg LoadConfig) (*Bundle, error) {
 		crds = append(crds, RawFile{Path: path, Raw: raw})
 	}
 
-	crdScope := scopeFromCRDFiles(crds)
-	scope := withCRDScope(cfg.Scope, crdScope)
-
 	for i := range manifests {
 		gvk := manifests[i].GVK()
-		known, knownErr := scope.Known(gvk)
+		known, knownErr := cfg.Scope.Known(gvk)
 		if knownErr != nil {
 			return nil, fmt.Errorf("%s: resolve type: %w", manifests[i].Path, knownErr)
 		}
 		if !known && !cfg.Offline {
-			return nil, fmt.Errorf("%s: unknown type %s; add its CRD under .deployah/crds/ or install it on the cluster first", manifests[i].Path, gvk.String())
+			return nil, fmt.Errorf("%s: unknown type %s; install that API on the cluster first", manifests[i].Path, gvk.String())
 		}
-		namespaced, scopeErr := scope.Namespaced(gvk)
+		namespaced, scopeErr := cfg.Scope.Namespaced(gvk)
 		if scopeErr != nil {
 			return nil, fmt.Errorf("%s: resolve scope: %w", manifests[i].Path, scopeErr)
 		}
@@ -155,94 +150,6 @@ func checkDuplicateIdentities(objs []Object) error {
 		seen[id.Key()] = objs[i].Path
 	}
 	return nil
-}
-
-// scopeFromCRDFiles extracts group/kind -> namespaced from raw CRD source
-// files. Inspection is read-only: parse failures skip that file and never
-// fail Load, and nothing is written back into the source bytes. Documents
-// that are not kind CustomResourceDefinition, or that lack an exact
-// spec.scope of Cluster or Namespaced, contribute no scope hint.
-func scopeFromCRDFiles(files []RawFile) map[string]bool {
-	out := make(map[string]bool)
-	for i := range files {
-		inspectCRDScope(files[i].Raw, out)
-	}
-	return out
-}
-
-func inspectCRDScope(raw []byte, out map[string]bool) {
-	decoder := yamlutil.NewYAMLOrJSONDecoder(bytes.NewReader(raw), 4096)
-	for {
-		var obj map[string]any
-		if err := decoder.Decode(&obj); err != nil {
-			return
-		}
-		if len(obj) == 0 {
-			continue
-		}
-		kind, _ := unstructuredNestedString(obj, "kind")
-		if kind != "CustomResourceDefinition" {
-			continue
-		}
-		group, _ := unstructuredNestedString(obj, "spec", "group")
-		crdKind, _ := unstructuredNestedString(obj, "spec", "names", "kind")
-		scope, _ := unstructuredNestedString(obj, "spec", "scope")
-		if group == "" || crdKind == "" {
-			continue
-		}
-		var namespaced bool
-		switch scope {
-		case "Cluster":
-			namespaced = false
-		case "Namespaced":
-			namespaced = true
-		default:
-			continue
-		}
-		out[crdScopeKey(group, crdKind)] = namespaced
-	}
-}
-
-// withCRDScope returns a resolver that prefers CRD-derived scopes.
-func withCRDScope(base ScopeResolver, crdScope map[string]bool) ScopeResolver {
-	if len(crdScope) == 0 {
-		return base
-	}
-	switch r := base.(type) {
-	case *TableResolver:
-		merged := make(map[string]bool, len(r.CRDScope)+len(crdScope))
-		maps.Copy(merged, r.CRDScope)
-		maps.Copy(merged, crdScope)
-		return &TableResolver{CRDScope: merged}
-	case *DiscoveryResolver:
-		merged := make(map[string]bool, len(r.Table.CRDScope)+len(crdScope))
-		maps.Copy(merged, r.Table.CRDScope)
-		maps.Copy(merged, crdScope)
-		return &DiscoveryResolver{Mapper: r.Mapper, Table: TableResolver{CRDScope: merged}}
-	default:
-		return &chainedScope{crd: &TableResolver{CRDScope: crdScope}, next: base}
-	}
-}
-
-type chainedScope struct {
-	crd  *TableResolver
-	next ScopeResolver
-}
-
-func (c *chainedScope) Known(gvk schema.GroupVersionKind) (bool, error) {
-	if known, err := c.crd.Known(gvk); err != nil || known {
-		return known, err
-	}
-	return c.next.Known(gvk)
-}
-
-func (c *chainedScope) Namespaced(gvk schema.GroupVersionKind) (bool, error) {
-	if c.crd.CRDScope != nil {
-		if ns, ok := c.crd.CRDScope[crdScopeKey(gvk.Group, gvk.Kind)]; ok {
-			return ns, nil
-		}
-	}
-	return c.next.Namespaced(gvk)
 }
 
 func listManifestFiles(root string, declaredEnvs []string, envKey string) ([]string, error) {

@@ -216,9 +216,10 @@ as your generated resources.
 `
 	crdsREADME = `# Extra CRDs
 
-Put CustomResourceDefinition YAML here. Deployah copies these files into
-the generated Helm chart's crds/ directory. Helm installs them on a
-fresh release unless you pass --skip-crds.
+Put CustomResourceDefinition YAML here. Deployah copies these files
+unchanged into the generated Helm chart's crds/ directory. It does not
+inspect the documents. Helm installs them on a fresh release unless you
+pass --skip-crds.
 
 - Shared across all environments (no per-env subdirectories)
 - Files stay in the chart even when you skip install-time CRDs

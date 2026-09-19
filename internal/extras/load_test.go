@@ -472,6 +472,10 @@ metadata:
 			name: "invalid yaml still loads",
 			body: "not: [valid\n",
 		},
+		{
+			name: "multi-document file stays one RawFile",
+			body: widgetCRDBody + "---\napiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\nmetadata:\n  name: gadgets.example.com\n",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -584,11 +588,11 @@ metadata:
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown type")
-	assert.Contains(t, err.Error(), ".deployah/crds/")
+	assert.Contains(t, err.Error(), "install that API on the cluster first")
 }
 
 // TestLoad_OfflineAllowsUnknownType lets plan --offline load custom
-// resources without discovery or an in-repo CRD (scope defaults to namespaced).
+// resources without discovery (scope defaults to namespaced).
 func TestLoad_OfflineAllowsUnknownType(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -726,36 +730,17 @@ func (rejectAllScope) Namespaced(schema.GroupVersionKind) (bool, error) {
 	return true, nil
 }
 
-// TestLoad_ChainedScopeFromCustomResolver covers withCRDScope's default branch.
-func TestLoad_ChainedScopeFromCustomResolver(t *testing.T) {
+func TestLoad_CustomResolverIgnoresCRDFiles(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, ".deployah", "crds", "widget.yaml"), `
-apiVersion: apiextensions.k8s.io/v1
-kind: CustomResourceDefinition
-metadata:
-  name: widgets.example.com
-spec:
-  group: example.com
-  scope: Namespaced
-  names:
-    kind: Widget
-    plural: widgets
-  versions:
-    - name: v1
-      served: true
-      storage: true
-      schema:
-        openAPIV3Schema:
-          type: object
-`)
+	writeFile(t, filepath.Join(dir, ".deployah", "crds", "widget.yaml"), widgetCRDBody)
 	writeFile(t, filepath.Join(dir, ".deployah", "manifests", "w.yaml"), `
 apiVersion: example.com/v1
 kind: Widget
 metadata:
   name: one
 `)
-	bundle, err := extras.Load(extras.LoadConfig{
+	_, err := extras.Load(extras.LoadConfig{
 		SpecDir:          dir,
 		Project:          "demo",
 		Environment:      "prod",
@@ -763,51 +748,8 @@ metadata:
 		ReleaseNamespace: "apps",
 		Scope:            rejectAllScope{},
 	})
-	require.NoError(t, err)
-	require.Len(t, bundle.Manifests, 1)
-	assert.Equal(t, "apps", bundle.Manifests[0].Obj.GetNamespace())
-}
-
-// TestLoad_DiscoveryResolverMergesCRDScope covers the DiscoveryResolver branch
-// of withCRDScope (mapper nil falls back to the table + CRD scope).
-func TestLoad_DiscoveryResolverMergesCRDScope(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, ".deployah", "crds", "widget.yaml"), `
-apiVersion: apiextensions.k8s.io/v1
-kind: CustomResourceDefinition
-metadata:
-  name: widgets.example.com
-spec:
-  group: example.com
-  scope: Namespaced
-  names:
-    kind: Widget
-    plural: widgets
-  versions:
-    - name: v1
-      served: true
-      storage: true
-      schema:
-        openAPIV3Schema:
-          type: object
-`)
-	writeFile(t, filepath.Join(dir, ".deployah", "manifests", "w.yaml"), `
-apiVersion: example.com/v1
-kind: Widget
-metadata:
-  name: one
-`)
-	bundle, err := extras.Load(extras.LoadConfig{
-		SpecDir:          dir,
-		Project:          "demo",
-		Environment:      "prod",
-		DeclaredEnvs:     []string{"prod"},
-		ReleaseNamespace: "apps",
-		Scope:            &extras.DiscoveryResolver{},
-	})
-	require.NoError(t, err)
-	require.Len(t, bundle.Manifests, 1)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "unknown type")
 }
 
 // TestLoadFromSpec_Offline loads extras without a rest.Config.

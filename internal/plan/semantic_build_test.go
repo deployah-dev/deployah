@@ -268,7 +268,6 @@ func buildInput(clusterContext string, resolved *spec.ResolvedSpec, post postren
 		ClusterContext: clusterContext,
 		Resolved:       resolved,
 		PostRenderer:   post,
-		CRDPolicy:      extras.PolicyCreate,
 	}
 }
 
@@ -302,15 +301,6 @@ func TestBuildSemanticPlan_RequiresInput(t *testing.T) {
 			cluster: newFakeCluster(),
 			in:      buildInput("ctx", &spec.ResolvedSpec{}, nil),
 			wantErr: "semantic plan requires resolved spec; call spec.Resolve first",
-		},
-		{
-			name:    "unknown CRD policy",
-			cluster: newFakeCluster(),
-			in: plan.SemanticBuildInput{
-				ClusterContext: "ctx",
-				Resolved:       resolvedSpec(),
-			},
-			wantErr: "unknown CRD policy",
 		},
 		{
 			name:    "nil cluster",

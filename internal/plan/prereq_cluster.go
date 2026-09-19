@@ -16,7 +16,6 @@ package plan
 
 import (
 	"context"
-	"fmt"
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -28,37 +27,25 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
-const (
-	limitationTargetNamespace = "target namespace is created earlier in this deployment"
-	limitationCRDSpecChange   = "prediction used the currently installed CRD, but that CRD's spec changes before Helm executes"
-)
+const limitationTargetNamespace = "target namespace is created earlier in this deployment"
 
 type prereqCluster struct {
 	inner           predict.Cluster
 	missingTargetNS bool
 	targetNS        string
-	surface         *crdSurface
 }
 
-func newPrereqCluster(inner predict.Cluster, missingTargetNS bool, targetNS string, surface *crdSurface) *prereqCluster {
-	if surface == nil {
-		surface = newCRDSurface()
-	}
+func newPrereqCluster(inner predict.Cluster, missingTargetNS bool, targetNS string) *prereqCluster {
 	return &prereqCluster{
 		inner:           inner,
 		missingTargetNS: missingTargetNS,
 		targetNS:        targetNS,
-		surface:         surface,
 	}
 }
 
 var _ predict.Cluster = (*prereqCluster)(nil)
 
 func (c *prereqCluster) Get(ctx context.Context, id predict.Identity) (*unstructured.Unstructured, error) {
-	gvk := id.GroupVersionKind()
-	if desc, ok := c.surface.served[gvk]; ok && desc.missingEntire {
-		return nil, apierrors.NewNotFound(schema.GroupResource{Group: gvk.Group, Resource: desc.gvr.Resource}, id.Name)
-	}
 	if c.missingTargetNS && id.Namespace != "" && id.Namespace == c.targetNS {
 		return nil, apierrors.NewNotFound(schema.GroupResource{Group: id.Group, Resource: id.Kind}, id.Name)
 	}
@@ -85,42 +72,10 @@ func (c *prereqCluster) Delete(ctx context.Context, id predict.Identity) error {
 }
 
 func (c *prereqCluster) Mapping(gvk schema.GroupVersionKind) (*meta.RESTMapping, error) {
-	if name, ok := c.surface.unserved[gvk]; ok {
-		return nil, fmt.Errorf("API %s/%s/%s is not served by CRD %s after this deployment", gvk.Group, gvk.Version, gvk.Kind, name)
-	}
-	mapping, err := c.inner.Mapping(gvk)
-	if err == nil {
-		return mapping, nil
-	}
-	if !meta.IsNoMatchError(err) {
-		return nil, err
-	}
-	desc, ok := c.surface.served[gvk]
-	if !ok {
-		return nil, err
-	}
-	if desc.missingEntire {
-		scope := meta.RESTScopeNamespace
-		if desc.cluster {
-			scope = meta.RESTScopeRoot
-		}
-		return &meta.RESTMapping{
-			Resource:         desc.gvr,
-			GroupVersionKind: desc.gvk,
-			Scope:            scope,
-		}, nil
-	}
-	return nil, fmt.Errorf("cannot predict %s: CRD %s would add this API but it is not discoverable on the cluster yet", gvk, desc.crdName)
+	return c.inner.Mapping(gvk)
 }
 
 func (c *prereqCluster) needsSyntheticApply(obj *unstructured.Unstructured) bool {
-	if obj == nil {
-		return false
-	}
-	gvk := obj.GroupVersionKind()
-	if desc, ok := c.surface.served[gvk]; ok && desc.missingEntire {
-		return true
-	}
 	return c.namespacedInMissingTarget(obj)
 }
 
@@ -131,30 +86,10 @@ func limitationDiagnostics(c *prereqCluster, results []predict.Result) []semanti
 	var diags []semantic.Diagnostic
 	for _, r := range results {
 		obj := firstObject(r.Predicted, r.Live)
-		ref := resourceRef(r.Identity, obj)
-		seen := make(map[string]struct{})
-		add := func(reason string) {
-			if reason == "" {
-				return
-			}
-			if _, ok := seen[reason]; ok {
-				return
-			}
-			seen[reason] = struct{}{}
-			diags = append(diags, limitationDiagnostic(ref, reason))
+		if obj == nil || !c.needsSyntheticApply(obj) {
+			continue
 		}
-		if obj != nil && c.needsSyntheticApply(obj) {
-			gvk := obj.GroupVersionKind()
-			if desc, ok := c.surface.served[gvk]; ok && desc.missingEntire {
-				add(fmt.Sprintf("API %s/%s/%s becomes available after CRD %s is created earlier in this deployment", gvk.Group, gvk.Version, gvk.Kind, desc.crdName))
-			}
-			if c.namespacedInMissingTarget(obj) {
-				add(limitationTargetNamespace)
-			}
-		}
-		if _, ok := c.surface.specChanged[r.Identity.GroupVersionKind()]; ok {
-			add(limitationCRDSpecChange)
-		}
+		diags = append(diags, limitationDiagnostic(resourceRef(r.Identity, obj), limitationTargetNamespace))
 	}
 	return diags
 }
@@ -163,11 +98,6 @@ func (c *prereqCluster) namespacedInMissingTarget(obj *unstructured.Unstructured
 	if obj == nil || !c.missingTargetNS || obj.GetNamespace() != c.targetNS {
 		return false
 	}
-	gvk := obj.GroupVersionKind()
-	mapping, err := c.inner.Mapping(gvk)
-	if err == nil {
-		return mapping.Scope.Name() == meta.RESTScopeNameNamespace
-	}
-	desc, ok := c.surface.served[gvk]
-	return ok && !desc.cluster
+	mapping, err := c.inner.Mapping(obj.GroupVersionKind())
+	return err == nil && mapping.Scope.Name() == meta.RESTScopeNameNamespace
 }

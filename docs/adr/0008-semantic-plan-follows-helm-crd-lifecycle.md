@@ -16,37 +16,25 @@ install. Docs and the executed lifecycle are not the same thing.
 Deployah follows the CRD lifecycle its Helm 4.3 server-side apply path
 actually performs. It does not invent a parallel CRD controller.
 
-`.deployah/crds/` becomes root Helm chart `crds/` input. Those files
-are opaque, user-owned chart input. Deployah copies them without
-mutating CRD metadata and without a parallel CRD writer. Helm owns
-the lifecycle.
+`.deployah/crds/` is opaque root-chart `crds/` input. Deployah
+preserves the source files and does not interpret or mutate their
+Kubernetes semantics. Helm owns CRD lifecycle.
 
 Helm applies chart `crds/` objects only on install, before ordinary
 release resources. With server-side apply enabled, that Create can
 apply an existing CRD rather than returning AlreadyExists.
 
-Install-time CRD processing may be explicitly disabled by execution
-intent. Disabling it does not remove files from the chart. Deployah
-does not Create, Apply, Replace, Patch, or Delete chart CRDs itself.
-Origin is derived from the CRD source location, not from object metadata.
-Deployah does not inject Deployah identity labels or annotations into
-chart CRDs.
+Install-time CRD processing may be disabled by execution intent.
+Disabling it does not remove files from the chart. Deployah does not
+Create, Apply, Replace, Patch, or Delete chart CRDs itself. Deployah
+does not inject Deployah identity labels or annotations into chart
+CRDs.
 
-On install:
-
-- CRD absent: visible Create
-- CRD exists and its declared state differs: visible Update according
-  to Helm's install-time server-side apply behavior
-- CRD exists and is already converged: no visible resource change
-
-Live-only fields outside the declared surface must not become
-synthetic removals (ADR-0005).
-
-On a real upgrade, chart CRDs are not applied. Do not invent a CRD
-Create or Update. A CRD newly added after the initial install is not
-installed by an ordinary Helm Upgrade. Upgrade and rollback do not
-process chart CRDs. Uninstall does not delete chart CRDs. Do not
-invent CRD pruning or deletion.
+On a real upgrade, chart CRDs are not applied. A CRD newly added after
+the initial install is not installed by an ordinary Helm Upgrade.
+Upgrade and rollback do not process chart CRDs. Uninstall does not
+delete chart CRDs. Do not invent CRD pruning or deletion. CRD source
+files do not participate in a parallel Deployah CRD lifecycle.
 
 A Deployah-specific `create-replace` CRD path is rejected as target
 architecture. It is a lifecycle beyond Helm: it would update CRDs on

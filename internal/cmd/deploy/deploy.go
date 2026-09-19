@@ -194,8 +194,8 @@ func runDeploy(c *nabat.Context) error {
 	}
 	defer plan.cleanup()
 
-	if n := len(bundle.CRDs); n > 0 {
-		c.Println(extras.CRDLifecycleNote(n, plan.result.IsUpgrade, opts.SkipCRDs))
+	if note := extras.CRDLifecycleNote(bundle.CRDs, plan.result.IsUpgrade, opts.SkipCRDs); note != "" {
+		c.Println(note)
 	}
 
 	textOpts := planengine.TextOptions{Mode: planengine.ModeCompact, Theme: c.Theme()}

@@ -15,8 +15,8 @@
 package extras
 
 import (
-	"fmt"
 	"path/filepath"
+	"strings"
 
 	"helm.sh/helm/v4/pkg/postrenderer"
 	"k8s.io/client-go/rest"
@@ -27,7 +27,8 @@ import (
 // LoadFromSpec loads extras for a deploy/plan of the given spec.
 // specPath is the path to deployah.yaml. When cfg is non-nil, live discovery
 // is used for scope resolution; otherwise Offline is set so unknown types are
-// not rejected (scope still comes from the built-in table and in-repo CRDs).
+// not rejected. Scope comes from the built-in table and live discovery, not
+// from .deployah/crds/ content.
 func LoadFromSpec(specPath string, spc *spec.Spec, platform *spec.PlatformConfig, environment, releaseNamespace string, cfg *rest.Config) (*Bundle, error) {
 	scope, err := NewDiscoveryResolver(cfg, nil)
 	if err != nil {
@@ -53,21 +54,40 @@ func (b *Bundle) PostRendererFor() postrenderer.PostRenderer {
 	return &PostRenderer{Manifests: b.Manifests}
 }
 
-// CRDLifecycleNote describes Helm's install-only processing of n loaded
+// CRDLifecycleNote describes Helm's install-only processing of the loaded
 // .deployah/crds/ source files. upgrade is true for an existing release.
 // skipInstall is true when this invocation disables install-time CRD
-// processing. The files stay in the chart either way.
-func CRDLifecycleNote(n int, upgrade, skipInstall bool) string {
-	if n <= 0 {
+// processing. The files stay in the chart either way. The note lists
+// source filenames; it does not interpret file contents.
+func CRDLifecycleNote(files []RawFile, upgrade, skipInstall bool) string {
+	if len(files) == 0 {
 		return ""
 	}
-	base := fmt.Sprintf("CRD files: %d from .deployah/crds/", n)
+	var header string
+	mark := "  "
 	switch {
 	case upgrade:
-		return base + " (Helm does not install or update chart CRDs on upgrade, including newly added files)"
+		header = "CRD files not processed on upgrade:"
 	case skipInstall:
-		return base + " (install-time CRD processing disabled; files stay in the chart)"
+		header = "CRD files in chart (install-time processing disabled):"
 	default:
-		return base + " (Helm processes chart CRDs on install)"
+		header = "CRD files to process on install:"
+		mark = "  + "
 	}
+	var b strings.Builder
+	b.WriteString(header)
+	for i := range files {
+		b.WriteByte('\n')
+		b.WriteString(mark)
+		b.WriteString(crdDisplayPath(files[i].Path))
+	}
+	return b.String()
+}
+
+func crdDisplayPath(path string) string {
+	name := filepath.Base(path)
+	if name == "" || name == "." || name == "/" {
+		name = path
+	}
+	return filepath.ToSlash(filepath.Join(spec.DeployahConfigDir, spec.CRDsDir, name))
 }

@@ -1,5 +1,7 @@
-apiVersion: example.com/v1
-kind: ClusterWidget
+apiVersion: v1
+data:
+    note: extra-manifest-independent-of-crd
+kind: ConfigMap
 metadata:
     annotations:
         deployah.dev/environment-instance: prod
@@ -10,4 +12,4 @@ metadata:
         deployah.dev/instance: extras-env-and-crds-prod
         deployah.dev/project: extras-env-and-crds
     name: shared-widget
-spec: {}
+    namespace: default

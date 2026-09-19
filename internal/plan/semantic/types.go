@@ -176,8 +176,8 @@ type OriginKind int
 const (
 	// OriginHelm is a Helm-predicted resource.
 	OriginHelm OriginKind = iota + 1
-	// OriginCRD is a CustomResourceDefinition predicted from
-	// .deployah/crds/. Helm processes those files on install only.
+	// OriginCRD is a CustomResourceDefinition-origin change. Chart CRD
+	// source files are not parsed into this origin.
 	OriginCRD
 	// OriginNamespace is the target Namespace created as part of a
 	// Helm install. It is invalid with [HelmNone] or [HelmUpgrade].
