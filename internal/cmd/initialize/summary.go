@@ -222,7 +222,8 @@ fresh release unless you pass --skip-crds.
 
 - Shared across all environments (no per-env subdirectories)
 - Files stay in the chart even when you skip install-time CRDs
-- Upgrades do not update CRDs; uninstall does not delete them
+- Upgrades do not install newly added chart CRDs or update existing ones
+- Uninstall does not delete chart CRDs
 `
 )
 

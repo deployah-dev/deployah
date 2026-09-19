@@ -175,9 +175,10 @@ const (
 	// TLSModeSecretName uses a pre-existing Kubernetes TLS secret. The secret
 	// must exist in the deployment namespace.
 	TLSModeSecretName TLSMode = "secretName"
-	// TLSModeCertManager provisions a certificate via cert-manager. The
-	// cert-manager.io/v1 API and the referenced ClusterIssuer or Issuer
-	// must be available when Kubernetes processes the Certificate.
+	// TLSModeCertManager configures the Ingress for cert-manager using the
+	// referenced issuer. Deployah does not preflight cert-manager
+	// availability or issuer existence; cert-manager and the issuer must
+	// be available for certificate provisioning to succeed.
 	TLSModeCertManager TLSMode = "certManager"
 )
 
