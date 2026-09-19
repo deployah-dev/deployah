@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"testing"
 	"time"
 
@@ -17,8 +16,8 @@ import (
 	"nabat.dev/nabat"
 	"nabat.dev/nabat/nabattest"
 
+	"deployah.dev/deployah/internal/extras"
 	"deployah.dev/deployah/internal/helm"
-	"deployah.dev/deployah/internal/k8s"
 	"deployah.dev/deployah/internal/render"
 	"deployah.dev/deployah/internal/session"
 	"deployah.dev/deployah/internal/spec"
@@ -43,16 +42,20 @@ type stubHelmClient struct {
 
 	installErr       error
 	installCallCount int
+	lastCRDs         []extras.RawFile
+	lastSkipCRDs     bool
 }
 
 func (s *stubHelmClient) IsReachable() error { return nil }
 
-func (s *stubHelmClient) InstallApp(context.Context, bool, *spec.ResolvedSpec, postrenderer.PostRenderer) error {
+func (s *stubHelmClient) InstallApp(_ context.Context, _ bool, _ *spec.ResolvedSpec, _ postrenderer.PostRenderer, crds []extras.RawFile, skipCRDs bool) error {
 	s.installCallCount++
+	s.lastCRDs = crds
+	s.lastSkipCRDs = skipCRDs
 	return s.installErr
 }
 
-func (s *stubHelmClient) RenderManifests(context.Context, *spec.ResolvedSpec, postrenderer.PostRenderer) (*render.RenderResult, func(), error) {
+func (s *stubHelmClient) RenderManifests(context.Context, *spec.ResolvedSpec, postrenderer.PostRenderer, []extras.RawFile) (*render.RenderResult, func(), error) {
 	if s.renderErr != nil {
 		return nil, func() {}, s.renderErr
 	}
@@ -64,7 +67,7 @@ func (s *stubHelmClient) RenderManifests(context.Context, *spec.ResolvedSpec, po
 	return s.renderResults[i], func() {}, nil
 }
 
-func (s *stubHelmClient) RenderOffline(context.Context, *spec.ResolvedSpec, postrenderer.PostRenderer) (*render.RenderResult, func(), error) {
+func (s *stubHelmClient) RenderOffline(context.Context, *spec.ResolvedSpec, postrenderer.PostRenderer, []extras.RawFile) (*render.RenderResult, func(), error) {
 	panic("unexpected RenderOffline call")
 }
 
@@ -160,118 +163,6 @@ func releaseWithIngressHostname(component, hostname string) *v1.Release {
 				},
 			},
 		},
-	}
-}
-
-func hasGroupVersion(reqs []k8s.APIRequirement, want string) bool {
-	for _, r := range reqs {
-		if slices.Contains(r.GroupVersions, want) {
-			return true
-		}
-	}
-	return false
-}
-
-// TestRequiredAPIs verifies API requirements derived from expose TLS mode and
-// component environment filters.
-func TestRequiredAPIs(t *testing.T) {
-	t.Parallel()
-
-	exposeAPI := &spec.Spec{
-		Components: map[string]spec.Component{
-			"api": {Expose: &spec.Expose{Domain: "public", Subdomain: new("api")}},
-		},
-	}
-
-	tests := []struct {
-		name            string
-		manifest        *spec.Spec
-		environment     string
-		resolved        *spec.ResolvedSpec
-		wantContains    []string
-		wantNotContains []string
-		wantLen         *int
-		wantEmpty       bool
-	}{
-		{
-			name:        "certManager TLS includes cert-manager",
-			manifest:    exposeAPI,
-			environment: "production",
-			resolved: &spec.ResolvedSpec{
-				Components: map[string]spec.ResolvedComponent{
-					"api": {FQDN: "api.example.com", TLSMode: spec.TLSModeCertManager},
-				},
-			},
-			wantContains: []string{"cert-manager.io/v1"},
-		},
-		{
-			name:        "selfSigned TLS omits cert-manager",
-			manifest:    exposeAPI,
-			environment: "local",
-			resolved: &spec.ResolvedSpec{
-				Components: map[string]spec.ResolvedComponent{
-					"api": {FQDN: "api.local.nip.io", TLSMode: spec.TLSModeSelfSigned},
-				},
-			},
-			wantNotContains: []string{"cert-manager.io/v1"},
-		},
-		{
-			name: "wildcard environment filter matches review/pr-123",
-			manifest: &spec.Spec{
-				Components: map[string]spec.Component{
-					"web": {
-						Environments: []string{"review"},
-						Autoscaling:  &spec.Autoscaling{Enabled: true},
-					},
-				},
-			},
-			environment:  "review/pr-123",
-			wantContains: []string{"autoscaling/v2"},
-			wantLen:      new(1),
-		},
-		{
-			name: "wildcard environment filter excludes staging",
-			manifest: &spec.Spec{
-				Components: map[string]spec.Component{
-					"web": {
-						Environments: []string{"review"},
-						Autoscaling:  &spec.Autoscaling{Enabled: true},
-					},
-				},
-			},
-			environment: "staging",
-			wantEmpty:   true,
-		},
-		{
-			name: "metrics enabled requires prometheus operator API",
-			manifest: &spec.Spec{
-				Components: map[string]spec.Component{
-					"api": {Metrics: &spec.ComponentMetrics{}},
-				},
-			},
-			environment:  "production",
-			wantContains: []string{"monitoring.coreos.com/v1"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			reqs := k8s.RequiredAPIs(tt.manifest, tt.environment, tt.resolved)
-			if tt.wantEmpty {
-				assert.Empty(t, reqs)
-				return
-			}
-			if tt.wantLen != nil {
-				require.Len(t, reqs, *tt.wantLen)
-			}
-			for _, gv := range tt.wantContains {
-				assert.True(t, hasGroupVersion(reqs, gv), "missing GroupVersion %s", gv)
-			}
-			for _, gv := range tt.wantNotContains {
-				assert.False(t, hasGroupVersion(reqs, gv), "unexpected GroupVersion %s", gv)
-			}
-		})
 	}
 }
 

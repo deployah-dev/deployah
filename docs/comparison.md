@@ -38,8 +38,10 @@ inside your cluster.
 > **An honest note:** you do not need Helm to *use* Deployah. But the output is a
 > real Helm release, so a little Helm knowledge helps when you debug the release
 > itself (for example `helm history` or `helm get`). Custom CRDs under
-> `.deployah/crds/` are another place the abstraction thins: they are applied
-> outside the Helm release, with their own install policy. See
+> `.deployah/crds/` are copied into the generated chart `crds/` directory as
+> opaque files. Helm installs them on a fresh release. An ordinary upgrade
+> does not update existing chart CRDs and does not install a CRD added after
+> that first install. Uninstall does not delete them. See
 > [Custom manifests and CRDs](custom-manifests-and-crds.md).
 
 ## How much Helm you need (from most to least)

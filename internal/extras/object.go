@@ -46,6 +46,14 @@ func (id Identity) Key() string {
 	return strings.Join([]string{id.APIVersion, id.Kind, id.Namespace, id.Name}, "\x00")
 }
 
+// RawFile is one source file under .deployah/crds/. Raw is the exact
+// file bytes. Helm copies them into the chart; they are never parsed or
+// rewritten for that path.
+type RawFile struct {
+	Path string
+	Raw  []byte
+}
+
 // Object is one Kubernetes document loaded from an extras file.
 type Object struct {
 	Path string

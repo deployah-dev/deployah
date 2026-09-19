@@ -15,8 +15,12 @@
 package plan
 
 import (
+	"bufio"
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -26,8 +30,17 @@ import (
 	"deployah.dev/deployah/internal/plan/semantic"
 	"deployah.dev/deployah/internal/predict"
 
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	yamlutil "k8s.io/apimachinery/pkg/util/yaml"
 )
+
+// inspectedCRD is one relevant CRD document from a source file. object.Raw
+// is that document's bytes only. The source [extras.RawFile] is unchanged.
+type inspectedCRD struct {
+	object extras.Object
+	typed  *apiextensionsv1.CustomResourceDefinition
+}
 
 type crdSurface struct {
 	served      map[schema.GroupVersionKind]apiDesc
@@ -63,20 +76,25 @@ func newCRDSurface() *crdSurface {
 	}
 }
 
-func predictCRDs(ctx context.Context, cluster predict.Cluster, crds []extras.Object, policy extras.Policy) ([]semantic.ResourceChange, *crdSurface, error) {
+// predictCRDs inspects every non-empty YAML document in each source
+// file. Inspection objects are document slices only. Source
+// [extras.RawFile] bytes stay untouched for Helm.
+func predictCRDs(ctx context.Context, cluster predict.Cluster, files []extras.RawFile, policy extras.Policy) ([]semantic.ResourceChange, *crdSurface, error) {
 	surface := newCRDSurface()
-	if len(crds) == 0 {
+	if len(files) == 0 {
 		return nil, surface, nil
+	}
+	crds, inspectErr := inspectCRDDocuments(files)
+	if inspectErr != nil {
+		return nil, nil, inspectErr
 	}
 	changes := make([]semantic.ResourceChange, 0, len(crds))
 	var previouslyServed []apiDesc
 	origin := semantic.ResourceOrigin{Kind: semantic.OriginCRD}
 	order := 1
-	for _, o := range crds {
-		typed, err := extras.DecodeCRD(o)
-		if err != nil {
-			return nil, nil, err
-		}
+	for _, crd := range crds {
+		o := crd.object
+		typed := crd.typed
 		id := predict.Identity{
 			Group:   "apiextensions.k8s.io",
 			Version: "v1",
@@ -203,6 +221,48 @@ func predictCRDs(ctx context.Context, cluster predict.Cluster, crds []extras.Obj
 		}
 	}
 	return changes, surface, nil
+}
+
+// inspectCRDDocuments yields one [inspectedCRD] per relevant CRD
+// document. Parsed objects are never written back into [extras.RawFile].
+func inspectCRDDocuments(files []extras.RawFile) ([]inspectedCRD, error) {
+	out := make([]inspectedCRD, 0, len(files))
+	for i := range files {
+		docs, err := yamlDocuments(files[i].Raw)
+		if err != nil {
+			return nil, fmt.Errorf("%s: split CRD documents: %w", files[i].Path, err)
+		}
+		for _, doc := range docs {
+			o := extras.Object{Path: files[i].Path, Raw: doc}
+			typed, decodeErr := extras.DecodeCRD(o)
+			if decodeErr != nil {
+				continue
+			}
+			if typed.Kind != "CustomResourceDefinition" {
+				continue
+			}
+			out = append(out, inspectedCRD{object: o, typed: typed})
+		}
+	}
+	return out, nil
+}
+
+func yamlDocuments(raw []byte) ([][]byte, error) {
+	reader := yamlutil.NewYAMLReader(bufio.NewReader(bytes.NewReader(raw)))
+	var docs [][]byte
+	for {
+		doc, err := reader.Read()
+		if errors.Is(err, io.EOF) {
+			return docs, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		if len(bytes.TrimSpace(doc)) == 0 {
+			continue
+		}
+		docs = append(docs, doc)
+	}
 }
 
 func specChanged(live, predicted *unstructured.Unstructured) (bool, error) {

@@ -1,0 +1,5 @@
+apiVersion: example.com/v1
+kind: LifecycleWidget
+metadata:
+  name: lifecycle-widget
+spec: {}

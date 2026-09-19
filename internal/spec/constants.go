@@ -342,13 +342,13 @@ const (
 	ManagedByValue = "deployah"
 
 	// AnnotationSource is the annotation key recording which Deployah layer
-	// produced a managed object (spec, manifests, or crds).
+	// produced a managed object (spec or manifests). Chart CRDs from
+	// .deployah/crds/ are not stamped with this key.
 	AnnotationSource = LabelPrefix + "/source"
 
 	// AnnotationProject is the annotation key for project identification on
-	// Deployah-managed objects. Same string as LabelProject; used as an
-	// annotation so CRDs (which carry no environment label) still identify
-	// the owning project.
+	// Deployah-managed objects. Same string as LabelProject. Chart CRDs from
+	// .deployah/crds/ are not stamped with this key.
 	AnnotationProject = LabelProject
 
 	// AnnotationEnvironmentInstance stores [EnvIdentity.Original] for
@@ -361,9 +361,6 @@ const (
 
 	// SourceManifests is the AnnotationSource value for .deployah/manifests.
 	SourceManifests = "manifests"
-
-	// SourceCRDs is the AnnotationSource value for .deployah/crds.
-	SourceCRDs = "crds"
 
 	// ManifestsDir is the subdirectory under DeployahConfigDir for extra
 	// Kubernetes manifests.

@@ -30,7 +30,7 @@ import (
 func TestPrepareChart_RequiresResolvedSpecSource(t *testing.T) {
 	t.Parallel()
 
-	_, err := PrepareChart(t.Context(), &spec.ResolvedSpec{}, NewChartCache(time.Hour))
+	_, err := PrepareChart(t.Context(), &spec.ResolvedSpec{}, NewChartCache(time.Hour), nil)
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "resolved spec source")
 }
@@ -40,7 +40,7 @@ func TestPrepareChart_RequiresResolveResult(t *testing.T) {
 
 	_, err := PrepareChart(t.Context(), &spec.ResolvedSpec{
 		Spec: &spec.Spec{Project: "shop"},
-	}, NewChartCache(time.Hour))
+	}, NewChartCache(time.Hour), nil)
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "spec.Resolve")
 }
@@ -63,7 +63,7 @@ func TestPrepareChart_ActiveComponentsComeFromResolved(t *testing.T) {
 	delete(resolved.Components, "worker")
 
 	cache := NewChartCache(time.Hour)
-	chartDir, err := PrepareChart(t.Context(), resolved, cache)
+	chartDir, err := PrepareChart(t.Context(), resolved, cache, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { removeChartDirs(t, cache, resolved, "production", chartDir) })
 

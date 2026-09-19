@@ -21,6 +21,7 @@ import (
 	"k8s.io/apimachinery/pkg/selection"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 
+	"deployah.dev/deployah/internal/extras"
 	"deployah.dev/deployah/internal/spec"
 
 	v1 "helm.sh/helm/v4/pkg/release/v1"
@@ -175,10 +176,12 @@ func (c *Client) IsReachable() error {
 
 // InstallApp installs or upgrades the app from [spec.ResolvedSpec]. When
 // dryRun is true, it renders via [Client.RenderManifests] instead of
-// touching the cluster. A nil or unresolved spec is an error.
-func (c *Client) InstallApp(ctx context.Context, dryRun bool, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) error {
+// touching the cluster. crds are written into the per-invocation chart
+// copy. skipCRDs is forwarded to Helm Install.SkipCRDs on a fresh install
+// only. A nil or unresolved spec is an error.
+func (c *Client) InstallApp(ctx context.Context, dryRun bool, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer, crds []extras.RawFile, skipCRDs bool) error {
 	if dryRun {
-		_, cleanup, err := c.RenderManifests(ctx, resolved, postRenderer)
+		_, cleanup, err := c.RenderManifests(ctx, resolved, postRenderer, crds)
 		if cleanup != nil {
 			defer cleanup()
 		}
@@ -197,7 +200,7 @@ func (c *Client) InstallApp(ctx context.Context, dryRun bool, resolved *spec.Res
 		return err
 	}
 
-	chartPath, err := PrepareChart(ctx, resolved, c.chartCache)
+	chartPath, err := PrepareChart(ctx, resolved, c.chartCache, crds)
 	if err != nil {
 		return fmt.Errorf("failed to prepare chart: %w", err)
 	}
@@ -222,7 +225,7 @@ func (c *Client) InstallApp(ctx context.Context, dryRun bool, resolved *spec.Res
 
 	switch prep.Operation {
 	case OperationInstall:
-		install := c.newInstallAction(releaseName, labels, postRenderer)
+		install := c.newInstallAction(releaseName, labels, postRenderer, skipCRDs)
 		if _, runErr := install.RunWithContext(ctx, ch, values); runErr != nil {
 			return c.wrapHelmError("install", releaseName, runErr)
 		}
@@ -256,8 +259,9 @@ func (c *Client) lookupReleasePrep(releaseName string) (ReleasePrep, error) {
 }
 
 // newInstallAction returns an install action with Deployah SSA defaults.
-// ForceConflicts and TakeOwnership stay false (Helm zeros).
-func (c *Client) newInstallAction(releaseName string, labels map[string]string, postRenderer postrenderer.PostRenderer) *action.Install {
+// ForceConflicts and TakeOwnership stay false (Helm zeros). skipCRDs maps
+// to [action.Install.SkipCRDs].
+func (c *Client) newInstallAction(releaseName string, labels map[string]string, postRenderer postrenderer.PostRenderer, skipCRDs bool) *action.Install {
 	install := action.NewInstall(c.config)
 	install.ReleaseName = releaseName
 	install.Namespace = c.Namespace()
@@ -268,6 +272,7 @@ func (c *Client) newInstallAction(releaseName string, labels map[string]string, 
 	install.Labels = labels
 	install.PostRenderer = postRenderer
 	install.ServerSideApply = true
+	install.SkipCRDs = skipCRDs
 	return install
 }
 

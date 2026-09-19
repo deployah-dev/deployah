@@ -216,7 +216,7 @@ func TestNewClient_UnconfiguredGetterIgnoresAmbientKubeconfig(t *testing.T) {
 			require.Error(t, err)
 			assert.ErrorIs(t, err, ErrDestinationNotConfigured)
 
-			result, cleanup, err := client.RenderOffline(t.Context(), resolved, nil)
+			result, cleanup, err := client.RenderOffline(t.Context(), resolved, nil, nil)
 			require.NoError(t, err)
 			if cleanup != nil {
 				t.Cleanup(cleanup)
@@ -236,7 +236,7 @@ func TestNewClient_OfflineRenderWithoutKubeconfig(t *testing.T) {
 
 	m := envServiceSpec(t.TempDir(), spec.StringMap{"LOG_LEVEL": "debug"})
 	resolved := resolveChart(t, m, "dev")
-	result, cleanup, err := client.RenderOffline(t.Context(), resolved, nil)
+	result, cleanup, err := client.RenderOffline(t.Context(), resolved, nil, nil)
 	require.NoError(t, err)
 	if cleanup != nil {
 		t.Cleanup(cleanup)

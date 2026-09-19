@@ -6,9 +6,10 @@ a `NetworkPolicy`, or a CRD your app needs): drop manifests into
 `.deployah/manifests/` and CRDs into `.deployah/crds/`.
 
 Extra **manifests** join the same Helm release as your generated resources
-(via a Helm post-renderer). Extra **CRDs** are applied to the cluster first,
-outside the release, then Deployah waits for each CRD to become
-`Established` before installing or upgrading the chart.
+(via a Helm post-renderer). Extra **CRDs** are copied into the generated
+chart's `crds/` directory. Helm installs them on a fresh release, before
+ordinary resources. Deployah does not apply, patch, or delete those CRDs
+itself.
 
 ## Layout
 
@@ -36,13 +37,13 @@ Rules:
 - Nested directories under a manifests env dir (or under `crds/`) are not
   allowed.
 - `CustomResourceDefinition` belongs in `.deployah/crds/`, not under
-  `manifests/`. CRDs must use `apiVersion: apiextensions.k8s.io/v1`.
+  `manifests/`.
 
 ## Literal YAML
 
-Extra manifests are applied **literally**. There is no Helm templating, no
-Sprig, and no environment-variable substitution. Content such as
-`{{ $labels.instance }}` in a PrometheusRule is left untouched.
+Extra manifests and CRDs are loaded **literally**. There is no Helm
+templating, no Sprig, and no environment-variable substitution. Content such
+as `{{ $labels.instance }}` in a PrometheusRule is left untouched.
 
 ## Example: a PrometheusRule
 
@@ -64,7 +65,7 @@ spec:
 
 ```sh
 deployah plan prod          # extras appear in the plan diff
-deployah deploy prod -y     # CRDs (if any) first, then the release
+deployah deploy prod -y     # Helm install processes chart CRDs, then the release
 ```
 
 ## Labels and annotations
@@ -78,7 +79,12 @@ rewrites object names:
 | Generated component | `deployah.dev/project`, `deployah.dev/environment`, `deployah.dev/component`, `deployah.dev/instance` | `deployah.dev/source=spec`, `deployah.dev/project`, `deployah.dev/environment-instance` |
 | Generated task | same as a component, plus `deployah.dev/task` (the task name). Components never carry this key. | `deployah.dev/source=spec`, `deployah.dev/project`, `deployah.dev/environment-instance` |
 | Extra manifests | `deployah.dev/project`, `deployah.dev/environment`, `deployah.dev/instance` | `deployah.dev/source=manifests`, `deployah.dev/project`, `deployah.dev/environment-instance` |
-| Extra CRDs | project only (no environment or instance) | `deployah.dev/source=crds`, `deployah.dev/project` |
+| Extra CRDs | none injected | none injected |
+
+Chart CRDs stay semantically yours. Deployah does not add `deployah.dev/*`
+keys, and it does not strip user `deployah.dev/*` keys that you wrote on the
+CRD. Origin is tracked internally from `.deployah/crds/`, not from object
+metadata.
 
 `deployah.dev/environment` is the logical environment (`review`). Concrete
 wildcard instances such as `review/pr-123` are stored in the
@@ -89,18 +95,28 @@ chart resources. Extra manifests do not take ownership of that conventional
 label: if you set it, Deployah leaves it alone.
 
 Reserved `deployah.dev/*` keys that Deployah does not own are stripped from
-extras so they cannot impersonate managed metadata. Your other labels and
-annotations are kept.
+extra **manifests** so they cannot impersonate managed metadata. Your other
+labels and annotations on manifests are kept.
 
-Empty `metadata.namespace` on namespaced extras is filled with the release
-namespace. A different namespace is an error. Cluster-scoped objects must omit
-namespace.
+Empty `metadata.namespace` on namespaced extra **manifests** is filled with
+the release namespace. A different namespace is an error. Cluster-scoped
+manifests must omit namespace.
+
+CRD YAML keeps `metadata.namespace` if you set it. Deployah does not reject
+or clear that field. Kubernetes or Helm may still refuse a namespaced CRD
+later.
 
 ## Validation and collisions
 
-- Each document needs `apiVersion`, `kind`, and `metadata.name`.
-- Duplicate identities (same apiVersion/kind/namespace/name) across extras
-  files fail the load.
+- Each extra **manifest** document needs `apiVersion`, `kind`, and
+  `metadata.name`.
+- Duplicate extra **manifests** (same apiVersion/kind/namespace/name) fail
+  the load.
+- `.deployah/crds/` is an opaque Helm-chart file set. Deployah checks the
+  filesystem rules above. It does not require a CRD `apiVersion` or reject
+  duplicate CRD logical identity. Deployah does not validate CRD document
+  semantics. Helm and Kubernetes process the files at runtime and may
+  reject invalid or unsupported content.
 - An extra that collides with a generated chart object fails the render
   (Deployah will not overwrite chart resources).
 - Custom resource kinds must be known: put their CRD under `.deployah/crds/`,
@@ -115,37 +131,55 @@ namespace.
 ## Plan vs deploy
 
 - `deployah plan` includes extra manifests in the rendered diff. It does not
-  apply CRDs; when `.deployah/crds/` is non-empty it prints how many CRDs are
-  pending.
-- `deployah deploy` applies CRDs first (see below), then the Helm release
-  with extras attached.
+  apply CRDs. When `.deployah/crds/` is non-empty it prints how many CRD
+  files were loaded (`CRD files: N from .deployah/crds/`).
+- `deployah deploy` copies those CRD files into the generated chart, then
+  runs Helm. On a fresh install Helm processes `crds/` before ordinary
+  resources. On upgrade Helm leaves chart CRDs alone, including CRDs added
+  after the first install.
 
-## CRD policy
+## Helm CRD lifecycle
 
 ```sh
-deployah deploy prod                  # --crds create (default): install if missing
-deployah deploy prod --crds create-replace
+deployah deploy prod                  # fresh install: Helm installs chart CRDs
+deployah deploy prod --skip-crds      # fresh install: Helm skips chart CRDs
 ```
 
-| Policy | Behavior |
-|---|---|
-| `create` (default) | Create the CRD when it is missing; leave an existing CRD unchanged. |
-| `create-replace` | Create when missing, or server-side-apply over an existing CRD (force ownership). |
+`--skip-crds` maps to Helm `Install.SkipCRDs`. The files stay in the chart.
+Skip is not a Deployah CRD writer, and it does not apply on upgrade.
 
-Deployah waits for each CRD to report `Established` (bounded by `--timeout`),
-then applies the Helm release. If the Helm plan has no changes but
-`.deployah/crds/` is non-empty, Deployah still applies those CRDs (the chart is
-left alone). CRDs are never pruned and are never deleted on uninstall. Extra
-manifests leave with the release.
+Helm 4.3 install-time CRD handling, with server-side apply enabled, works
+like this:
+
+- Fresh install: Helm processes chart CRDs unless you pass `--skip-crds`.
+- Existing chart CRD: the install path may apply changes to it. Helm's
+  Create call uses server-side apply, so an already-present CRD can be
+  updated during that first install.
+- Upgrade: Helm does not process chart CRDs.
+- Rollback: chart CRDs are not reprocessed.
+- Uninstall: chart CRDs remain.
+- CRD added after the first install: an ordinary Upgrade does not install
+  it.
+
+Extra manifests leave with the release.
+
+If a Helm release already exists and you later add a new CRD file under
+`.deployah/crds/`, a normal `deployah deploy` performs a Helm Upgrade and
+that new CRD is not installed.
+
+If you skip CRDs on the first install, later ordinary upgrades will not
+install them either. Use a first install without `--skip-crds` when the
+release needs those APIs.
+
+See Helm's [Limitations on CRDs](https://helm.sh/docs/topics/charts/#limitations-on-crds).
 
 ## Failure modes
 
-CRD apply and the Helm release are **not** one atomic operation. Deployah
-applies CRDs first, waits for `Established`, then installs or upgrades the
-release. If the Helm step fails after CRDs succeed, those CRDs stay in the
-cluster (Deployah never rolls them back). If CRD apply fails, Deployah does
-not call Helm. Re-run `deployah deploy` after fixing the failure; already
-present CRDs are left alone under `--crds create`, or updated under
-`--crds create-replace`.
+Helm's install-time CRD step and the rest of the release are **not** one
+atomic operation. Helm installs chart CRDs first (unless skipped), waits for
+each to become `Established`, then applies ordinary resources. If the
+resource step fails after CRDs succeed, those CRDs stay in the cluster.
+Re-run `deployah deploy` after you fix the failure. An existing release is
+an upgrade, so chart CRDs will not be written again.
 
 See the [README](../README.md) for the project overview and the other guides.

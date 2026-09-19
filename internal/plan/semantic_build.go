@@ -38,6 +38,7 @@ type SemanticBuildClient interface {
 		ctx context.Context,
 		resolved *spec.ResolvedSpec,
 		postRenderer postrenderer.PostRenderer,
+		crds []extras.RawFile,
 	) (*render.RenderResult, helm.ReleasePrep, func(), error)
 }
 
@@ -53,8 +54,8 @@ type SemanticBuildInput struct {
 	Resolved *spec.ResolvedSpec
 	// PostRenderer, when non-nil, is forwarded once to the render client.
 	PostRenderer postrenderer.PostRenderer
-	// CRDs are already-loaded CustomResourceDefinition objects, in apply order.
-	CRDs []extras.Object
+	// CRDs are already-loaded opaque source files from .deployah/crds/.
+	CRDs []extras.RawFile
 	// CRDPolicy is extras.PolicyCreate or extras.PolicyCreateReplace.
 	CRDPolicy extras.Policy
 }
@@ -94,7 +95,7 @@ func BuildSemanticPlan(
 		return semantic.Plan{}, nil, cleanup, fmt.Errorf("semantic plan requires a cluster")
 	}
 
-	result, prep, renderCleanup, err := client.RenderManifestsWithPrep(ctx, input.Resolved, input.PostRenderer)
+	result, prep, renderCleanup, err := client.RenderManifestsWithPrep(ctx, input.Resolved, input.PostRenderer, input.CRDs)
 	if renderCleanup != nil {
 		cleanup = renderCleanup
 	}
@@ -117,9 +118,14 @@ func BuildSemanticPlan(
 		}
 	}
 
-	crdChanges, surface, err := predictCRDs(ctx, cluster, input.CRDs, input.CRDPolicy)
-	if err != nil {
-		return semantic.Plan{}, nil, cleanup, fmt.Errorf("predict CRDs: %w", err)
+	var crdChanges []semantic.ResourceChange
+	surface := newCRDSurface()
+	if prep.Operation == helm.OperationInstall {
+		var crdErr error
+		crdChanges, surface, crdErr = predictCRDs(ctx, cluster, input.CRDs, input.CRDPolicy)
+		if crdErr != nil {
+			return semantic.Plan{}, nil, cleanup, fmt.Errorf("predict CRDs: %w", crdErr)
+		}
 	}
 	nsChange, missingNS, err := predictNamespace(ctx, cluster, prep.Operation, result.Namespace)
 	if err != nil {

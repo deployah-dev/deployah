@@ -16,18 +16,16 @@ package deploy
 
 import (
 	"errors"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 	"nabat.dev/nabat"
+	"nabat.dev/nabat/nabattest"
 
 	"deployah.dev/deployah/internal/extras"
-	"deployah.dev/deployah/internal/k8s"
 	"deployah.dev/deployah/internal/render"
 	"deployah.dev/deployah/internal/session"
 	"deployah.dev/deployah/internal/spec"
@@ -204,207 +202,75 @@ func TestSkipDeploy_NoChanges_ShowsReadinessSummary(t *testing.T) {
 	assert.Contains(t, stdout.String(), "web: 1/1")
 }
 
-// TestSkipWhenIdle locks the gate that used to skip CRD apply on a no-op
-// Helm plan.
-func TestSkipWhenIdle(t *testing.T) {
+// TestSkipHelmApply locks the idle gate: upgrades with no rendered
+// changes skip Helm unless --reapply is set. Fresh installs never skip,
+// even when the ordinary Manifest is empty. --skip-crds is not a trigger.
+func TestSkipHelmApply(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name     string
-		helmIdle bool
-		crdCount int
-		want     bool
+		name       string
+		isUpgrade  bool
+		hasChanges bool
+		reapply    bool
+		want       bool
 	}{
-		{name: "idle no CRDs", helmIdle: true, crdCount: 0, want: true},
-		{name: "idle with CRDs", helmIdle: true, crdCount: 1, want: false},
-		{name: "helm changes no CRDs", helmIdle: false, crdCount: 0, want: false},
-		{name: "helm changes with CRDs", helmIdle: false, crdCount: 2, want: false},
+		{name: "fresh install empty manifest", isUpgrade: false, hasChanges: false, want: false},
+		{name: "fresh install with changes", isUpgrade: false, hasChanges: true, want: false},
+		{name: "idle upgrade", isUpgrade: true, hasChanges: false, want: true},
+		{name: "idle upgrade reapply", isUpgrade: true, hasChanges: false, reapply: true, want: false},
+		{name: "upgrade with changes", isUpgrade: true, hasChanges: true, want: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, tt.want, skipWhenIdle(tt.helmIdle, tt.crdCount))
+			assert.Equal(t, tt.want, skipHelmApply(tt.isUpgrade, tt.hasChanges, tt.reapply))
 		})
 	}
 }
 
-// TestCRDIdleSuccessMessage covers wait-only vs created/replaced wording.
-func TestCRDIdleSuccessMessage(t *testing.T) {
+// TestApplyDeploy_PassesCRDsToInstall forwards loaded CRDs to Helm
+// install and maps Options.SkipCRDs onto Install.SkipCRDs.
+func TestApplyDeploy_PassesCRDsToInstall(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name  string
-		stats extras.CRDStats
-		want  string
+		name       string
+		skipCRDs   bool
+		wantStderr []string
 	}{
-		{
-			name:  "already present",
-			stats: extras.CRDStats{Ready: 2},
-			want:  "CRDs ready (2 already present). Release web-production unchanged (revision 3).",
-		},
-		{
-			name:  "created and replaced",
-			stats: extras.CRDStats{Created: 1, Replaced: 1, Ready: 2},
-			want:  "Applied 2 CRDs (1 created, 1 replaced). Release web-production unchanged (revision 3).",
-		},
-		{
-			name:  "one created",
-			stats: extras.CRDStats{Created: 1, Ready: 1},
-			want:  "Applied 1 CRD (1 created). Release web-production unchanged (revision 3).",
-		},
+		{name: "skip false", wantStderr: []string{"Deployed"}},
+		{name: "skip true", skipCRDs: true},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, tt.want, crdIdleSuccessMessage(tt.stats, "web-production", 3))
+			manifest := deployFlowManifestV1
+			stub := &stubHelmClient{
+				renderResults: []*render.RenderResult{testRenderResult(manifest)},
+			}
+			sess, cluster := newClusterWithStub(t, stub, nil)
+			planned := &deployPlan{
+				diff:    &planengine.Plan{Header: planengine.Header{Release: "web-production", Revision: 1}},
+				result:  testRenderResult(manifest),
+				cleanup: func() {},
+			}
+			c, _, _, stderr := nabatContextWithIO(t)
+			opts := &Options{Environment: "production", SkipCRDs: tc.skipCRDs}
+			bundle := &extras.Bundle{CRDs: []extras.RawFile{{Path: "widget.yaml"}}}
+
+			err := applyDeploy(c, sess, cluster, stub, nil, &spec.Spec{Project: "web"}, opts, nil, planned, nil, assertNever{}, bundle, nil, nil)
+			require.NoError(t, err)
+			assert.Equal(t, 1, stub.installCallCount)
+			assert.Equal(t, tc.skipCRDs, stub.lastSkipCRDs)
+			require.Len(t, stub.lastCRDs, 1)
+			for _, want := range tc.wantStderr {
+				assert.Contains(t, stderr.String(), want)
+			}
 		})
 	}
 }
 
-// TestCRDApplySuffix covers the Helm-path success footnote for CRD writes.
-func TestCRDApplySuffix(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name  string
-		stats extras.CRDStats
-		want  string
-	}{
-		{name: "noop", stats: extras.CRDStats{Ready: 2}, want: ""},
-		{name: "created", stats: extras.CRDStats{Created: 1, Ready: 1}, want: "; applied 1 CRD (1 created)"},
-		{name: "both", stats: extras.CRDStats{Created: 1, Replaced: 2, Ready: 3}, want: "; applied 3 CRDs (1 created, 2 replaced)"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tt.want, crdApplySuffix(tt.stats))
-		})
-	}
-}
-
-// TestFilterCoveredAPIs drops requirements satisfied by pending CRDs.
-func TestFilterCoveredAPIs(t *testing.T) {
-	t.Parallel()
-
-	reqs := []k8s.APIRequirement{
-		{GroupVersions: []string{"cert-manager.io/v1"}, Reason: "tls"},
-		{GroupVersions: []string{"autoscaling/v2", "autoscaling/v2beta2"}, Reason: "hpa"},
-	}
-	covered := map[string]struct{}{"cert-manager.io/v1": {}}
-	got := filterCoveredAPIs(reqs, covered)
-	require.Len(t, got, 1)
-	assert.Equal(t, []string{"autoscaling/v2", "autoscaling/v2beta2"}, got[0].GroupVersions)
-	assert.Equal(t, reqs, filterCoveredAPIs(reqs, nil))
-}
-
-// TestApplyCRDsOnly_ReportsSuccessAndReadiness covers the Helm-idle success
-// message and readiness poll. applyBundleCRDs is a no-op for an empty CRD
-// list (real CRD apply needs a live apiextensions API).
-func TestApplyCRDsOnly_ReportsSuccessAndReadiness(t *testing.T) {
-	t.Parallel()
-
-	k8sClient := fake.NewSimpleClientset(
-		&corev1.Pod{
-			Name: "web-1", Namespace: "default",
-			Labels: map[string]string{
-				"app.kubernetes.io/instance":  "web-production",
-				"app.kubernetes.io/component": "web",
-			},
-			Status: corev1.PodStatus{
-				Phase: corev1.PodRunning,
-				ContainerStatuses: []corev1.ContainerStatus{
-					{Ready: true},
-				},
-			},
-		},
-	)
-	stub := &stubHelmClient{}
-	sess, cluster := newClusterWithStub(t, stub, k8sClient)
-	c, _, stdout, stderr := nabatContextWithIO(t)
-	plan := &deployPlan{
-		diff: &planengine.Plan{
-			Header: planengine.Header{Release: "web-production", Revision: 3},
-		},
-		result:  testRenderResult(deployFlowManifestV1),
-		cleanup: func() {},
-	}
-	opts := &Options{Environment: "production", CRDs: string(extras.PolicyCreate)}
-
-	err := applyCRDsOnly(c, sess, cluster, k8sClient, nil, plan, &extras.Bundle{}, opts)
-	require.NoError(t, err)
-	assert.Contains(t, stderr.String(), "CRDs ready (0 already present). Release web-production unchanged (revision 3).")
-	assert.Contains(t, stdout.String(), "Readiness:")
-}
-
-func sampleBundleCRD(t *testing.T) *extras.Bundle {
-	t.Helper()
-
-	obj := &unstructured.Unstructured{Object: map[string]any{
-		"apiVersion": "apiextensions.k8s.io/v1",
-		"kind":       "CustomResourceDefinition",
-		"metadata":   map[string]any{"name": "widgets.example.com"},
-		"spec": map[string]any{
-			"group": "example.com",
-			"scope": "Namespaced",
-			"names": map[string]any{"kind": "Widget", "plural": "widgets"},
-			"versions": []any{
-				map[string]any{"name": "v1", "served": true, "storage": true},
-			},
-		},
-	}}
-	o := extras.Object{Path: "widget.yaml", Obj: obj}
-	raw, err := o.MarshalYAML()
-	require.NoError(t, err)
-	o.Raw = raw
-	return &extras.Bundle{CRDs: []extras.Object{o}}
-}
-
-// TestApplyBundleCRDs_RESTConfigError surfaces kubeconfig failures before apply.
-func TestApplyBundleCRDs_RESTConfigError(t *testing.T) {
-	t.Parallel()
-
-	stub := &stubHelmClient{}
-	sess := session.New(
-		session.WithKubeconfig(filepath.Join(t.TempDir(), "missing-kubeconfig")),
-		session.WithHelmFactory(func(*target.Target, session.HelmConfig) (session.HelmClient, error) {
-			return stub, nil
-		}),
-	)
-	cluster, err := sess.Target(t.Context(), "production")
-	require.NoError(t, err)
-	c := nabatContext(t)
-	opts := &Options{Environment: "production", CRDs: string(extras.PolicyCreate)}
-
-	_, err = applyBundleCRDs(c, sess, cluster, sampleBundleCRD(t), opts)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "rest config for CRDs")
-}
-
-// TestApplyDeploy_CallsInstallAfterEmptyCRDs applies Helm when CRD list is empty.
-func TestApplyDeploy_CallsInstallAfterEmptyCRDs(t *testing.T) {
-	t.Parallel()
-
-	manifest := deployFlowManifestV1
-	stub := &stubHelmClient{
-		renderResults: []*render.RenderResult{testRenderResult(manifest)},
-	}
-	sess, cluster := newClusterWithStub(t, stub, nil)
-	planned := &deployPlan{
-		diff:    &planengine.Plan{Header: planengine.Header{Release: "web-production", Revision: 1}},
-		result:  testRenderResult(manifest),
-		cleanup: func() {},
-	}
-	c, _, _, stderr := nabatContextWithIO(t)
-	opts := &Options{Environment: "production", CRDs: string(extras.PolicyCreate)}
-
-	err := applyDeploy(c, sess, cluster, stub, nil, &spec.Spec{Project: "web"}, opts, nil, planned, nil, assertNever{}, &extras.Bundle{}, nil, nil)
-	require.NoError(t, err)
-	assert.Equal(t, 1, stub.installCallCount)
-	assert.Contains(t, stderr.String(), "Deployed")
-}
-
-// TestApplyDeploy_PropagatesInstallErrorAfterCRDStep locks ordering: the CRD
-// step runs first (empty list is a successful no-op), then InstallApp. A
-// Helm failure after that step is returned to the caller. CRD survival
-// across deployah delete is covered by the e2e CRD lifecycle test.
-func TestApplyDeploy_PropagatesInstallErrorAfterCRDStep(t *testing.T) {
+// TestApplyDeploy_PropagatesInstallError returns Helm failures to the caller.
+func TestApplyDeploy_PropagatesInstallError(t *testing.T) {
 	t.Parallel()
 
 	manifest := deployFlowManifestV1
@@ -419,41 +285,33 @@ func TestApplyDeploy_PropagatesInstallErrorAfterCRDStep(t *testing.T) {
 		cleanup: func() {},
 	}
 	c := nabatContext(t)
-	opts := &Options{Environment: "production", CRDs: string(extras.PolicyCreate)}
+	opts := &Options{Environment: "production"}
 
 	err := applyDeploy(c, sess, cluster, stub, nil, &spec.Spec{Project: "web"}, opts, nil, planned, nil, assertNever{}, &extras.Bundle{}, nil, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "deploy failed")
 	assert.Contains(t, err.Error(), "helm boom")
-	assert.Equal(t, 1, stub.installCallCount, "InstallApp must run after the CRD step")
+	assert.Equal(t, 1, stub.installCallCount)
 }
 
-// TestApplyDeploy_PropagatesCRDApplyError skips InstallApp when CRDs fail.
-func TestApplyDeploy_PropagatesCRDApplyError(t *testing.T) {
+// TestDeployFlags_SkipCRDsAcceptedCRDsRemoved checks the deploy CLI surface.
+func TestDeployFlags_SkipCRDsAcceptedCRDsRemoved(t *testing.T) {
 	t.Parallel()
 
-	manifest := deployFlowManifestV1
-	stub := &stubHelmClient{
-		renderResults: []*render.RenderResult{testRenderResult(manifest)},
-	}
-	sess := session.New(
-		session.WithKubeconfig(filepath.Join(t.TempDir(), "missing-kubeconfig")),
-		session.WithHelmFactory(func(*target.Target, session.HelmConfig) (session.HelmClient, error) {
-			return stub, nil
-		}),
-	)
-	cluster, err := sess.Target(t.Context(), "production")
+	io, _, out, errOut := nabattest.NewIO()
+	app := nabat.MustNew("deployah", nabat.WithIO(io))
+	Register(app)
+	err := nabattest.Run(t, app, []string{"deploy", "--help"})
 	require.NoError(t, err)
-	planned := &deployPlan{
-		diff:    &planengine.Plan{},
-		result:  testRenderResult(manifest),
-		cleanup: func() {},
-	}
-	c := nabatContext(t)
-	opts := &Options{Environment: "production", CRDs: string(extras.PolicyCreate)}
+	help := out.String() + errOut.String()
+	assert.Contains(t, help, "--skip-crds")
+	assert.NotContains(t, help, "--crds")
+	assert.NotContains(t, help, "create-replace")
 
-	err = applyDeploy(c, sess, cluster, stub, nil, &spec.Spec{Project: "web"}, opts, nil, planned, nil, nil, sampleBundleCRD(t), nil, nil)
+	err = nabattest.Run(t, app, []string{"deploy", "prod", "--crds", "create"})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "rest config for CRDs")
-	assert.Equal(t, 0, stub.installCallCount)
+	assert.NotContains(t, err.Error(), "cluster")
+
+	var opts Options
+	assert.False(t, opts.SkipCRDs)
 }

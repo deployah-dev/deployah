@@ -178,7 +178,7 @@ func runOffline(c *nabat.Context, sess *session.Session, platform *spec.Platform
 	}
 	postRenderer := bundle.PostRendererFor()
 
-	result, cleanup, err := helmClient.RenderOffline(c, resolvedSpec, postRenderer)
+	result, cleanup, err := helmClient.RenderOffline(c, resolvedSpec, postRenderer, bundle.CRDs)
 	if cleanup != nil {
 		defer cleanup()
 	}
@@ -193,7 +193,7 @@ func runOffline(c *nabat.Context, sess *session.Session, platform *spec.Platform
 
 	c.Println(fmt.Sprintf("Rendered %d resources for environment '%s' (no cluster comparison).", count, opts.Environment))
 	if n := len(bundle.CRDs); n > 0 {
-		c.Printf("CRDs: %d pending from .deployah/crds/ (not applied in plan)\n", n)
+		c.Println(extras.CRDLifecycleNote(n, false, false))
 	}
 	c.Println("validation: OK")
 	return nil
@@ -239,24 +239,16 @@ func runOnline(c *nabat.Context, sess *session.Session, platform *spec.PlatformC
 	if err != nil {
 		return fmt.Errorf("load extras: %w", err)
 	}
-	if k8sErr == nil {
-		reqs := k8s.RequiredAPIs(manifest, opts.Environment, resolvedSpec)
-		if len(reqs) > 0 {
-			if capErr := k8s.CheckAPIRequirements(k8sClient, reqs); capErr != nil {
-				return capErr
-			}
-		}
-	}
 	postRenderer := bundle.PostRendererFor()
 
-	p, result, cleanup, err := planengine.BuildPlan(c, helmClient, cluster.Context(), resolvedSpec, postRenderer)
+	p, result, cleanup, err := planengine.BuildPlan(c, helmClient, cluster.Context(), resolvedSpec, postRenderer, bundle.CRDs)
 	defer cleanup()
 	if err != nil {
 		return fmt.Errorf("%w%s", err, cmdopts.ClusterHint(err))
 	}
 
 	if n := len(bundle.CRDs); n > 0 {
-		c.Printf("CRDs: %d pending from .deployah/crds/ (not applied in plan)\n", n)
+		c.Println(extras.CRDLifecycleNote(n, result.IsUpgrade, false))
 	}
 
 	if opts.Drift {

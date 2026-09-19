@@ -63,6 +63,7 @@ func (f *fakeBuildClient) RenderManifestsWithPrep(
 	ctx context.Context,
 	_ *spec.ResolvedSpec,
 	postRenderer postrenderer.PostRenderer,
+	_ []extras.RawFile,
 ) (*render.RenderResult, helm.ReleasePrep, func(), error) {
 	f.calls++
 	f.gotCtx = ctx

@@ -255,7 +255,7 @@ func (suite *IntegrationTestSuite) renderChart(t *testing.T, testDir string, man
 		return nil, fmt.Errorf("load extras: %w", loadErr)
 	}
 
-	result, cleanup, err := client.RenderOffline(context.Background(), resolved, bundle.PostRendererFor())
+	result, cleanup, err := client.RenderOffline(context.Background(), resolved, bundle.PostRendererFor(), bundle.CRDs)
 	if cleanup != nil {
 		t.Cleanup(cleanup)
 	}

@@ -216,50 +216,6 @@ func crdScopeKey(group, kind string) string {
 	return strings.ToLower(group) + "/" + strings.ToLower(kind)
 }
 
-// scopeFromCRDObjects extracts group/kind -> namespaced from CRD Objects.
-func scopeFromCRDObjects(crds []Object) map[string]bool {
-	out := make(map[string]bool)
-	for i := range crds {
-		group, _ := unstructuredNestedString(crds[i].Obj.Object, "spec", "group")
-		kind, _ := unstructuredNestedString(crds[i].Obj.Object, "spec", "names", "kind")
-		scope, _ := unstructuredNestedString(crds[i].Obj.Object, "spec", "scope")
-		if group == "" || kind == "" {
-			continue
-		}
-		out[crdScopeKey(group, kind)] = !strings.EqualFold(scope, "Cluster")
-	}
-	return out
-}
-
-// GroupVersionsFromCRDs returns the set of "group/version" strings declared by
-// the given CRD objects (every entry under spec.versions). Used to skip
-// required-API checks for APIs this deploy is about to install.
-func GroupVersionsFromCRDs(crds []Object) map[string]struct{} {
-	out := make(map[string]struct{})
-	for i := range crds {
-		group, ok := unstructuredNestedString(crds[i].Obj.Object, "spec", "group")
-		if !ok || group == "" {
-			continue
-		}
-		versions, hasVersions := unstructuredNestedSlice(crds[i].Obj.Object, "spec", "versions")
-		if !hasVersions {
-			continue
-		}
-		for _, v := range versions {
-			vm, isMap := v.(map[string]any)
-			if !isMap {
-				continue
-			}
-			name, isString := vm["name"].(string)
-			if !isString || name == "" {
-				continue
-			}
-			out[group+"/"+name] = struct{}{}
-		}
-	}
-	return out
-}
-
 func unstructuredNestedString(obj map[string]any, fields ...string) (string, bool) {
 	cur := any(obj)
 	for _, f := range fields {
@@ -273,21 +229,5 @@ func unstructuredNestedString(obj map[string]any, fields ...string) (string, boo
 		}
 	}
 	s, ok := cur.(string)
-	return s, ok
-}
-
-func unstructuredNestedSlice(obj map[string]any, fields ...string) ([]any, bool) {
-	cur := any(obj)
-	for _, f := range fields {
-		m, ok := cur.(map[string]any)
-		if !ok {
-			return nil, false
-		}
-		cur, ok = m[f]
-		if !ok {
-			return nil, false
-		}
-	}
-	s, ok := cur.([]any)
 	return s, ok
 }

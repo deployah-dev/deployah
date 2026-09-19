@@ -26,10 +26,11 @@ write-feasibility prediction (ADR-0004).
 
 On install, Helm processes chart CRDs before dependent ordinary
 resources (ADR-0008). If Desired CRD intent declares the required
-version served, semantic planning may reason from that declared
-intent even when the Desired GVK is not yet discoverable. This does
-not guarantee that Kubernetes will accept the CRD, that discovery
-appears at runtime, or that a dependent resource succeeds.
+version served (`served: true`), semantic planning may reason from
+that declared intent even when the Desired GVK is not yet
+discoverable. Missing or non-boolean `served` does not count. This
+does not guarantee that Kubernetes will accept the CRD, that
+discovery appears at runtime, or that a dependent resource succeeds.
 
 - Entire CRD absent: the logical custom resource is known absent. If
   Desired CRD intent declares the Desired version served, show CRD

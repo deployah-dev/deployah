@@ -18,33 +18,28 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-
-	"deployah.dev/deployah/internal/extras"
 )
 
 func TestDefaultDeploymentIntent(t *testing.T) {
 	t.Parallel()
 
 	got := DefaultDeploymentIntent()
-	assert.Equal(t, extras.PolicyCreate, got.CRDs)
 	assert.False(t, got.ResizeVolumes)
 	assert.False(t, got.Reapply)
 	assert.False(t, got.ForceHostnameChange)
 }
 
-func TestDeploymentIntent_ZeroValueCRDsEmpty(t *testing.T) {
+func TestDeploymentIntent_ZeroValueMatchesDefault(t *testing.T) {
 	t.Parallel()
 
 	var zero DeploymentIntent
-	assert.Equal(t, extras.Policy(""), zero.CRDs)
-	assert.NotEqual(t, extras.PolicyCreate, zero.CRDs)
+	assert.Equal(t, DefaultDeploymentIntent(), zero)
 }
 
 // deploymentIntentFields is the allowed field set of [DeploymentIntent].
 // Converting DeploymentIntent to this type fails to compile if a
-// presentation field is added or CRDs is not extras.Policy.
+// presentation field or CRD skip flag is added.
 type deploymentIntentFields struct {
-	CRDs                extras.Policy
 	ResizeVolumes       bool
 	Reapply             bool
 	ForceHostnameChange bool
@@ -52,11 +47,10 @@ type deploymentIntentFields struct {
 
 var _ = deploymentIntentFields(DeploymentIntent{})
 
-func TestDeploymentIntent_UsesExtrasPolicy(t *testing.T) {
+func TestDeploymentIntent_BoolsDefaultFalse(t *testing.T) {
 	t.Parallel()
 
 	got := deploymentIntentFields(DefaultDeploymentIntent())
-	assert.Equal(t, extras.PolicyCreate, got.CRDs)
 	assert.False(t, got.ResizeVolumes)
 	assert.False(t, got.Reapply)
 	assert.False(t, got.ForceHostnameChange)

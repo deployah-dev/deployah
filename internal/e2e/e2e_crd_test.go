@@ -18,6 +18,7 @@ package e2e_test
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -27,20 +28,33 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/e2e-framework/klient/wait"
 
+	"deployah.dev/deployah/internal/spec"
+
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apiextensionsclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-const crdLifecycleName = "clusterwidgets.example.com"
+const (
+	crdLifecycleName   = "lifecyclewidgets.example.com"
+	crdLifecycleWidget = "lifecycle-widget"
+)
 
-// TestCRDLifecycle checks CRD apply outside the Helm release.
-// It waits for Established, re-applies with no Helm changes, compares
-// create to create-replace, and checks the CRD survives deployah delete.
-// File mutation cannot be expressed in e2e.yaml.
+var crdLifecycleGVR = schema.GroupVersionResource{
+	Group:    "example.com",
+	Version:  "v1",
+	Resource: "lifecyclewidgets",
+}
+
+// TestCRDLifecycle checks Helm-native chart CRD install, upgrade, and
+// uninstall. File mutation cannot be expressed in e2e.yaml.
 func (s *E2ESuite) TestCRDLifecycle() {
 	t := s.T()
 	src := filepath.Join(s.scenariosDir, "crd-lifecycle")
@@ -52,7 +66,9 @@ func (s *E2ESuite) TestCRDLifecycle() {
 	ns := fixtureNamespace("crd-lifecycle")
 	s.createNamespace(t, ns)
 
-	ext := newApiextensionsClient(t, s.kcPath, kindContext)
+	restCfg := kubeRESTConfig(t, s.kcPath, kindContext)
+	ext := newApiextensionsClient(t, restCfg)
+	dyn := newDynamicClient(t, restCfg)
 	t.Cleanup(func() {
 		// t.Context() is canceled before Cleanup; teardown needs its own.
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -70,52 +86,126 @@ func (s *E2ESuite) TestCRDLifecycle() {
 	})
 
 	runIn(t, dir, "deploy", "dev", "--context", kindContext, "--yes",
-		"--namespace", ns, "--crds", "create")
+		"--namespace", ns)
 	crd := waitCRDEstablished(t, ext, crdLifecycleName)
-	assert.Equal(t, "crd-lifecycle", crd.Labels["e2e-marker"])
-
-	_, stderr, err := runInErr(t, dir, "deploy", "dev", "--context", kindContext,
-		"--yes", "--namespace", ns, "--crds", "create")
-	require.NoError(t, err)
-	assert.Contains(t, stderr, "already present")
-	waitCRDEstablished(t, ext, crdLifecycleName)
+	assertCRDUserMetadata(t, crd)
+	waitClusterResource(t, dyn, crdLifecycleGVR, crdLifecycleWidget)
 
 	patched := strings.Replace(
 		readFixtureFile(t, filepath.Join(dir, ".deployah", "crds", "clusterwidget.yaml")),
 		`e2e-marker: "crd-lifecycle"`,
-		`e2e-marker: "create-skipped"`,
+		`e2e-marker: "upgrade-skipped"`,
 		1,
 	)
 	require.NoError(t, os.WriteFile(
 		filepath.Join(dir, ".deployah", "crds", "clusterwidget.yaml"),
 		[]byte(patched), 0o600))
 	runIn(t, dir, "deploy", "dev", "--context", kindContext, "--yes",
-		"--namespace", ns, "--crds", "create")
+		"--namespace", ns, "--reapply")
 	crd = getCRD(t, ext, crdLifecycleName)
 	assert.Equal(t, "crd-lifecycle", crd.Labels["e2e-marker"],
-		"--crds create must not replace an existing CRD")
-
-	runIn(t, dir, "deploy", "dev", "--context", kindContext, "--yes",
-		"--namespace", ns, "--crds", "create-replace")
-	require.NoError(t, wait.For(func(ctx context.Context) (bool, error) {
-		live, getErr := ext.ApiextensionsV1().CustomResourceDefinitions().Get(
-			ctx, crdLifecycleName, metav1.GetOptions{})
-		if getErr != nil {
-			if isRetryableAPIError(getErr) {
-				return false, nil
-			}
-			return false, getErr
-		}
-		return live.Labels["e2e-marker"] == "create-skipped", nil
-	}, wait.WithTimeout(2*time.Minute), wait.WithInterval(time.Second),
-		wait.WithContext(t.Context()), wait.WithImmediate()))
+		"Helm upgrade must not rewrite chart CRDs")
+	assertCRDUserMetadata(t, crd)
 
 	runIn(t, dir, "delete", "crd-lifecycle", "dev",
 		"--yes", "--wait", "--allow-missing-platform",
 		"--context", kindContext, "--namespace", ns)
-	_, err = ext.ApiextensionsV1().CustomResourceDefinitions().Get(
+	_, err := ext.ApiextensionsV1().CustomResourceDefinitions().Get(
 		t.Context(), crdLifecycleName, metav1.GetOptions{})
 	require.NoError(t, err, "CRD must survive deployah delete")
+}
+
+const (
+	crdAddedName = "addedwidgets.example.com"
+	crdAddedYAML = `apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: addedwidgets.example.com
+spec:
+  group: example.com
+  scope: Namespaced
+  names:
+    kind: AddedWidget
+    plural: addedwidgets
+    singular: addedwidget
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+`
+)
+
+// TestCRDNewlyAddedOnUpgrade checks that a CRD file added after the
+// first install is not installed by an ordinary Helm Upgrade.
+func (s *E2ESuite) TestCRDNewlyAddedOnUpgrade() {
+	t := s.T()
+	src := filepath.Join(s.scenariosDir, "crd-lifecycle")
+	require.DirExists(t, src)
+
+	dir := t.TempDir()
+	copyTree(t, src, dir)
+
+	ns := fixtureNamespace("crd-added")
+	s.createNamespace(t, ns)
+
+	restCfg := kubeRESTConfig(t, s.kcPath, kindContext)
+	ext := newApiextensionsClient(t, restCfg)
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		for _, name := range []string{crdLifecycleName, crdAddedName} {
+			if delCRDErr := ext.ApiextensionsV1().CustomResourceDefinitions().Delete(
+				cleanupCtx, name, metav1.DeleteOptions{}); delCRDErr != nil {
+				t.Logf("cleanup CRD delete failed (non-fatal): %v", delCRDErr)
+			}
+		}
+		if _, _, delErr := runInErrContext(t, cleanupCtx, dir, "delete", "crd-lifecycle", "dev",
+			"--yes", "--wait", "--allow-missing-platform",
+			"--context", kindContext, "--namespace", ns); delErr != nil {
+			t.Logf("cleanup delete failed (non-fatal): %v", delErr)
+		}
+		s.deleteNamespace(t, ns)
+	})
+
+	runIn(t, dir, "deploy", "dev", "--context", kindContext, "--yes",
+		"--namespace", ns)
+	waitCRDEstablished(t, ext, crdLifecycleName)
+	assertReleaseExists(t, dir, ns, "crd-lifecycle", "dev")
+
+	require.NoError(t, os.WriteFile(
+		filepath.Join(dir, ".deployah", "crds", "addedwidget.yaml"),
+		[]byte(crdAddedYAML), 0o600))
+	runIn(t, dir, "deploy", "dev", "--context", kindContext, "--yes",
+		"--namespace", ns, "--reapply")
+
+	_, err := ext.ApiextensionsV1().CustomResourceDefinitions().Get(
+		t.Context(), crdAddedName, metav1.GetOptions{})
+	require.True(t, apierrors.IsNotFound(err),
+		"Helm upgrade must not install a CRD added after first install, got: %v", err)
+}
+
+func assertReleaseExists(t *testing.T, dir, ns, project, env string) {
+	t.Helper()
+	stdout, _ := runIn(t, dir, "status", project,
+		"--environment", env,
+		"--output", "json",
+		"--context", kindContext,
+		"--namespace", ns)
+	var rows []map[string]any
+	require.NoError(t, json.Unmarshal([]byte(stdout), &rows), stdout)
+	require.NotEmpty(t, rows, stdout)
+	require.NotEmpty(t, rows[0]["release"], stdout)
+}
+
+func assertCRDUserMetadata(t *testing.T, crd *apiextensionsv1.CustomResourceDefinition) {
+	t.Helper()
+	assert.Equal(t, "crd-lifecycle", crd.Labels["e2e-marker"])
+	assert.Empty(t, crd.Labels[spec.LabelProject])
+	assert.Empty(t, crd.Annotations[spec.AnnotationSource])
+	assert.Empty(t, crd.Annotations[spec.AnnotationProject])
 }
 
 func copyTree(tb testing.TB, src, dst string) {
@@ -158,7 +248,7 @@ func readFixtureFile(tb testing.TB, path string) string {
 	return string(raw)
 }
 
-func newApiextensionsClient(tb testing.TB, kubeconfigPath, contextName string) apiextensionsclient.Interface {
+func kubeRESTConfig(tb testing.TB, kubeconfigPath, contextName string) *rest.Config {
 	tb.Helper()
 	rules := clientcmd.NewDefaultClientConfigLoadingRules()
 	rules.ExplicitPath = kubeconfigPath
@@ -166,7 +256,19 @@ func newApiextensionsClient(tb testing.TB, kubeconfigPath, contextName string) a
 	restCfg, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
 		rules, overrides).ClientConfig()
 	require.NoError(tb, err)
+	return restCfg
+}
+
+func newApiextensionsClient(tb testing.TB, restCfg *rest.Config) apiextensionsclient.Interface {
+	tb.Helper()
 	cs, err := apiextensionsclient.NewForConfig(restCfg)
+	require.NoError(tb, err)
+	return cs
+}
+
+func newDynamicClient(tb testing.TB, restCfg *rest.Config) dynamic.Interface {
+	tb.Helper()
+	cs, err := dynamic.NewForConfig(restCfg)
 	require.NoError(tb, err)
 	return cs
 }
@@ -203,4 +305,19 @@ func waitCRDEstablished(tb testing.TB, ext apiextensionsclient.Interface, name s
 		wait.WithContext(tb.Context()), wait.WithImmediate()))
 	require.NotNil(tb, latest)
 	return latest
+}
+
+func waitClusterResource(tb testing.TB, dyn dynamic.Interface, gvr schema.GroupVersionResource, name string) {
+	tb.Helper()
+	require.NoError(tb, wait.For(func(ctx context.Context) (bool, error) {
+		_, err := dyn.Resource(gvr).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			if apierrors.IsNotFound(err) || isRetryableAPIError(err) {
+				return false, nil
+			}
+			return false, err
+		}
+		return true, nil
+	}, wait.WithTimeout(2*time.Minute), wait.WithInterval(time.Second),
+		wait.WithContext(tb.Context()), wait.WithImmediate()))
 }

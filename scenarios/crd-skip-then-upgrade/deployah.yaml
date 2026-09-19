@@ -1,12 +1,11 @@
 # $schema: ../../internal/spec/schema/v1-alpha.5/manifest.json
 apiVersion: v1-alpha.5
-project: extras-env-and-crds
+project: crd-skip-then-upgrade
 components:
   web:
     image: nginx:latest
     port: 80
-    environments: [dev, prod]
+    environments: [dev]
     resourcePreset: small
 environments:
   dev: {}
-  prod: {}

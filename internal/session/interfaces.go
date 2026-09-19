@@ -21,6 +21,7 @@ import (
 	"helm.sh/helm/v4/pkg/postrenderer"
 	"k8s.io/apimachinery/pkg/labels"
 
+	"deployah.dev/deployah/internal/extras"
 	"deployah.dev/deployah/internal/render"
 	"deployah.dev/deployah/internal/spec"
 
@@ -36,21 +37,25 @@ type HelmClient interface {
 
 	// InstallApp installs or upgrades an application from [spec.ResolvedSpec].
 	// Chart content, release name, and labels all come from resolved.
+	// crds are written into the per-invocation chart copy under crds/.
+	// skipCRDs maps to Helm Install.SkipCRDs on a fresh install only.
 	// postRenderer, when non-nil, is applied to the rendered manifests
 	// before they are sent to the cluster.
-	InstallApp(ctx context.Context, dryRun bool, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) error
+	InstallApp(ctx context.Context, dryRun bool, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer, crds []extras.RawFile, skipCRDs bool) error
 
 	// RenderManifests renders the chart from [spec.ResolvedSpec] client-side,
 	// without mutating the cluster or Helm's release history. The caller must
 	// run the returned cleanup func once done with the result's ChartPath.
+	// crds are written into the per-invocation chart copy under crds/.
 	// postRenderer, when non-nil, is applied to the rendered manifests.
-	RenderManifests(ctx context.Context, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) (*render.RenderResult, func(), error)
+	RenderManifests(ctx context.Context, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer, crds []extras.RawFile) (*render.RenderResult, func(), error)
 
 	// RenderOffline renders the chart from [spec.ResolvedSpec] as a fresh
 	// install, without any Kubernetes API access. The caller must run the
 	// returned cleanup func once done with the result's ChartPath.
+	// crds are written into the per-invocation chart copy under crds/.
 	// postRenderer, when non-nil, is applied to the rendered manifests.
-	RenderOffline(ctx context.Context, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) (*render.RenderResult, func(), error)
+	RenderOffline(ctx context.Context, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer, crds []extras.RawFile) (*render.RenderResult, func(), error)
 
 	// DeleteRelease uninstalls a Helm release. When wait is true the call
 	// blocks until all resources are fully removed using the legacy polling

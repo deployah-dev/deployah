@@ -21,7 +21,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/api/meta"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"deployah.dev/deployah/internal/extras"
@@ -74,43 +73,6 @@ func TestTableResolver_OperatorAllowlistUsesRealGroups(t *testing.T) {
 	known, err = r.Known(schema.GroupVersionKind{Group: "monitoring.coreos.com", Version: "v1", Kind: "PrometheusRule"})
 	require.NoError(t, err)
 	assert.True(t, known)
-}
-
-// TestGroupVersionsFromCRDs extracts group/version pairs from CRD YAML.
-func TestGroupVersionsFromCRDs(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, ".deployah", "crds", "cert.yaml"), `
-apiVersion: apiextensions.k8s.io/v1
-kind: CustomResourceDefinition
-metadata:
-  name: certificates.cert-manager.io
-spec:
-  group: cert-manager.io
-  scope: Namespaced
-  names:
-    kind: Certificate
-    plural: certificates
-  versions:
-    - name: v1
-      served: true
-      storage: true
-      schema:
-        openAPIV3Schema:
-          type: object
-`)
-	bundle, err := extras.Load(extras.LoadConfig{
-		SpecDir:          dir,
-		Project:          "demo",
-		Environment:      "prod",
-		DeclaredEnvs:     []string{"prod"},
-		ReleaseNamespace: "default",
-		Scope:            &extras.TableResolver{},
-	})
-	require.NoError(t, err)
-	gvs := extras.GroupVersionsFromCRDs(bundle.CRDs)
-	_, ok := gvs["cert-manager.io/v1"]
-	assert.True(t, ok)
 }
 
 // TestTableResolver_KnownFromCRDScope exercises extras package behavior.
@@ -177,6 +139,139 @@ metadata:
 	assert.Empty(t, bundle.Manifests[0].Obj.GetNamespace())
 }
 
+func TestLoad_CRDScopeInspection_ValidScope(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name          string
+		scope         string
+		wantNamespace string
+	}{
+		{name: "scope Cluster contributes cluster hint", scope: "Cluster", wantNamespace: ""},
+		{name: "scope Namespaced contributes namespaced hint", scope: "Namespaced", wantNamespace: "apps"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			body := clusterWidgetCRDBody(tc.scope)
+			bundle := loadClusterWidgetExtras(t, body, false)
+			require.Len(t, bundle.CRDs, 1)
+			assert.Equal(t, body, string(bundle.CRDs[0].Raw))
+			require.Len(t, bundle.Manifests, 1)
+			assert.Equal(t, tc.wantNamespace, bundle.Manifests[0].Obj.GetNamespace())
+		})
+	}
+}
+
+func TestLoad_CRDScopeInspection_InvalidScopeUnknownType(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		crdBody string
+	}{
+		{name: "missing scope contributes no hint", crdBody: clusterWidgetCRDBody("")},
+		{name: "invalid scope Clustr contributes no hint", crdBody: clusterWidgetCRDBody("Clustr")},
+		{name: "lowercase cluster contributes no hint", crdBody: clusterWidgetCRDBody("cluster")},
+		{name: "lowercase namespaced contributes no hint", crdBody: clusterWidgetCRDBody("namespaced")},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := loadClusterWidgetExtrasErr(t, tc.crdBody, false)
+			require.Error(t, err)
+			assert.ErrorContains(t, err, "unknown type")
+		})
+	}
+}
+
+func TestLoad_CRDScopeInspection_OpaqueNoHint(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		crdBody string
+	}{
+		{name: "malformed YAML is non-fatal and contributes no hint", crdBody: "not: [valid\n"},
+		{
+			name: "non-CRD with CRD-shaped spec contributes no hint",
+			crdBody: `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fake
+spec:
+  group: example.com
+  scope: Cluster
+  names:
+    kind: ClusterWidget
+`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			bundle := loadClusterWidgetExtras(t, tc.crdBody, true)
+			require.Len(t, bundle.CRDs, 1)
+			assert.Equal(t, tc.crdBody, string(bundle.CRDs[0].Raw))
+			require.Len(t, bundle.Manifests, 1)
+			assert.Equal(t, "apps", bundle.Manifests[0].Obj.GetNamespace())
+		})
+	}
+}
+
+const clusterWidgetManifest = `
+apiVersion: example.com/v1
+kind: ClusterWidget
+metadata:
+  name: one
+`
+
+func clusterWidgetCRDBody(scope string) string {
+	scopeLine := ""
+	if scope != "" {
+		scopeLine = "  scope: " + scope + "\n"
+	}
+	return `
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: clusterwidgets.example.com
+spec:
+  group: example.com
+` + scopeLine + `  names:
+    kind: ClusterWidget
+    plural: clusterwidgets
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+`
+}
+
+func loadClusterWidgetExtras(t *testing.T, crdBody string, offline bool) *extras.Bundle {
+	t.Helper()
+	bundle, err := loadClusterWidgetExtrasErr(t, crdBody, offline)
+	require.NoError(t, err)
+	return bundle
+}
+
+func loadClusterWidgetExtrasErr(t *testing.T, crdBody string, offline bool) (*extras.Bundle, error) {
+	t.Helper()
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".deployah", "crds", "widget.yaml"), crdBody)
+	writeFile(t, filepath.Join(dir, ".deployah", "manifests", "cw.yaml"), clusterWidgetManifest)
+	return extras.Load(extras.LoadConfig{
+		SpecDir:          dir,
+		Project:          "demo",
+		Environment:      "prod",
+		DeclaredEnvs:     []string{"prod"},
+		ReleaseNamespace: "apps",
+		Scope:            &extras.TableResolver{},
+		Offline:          offline,
+	})
+}
+
 // TestNewDiscoveryResolver_NilConfig returns a table-only resolver.
 func TestNewDiscoveryResolver_NilConfig(t *testing.T) {
 	t.Parallel()
@@ -215,34 +310,4 @@ func TestDiscoveryResolver_MapperHitAndFallback(t *testing.T) {
 	known, err = r.Known(schema.GroupVersionKind{Group: "other.io", Version: "v1", Kind: "Thing"})
 	require.NoError(t, err)
 	assert.True(t, known, "unknown to mapper still known via table CRDScope")
-}
-
-// TestGroupVersionsFromCRDs_MalformedSkipped ignores incomplete CRD objects.
-func TestGroupVersionsFromCRDs_MalformedSkipped(t *testing.T) {
-	t.Parallel()
-	crds := []extras.Object{
-		{Obj: &unstructured.Unstructured{Object: map[string]any{
-			"spec": map[string]any{"group": "example.com"},
-		}}},
-		{Obj: &unstructured.Unstructured{Object: map[string]any{
-			"spec": map[string]any{
-				"group":    "example.com",
-				"versions": []any{"v1", map[string]any{"name": ""}},
-			},
-		}}},
-		{Obj: &unstructured.Unstructured{Object: map[string]any{
-			"spec": map[string]any{
-				"group": "ok.io",
-				"versions": []any{
-					map[string]any{"name": "v1"},
-					map[string]any{"name": "v2beta1"},
-				},
-			},
-		}}},
-	}
-	gvs := extras.GroupVersionsFromCRDs(crds)
-	assert.Equal(t, map[string]struct{}{
-		"ok.io/v1":      {},
-		"ok.io/v2beta1": {},
-	}, gvs)
 }
