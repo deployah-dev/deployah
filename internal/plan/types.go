@@ -193,10 +193,9 @@ type ChartCRD struct {
 	// Index is the 0-based position among non-empty YAML documents in that
 	// file. Parse errors use a 1-based YAML document number that also
 	// counts empty documents.
-	Index      int
-	Kind       string
-	Name       string
-	APIVersion string
+	Index int
+	Kind  string
+	Name  string
 	// Lifecycle is Helm's handling of this document in this invocation.
 	Lifecycle ChartCRDLifecycle
 	// WillProcess is true only when Lifecycle is [ChartCRDProcess].

@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 
+	yamlv3 "go.yaml.in/yaml/v3"
 	yamlutil "k8s.io/apimachinery/pkg/util/yaml"
 	sigsyaml "sigs.k8s.io/yaml"
 )
@@ -28,11 +29,10 @@ import (
 const crdKind = "CustomResourceDefinition"
 
 // crdPresentation is the only YAML shape the CRD source contract reads.
-// Spec, status, namespace, and other fields are ignored on purpose.
+// Spec, status, namespace, apiVersion, and other fields are ignored.
 type crdPresentation struct {
-	APIVersion string `json:"apiVersion"`
-	Kind       string `json:"kind"`
-	Metadata   struct {
+	Kind     string `json:"kind"`
+	Metadata struct {
 		Name string `json:"name"`
 	} `json:"metadata"`
 }
@@ -52,7 +52,11 @@ func parseCRDDocuments(path string, raw []byte) ([]CRDDoc, error) {
 			return nil, fmt.Errorf("%s: parse YAML: %w", path, err)
 		}
 		docNum++
-		if len(bytes.TrimSpace(body)) == 0 {
+		empty, emptyErr := yamlDocumentEmpty(body)
+		if emptyErr != nil {
+			return nil, fmt.Errorf("%s: parse YAML: %w", path, emptyErr)
+		}
+		if empty {
 			continue
 		}
 		var ident crdPresentation
@@ -69,13 +73,48 @@ func parseCRDDocuments(path string, raw []byte) ([]CRDDoc, error) {
 			return nil, fmt.Errorf("%s: document %d missing required metadata.name", path, docNum)
 		}
 		docs = append(docs, CRDDoc{
-			Path:       path,
-			Index:      len(docs),
-			Kind:       ident.Kind,
-			Name:       ident.Metadata.Name,
-			APIVersion: ident.APIVersion,
-			YAML:       bytes.Clone(body),
+			Path:  path,
+			Index: len(docs),
+			Kind:  ident.Kind,
+			Name:  ident.Metadata.Name,
+			YAML:  bytes.Clone(body),
 		})
 	}
 	return docs, nil
+}
+
+// yamlDocumentEmpty reports whether body has no YAML value: comments,
+// whitespace, a bare document separator, or a !!null scalar with an
+// empty value. The tokens null and ~, {}, and other values are not
+// empty.
+func yamlDocumentEmpty(body []byte) (bool, error) {
+	var node yamlv3.Node
+	if err := yamlv3.Unmarshal(body, &node); err != nil {
+		return false, err
+	}
+	return yamlValueEmpty(&node), nil
+}
+
+func yamlValueEmpty(n *yamlv3.Node) bool {
+	if n == nil {
+		return true
+	}
+	switch n.Kind {
+	case 0:
+		return true
+	case yamlv3.DocumentNode:
+		if len(n.Content) == 0 {
+			return true
+		}
+		for _, c := range n.Content {
+			if !yamlValueEmpty(c) {
+				return false
+			}
+		}
+		return true
+	case yamlv3.ScalarNode:
+		return n.Tag == "!!null" && n.Value == ""
+	default:
+		return false
+	}
 }

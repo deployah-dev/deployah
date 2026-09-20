@@ -75,6 +75,10 @@ func copyPlan(p semantic.Plan) semantic.Plan {
 			}
 		}
 	}
+	out.ChartCRDs = slices.Clone(p.ChartCRDs)
+	if out.ChartCRDs == nil {
+		out.ChartCRDs = []semantic.ChartCRD{}
+	}
 	return out
 }
 

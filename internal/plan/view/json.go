@@ -23,14 +23,15 @@ import (
 )
 
 type document struct {
-	Schema       string      `json:"schema"`
-	Header       headerDTO   `json:"header"`
-	HelmAction   string      `json:"helmAction"`
-	Changes      []changeDTO `json:"changes"`
-	Tasks        []taskDTO   `json:"tasks"`
-	Diagnostics  []diagDTO   `json:"diagnostics"`
-	Summary      summaryDTO  `json:"summary"`
-	Completeness string      `json:"completeness"`
+	Schema       string        `json:"schema"`
+	Header       headerDTO     `json:"header"`
+	HelmAction   string        `json:"helmAction"`
+	Changes      []changeDTO   `json:"changes"`
+	Tasks        []taskDTO     `json:"tasks"`
+	ChartCRDs    []chartCRDDTO `json:"chartCRDs"`
+	Diagnostics  []diagDTO     `json:"diagnostics"`
+	Summary      summaryDTO    `json:"summary"`
+	Completeness string        `json:"completeness"`
 }
 
 type headerDTO struct {
@@ -117,6 +118,15 @@ type taskDTO struct {
 	Resources   []resourceDTO `json:"resources"`
 }
 
+type chartCRDDTO struct {
+	Source      string `json:"source"`
+	Index       int    `json:"index"`
+	Kind        string `json:"kind"`
+	Name        string `json:"name"`
+	Lifecycle   string `json:"lifecycle"`
+	WillProcess bool   `json:"willProcess"`
+}
+
 type hookDefDTO struct {
 	Resource resourceDTO `json:"resource"`
 	Action   string      `json:"action"`
@@ -158,12 +168,17 @@ func newDocument(p semantic.Plan, opts Options) (document, error) {
 	for _, t := range prepared.Tasks {
 		tasks = append(tasks, toTaskDTO(t))
 	}
+	crds := make([]chartCRDDTO, 0, len(prepared.ChartCRDs))
+	for _, c := range prepared.ChartCRDs {
+		crds = append(crds, toChartCRDDTO(c))
+	}
 	return document{
-		Schema:       SchemaV1ID,
+		Schema:       SchemaV2ID,
 		Header:       toHeaderDTO(prepared.Header),
 		HelmAction:   prepared.HelmAction.String(),
 		Changes:      changes,
 		Tasks:        tasks,
+		ChartCRDs:    crds,
 		Diagnostics:  diags,
 		Summary:      toSummaryDTO(prepared.Summary),
 		Completeness: prepared.Completeness.String(),
@@ -279,6 +294,17 @@ func toTaskDTO(t semantic.TaskPlan) taskDTO {
 		WillRun:     t.WillRun,
 		Definitions: defs,
 		Resources:   refs,
+	}
+}
+
+func toChartCRDDTO(c semantic.ChartCRD) chartCRDDTO {
+	return chartCRDDTO{
+		Source:      c.Source,
+		Index:       c.Index,
+		Kind:        c.Kind,
+		Name:        c.Name,
+		Lifecycle:   c.Lifecycle.String(),
+		WillProcess: c.WillProcess,
 	}
 }
 

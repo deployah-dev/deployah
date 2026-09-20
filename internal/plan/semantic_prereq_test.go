@@ -269,12 +269,88 @@ func TestBuildSemanticPlan_CRDFilesDoNotProduceResourceChanges(t *testing.T) {
 	}
 	in := buildInput("ctx", resolvedSpec(), nil)
 	in.CRDs = []extras.RawFile{crd}
+	in.CRDDocs = []extras.CRDDoc{{
+		Path: "/abs/.deployah/crds/widgets.yaml",
+		Kind: "CustomResourceDefinition",
+		Name: "widgets.example.com",
+	}}
 	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, readyCluster(), in)
 	t.Cleanup(cleanup)
 	require.NoError(t, err)
 	assert.Equal(t, rawCopy, in.CRDs[0].Raw)
 	for _, c := range p.Changes {
 		assert.True(t, c.Origin.Kind == semantic.OriginHelm || c.Origin.Kind == semantic.OriginNamespace)
+		assert.NotEqual(t, "CustomResourceDefinition", c.Resource.Kind)
+	}
+	require.Len(t, p.ChartCRDs, 1)
+	assert.Equal(t, semantic.ChartCRDProcess, p.ChartCRDs[0].Lifecycle)
+	assert.True(t, p.ChartCRDs[0].WillProcess)
+	assert.Equal(t, "widgets.example.com", p.ChartCRDs[0].Name)
+}
+
+func TestBuildSemanticPlan_ChartCRDLifecycle(t *testing.T) {
+	t.Parallel()
+	docs := []extras.CRDDoc{{
+		Path: "/abs/.deployah/crds/widget.yaml",
+		Kind: "CustomResourceDefinition",
+		Name: "widgets.example.com",
+	}}
+	tests := []struct {
+		name        string
+		op          helm.Operation
+		skip        bool
+		wantLife    semantic.ChartCRDLifecycle
+		wantProcess bool
+		wantAction  semantic.HelmAction
+	}{
+		{name: "fresh install", op: helm.OperationInstall, wantLife: semantic.ChartCRDProcess, wantProcess: true, wantAction: semantic.HelmInstall},
+		{name: "fresh skip", op: helm.OperationInstall, skip: true, wantLife: semantic.ChartCRDSkip, wantAction: semantic.HelmInstall},
+		{name: "upgrade", op: helm.OperationUpgrade, wantLife: semantic.ChartCRDUpgrade, wantAction: semantic.HelmNone},
+		{name: "upgrade ignores skip", op: helm.OperationUpgrade, skip: true, wantLife: semantic.ChartCRDUpgrade, wantAction: semantic.HelmNone},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			manifest := configMapYAML("app", "prod", "same")
+			client := &fakeBuildClient{cleanup: func() {}}
+			cluster := readyCluster()
+			in := buildInput("ctx", resolvedSpec(), nil)
+			in.CRDDocs = docs
+			in.SkipCRDs = tc.skip
+			switch tc.op {
+			case helm.OperationInstall:
+				client.result = installResult(configMapYAML("app", "prod", "v1"))
+				client.prep = helm.ReleasePrep{Operation: helm.OperationInstall, NextRevision: 1}
+			case helm.OperationUpgrade:
+				current := &v1.Release{Version: 3, Manifest: manifest}
+				client.result = upgradeResult(manifest, 4)
+				client.prep = helm.ReleasePrep{
+					Operation:    helm.OperationUpgrade,
+					Current:      current,
+					Newest:       current,
+					NextRevision: 4,
+				}
+				cluster.store(ownedConfigMap("app", "prod", "web", "same"))
+			}
+			p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, in)
+			t.Cleanup(cleanup)
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantAction, p.HelmAction)
+			require.Len(t, p.ChartCRDs, 1)
+			assert.Equal(t, ".deployah/crds/widget.yaml", p.ChartCRDs[0].Source)
+			assert.Equal(t, "CustomResourceDefinition", p.ChartCRDs[0].Kind)
+			assert.Equal(t, "widgets.example.com", p.ChartCRDs[0].Name)
+			assert.Equal(t, tc.wantLife, p.ChartCRDs[0].Lifecycle)
+			assert.Equal(t, tc.wantProcess, p.ChartCRDs[0].WillProcess)
+			for _, c := range p.Changes {
+				assert.NotEqual(t, "CustomResourceDefinition", c.Resource.Kind)
+			}
+			if tc.op == helm.OperationUpgrade {
+				assert.Empty(t, p.Changes)
+				assert.False(t, p.HasEffects())
+				assert.True(t, p.IsNoOp())
+			}
+		})
 	}
 }
 

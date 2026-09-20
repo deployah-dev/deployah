@@ -185,6 +185,7 @@ func TestRenderJSON_ChartCRDs(t *testing.T) {
 			assert.Equal(t, tc.wantLife, entry["lifecycle"])
 			assert.Equal(t, tc.wantProcess, entry["will_process"])
 			assert.NotContains(t, entry, "action")
+			assert.NotContains(t, entry, "api_version")
 			assert.NotContains(t, buf.String(), "Helm install will process")
 		})
 	}

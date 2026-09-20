@@ -23,14 +23,27 @@ import (
 //go:embed schema/semantic_plan.v1.json
 var schemaV1 []byte
 
-// SchemaV1ID is the canonical $id of the Draft 2020-12 schema for
-// [WriteJSON] documents. WriteJSON stores it in the instance schema
-// field.
+//go:embed schema/semantic_plan.v2.json
+var schemaV2 []byte
+
+// SchemaV1ID is the canonical $id of the historical Draft 2020-12 v1
+// schema. [WriteJSON] no longer emits this identifier.
 const SchemaV1ID = "https://deployah.dev/schemas/plan/v1/schema.json"
 
-// SchemaV1 returns the Draft 2020-12 JSON Schema that describes documents
-// written by [WriteJSON]. WriteJSON does not validate against this
-// schema.
+// SchemaV2ID is the canonical $id of the Draft 2020-12 schema for
+// [WriteJSON] documents. WriteJSON stores it in the instance schema
+// field.
+const SchemaV2ID = "https://deployah.dev/schemas/plan/v2/schema.json"
+
+// SchemaV1 returns the historical Draft 2020-12 JSON Schema for
+// documents written before chartCRDs existed.
 func SchemaV1() []byte {
 	return bytes.Clone(schemaV1)
+}
+
+// SchemaV2 returns the Draft 2020-12 JSON Schema that describes documents
+// written by [WriteJSON]. WriteJSON does not validate against this
+// schema.
+func SchemaV2() []byte {
+	return bytes.Clone(schemaV2)
 }

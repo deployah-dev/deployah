@@ -583,6 +583,7 @@ func TestRunOnline_JSONStdoutUnmarshalsWithCRDs(t *testing.T) {
 			assert.Equal(t, tc.wantLife, entry["lifecycle"])
 			assert.Equal(t, tc.wantProcess, entry["will_process"])
 			assert.NotContains(t, entry, "action")
+			assert.NotContains(t, entry, "api_version")
 		})
 	}
 }
@@ -617,6 +618,7 @@ func TestOutputPlan_JSONSkipCRDsStdoutUnmarshals(t *testing.T) {
 	assert.Equal(t, "widgets.example.com", entry["name"])
 	assert.Equal(t, "skip", entry["lifecycle"])
 	assert.Equal(t, false, entry["will_process"])
+	assert.NotContains(t, entry, "api_version")
 }
 
 func TestRunOnline_DetailedExitCode_ChartCRDs(t *testing.T) {

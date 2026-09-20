@@ -136,6 +136,8 @@ func TestNew_TasksAlwaysNonNil(t *testing.T) {
 	assert.Empty(t, p.Changes)
 	require.NotNil(t, p.Diagnostics)
 	assert.Empty(t, p.Diagnostics)
+	require.NotNil(t, p.ChartCRDs)
+	assert.Empty(t, p.ChartCRDs)
 	assert.Equal(t, semantic.CompletenessComplete, p.Completeness)
 	assert.Equal(t, semantic.HelmUpgrade, p.HelmAction)
 	assert.Equal(t, 0, p.Summary.Total())

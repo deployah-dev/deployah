@@ -188,12 +188,21 @@ See Helm's [Limitations on CRDs](https://helm.sh/docs/topics/charts/#limitations
 
 Helm's install-time CRD step and the rest of the release are **not** one
 atomic operation. Helm installs chart CRDs first (unless skipped), waits for
-each to become `Established`, then applies ordinary resources. If the
-resource step fails after CRDs succeed, those CRDs stay in the cluster.
+each to become `Established`, then applies ordinary resources.
 
-Deployah uses Helm 4.3 with `RollbackOnFailure` on install. A failed first
-install does not always leave a Helm release. If a release does remain, the
-next deploy is an Upgrade, and Helm will not process chart CRDs again.
-Re-run `deployah deploy` after you fix the failure.
+After a successful install, later ordinary deploys are upgrades. Helm
+upgrade does not process chart CRDs. A CRD added after that successful
+install is not installed by an ordinary deploy.
+
+If the CRD phase fails during a first install, the Helm release was not
+successfully established. After you fix the CRD, retry `deployah deploy`.
+Treat that retry according to the remaining Helm release history, not as
+an automatic upgrade.
+
+If CRDs succeed but later ordinary install resources fail, those CRDs can
+remain in the cluster. Deployah uses Helm 4.3 `RollbackOnFailure` on
+install, so the failed install may be uninstalled and a retry can be a
+fresh install. If release history remains, the next operation follows
+that history. Re-run `deployah deploy` after you fix the failure.
 
 See the [README](../README.md) for the project overview and the other guides.

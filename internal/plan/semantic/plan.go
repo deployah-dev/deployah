@@ -20,6 +20,7 @@ import (
 )
 
 // Plan is the Live -> Predicted semantic result. Construct it with [New].
+// Chart CRDs are attached with [AttachChartCRDs]; [New] leaves them empty.
 // Snapshots and field values are unredacted. This type is not a JSON
 // rendering contract.
 type Plan struct {
@@ -27,6 +28,7 @@ type Plan struct {
 	HelmAction   HelmAction
 	Changes      []ResourceChange
 	Tasks        []TaskPlan
+	ChartCRDs    []ChartCRD
 	Diagnostics  []Diagnostic
 	Summary      Summary
 	Completeness Completeness
@@ -34,10 +36,10 @@ type Plan struct {
 
 // New validates helmAction, header, changes, tasks, and diagnostics,
 // sorts them, derives [Summary] and [Completeness], and returns a plan
-// whose slices are non-nil. Task references to [ResourceChange] values
-// must be consistent; it fails closed on dangling or duplicate
-// ownership. helmAction is stored as provided; [New] does not derive or
-// mutate it.
+// whose slices are non-nil. ChartCRDs is empty; call [AttachChartCRDs]
+// to set them. Task references to [ResourceChange] values must be
+// consistent; it fails closed on dangling or duplicate ownership.
+// helmAction is stored as provided; [New] does not derive or mutate it.
 func New(header Header, helmAction HelmAction, changes []ResourceChange, tasks []TaskPlan, diagnostics []Diagnostic) (Plan, error) {
 	if !helmAction.valid() {
 		return Plan{}, fmt.Errorf("invalid helm action %s", helmAction)
@@ -94,10 +96,45 @@ func New(header Header, helmAction HelmAction, changes []ResourceChange, tasks [
 		HelmAction:   helmAction,
 		Changes:      copiedChanges,
 		Tasks:        copiedTasks,
+		ChartCRDs:    []ChartCRD{},
 		Diagnostics:  copiedDiags,
 		Summary:      Summarize(copiedChanges),
 		Completeness: deriveCompleteness(copiedChanges, copiedDiags),
 	}, nil
+}
+
+// AttachChartCRDs returns a copy of p with validated chart CRD lifecycle
+// entries. Order is preserved. It does not change [Plan.Changes],
+// [Plan.HasEffects], or [Plan.IsNoOp].
+func AttachChartCRDs(p Plan, crds []ChartCRD) (Plan, error) {
+	copied := slices.Clone(crds)
+	if copied == nil {
+		copied = []ChartCRD{}
+	}
+	for i, c := range copied {
+		if err := validateChartCRD(c); err != nil {
+			return Plan{}, fmt.Errorf("chart crd %d: %w", i, err)
+		}
+	}
+	p.ChartCRDs = copied
+	return p, nil
+}
+
+func validateChartCRD(c ChartCRD) error {
+	if c.Kind != "CustomResourceDefinition" {
+		return fmt.Errorf("kind must be CustomResourceDefinition")
+	}
+	if c.Name == "" {
+		return fmt.Errorf("name is required")
+	}
+	if !c.Lifecycle.valid() {
+		return fmt.Errorf("invalid lifecycle %s", c.Lifecycle)
+	}
+	wantProcess := c.Lifecycle == ChartCRDProcess
+	if c.WillProcess != wantProcess {
+		return fmt.Errorf("willProcess must be %t for lifecycle %s", wantProcess, c.Lifecycle)
+	}
+	return nil
 }
 
 // HasEffects reports whether the plan lists a known resource mutation or

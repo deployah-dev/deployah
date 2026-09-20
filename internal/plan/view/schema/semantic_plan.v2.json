@@ -1,0 +1,900 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://deployah.dev/schemas/plan/v2/schema.json",
+  "title": "Deployah semantic plan v2",
+  "description": "Machine-readable document produced by view.WriteJSON.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "header",
+    "helmAction",
+    "changes",
+    "tasks",
+    "chartCRDs",
+    "diagnostics",
+    "summary",
+    "completeness"
+  ],
+  "properties": {
+    "schema": {
+      "type": "string",
+      "const": "https://deployah.dev/schemas/plan/v2/schema.json"
+    },
+    "header": {
+      "$ref": "#/$defs/Header"
+    },
+    "helmAction": {
+      "type": "string",
+      "enum": ["none", "install", "upgrade"]
+    },
+    "changes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ResourceChange"
+      }
+    },
+    "tasks": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Task"
+      }
+    },
+    "chartCRDs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ChartCRD"
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Diagnostic"
+      }
+    },
+    "summary": {
+      "$ref": "#/$defs/Summary"
+    },
+    "completeness": {
+      "type": "string",
+      "enum": ["complete", "partial"]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "helmAction": {
+            "const": "install"
+          }
+        },
+        "required": ["helmAction"]
+      },
+      "then": {
+        "properties": {
+          "header": {
+            "properties": {
+              "freshInstall": {
+                "const": true
+              }
+            },
+            "required": ["freshInstall"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "header": {
+            "properties": {
+              "freshInstall": {
+                "const": true
+              }
+            },
+            "required": ["freshInstall"]
+          }
+        },
+        "required": ["header"]
+      },
+      "then": {
+        "properties": {
+          "helmAction": {
+            "const": "install"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "helmAction": {
+            "const": "none"
+          }
+        },
+        "required": ["helmAction"]
+      },
+      "then": {
+        "properties": {
+          "header": {
+            "properties": {
+              "freshInstall": {
+                "not": {
+                  "const": true
+                }
+              }
+            }
+          },
+          "changes": {
+            "items": {
+              "not": {
+                "properties": {
+                  "origin": {
+                    "properties": {
+                      "kind": {
+                        "const": "helm"
+                      }
+                    },
+                    "required": ["kind"]
+                  }
+                },
+                "required": ["origin"]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "helmAction": {
+            "const": "upgrade"
+          }
+        },
+        "required": ["helmAction"]
+      },
+      "then": {
+        "properties": {
+          "header": {
+            "properties": {
+              "freshInstall": {
+                "not": {
+                  "const": true
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "Header": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project": {
+          "type": "string"
+        },
+        "environment": {
+          "type": "string"
+        },
+        "release": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "context": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "integer"
+        },
+        "freshInstall": {
+          "type": "boolean"
+        }
+      }
+    },
+    "ResourceChange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "resource",
+        "origin",
+        "action",
+        "before",
+        "after",
+        "fields",
+        "apply"
+      ],
+      "properties": {
+        "resource": {
+          "$ref": "#/$defs/Resource"
+        },
+        "origin": {
+          "$ref": "#/$defs/Origin"
+        },
+        "action": {
+          "type": "string",
+          "enum": ["create", "update", "delete", "replace"]
+        },
+        "before": {
+          "$ref": "#/$defs/Snapshot"
+        },
+        "after": {
+          "$ref": "#/$defs/Snapshot"
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FieldChange"
+          }
+        },
+        "apply": {
+          "$ref": "#/$defs/Apply"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "create"
+              }
+            },
+            "required": ["action"]
+          },
+          "then": {
+            "properties": {
+              "before": {
+                "type": "null"
+              },
+              "after": {
+                "type": "object"
+              },
+              "fields": {
+                "maxItems": 0
+              },
+              "apply": {
+                "required": ["write"],
+                "not": {
+                  "required": ["delete"]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "update"
+              }
+            },
+            "required": ["action"]
+          },
+          "then": {
+            "properties": {
+              "before": {
+                "type": "object"
+              },
+              "apply": {
+                "required": ["write"],
+                "not": {
+                  "required": ["delete"]
+                },
+                "properties": {
+                  "write": {
+                    "properties": {
+                      "method": {
+                        "const": "server_side_apply"
+                      }
+                    },
+                    "required": ["method"]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "delete"
+              }
+            },
+            "required": ["action"]
+          },
+          "then": {
+            "properties": {
+              "before": {
+                "type": "object"
+              },
+              "after": {
+                "type": "null"
+              },
+              "fields": {
+                "maxItems": 0
+              },
+              "apply": {
+                "required": ["delete"],
+                "not": {
+                  "required": ["write"]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "replace"
+              }
+            },
+            "required": ["action"]
+          },
+          "then": {
+            "properties": {
+              "before": {
+                "type": "object"
+              },
+              "after": {
+                "type": "object"
+              },
+              "apply": {
+                "required": ["write", "delete"]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "Resource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["apiVersion", "kind", "namespace", "name"],
+      "properties": {
+        "apiVersion": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "generateName": {
+          "type": "string"
+        }
+      }
+    },
+    "Origin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["helm", "namespace"]
+        },
+        "helm": {
+          "$ref": "#/$defs/HelmOrigin"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "helm"
+              }
+            },
+            "required": ["kind"]
+          },
+          "then": {
+            "required": ["helm"]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "namespace"
+              }
+            },
+            "required": ["kind"]
+          },
+          "then": {
+            "not": {
+              "required": ["helm"]
+            }
+          }
+        }
+      ]
+    },
+    "HelmOrigin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["release", "namespace"],
+      "properties": {
+        "release": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        }
+      }
+    },
+    "Apply": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "write": {
+          "$ref": "#/$defs/WriteSemantics"
+        },
+        "delete": {
+          "$ref": "#/$defs/DeleteSemantics"
+        }
+      }
+    },
+    "WriteSemantics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method", "forceConflicts"],
+      "properties": {
+        "method": {
+          "type": "string",
+          "enum": ["create", "server_side_apply"]
+        },
+        "fieldManager": {
+          "type": "string"
+        },
+        "forceConflicts": {
+          "type": "boolean"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "method": {
+                "const": "server_side_apply"
+              }
+            },
+            "required": ["method"]
+          },
+          "then": {
+            "required": ["fieldManager"],
+            "properties": {
+              "fieldManager": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "method": {
+                "const": "create"
+              }
+            },
+            "required": ["method"]
+          },
+          "then": {
+            "properties": {
+              "forceConflicts": {
+                "const": false
+              }
+            },
+            "not": {
+              "required": ["fieldManager"]
+            }
+          }
+        }
+      ]
+    },
+    "DeleteSemantics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["propagation"],
+      "properties": {
+        "propagation": {
+          "type": "string",
+          "enum": ["background"]
+        }
+      }
+    },
+    "FieldChange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "op"],
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "op": {
+          "type": "string",
+          "enum": ["add", "remove", "replace"]
+        },
+        "before": true,
+        "after": true
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "op": {
+                "const": "add"
+              }
+            },
+            "required": ["op"]
+          },
+          "then": {
+            "required": ["after"],
+            "not": {
+              "required": ["before"]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "op": {
+                "const": "remove"
+              }
+            },
+            "required": ["op"]
+          },
+          "then": {
+            "required": ["before"],
+            "not": {
+              "required": ["after"]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "op": {
+                "const": "replace"
+              }
+            },
+            "required": ["op"]
+          },
+          "then": {
+            "required": ["before", "after"]
+          }
+        }
+      ]
+    },
+    "Diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["severity", "category", "message"],
+      "properties": {
+        "severity": {
+          "type": "string",
+          "enum": ["warning"]
+        },
+        "category": {
+          "type": "string",
+          "enum": ["prediction_limitation"]
+        },
+        "message": {
+          "type": "string"
+        },
+        "resource": {
+          "$ref": "#/$defs/Resource"
+        }
+      }
+    },
+    "Summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["create", "update", "delete", "replace", "total"],
+      "properties": {
+        "create": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "update": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "delete": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "replace": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "Snapshot": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object"
+        }
+      ]
+    },
+    "Task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "phase",
+        "action",
+        "willRun",
+        "definitions",
+        "resources"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "phase": {
+          "type": "string",
+          "enum": ["preDeploy", "postDeploy", "schedule"]
+        },
+        "action": {
+          "type": "string",
+          "enum": ["unchanged", "create", "update", "delete"]
+        },
+        "willRun": {
+          "type": "boolean"
+        },
+        "definitions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HookDefinition"
+          }
+        },
+        "resources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Resource"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "phase": {
+                "const": "schedule"
+              }
+            },
+            "required": ["phase"]
+          },
+          "then": {
+            "properties": {
+              "willRun": {
+                "const": false
+              },
+              "definitions": {
+                "maxItems": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "phase": {
+                "enum": ["preDeploy", "postDeploy"]
+              }
+            },
+            "required": ["phase"]
+          },
+          "then": {
+            "properties": {
+              "resources": {
+                "maxItems": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "delete"
+              }
+            },
+            "required": ["action"]
+          },
+          "then": {
+            "properties": {
+              "willRun": {
+                "const": false
+              }
+            }
+          }
+        }
+      ]
+    },
+    "HookDefinition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "resource",
+        "action",
+        "before",
+        "after",
+        "fields"
+      ],
+      "properties": {
+        "resource": {
+          "$ref": "#/$defs/Resource"
+        },
+        "action": {
+          "type": "string",
+          "enum": ["create", "update", "delete"]
+        },
+        "before": {
+          "$ref": "#/$defs/Snapshot"
+        },
+        "after": {
+          "$ref": "#/$defs/Snapshot"
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FieldChange"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "create"
+              }
+            },
+            "required": ["action"]
+          },
+          "then": {
+            "properties": {
+              "before": {
+                "type": "null"
+              },
+              "after": {
+                "type": "object"
+              },
+              "fields": {
+                "maxItems": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "update"
+              }
+            },
+            "required": ["action"]
+          },
+          "then": {
+            "properties": {
+              "before": {
+                "type": "object"
+              },
+              "after": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "delete"
+              }
+            },
+            "required": ["action"]
+          },
+          "then": {
+            "properties": {
+              "before": {
+                "type": "object"
+              },
+              "after": {
+                "type": "null"
+              },
+              "fields": {
+                "maxItems": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "ChartCRD": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "index", "kind", "name", "lifecycle", "willProcess"],
+      "properties": {
+        "source": {
+          "type": "string"
+        },
+        "index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "kind": {
+          "type": "string",
+          "const": "CustomResourceDefinition"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "lifecycle": {
+          "type": "string",
+          "enum": ["process", "skip", "upgrade"]
+        },
+        "willProcess": {
+          "type": "boolean"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "lifecycle": {
+                "const": "process"
+              }
+            },
+            "required": ["lifecycle"]
+          },
+          "then": {
+            "properties": {
+              "willProcess": {
+                "const": true
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "lifecycle": {
+                "enum": ["skip", "upgrade"]
+              }
+            },
+            "required": ["lifecycle"]
+          },
+          "then": {
+            "properties": {
+              "willProcess": {
+                "const": false
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -151,6 +151,13 @@ func TestPrepareChart_WritesSourceFiles(t *testing.T) {
 			},
 		},
 		{
+			name: "comment-only leading document stays in raw file",
+			crds: []extras.RawFile{{Path: "widgets.yaml", Raw: []byte("# CRDs used by the widget controller\n---\nkind: CustomResourceDefinition\nmetadata:\n  name: widgets.example.com\n")}},
+			wantFiles: map[string]string{
+				"widgets.yaml": "# CRDs used by the widget controller\n---\nkind: CustomResourceDefinition\nmetadata:\n  name: widgets.example.com\n",
+			},
+		},
+		{
 			name: "malformed yaml stays exact bytes",
 			crds: []extras.RawFile{{Path: "broken.yaml", Raw: []byte("not: [valid\n")}},
 			wantFiles: map[string]string{

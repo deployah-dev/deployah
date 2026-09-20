@@ -58,12 +58,11 @@ type RawFile struct {
 // Index is the 0-based non-empty document number in that file. YAML is
 // the original document bytes; it is never marshaled back for Helm.
 type CRDDoc struct {
-	Path       string
-	Index      int
-	Kind       string
-	Name       string
-	APIVersion string
-	YAML       []byte
+	Path  string
+	Index int
+	Kind  string
+	Name  string
+	YAML  []byte
 }
 
 // Object is one Kubernetes document loaded from an extras file.

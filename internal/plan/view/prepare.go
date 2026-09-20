@@ -131,6 +131,12 @@ func validateRenderable(p semantic.Plan) error {
 			}
 		}
 	}
+	for i, c := range p.ChartCRDs {
+		if err := requireEnum(fmt.Sprintf("chart crd %d lifecycle", i), c.Lifecycle.String(),
+			semantic.ChartCRDProcess.String(), semantic.ChartCRDSkip.String(), semantic.ChartCRDUpgrade.String()); err != nil {
+			return err
+		}
+	}
 	for i, d := range p.Diagnostics {
 		if err := requireEnum(fmt.Sprintf("diagnostic %d severity", i), d.Severity.String(),
 			semantic.DiagnosticWarning.String()); err != nil {

@@ -56,6 +56,12 @@ type SemanticBuildInput struct {
 	// CRDs are already-loaded source files from .deployah/crds/.
 	// They are forwarded to Helm chart materialization only.
 	CRDs []extras.RawFile
+	// CRDDocs are presentation identity for those files. They are not
+	// Helm transport and are not parsed here.
+	CRDDocs []extras.CRDDoc
+	// SkipCRDs stamps ChartCRD lifecycle as skip on a fresh install. It is
+	// ignored on upgrade. It does not set Helm Install.SkipCRDs.
+	SkipCRDs bool
 }
 
 // BuildSemanticPlan renders [spec.ResolvedSpec], predicts Live to
@@ -68,6 +74,7 @@ type SemanticBuildInput struct {
 // [predict.Predict] then runs against a plan-local wrapper so a
 // same-deploy missing target namespace is not fatal. Chart CRD files
 // are forwarded to Helm only; they are not parsed into resource changes.
+// Presentation identity comes from [SemanticBuildInput.CRDDocs].
 //
 // The caller must invoke the returned cleanup func once. Cleanup is
 // always non-nil. On error the plan is empty and the render result is
@@ -162,7 +169,36 @@ func BuildSemanticPlan(
 	if err != nil {
 		return semantic.Plan{}, nil, cleanup, fmt.Errorf("assemble semantic plan: %w", err)
 	}
+	p, err = semantic.AttachChartCRDs(p, chartCRDsFromDocs(input.CRDDocs, prep.Operation, input.SkipCRDs))
+	if err != nil {
+		return semantic.Plan{}, nil, cleanup, fmt.Errorf("assemble semantic plan: %w", err)
+	}
 	return p, result, cleanup, nil
+}
+
+func chartCRDsFromDocs(docs []extras.CRDDoc, op helm.Operation, skipCRDs bool) []semantic.ChartCRD {
+	lifecycle := semantic.ChartCRDProcess
+	willProcess := true
+	switch {
+	case op == helm.OperationUpgrade:
+		lifecycle = semantic.ChartCRDUpgrade
+		willProcess = false
+	case skipCRDs:
+		lifecycle = semantic.ChartCRDSkip
+		willProcess = false
+	}
+	out := make([]semantic.ChartCRD, 0, len(docs))
+	for _, d := range docs {
+		out = append(out, semantic.ChartCRD{
+			Source:      extras.CRDDisplayPath(d.Path),
+			Index:       d.Index,
+			Kind:        d.Kind,
+			Name:        d.Name,
+			Lifecycle:   lifecycle,
+			WillProcess: willProcess,
+		})
+	}
+	return out
 }
 
 func validateRenderPrep(result *render.RenderResult, prep helm.ReleasePrep) error {

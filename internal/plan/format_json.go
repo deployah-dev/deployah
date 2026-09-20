@@ -63,7 +63,6 @@ type JSONChartCRD struct {
 	Index       int    `json:"index"`
 	Kind        string `json:"kind"`
 	Name        string `json:"name"`
-	APIVersion  string `json:"api_version,omitempty"`
 	Lifecycle   string `json:"lifecycle"`
 	WillProcess bool   `json:"will_process"`
 }
@@ -153,7 +152,6 @@ func NewJSONDocument(p *Plan) *JSONDocument {
 			Index:       crd.Index,
 			Kind:        crd.Kind,
 			Name:        crd.Name,
-			APIVersion:  crd.APIVersion,
 			Lifecycle:   string(crd.Lifecycle),
 			WillProcess: crd.WillProcess,
 		})

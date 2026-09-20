@@ -88,8 +88,9 @@ generating that resource from the spec.
 
 Deployah copies `.deployah/crds/` files as-is. It does not require
 `apiextensions.k8s.io/v1` or validate CRD document semantics. If Helm or the
-API server rejects a file, fix the YAML and retry. A later ordinary deploy is
-an upgrade and will not install a newly added CRD. See
+API server rejects a file, fix the YAML and retry `deployah deploy`. Only
+after a successful install are later ordinary deploys upgrades that do not
+process chart CRDs. See
 [Custom manifests and CRDs](custom-manifests-and-crds.md).
 
 ## Deploy succeeds but the app returns 503 / times out over HTTPS

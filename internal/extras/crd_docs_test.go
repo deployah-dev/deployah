@@ -38,6 +38,7 @@ func TestLoad_CRDPresentationIdentity(t *testing.T) {
 		wantKind  string
 	}{
 		{name: "valid single crd", body: widgetCRDBody, wantNames: []string{"widgets.example.com"}, wantKind: "CustomResourceDefinition"},
+		{name: "apiVersion absent", body: "kind: CustomResourceDefinition\nmetadata:\n  name: widgets.example.com\n", wantNames: []string{"widgets.example.com"}, wantKind: "CustomResourceDefinition"},
 		{name: "comments quotes and helm-looking text", body: commented, wantNames: []string{"widgets.example.com"}, wantKind: "CustomResourceDefinition"},
 		{name: "unusual indentation", body: indented, wantNames: []string{"gadgets.example.com"}, wantKind: "CustomResourceDefinition"},
 		{name: "multi-doc with empty separator", body: multi, wantNames: []string{"one.example.com", "two.example.com"}, wantKind: "CustomResourceDefinition"},
@@ -83,6 +84,9 @@ func TestLoad_CRDSourceContractErrors(t *testing.T) {
 	}{
 		{name: "malformed yaml", body: "not: [valid\n", wantErr: "parse YAML"},
 		{name: "missing kind", body: "metadata:\n  name: widgets.example.com\n", wantErr: "missing required kind"},
+		{name: "empty mapping", body: "{}\n", wantErr: "missing required kind"},
+		{name: "null token", body: "null\n", wantErr: "missing required kind"},
+		{name: "tilde null", body: "~\n", wantErr: "missing required kind"},
 		{name: "missing metadata.name", body: "kind: CustomResourceDefinition\nmetadata: {}\n", wantErr: "missing required metadata.name"},
 		{name: "non-crd kind", body: "kind: ConfigMap\nmetadata:\n  name: nope\n", wantErr: "document 1: only CustomResourceDefinition"},
 		{name: "non-crd kind in second document", body: "kind: CustomResourceDefinition\nmetadata:\n  name: widgets.example.com\n---\nkind: ConfigMap\nmetadata:\n  name: nope\n", wantErr: "document 2: only CustomResourceDefinition"},
@@ -105,6 +109,70 @@ func TestLoad_CRDSourceContractErrors(t *testing.T) {
 			assert.ErrorContains(t, err, tc.wantErr)
 		})
 	}
+}
+
+func TestLoad_CRDEmptyDocumentsIgnored(t *testing.T) {
+	t.Parallel()
+	valid := "kind: CustomResourceDefinition\nmetadata:\n  name: widgets.example.com\n"
+	tests := []struct {
+		name      string
+		body      string
+		wantNames []string
+	}{
+		{name: "whitespace-only document before crd", body: "   \n---\n" + valid, wantNames: []string{"widgets.example.com"}},
+		{name: "comment-only document before crd", body: "# CRDs used by the widget controller\n---\n" + valid, wantNames: []string{"widgets.example.com"}},
+		{name: "comments and whitespace only before crd", body: "# nothing here\n\n---\n" + valid, wantNames: []string{"widgets.example.com"}},
+		{
+			name:      "comment empty then two crds",
+			body:      "# intro\n---\nkind: CustomResourceDefinition\nmetadata:\n  name: one.example.com\n---\n---\nkind: CustomResourceDefinition\nmetadata:\n  name: two.example.com\n",
+			wantNames: []string{"one.example.com", "two.example.com"},
+		},
+		{name: "comment-only file", body: "# CRDs used by the widget controller\n", wantNames: nil},
+		{name: "tagged null document before crd", body: "!!null\n---\n" + valid, wantNames: []string{"widgets.example.com"}},
+		{name: "tagged null file", body: "!!null\n", wantNames: nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			path := filepath.Join(dir, ".deployah", "crds", "types.yaml")
+			writeFile(t, path, tc.body)
+			bundle, err := extras.Load(extras.LoadConfig{
+				SpecDir:          dir,
+				Project:          "demo",
+				Environment:      "prod",
+				DeclaredEnvs:     []string{"prod"},
+				ReleaseNamespace: "default",
+				Scope:            &extras.TableResolver{},
+			})
+			require.NoError(t, err)
+			require.Len(t, bundle.CRDs, 1)
+			assert.Equal(t, tc.body, string(bundle.CRDs[0].Raw))
+			require.Len(t, bundle.CRDDocs, len(tc.wantNames))
+			for i, wantName := range tc.wantNames {
+				assert.Equal(t, "CustomResourceDefinition", bundle.CRDDocs[i].Kind)
+				assert.Equal(t, wantName, bundle.CRDDocs[i].Name)
+				assert.Equal(t, i, bundle.CRDDocs[i].Index)
+			}
+		})
+	}
+}
+
+func TestLoad_CRDPhysicalDocumentNumberSkipsEmptyDocs(t *testing.T) {
+	t.Parallel()
+	body := "# comment only\n---\nkind: CustomResourceDefinition\nmetadata:\n  name: first.example.com\n---\n# comment only\n---\nkind: ConfigMap\nmetadata:\n  name: invalid\n"
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".deployah", "crds", "types.yaml"), body)
+	_, err := extras.Load(extras.LoadConfig{
+		SpecDir:          dir,
+		Project:          "demo",
+		Environment:      "prod",
+		DeclaredEnvs:     []string{"prod"},
+		ReleaseNamespace: "default",
+		Scope:            &extras.TableResolver{},
+	})
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "document 4: only CustomResourceDefinition")
 }
 
 func TestLoad_DuplicateCRDNamesAccepted(t *testing.T) {
@@ -130,14 +198,10 @@ func TestLoad_DuplicateCRDNamesAccepted(t *testing.T) {
 func TestCRDDoc_HasNoSpecFields(t *testing.T) {
 	t.Parallel()
 	rt := reflect.TypeFor[extras.CRDDoc]()
-	_, hasScope := rt.FieldByName("Scope")
-	assert.False(t, hasScope)
-	_, hasSpec := rt.FieldByName("Spec")
-	assert.False(t, hasSpec)
-	_, hasObj := rt.FieldByName("Obj")
-	assert.False(t, hasObj)
-	_, hasGroup := rt.FieldByName("Group")
-	assert.False(t, hasGroup)
+	for _, name := range []string{"APIVersion", "Scope", "Spec", "Obj", "Group", "Versions"} {
+		_, has := rt.FieldByName(name)
+		assert.False(t, has, name)
+	}
 }
 
 func TestCRDDisplayPath(t *testing.T) {

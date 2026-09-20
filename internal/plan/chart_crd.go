@@ -41,7 +41,6 @@ func StampChartCRDs(p *Plan, docs []extras.CRDDoc, upgrade, skipCRDs bool) {
 			Index:       d.Index,
 			Kind:        d.Kind,
 			Name:        d.Name,
-			APIVersion:  d.APIVersion,
 			Lifecycle:   lifecycle,
 			WillProcess: willProcess,
 			YAML:        string(d.YAML),

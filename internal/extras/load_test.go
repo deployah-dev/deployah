@@ -471,6 +471,11 @@ spec:
 			body:      "# keep comments\nkind: CustomResourceDefinition\nmetadata:\n  name: widgets.example.com\n  annotations:\n    note: \"{{ .Release.Name }}\"\n",
 			wantNames: []string{"widgets.example.com"},
 		},
+		{
+			name:      "comment-only leading document stays in raw file",
+			body:      "# CRDs used by the widget controller\n---\nkind: CustomResourceDefinition\nmetadata:\n  name: widgets.example.com\n",
+			wantNames: []string{"widgets.example.com"},
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

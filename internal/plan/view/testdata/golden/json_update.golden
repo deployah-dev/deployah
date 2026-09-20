@@ -1,5 +1,5 @@
 {
-  "schema": "https://deployah.dev/schemas/plan/v1/schema.json",
+  "schema": "https://deployah.dev/schemas/plan/v2/schema.json",
   "header": {
     "project": "web",
     "environment": "prod",
@@ -55,6 +55,7 @@
     }
   ],
   "tasks": [],
+  "chartCRDs": [],
   "diagnostics": [],
   "summary": {
     "create": 0,

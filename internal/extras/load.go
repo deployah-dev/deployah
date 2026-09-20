@@ -41,7 +41,7 @@ type Bundle struct {
 	// the exact file contents Helm copies into the chart.
 	CRDs []RawFile
 	// CRDDocs is presentation identity for every non-empty CRD document.
-	// Load parses only kind and metadata.name (and apiVersion when present).
+	// Load parses only kind and metadata.name.
 	CRDDocs []CRDDoc
 }
 
