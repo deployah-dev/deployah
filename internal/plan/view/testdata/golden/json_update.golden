@@ -55,6 +55,7 @@
     }
   ],
   "tasks": [],
+  "chartCRDs": [],
   "diagnostics": [],
   "summary": {
     "create": 0,

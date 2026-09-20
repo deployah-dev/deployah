@@ -48,7 +48,7 @@ func validateRenderable(p semantic.Plan) error {
 			return err
 		}
 		if err := requireEnum(fmt.Sprintf("change %d origin", i), c.Origin.Kind.String(),
-			semantic.OriginHelm.String(), semantic.OriginCRD.String(), semantic.OriginNamespace.String()); err != nil {
+			semantic.OriginHelm.String(), semantic.OriginNamespace.String()); err != nil {
 			return err
 		}
 		if c.Apply.Write != nil {
@@ -129,6 +129,12 @@ func validateRenderable(p semantic.Plan) error {
 					return err
 				}
 			}
+		}
+	}
+	for i, c := range p.ChartCRDs {
+		if err := requireEnum(fmt.Sprintf("chart crd %d lifecycle", i), c.Lifecycle.String(),
+			semantic.ChartCRDProcess.String(), semantic.ChartCRDSkip.String(), semantic.ChartCRDUpgrade.String()); err != nil {
+			return err
 		}
 	}
 	for i, d := range p.Diagnostics {

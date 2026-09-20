@@ -176,8 +176,6 @@ type OriginKind int
 const (
 	// OriginHelm is a Helm-predicted resource.
 	OriginHelm OriginKind = iota + 1
-	// OriginCRD is a CustomResourceDefinition applied outside Helm.
-	OriginCRD
 	// OriginNamespace is the target Namespace created as part of a
 	// Helm install. It is invalid with [HelmNone] or [HelmUpgrade].
 	OriginNamespace
@@ -187,8 +185,6 @@ func (k OriginKind) String() string {
 	switch k {
 	case OriginHelm:
 		return "helm"
-	case OriginCRD:
-		return "crd"
 	case OriginNamespace:
 		return "namespace"
 	default:
@@ -198,7 +194,7 @@ func (k OriginKind) String() string {
 
 func (k OriginKind) valid() bool {
 	switch k {
-	case OriginHelm, OriginCRD, OriginNamespace:
+	case OriginHelm, OriginNamespace:
 		return true
 	default:
 		return false
@@ -206,8 +202,7 @@ func (k OriginKind) valid() bool {
 }
 
 // ResourceOrigin names the producer of a [ResourceChange]. Helm details
-// are required for [OriginHelm] and forbidden for [OriginCRD] and
-// [OriginNamespace].
+// are required for [OriginHelm] and forbidden for [OriginNamespace].
 type ResourceOrigin struct {
 	Kind OriginKind
 	Helm *HelmOrigin
@@ -433,4 +428,60 @@ func (d HookDefinition) definitionActionValid() bool {
 	default:
 		return false
 	}
+}
+
+// ChartCRDLifecycle is Helm's install-only handling of one chart CRD
+// document. The zero value is invalid.
+type ChartCRDLifecycle int
+
+const (
+	// ChartCRDProcess means a fresh install will ask Helm to process the
+	// chart CRD. It does not claim Kubernetes will create versus apply.
+	ChartCRDProcess ChartCRDLifecycle = iota + 1
+	// ChartCRDSkip means the CRD is in the chart but install-time
+	// processing is disabled.
+	ChartCRDSkip
+	// ChartCRDUpgrade means the CRD is in the chart and Helm Upgrade will
+	// not process it.
+	ChartCRDUpgrade
+)
+
+func (l ChartCRDLifecycle) String() string {
+	switch l {
+	case ChartCRDProcess:
+		return "process"
+	case ChartCRDSkip:
+		return "skip"
+	case ChartCRDUpgrade:
+		return "upgrade"
+	default:
+		return fmt.Sprintf("ChartCRDLifecycle(%d)", int(l))
+	}
+}
+
+func (l ChartCRDLifecycle) valid() bool {
+	switch l {
+	case ChartCRDProcess, ChartCRDSkip, ChartCRDUpgrade:
+		return true
+	default:
+		return false
+	}
+}
+
+// ChartCRD is one chart CRD document for plan presentation. It is Helm
+// chart-CRD lifecycle, not a predicted Kubernetes mutation.
+type ChartCRD struct {
+	// Source is the display path under .deployah/crds/.
+	Source string
+	// Index is the 0-based position among non-empty YAML documents in that
+	// file.
+	Index int
+	// Kind is always CustomResourceDefinition.
+	Kind string
+	// Name is metadata.name from the source document.
+	Name string
+	// Lifecycle is Helm's handling of this document in this invocation.
+	Lifecycle ChartCRDLifecycle
+	// WillProcess is true only when Lifecycle is [ChartCRDProcess].
+	WillProcess bool
 }

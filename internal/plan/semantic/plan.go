@@ -20,6 +20,7 @@ import (
 )
 
 // Plan is the Live -> Predicted semantic result. Construct it with [New].
+// Chart CRDs are attached with [AttachChartCRDs]; [New] leaves them empty.
 // Snapshots and field values are unredacted. This type is not a JSON
 // rendering contract.
 type Plan struct {
@@ -27,6 +28,7 @@ type Plan struct {
 	HelmAction   HelmAction
 	Changes      []ResourceChange
 	Tasks        []TaskPlan
+	ChartCRDs    []ChartCRD
 	Diagnostics  []Diagnostic
 	Summary      Summary
 	Completeness Completeness
@@ -34,10 +36,10 @@ type Plan struct {
 
 // New validates helmAction, header, changes, tasks, and diagnostics,
 // sorts them, derives [Summary] and [Completeness], and returns a plan
-// whose slices are non-nil. Task references to [ResourceChange] values
-// must be consistent; it fails closed on dangling or duplicate
-// ownership. helmAction is stored as provided; [New] does not derive or
-// mutate it.
+// whose slices are non-nil. ChartCRDs is empty; call [AttachChartCRDs]
+// to set them. Task references to [ResourceChange] values must be
+// consistent; it fails closed on dangling or duplicate ownership.
+// helmAction is stored as provided; [New] does not derive or mutate it.
 func New(header Header, helmAction HelmAction, changes []ResourceChange, tasks []TaskPlan, diagnostics []Diagnostic) (Plan, error) {
 	if !helmAction.valid() {
 		return Plan{}, fmt.Errorf("invalid helm action %s", helmAction)
@@ -94,10 +96,45 @@ func New(header Header, helmAction HelmAction, changes []ResourceChange, tasks [
 		HelmAction:   helmAction,
 		Changes:      copiedChanges,
 		Tasks:        copiedTasks,
+		ChartCRDs:    []ChartCRD{},
 		Diagnostics:  copiedDiags,
 		Summary:      Summarize(copiedChanges),
 		Completeness: deriveCompleteness(copiedChanges, copiedDiags),
 	}, nil
+}
+
+// AttachChartCRDs returns a copy of p with validated chart CRD lifecycle
+// entries. Order is preserved. It does not change [Plan.Changes],
+// [Plan.HasEffects], or [Plan.IsNoOp].
+func AttachChartCRDs(p Plan, crds []ChartCRD) (Plan, error) {
+	copied := slices.Clone(crds)
+	if copied == nil {
+		copied = []ChartCRD{}
+	}
+	for i, c := range copied {
+		if err := validateChartCRD(c); err != nil {
+			return Plan{}, fmt.Errorf("chart crd %d: %w", i, err)
+		}
+	}
+	p.ChartCRDs = copied
+	return p, nil
+}
+
+func validateChartCRD(c ChartCRD) error {
+	if c.Kind != "CustomResourceDefinition" {
+		return fmt.Errorf("kind must be CustomResourceDefinition")
+	}
+	if c.Name == "" {
+		return fmt.Errorf("name is required")
+	}
+	if !c.Lifecycle.valid() {
+		return fmt.Errorf("invalid lifecycle %s", c.Lifecycle)
+	}
+	wantProcess := c.Lifecycle == ChartCRDProcess
+	if c.WillProcess != wantProcess {
+		return fmt.Errorf("willProcess must be %t for lifecycle %s", wantProcess, c.Lifecycle)
+	}
+	return nil
 }
 
 // HasEffects reports whether the plan lists a known resource mutation or
@@ -328,7 +365,7 @@ func validateOrigin(o ResourceOrigin) error {
 		if o.Helm == nil {
 			return fmt.Errorf("helm origin requires helm details")
 		}
-	case OriginCRD, OriginNamespace:
+	case OriginNamespace:
 		if o.Helm != nil {
 			return fmt.Errorf("%s origin must not include helm details", o.Kind)
 		}
@@ -337,66 +374,32 @@ func validateOrigin(o ResourceOrigin) error {
 }
 
 func validateOriginResource(c ResourceChange) error {
-	switch c.Origin.Kind {
-	case OriginCRD:
-		if c.Resource.APIVersion != "apiextensions.k8s.io/v1" || c.Resource.Kind != "CustomResourceDefinition" {
-			return fmt.Errorf("crd origin requires apiextensions.k8s.io/v1 CustomResourceDefinition")
-		}
-		if c.Resource.Namespace != "" {
-			return fmt.Errorf("crd origin must be cluster-scoped")
-		}
-		switch c.Action {
-		case Create, Update:
-		default:
-			return fmt.Errorf("crd origin does not support %s", c.Action)
-		}
-	case OriginNamespace:
-		if c.Resource.APIVersion != "v1" || c.Resource.Kind != "Namespace" {
-			return fmt.Errorf("namespace origin requires v1 Namespace")
-		}
-		if c.Resource.Namespace != "" {
-			return fmt.Errorf("namespace origin must be cluster-scoped")
-		}
-		switch c.Action {
-		case Create, Update:
-		default:
-			return fmt.Errorf("namespace origin does not support %s", c.Action)
-		}
+	if c.Origin.Kind != OriginNamespace {
+		return nil
+	}
+	if c.Resource.APIVersion != "v1" || c.Resource.Kind != "Namespace" {
+		return fmt.Errorf("namespace origin requires v1 Namespace")
+	}
+	if c.Resource.Namespace != "" {
+		return fmt.Errorf("namespace origin must be cluster-scoped")
+	}
+	switch c.Action {
+	case Create, Update:
+	default:
+		return fmt.Errorf("namespace origin does not support %s", c.Action)
 	}
 	return nil
 }
 
 func validateOriginApply(c ResourceChange) error {
-	if c.Apply.Write == nil {
+	if c.Apply.Write == nil || c.Origin.Kind != OriginNamespace {
 		return nil
 	}
-	switch c.Origin.Kind {
-	case OriginCRD:
-		switch c.Action {
-		case Create:
-			switch c.Apply.Write.Method {
-			case WriteCreate:
-				return nil
-			case WriteServerSide:
-				if !c.Apply.Write.ForceConflicts {
-					return fmt.Errorf("crd create server_side_apply requires force conflicts")
-				}
-				return nil
-			default:
-				return fmt.Errorf("crd create requires create or server_side_apply")
-			}
-		case Update:
-			if c.Apply.Write.Method != WriteServerSide || !c.Apply.Write.ForceConflicts {
-				return fmt.Errorf("crd update requires server_side_apply with force conflicts")
-			}
-		}
-	case OriginNamespace:
-		if c.Apply.Write.Method != WriteServerSide {
-			return fmt.Errorf("namespace origin requires server_side_apply")
-		}
-		if c.Apply.Write.ForceConflicts {
-			return fmt.Errorf("namespace origin must not force conflicts")
-		}
+	if c.Apply.Write.Method != WriteServerSide {
+		return fmt.Errorf("namespace origin requires server_side_apply")
+	}
+	if c.Apply.Write.ForceConflicts {
+		return fmt.Errorf("namespace origin must not force conflicts")
 	}
 	return nil
 }

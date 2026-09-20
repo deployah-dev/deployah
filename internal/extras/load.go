@@ -20,14 +20,12 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"maps"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"deployah.dev/deployah/internal/spec"
 
@@ -35,16 +33,16 @@ import (
 	yamlutil "k8s.io/apimachinery/pkg/util/yaml"
 )
 
-// crdAPIVersion is the only CustomResourceDefinition apiVersion Deployah
-// accepts. apiextensions.k8s.io/v1beta1 was removed in Kubernetes 1.22.
-const crdAPIVersion = "apiextensions.k8s.io/v1"
-
 // Bundle holds the deploy-ready extras for one environment.
 type Bundle struct {
 	// Manifests are objects from .deployah/manifests/ for the selected environment.
 	Manifests []Object
-	// CRDs are CustomResourceDefinition objects from .deployah/crds/.
-	CRDs []Object
+	// CRDs are one entry per source file under .deployah/crds/. Bytes are
+	// the exact file contents Helm copies into the chart.
+	CRDs []RawFile
+	// CRDDocs is presentation identity for every non-empty CRD document.
+	// Load parses only kind and metadata.name.
+	CRDDocs []CRDDoc
 }
 
 // LoadConfig configures [Load].
@@ -62,14 +60,17 @@ type LoadConfig struct {
 	// Scope resolves namespaced vs cluster-scoped. Required.
 	Scope ScopeResolver
 	// Offline is true when cluster discovery is unavailable (plan --offline
-	// or missing rest config). Unknown types are then allowed; scope defaults
-	// to namespaced unless an in-repo CRD declares otherwise.
+	// or missing rest config). Unknown types are then allowed; scope
+	// defaults to namespaced.
 	Offline bool
 }
 
-// Load reads .deployah/manifests and .deployah/crds under SpecDir, validates
-// them, merges Deployah identity metadata, and returns a deploy-ready Bundle.
-// Missing directories yield an empty Bundle with a nil error.
+// Load reads .deployah/manifests and .deployah/crds under SpecDir and
+// returns a deploy-ready Bundle. It validates extra manifests and merges
+// Deployah identity metadata into them. Chart CRD files are kept as
+// exact bytes for Helm. Each CRD YAML document is parsed only for
+// presentation identity (kind and metadata.name). Missing directories
+// yield an empty Bundle with a nil error.
 func Load(cfg LoadConfig) (*Bundle, error) {
 	if cfg.Scope == nil {
 		return nil, errors.New("extras: ScopeResolver is required")
@@ -110,36 +111,31 @@ func Load(cfg LoadConfig) (*Bundle, error) {
 		manifests = append(manifests, objs...)
 	}
 
-	var crds []Object
+	var crds []RawFile
+	var crdDocs []CRDDoc
 	for _, path := range crdFiles {
-		objs, loadErr := loadFile(path, false)
-		if loadErr != nil {
-			return nil, loadErr
+		raw, readErr := os.ReadFile(path) // #nosec G304 -- path from extras dir listing under SpecDir
+		if readErr != nil {
+			return nil, fmt.Errorf("read %s: %w", path, readErr)
 		}
-		for i := range objs {
-			if objs[i].Obj.GetKind() != "CustomResourceDefinition" {
-				return nil, fmt.Errorf("%s: only CustomResourceDefinition objects are allowed under .deployah/crds/ (found %s)", objs[i].Path, objs[i].Obj.GetKind())
-			}
-			if av := objs[i].Obj.GetAPIVersion(); av != crdAPIVersion {
-				return nil, fmt.Errorf("%s: CustomResourceDefinition must use apiVersion %s (found %s)", objs[i].Path, crdAPIVersion, av)
-			}
-			crds = append(crds, objs[i])
+		docs, parseErr := parseCRDDocuments(path, raw)
+		if parseErr != nil {
+			return nil, parseErr
 		}
+		crds = append(crds, RawFile{Path: path, Raw: raw})
+		crdDocs = append(crdDocs, docs...)
 	}
-
-	crdScope := scopeFromCRDObjects(crds)
-	scope := withCRDScope(cfg.Scope, crdScope)
 
 	for i := range manifests {
 		gvk := manifests[i].GVK()
-		known, knownErr := scope.Known(gvk)
+		known, knownErr := cfg.Scope.Known(gvk)
 		if knownErr != nil {
 			return nil, fmt.Errorf("%s: resolve type: %w", manifests[i].Path, knownErr)
 		}
 		if !known && !cfg.Offline {
-			return nil, fmt.Errorf("%s: unknown type %s; add its CRD under .deployah/crds/ or install it on the cluster first", manifests[i].Path, gvk.String())
+			return nil, fmt.Errorf("%s: unknown type %s; install that API on the cluster first", manifests[i].Path, gvk.String())
 		}
-		namespaced, scopeErr := scope.Namespaced(gvk)
+		namespaced, scopeErr := cfg.Scope.Namespaced(gvk)
 		if scopeErr != nil {
 			return nil, fmt.Errorf("%s: resolve scope: %w", manifests[i].Path, scopeErr)
 		}
@@ -147,20 +143,12 @@ func Load(cfg LoadConfig) (*Bundle, error) {
 			return nil, mergeErr
 		}
 	}
-	for i := range crds {
-		if mergeErr := mergeIdentity(&crds[i], cfg.Project, "", "", "", spec.SourceCRDs, "", false); mergeErr != nil {
-			return nil, mergeErr
-		}
-	}
 
 	if dupErr := checkDuplicateIdentities(manifests); dupErr != nil {
 		return nil, dupErr
 	}
-	if dupErr := checkDuplicateIdentities(crds); dupErr != nil {
-		return nil, dupErr
-	}
 
-	return &Bundle{Manifests: manifests, CRDs: crds}, nil
+	return &Bundle{Manifests: manifests, CRDs: crds, CRDDocs: crdDocs}, nil
 }
 
 func checkDuplicateIdentities(objs []Object) error {
@@ -173,48 +161,6 @@ func checkDuplicateIdentities(objs []Object) error {
 		seen[id.Key()] = objs[i].Path
 	}
 	return nil
-}
-
-// withCRDScope returns a resolver that prefers CRD-derived scopes.
-func withCRDScope(base ScopeResolver, crdScope map[string]bool) ScopeResolver {
-	if len(crdScope) == 0 {
-		return base
-	}
-	switch r := base.(type) {
-	case *TableResolver:
-		merged := make(map[string]bool, len(r.CRDScope)+len(crdScope))
-		maps.Copy(merged, r.CRDScope)
-		maps.Copy(merged, crdScope)
-		return &TableResolver{CRDScope: merged}
-	case *DiscoveryResolver:
-		merged := make(map[string]bool, len(r.Table.CRDScope)+len(crdScope))
-		maps.Copy(merged, r.Table.CRDScope)
-		maps.Copy(merged, crdScope)
-		return &DiscoveryResolver{Mapper: r.Mapper, Table: TableResolver{CRDScope: merged}}
-	default:
-		return &chainedScope{crd: &TableResolver{CRDScope: crdScope}, next: base}
-	}
-}
-
-type chainedScope struct {
-	crd  *TableResolver
-	next ScopeResolver
-}
-
-func (c *chainedScope) Known(gvk schema.GroupVersionKind) (bool, error) {
-	if known, err := c.crd.Known(gvk); err != nil || known {
-		return known, err
-	}
-	return c.next.Known(gvk)
-}
-
-func (c *chainedScope) Namespaced(gvk schema.GroupVersionKind) (bool, error) {
-	if c.crd.CRDScope != nil {
-		if ns, ok := c.crd.CRDScope[crdScopeKey(gvk.Group, gvk.Kind)]; ok {
-			return ns, nil
-		}
-	}
-	return c.next.Namespaced(gvk)
 }
 
 func listManifestFiles(root string, declaredEnvs []string, envKey string) ([]string, error) {

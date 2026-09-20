@@ -26,9 +26,10 @@ import (
 // LoadFromSpec loads extras for a deploy/plan of the given spec.
 // specPath is the path to deployah.yaml. When cfg is non-nil, live discovery
 // is used for scope resolution; otherwise Offline is set so unknown types are
-// not rejected (scope still comes from the built-in table and in-repo CRDs).
+// not rejected. Scope comes from the built-in table and live discovery, not
+// from .deployah/crds/ content.
 func LoadFromSpec(specPath string, spc *spec.Spec, platform *spec.PlatformConfig, environment, releaseNamespace string, cfg *rest.Config) (*Bundle, error) {
-	scope, err := NewDiscoveryResolver(cfg, nil)
+	scope, err := NewDiscoveryResolver(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -50,4 +51,14 @@ func (b *Bundle) PostRendererFor() postrenderer.PostRenderer {
 		return nil
 	}
 	return &PostRenderer{Manifests: b.Manifests}
+}
+
+// CRDDisplayPath returns the stable .deployah/crds/<basename> path shown
+// in plan output for a CRD source file.
+func CRDDisplayPath(path string) string {
+	name := filepath.Base(path)
+	if name == "" || name == "." || name == "/" {
+		name = path
+	}
+	return filepath.ToSlash(filepath.Join(spec.DeployahConfigDir, spec.CRDsDir, name))
 }

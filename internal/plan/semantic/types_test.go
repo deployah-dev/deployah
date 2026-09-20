@@ -42,7 +42,6 @@ func TestEnumString(t *testing.T) {
 		{name: "upgrade", got: semantic.HelmUpgrade.String(), want: "upgrade"},
 		{name: "unknown helm action", got: semantic.HelmAction(0).String(), want: "HelmAction(0)"},
 		{name: "helm", got: semantic.OriginHelm.String(), want: "helm"},
-		{name: "crd", got: semantic.OriginCRD.String(), want: "crd"},
 		{name: "namespace", got: semantic.OriginNamespace.String(), want: "namespace"},
 		{name: "unknown origin", got: semantic.OriginKind(0).String(), want: "OriginKind(0)"},
 		{name: "create write", got: semantic.WriteCreate.String(), want: "create"},

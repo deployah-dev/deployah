@@ -53,11 +53,11 @@ If that YAML includes `metadata.namespace`, Deployah does not rewrite
 the field. Later Kubernetes rejection is a runtime concern unless a
 Deployah invariant was violated.
 
-Content placed in the CRD-specific Deployah location must actually be
-a CRD. Semantic planning does not prove that Kubernetes will accept
-the CRD schema or spec. It does not run OpenAPI feasibility checks,
-write dry-runs, or admission prediction for CRDs. Declared CRD intent
-and Helm constructibility are ADR-0008 and ADR-0013.
+`.deployah/crds/` is a Helm-chart file boundary. Deployah parses each
+document only for presentation identity (`kind` and `metadata.name`).
+It does not inspect CRD spec semantics, infer scope, or treat those
+files as Kubernetes objects it owns. Raw bytes are preserved for Helm.
+Kubernetes acceptance belongs to Helm and Kubernetes.
 
 If the planner needs discovery, REST mapping, or a Live GET to
 determine current state and the read fails, planning fails. That is

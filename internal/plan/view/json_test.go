@@ -54,6 +54,7 @@ func TestWriteJSON_SchemaAndTasks(t *testing.T) {
 		"helmAction": "none",
 		"changes": [],
 		"tasks": [],
+		"chartCRDs": [],
 		"diagnostics": [],
 		"summary": {
 			"create": 0,
@@ -134,12 +135,63 @@ func TestWriteJSON_TasksContract(t *testing.T) {
 			}],
 			"resources": []
 		}],
+		"chartCRDs": [],
 		"diagnostics": [],
 		"summary": {"create": 0, "update": 0, "delete": 0, "replace": 0, "total": 0},
 		"completeness": "complete"
 	}`, buf.String())
 	validatePlanSchema(t, buf.Bytes())
 	assertNoJSONKeysFromBytes(t, buf.Bytes())
+}
+
+func TestWriteJSON_ChartCRDs(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		header      semantic.Header
+		action      semantic.HelmAction
+		lifecycle   semantic.ChartCRDLifecycle
+		willProcess bool
+	}{
+		{name: "fresh install", header: semantic.Header{Project: "web", FreshInstall: true}, action: semantic.HelmInstall, lifecycle: semantic.ChartCRDProcess, willProcess: true},
+		{name: "fresh skip", header: semantic.Header{Project: "web", FreshInstall: true}, action: semantic.HelmInstall, lifecycle: semantic.ChartCRDSkip},
+		{name: "upgrade", header: semantic.Header{Project: "web"}, action: semantic.HelmUpgrade, lifecycle: semantic.ChartCRDUpgrade},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p := mustPlanWithHeader(t, tc.header, tc.action, nil, nil, nil)
+			var err error
+			p, err = semantic.AttachChartCRDs(p, []semantic.ChartCRD{{
+				Source:      ".deployah/crds/widgets.yaml",
+				Kind:        "CustomResourceDefinition",
+				Name:        "widgets.example.com",
+				Lifecycle:   tc.lifecycle,
+				WillProcess: tc.willProcess,
+			}})
+			require.NoError(t, err)
+			var buf bytes.Buffer
+			require.NoError(t, view.WriteJSON(&buf, p, view.Options{}))
+			var doc map[string]any
+			require.NoError(t, json.Unmarshal(buf.Bytes(), &doc))
+			assert.Equal(t, view.SchemaV1ID, doc["schema"])
+			crds := jsonObjects(t, doc["chartCRDs"])
+			require.Len(t, crds, 1)
+			entry := crds[0]
+			assert.Equal(t, "CustomResourceDefinition", entry["kind"])
+			assert.Equal(t, "widgets.example.com", entry["name"])
+			assert.Equal(t, ".deployah/crds/widgets.yaml", entry["source"])
+			assert.Equal(t, tc.lifecycle.String(), entry["lifecycle"])
+			assert.Equal(t, tc.willProcess, entry["willProcess"])
+			assert.Equal(t, float64(0), entry["index"])
+			for _, banned := range []string{"action", "origin", "before", "after", "apply", "fields", "namespace", "apiVersion"} {
+				assert.NotContains(t, entry, banned)
+			}
+			assert.NotContains(t, buf.String(), "Helm install will process")
+			validatePlanSchema(t, buf.Bytes())
+			assertNoJSONKeysFromBytes(t, buf.Bytes())
+		})
+	}
 }
 
 func TestWriteJSON_Deterministic(t *testing.T) {
@@ -361,43 +413,6 @@ func TestWriteJSON_MatchesSchemaForRepresentativePlans(t *testing.T) {
 			After:    snap(cm("app", "v1")),
 			Apply:    writeCreate(),
 		}}, nil)},
-		{name: "origin crd", plan: mustPlan(t, semantic.HelmNone, []semantic.ResourceChange{{
-			Resource: semantic.ResourceRef{
-				APIVersion: "apiextensions.k8s.io/v1",
-				Kind:       "CustomResourceDefinition",
-				Name:       "widgets.example.com",
-			},
-			Origin: semantic.ResourceOrigin{Kind: semantic.OriginCRD},
-			Action: semantic.Create,
-			After: snap(map[string]any{
-				"apiVersion": "apiextensions.k8s.io/v1",
-				"kind":       "CustomResourceDefinition",
-				"metadata":   map[string]any{"name": "widgets.example.com"},
-			}),
-			Apply: writeCreate(),
-		}}, nil)},
-		{name: "origin crd replace", plan: mustPlan(t, semantic.HelmNone, []semantic.ResourceChange{{
-			Resource: semantic.ResourceRef{
-				APIVersion: "apiextensions.k8s.io/v1",
-				Kind:       "CustomResourceDefinition",
-				Name:       "widgets.example.com",
-			},
-			Origin: semantic.ResourceOrigin{Kind: semantic.OriginCRD},
-			Action: semantic.Update,
-			Before: snap(map[string]any{
-				"apiVersion": "apiextensions.k8s.io/v1",
-				"kind":       "CustomResourceDefinition",
-				"metadata":   map[string]any{"name": "widgets.example.com"},
-				"spec":       map[string]any{"group": "example.com"},
-			}),
-			After: snap(map[string]any{
-				"apiVersion": "apiextensions.k8s.io/v1",
-				"kind":       "CustomResourceDefinition",
-				"metadata":   map[string]any{"name": "widgets.example.com"},
-				"spec":       map[string]any{"group": "example.com", "scope": "Namespaced"},
-			}),
-			Apply: writeForceApply(),
-		}}, nil)},
 		{name: "origin namespace", plan: mustPlanWithHeader(t, semantic.Header{
 			Project:      "web",
 			Environment:  "prod",
@@ -515,6 +530,9 @@ func assertNoJSONKeysFromBytes(t *testing.T, raw []byte) {
 	}
 	for _, item := range jsonObjects(t, doc["tasks"]) {
 		assertNoJSONTaskKeys(t, item)
+	}
+	for _, item := range jsonObjects(t, doc["chartCRDs"]) {
+		assertNoJSONKeys(t, item)
 	}
 	for _, item := range jsonObjects(t, doc["diagnostics"]) {
 		assertNoJSONDiagKeys(t, item)

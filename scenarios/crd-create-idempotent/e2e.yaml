@@ -2,8 +2,7 @@
 env: dev
 parallel: false
 steps:
-  - deploy:
-      args: [--crds, create]
+  - deploy: {}
     resources:
       - match:
           apiVersion: apiextensions.k8s.io/v1
@@ -14,6 +13,22 @@ steps:
             conditions:
               - type: Established
                 status: "True"
-  - deploy:
-      args: [--crds, create]
-    stderrContains: already present
+      - match:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: crd-create-idempotent-dev-web
+          status:
+            readyReplicas: 1
+  - deploy: {}
+    stderrContains: No changes
+    resources:
+      - match:
+          apiVersion: apiextensions.k8s.io/v1
+          kind: CustomResourceDefinition
+          metadata:
+            name: idempotentwidgets.example.com
+          status:
+            conditions:
+              - type: Established
+                status: "True"

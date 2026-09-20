@@ -21,7 +21,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/api/meta"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"deployah.dev/deployah/internal/extras"
@@ -76,70 +75,9 @@ func TestTableResolver_OperatorAllowlistUsesRealGroups(t *testing.T) {
 	assert.True(t, known)
 }
 
-// TestGroupVersionsFromCRDs extracts group/version pairs from CRD YAML.
-func TestGroupVersionsFromCRDs(t *testing.T) {
+func TestLoad_CRDContentDoesNotAffectManifestScope(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, ".deployah", "crds", "cert.yaml"), `
-apiVersion: apiextensions.k8s.io/v1
-kind: CustomResourceDefinition
-metadata:
-  name: certificates.cert-manager.io
-spec:
-  group: cert-manager.io
-  scope: Namespaced
-  names:
-    kind: Certificate
-    plural: certificates
-  versions:
-    - name: v1
-      served: true
-      storage: true
-      schema:
-        openAPIV3Schema:
-          type: object
-`)
-	bundle, err := extras.Load(extras.LoadConfig{
-		SpecDir:          dir,
-		Project:          "demo",
-		Environment:      "prod",
-		DeclaredEnvs:     []string{"prod"},
-		ReleaseNamespace: "default",
-		Scope:            &extras.TableResolver{},
-	})
-	require.NoError(t, err)
-	gvs := extras.GroupVersionsFromCRDs(bundle.CRDs)
-	_, ok := gvs["cert-manager.io/v1"]
-	assert.True(t, ok)
-}
-
-// TestTableResolver_KnownFromCRDScope exercises extras package behavior.
-func TestTableResolver_KnownFromCRDScope(t *testing.T) {
-	t.Parallel()
-	r := &extras.TableResolver{CRDScope: map[string]bool{
-		"example.com/widget": true,
-	}}
-	known, err := r.Known(schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "Widget"})
-	require.NoError(t, err)
-	assert.True(t, known)
-}
-
-// TestTableResolver_CRDScopeOverridesDefault exercises extras package behavior.
-func TestTableResolver_CRDScopeOverridesDefault(t *testing.T) {
-	t.Parallel()
-	r := &extras.TableResolver{CRDScope: map[string]bool{
-		"example.com/clusterwidget": false,
-	}}
-	ns, err := r.Namespaced(schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "ClusterWidget"})
-	require.NoError(t, err)
-	assert.False(t, ns)
-}
-
-// TestLoad_UsesCRDScopeForCustomResources exercises extras package behavior.
-func TestLoad_UsesCRDScopeForCustomResources(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, ".deployah", "crds", "widget.yaml"), `
+	clusterCRD := `
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
@@ -150,21 +88,16 @@ spec:
   names:
     kind: ClusterWidget
     plural: clusterwidgets
-  versions:
-    - name: v1
-      served: true
-      storage: true
-      schema:
-        openAPIV3Schema:
-          type: object
-`)
+`
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".deployah", "crds", "widget.yaml"), clusterCRD)
 	writeFile(t, filepath.Join(dir, ".deployah", "manifests", "cw.yaml"), `
 apiVersion: example.com/v1
 kind: ClusterWidget
 metadata:
   name: one
 `)
-	bundle, err := extras.Load(extras.LoadConfig{
+	_, err := extras.Load(extras.LoadConfig{
 		SpecDir:          dir,
 		Project:          "demo",
 		Environment:      "prod",
@@ -172,19 +105,40 @@ metadata:
 		ReleaseNamespace: "apps",
 		Scope:            &extras.TableResolver{},
 	})
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "unknown type")
+
+	bundle, err := extras.Load(extras.LoadConfig{
+		SpecDir:          dir,
+		Project:          "demo",
+		Environment:      "prod",
+		DeclaredEnvs:     []string{"prod"},
+		ReleaseNamespace: "apps",
+		Scope:            &extras.TableResolver{},
+		Offline:          true,
+	})
 	require.NoError(t, err)
+	require.Len(t, bundle.CRDs, 1)
+	assert.Equal(t, clusterCRD, string(bundle.CRDs[0].Raw))
+	require.Len(t, bundle.CRDDocs, 1)
+	assert.Equal(t, "CustomResourceDefinition", bundle.CRDDocs[0].Kind)
+	assert.Equal(t, "clusterwidgets.example.com", bundle.CRDDocs[0].Name)
 	require.Len(t, bundle.Manifests, 1)
-	assert.Empty(t, bundle.Manifests[0].Obj.GetNamespace())
+	assert.Equal(t, "apps", bundle.Manifests[0].Obj.GetNamespace())
 }
 
 // TestNewDiscoveryResolver_NilConfig returns a table-only resolver.
 func TestNewDiscoveryResolver_NilConfig(t *testing.T) {
 	t.Parallel()
-	scope, err := extras.NewDiscoveryResolver(nil, map[string]bool{"example.com/widget": true})
+	scope, err := extras.NewDiscoveryResolver(nil)
 	require.NoError(t, err)
-	known, err := scope.Known(schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "Widget"})
+	known, err := scope.Known(schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"})
 	require.NoError(t, err)
 	assert.True(t, known)
+
+	known, err = scope.Known(schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "Widget"})
+	require.NoError(t, err)
+	assert.False(t, known)
 }
 
 // TestDiscoveryResolver_MapperHitAndFallback covers mapper hits and table
@@ -197,7 +151,7 @@ func TestDiscoveryResolver_MapperHitAndFallback(t *testing.T) {
 
 	r := &extras.DiscoveryResolver{
 		Mapper: mapper,
-		Table:  extras.TableResolver{CRDScope: map[string]bool{"other.io/thing": true}},
+		Table:  extras.TableResolver{},
 	}
 
 	known, err := r.Known(schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "Widget"})
@@ -212,37 +166,11 @@ func TestDiscoveryResolver_MapperHitAndFallback(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, ns)
 
+	known, err = r.Known(schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"})
+	require.NoError(t, err)
+	assert.True(t, known)
+
 	known, err = r.Known(schema.GroupVersionKind{Group: "other.io", Version: "v1", Kind: "Thing"})
 	require.NoError(t, err)
-	assert.True(t, known, "unknown to mapper still known via table CRDScope")
-}
-
-// TestGroupVersionsFromCRDs_MalformedSkipped ignores incomplete CRD objects.
-func TestGroupVersionsFromCRDs_MalformedSkipped(t *testing.T) {
-	t.Parallel()
-	crds := []extras.Object{
-		{Obj: &unstructured.Unstructured{Object: map[string]any{
-			"spec": map[string]any{"group": "example.com"},
-		}}},
-		{Obj: &unstructured.Unstructured{Object: map[string]any{
-			"spec": map[string]any{
-				"group":    "example.com",
-				"versions": []any{"v1", map[string]any{"name": ""}},
-			},
-		}}},
-		{Obj: &unstructured.Unstructured{Object: map[string]any{
-			"spec": map[string]any{
-				"group": "ok.io",
-				"versions": []any{
-					map[string]any{"name": "v1"},
-					map[string]any{"name": "v2beta1"},
-				},
-			},
-		}}},
-	}
-	gvs := extras.GroupVersionsFromCRDs(crds)
-	assert.Equal(t, map[string]struct{}{
-		"ok.io/v1":      {},
-		"ok.io/v2beta1": {},
-	}, gvs)
+	assert.False(t, known)
 }

@@ -1,5 +1,6 @@
-apiVersion: example.com/v1
-kind: ClusterWidget
+apiVersion: v1
+kind: ConfigMap
 metadata:
   name: shared-widget
-spec: {}
+data:
+  note: extra-manifest-independent-of-crd

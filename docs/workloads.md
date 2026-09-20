@@ -296,9 +296,9 @@ components:
 
 Deployah can emit Prometheus Operator scrape configs when a component
 enables `metrics`. Services produce a `ServiceMonitor`; workers produce a
-`PodMonitor`. Your cluster must have the Prometheus Operator CRDs
-(`monitoring.coreos.com/v1`). `deployah plan` and `deployah deploy` check
-for that API group when metrics are enabled.
+`PodMonitor`. Those resources are part of Desired intent whenever metrics
+are enabled. The Prometheus Operator API (`monitoring.coreos.com/v1`)
+must be available when Kubernetes processes them.
 
 Shape:
 

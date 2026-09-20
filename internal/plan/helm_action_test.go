@@ -30,15 +30,6 @@ import (
 func TestDeriveHelmAction(t *testing.T) {
 	t.Parallel()
 	helmChange := labeledCreate("app", "app")
-	crdChange := semantic.ResourceChange{
-		Resource: semantic.ResourceRef{
-			APIVersion: "apiextensions.k8s.io/v1",
-			Kind:       "CustomResourceDefinition",
-			Name:       "widgets.example.com",
-		},
-		Origin: semantic.ResourceOrigin{Kind: semantic.OriginCRD},
-		Action: semantic.Create,
-	}
 	nsChange := semantic.ResourceChange{
 		Resource: semantic.ResourceRef{APIVersion: "v1", Kind: "Namespace", Name: "prod"},
 		Origin:   semantic.ResourceOrigin{Kind: semantic.OriginNamespace},
@@ -56,12 +47,11 @@ func TestDeriveHelmAction(t *testing.T) {
 		want    semantic.HelmAction
 	}{
 		{name: "install", op: helm.OperationInstall, want: semantic.HelmInstall},
-		{name: "install ignores changes", op: helm.OperationInstall, changes: []semantic.ResourceChange{crdChange}, want: semantic.HelmInstall},
+		{name: "install ignores changes", op: helm.OperationInstall, changes: []semantic.ResourceChange{nsChange}, want: semantic.HelmInstall},
 		{name: "upgrade with helm change", op: helm.OperationUpgrade, changes: []semantic.ResourceChange{helmChange}, want: semantic.HelmUpgrade},
 		{name: "upgrade with hook create", op: helm.OperationUpgrade, tasks: []semantic.TaskPlan{hookCreate}, want: semantic.HelmUpgrade},
 		{name: "upgrade with hook delete", op: helm.OperationUpgrade, tasks: []semantic.TaskPlan{hookDelete}, want: semantic.HelmUpgrade},
-		{name: "crd change does not upgrade", op: helm.OperationUpgrade, changes: []semantic.ResourceChange{crdChange}, tasks: []semantic.TaskPlan{unchanged}, want: semantic.HelmNone},
-		{name: "crd plus helm upgrades", op: helm.OperationUpgrade, changes: []semantic.ResourceChange{crdChange, helmChange}, want: semantic.HelmUpgrade},
+		{name: "namespace plus helm upgrades", op: helm.OperationUpgrade, changes: []semantic.ResourceChange{nsChange, helmChange}, want: semantic.HelmUpgrade},
 		{name: "namespace change does not upgrade", op: helm.OperationUpgrade, changes: []semantic.ResourceChange{nsChange}, want: semantic.HelmNone},
 		{name: "schedule change does not upgrade", op: helm.OperationUpgrade, tasks: []semantic.TaskPlan{schedule}, want: semantic.HelmNone},
 		{name: "unchanged hooks none", op: helm.OperationUpgrade, tasks: []semantic.TaskPlan{unchanged}, want: semantic.HelmNone},
@@ -74,24 +64,13 @@ func TestDeriveHelmAction(t *testing.T) {
 	}
 }
 
-func TestApplyHelmWillRun_OriginCRDUnchangedHook(t *testing.T) {
+func TestApplyHelmWillRun_UnchangedHook(t *testing.T) {
 	t.Parallel()
 	unchanged := []semantic.TaskPlan{{
 		Name:   "seed",
 		Phase:  semantic.TaskPreDeploy,
 		Action: semantic.TaskUnchanged,
 	}}
-	crd := []semantic.ResourceChange{{
-		Resource: semantic.ResourceRef{
-			APIVersion: "apiextensions.k8s.io/v1",
-			Kind:       "CustomResourceDefinition",
-			Name:       "widgets.example.com",
-		},
-		Origin: semantic.ResourceOrigin{Kind: semantic.OriginCRD},
-		Action: semantic.Create,
-	}}
-
-	assert.Equal(t, semantic.HelmNone, deriveHelmAction(helm.OperationUpgrade, crd, unchanged))
 
 	tests := []struct {
 		name    string

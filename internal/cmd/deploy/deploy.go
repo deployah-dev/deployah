@@ -32,11 +32,8 @@ type Options struct {
 	ResizeVolumes       bool   `nabat:"resize-volumes"`
 	Yes                 bool   `nabat:"yes"`
 	Reapply             bool   `nabat:"reapply"`
-	CRDs                string `nabat:"crds"`
+	SkipCRDs            bool   `nabat:"skip-crds"`
 }
-
-// crdPolicies are the allowed values for --crds (same order as help text).
-var crdPolicies = []string{string(extras.PolicyCreate), string(extras.PolicyCreateReplace)}
 
 // Register adds the deploy command to app.
 func Register(app *nabat.App) {
@@ -49,7 +46,7 @@ func Register(app *nabat.App) {
 		nabat.WithFlag("resize-volumes", false, nabat.WithUsage("Allow persistence.size increases by expanding PVCs; StatefulSet controllers are orphan-deleted when needed so volumeClaimTemplates can be rewritten")),
 		nabat.WithFlag("yes", false, nabat.WithShort('y'), nabat.WithUsage("Apply without an interactive confirmation prompt")),
 		nabat.WithFlag("reapply", false, nabat.WithUsage("Upgrade the release even when the plan shows no changes")),
-		nabat.WithSelectFlag("crds", string(extras.PolicyCreate), crdPolicies, nabat.WithUsage("CRD install policy: create (install if missing) or create-replace")),
+		nabat.WithFlag("skip-crds", false, nabat.WithUsage("Skip installing CustomResourceDefinitions from the chart on a fresh Helm install")),
 		nabat.WithExample(`
 # Deploy to production using the default spec path (./deployah.yaml)
 deployah deploy prod
@@ -60,8 +57,8 @@ deployah deploy staging -s ./path/to/deployah.yaml
 # Deploy without an interactive confirmation prompt (e.g. in CI)
 deployah deploy prod --yes
 
-# Replace existing CRDs from .deployah/crds/ when deploying
-deployah deploy prod --crds create-replace
+# Skip chart CRDs on a first install
+deployah deploy prod --skip-crds
 
 # Show resolution report before deploying
 deployah deploy prod --explain
@@ -191,15 +188,12 @@ func runDeploy(c *nabat.Context) error {
 	}
 	postRenderer := bundle.PostRendererFor()
 
-	plan, err := computePlan(c, helmClient, cluster, resolvedSpec, postRenderer)
+	plan, err := computePlan(c, helmClient, cluster, resolvedSpec, postRenderer, bundle.CRDs)
 	if err != nil {
 		return err
 	}
 	defer plan.cleanup()
-
-	if n := len(bundle.CRDs); n > 0 {
-		c.Printf("CRDs: %d from .deployah/crds/ (policy %s)\n", n, opts.CRDs)
-	}
+	planengine.StampChartCRDs(plan.diff, bundle.CRDDocs, plan.result.IsUpgrade, opts.SkipCRDs)
 
 	textOpts := planengine.TextOptions{Mode: planengine.ModeCompact, Theme: c.Theme()}
 	if renderErr := planengine.RenderText(c.IO().Out, plan.diff, textOpts); renderErr != nil {
@@ -228,22 +222,12 @@ func runDeploy(c *nabat.Context) error {
 		return resizeFlagErr
 	}
 
-	helmIdle := !plan.diff.HasChanges() && !opts.Reapply
-	if skipWhenIdle(helmIdle, len(bundle.CRDs)) {
+	helmIdle := skipHelmApply(plan.result.IsUpgrade, plan.diff.HasChanges(), opts.Reapply)
+	if helmIdle {
 		return skipDeploy(c, k8sClient, k8sErr, plan)
 	}
 
-	// Required-API check runs before confirmation: a missing CRD/API is a
-	// precondition failure the user shouldn't have to confirm past first.
-	// Skip when Helm is idle and only CRDs will apply (CRDs are the APIs).
-	// Also skip group/versions that .deployah/crds/ will install in this deploy.
-	if !helmIdle && k8sErr == nil {
-		reqs := filterCoveredAPIs(k8s.RequiredAPIs(manifest, opts.Environment, resolvedSpec), extras.GroupVersionsFromCRDs(bundle.CRDs))
-		if len(reqs) > 0 {
-			if capErr := k8s.CheckAPIRequirements(k8sClient, reqs); capErr != nil {
-				return capErr
-			}
-		}
+	if k8sErr == nil {
 		if hasStatefulWithPersistence(manifest, opts.Environment) {
 			if verErr := k8s.CheckMinimumVersion(
 				k8sClient,
@@ -256,12 +240,7 @@ func runDeploy(c *nabat.Context) error {
 		}
 	}
 
-	prompt := "Apply these changes?"
-	if helmIdle {
-		n := len(bundle.CRDs)
-		prompt = fmt.Sprintf("Helm release is unchanged. Apply %d %s?", n, crdNoun(n))
-	}
-	proceed, confirmErr := confirmApply(c, opts, prompt)
+	proceed, confirmErr := confirmApply(c, opts, "Apply these changes?")
 	if confirmErr != nil {
 		return confirmErr
 	}
@@ -270,16 +249,16 @@ func runDeploy(c *nabat.Context) error {
 		return nil
 	}
 
-	if helmIdle {
-		return applyCRDsOnly(c, sess, cluster, k8sClient, k8sErr, plan, bundle, opts)
-	}
 	return applyDeploy(c, sess, cluster, helmClient, platform, manifest, opts, resolvedSpec, plan, k8sClient, k8sErr, bundle, postRenderer, resizes)
 }
 
-// skipWhenIdle reports whether deploy should exit without cluster writes:
-// Helm plan idle and no CRDs to apply.
-func skipWhenIdle(helmIdle bool, crdCount int) bool {
-	return helmIdle && crdCount == 0
+// skipHelmApply reports whether deploy should exit without invoking Helm:
+// an existing release whose rendered manifests are unchanged, unless
+// --reapply is set. Fresh installs are never skipped, even when the
+// ordinary Manifest is empty. Chart CRD files and --skip-crds do not
+// affect this gate.
+func skipHelmApply(isUpgrade, hasChanges, reapply bool) bool {
+	return isUpgrade && !hasChanges && !reapply
 }
 
 // confirmApply gates the real apply behind --yes or an interactive prompt.
@@ -300,8 +279,8 @@ func confirmApply(c *nabat.Context, opts *Options, prompt string) (proceed bool,
 // computePlan renders the chart client-side and diffs it against the last
 // successful release. It never mutates the cluster or Helm's release history.
 // The caller must invoke deployPlan.cleanup when finished with the result.
-func computePlan(c *nabat.Context, helmClient session.HelmClient, cluster *session.Cluster, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) (*deployPlan, error) {
-	p, result, cleanup, err := planengine.BuildPlan(c, helmClient, cluster.Context(), resolved, postRenderer)
+func computePlan(c *nabat.Context, helmClient session.HelmClient, cluster *session.Cluster, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer, crds []extras.RawFile) (*deployPlan, error) {
+	p, result, cleanup, err := planengine.BuildPlan(c, helmClient, cluster.Context(), resolved, postRenderer, crds)
 	if err != nil {
 		cleanup()
 		return nil, fmt.Errorf("%w%s", err, cmdopts.ClusterHint(err))
@@ -309,45 +288,11 @@ func computePlan(c *nabat.Context, helmClient session.HelmClient, cluster *sessi
 	return &deployPlan{diff: p, result: result, cleanup: cleanup}, nil
 }
 
-// skipDeploy handles a plan with no changes and no CRDs: Helm is never
-// invoked, but pod readiness for the release is still shown for parity with
-// a real deploy.
+// skipDeploy handles an unchanged upgrade: Helm is never invoked, but pod
+// readiness for the release is still shown for parity with a real deploy.
 func skipDeploy(c *nabat.Context, k8sClient kubernetes.Interface, k8sErr error, plan *deployPlan) error {
 	c.Success(fmt.Sprintf("No changes. Release %s unchanged (revision %d).", plan.diff.Header.Release, plan.diff.Header.Revision))
 	return printReadiness(c, k8sClient, k8sErr, plan)
-}
-
-// applyCRDsOnly applies .deployah/crds when the Helm plan is idle. CRDs are
-// outside the Helm release, so a no-op chart must not skip them.
-func applyCRDsOnly(c *nabat.Context, sess *session.Session, cluster *session.Cluster, k8sClient kubernetes.Interface, k8sErr error, plan *deployPlan, bundle *extras.Bundle, opts *Options) error {
-	stats, err := applyBundleCRDs(c, sess, cluster, bundle, opts)
-	if err != nil {
-		return err
-	}
-	c.Success(crdIdleSuccessMessage(stats, plan.diff.Header.Release, plan.diff.Header.Revision))
-	return printReadiness(c, k8sClient, k8sErr, plan)
-}
-
-func crdIdleSuccessMessage(stats extras.CRDStats, release string, revision int) string {
-	suffix := fmt.Sprintf("Release %s unchanged (revision %d).", release, revision)
-	if stats.Created == 0 && stats.Replaced == 0 {
-		return fmt.Sprintf("CRDs ready (%d already present). %s", stats.Ready, suffix)
-	}
-	parts := make([]string, 0, 2)
-	if stats.Created > 0 {
-		parts = append(parts, fmt.Sprintf("%d created", stats.Created))
-	}
-	if stats.Replaced > 0 {
-		parts = append(parts, fmt.Sprintf("%d replaced", stats.Replaced))
-	}
-	return fmt.Sprintf("Applied %d %s (%s). %s", stats.Ready, crdNoun(stats.Ready), strings.Join(parts, ", "), suffix)
-}
-
-func crdNoun(n int) string {
-	if n == 1 {
-		return "CRD"
-	}
-	return "CRDs"
 }
 
 func printReadiness(c *nabat.Context, k8sClient kubernetes.Interface, k8sErr error, plan *deployPlan) error {
@@ -366,28 +311,11 @@ func printReadiness(c *nabat.Context, k8sClient kubernetes.Interface, k8sErr err
 	return nil
 }
 
-func applyBundleCRDs(c *nabat.Context, sess *session.Session, cluster *session.Cluster, bundle *extras.Bundle, opts *Options) (extras.CRDStats, error) {
-	var stats extras.CRDStats
-	if len(bundle.CRDs) == 0 {
-		return stats, nil
-	}
-	restCfg, restErr := cluster.RESTConfig()
-	if restErr != nil {
-		return stats, fmt.Errorf("rest config for CRDs: %w%s", restErr, cmdopts.ClusterHint(restErr))
-	}
-	stats, crdErr := extras.ApplyCRDs(c, restCfg, bundle.CRDs, extras.Policy(opts.CRDs), sess.Timeout())
-	if crdErr != nil {
-		return stats, fmt.Errorf("apply CRDs: %w%s", crdErr, cmdopts.ClusterHint(crdErr))
-	}
-	return stats, nil
-}
-
 // applyDeploy re-renders and verifies determinism before the real Helm
-// install/upgrade. CRDs from the bundle are applied first. When resizes is
-// non-empty, PVC expansion (and StatefulSet orphan-delete when needed) run
-// before Helm.
+// install/upgrade. When resizes is non-empty, PVC expansion (and
+// StatefulSet orphan-delete when needed) run before Helm.
 func applyDeploy(c *nabat.Context, sess *session.Session, cluster *session.Cluster, helmClient session.HelmClient, platform *spec.PlatformConfig, manifest *spec.Spec, opts *Options, resolved *spec.ResolvedSpec, plan *deployPlan, k8sClient kubernetes.Interface, k8sErr error, bundle *extras.Bundle, postRenderer postrenderer.PostRenderer, resizes []persistenceResize) error {
-	verify, verifyCleanup, err := helmClient.RenderManifests(c, resolved, postRenderer)
+	verify, verifyCleanup, err := helmClient.RenderManifests(c, resolved, postRenderer, bundle.CRDs)
 	if verifyCleanup != nil {
 		defer verifyCleanup()
 	}
@@ -398,11 +326,6 @@ func applyDeploy(c *nabat.Context, sess *session.Session, cluster *session.Clust
 	// timestamp), so what was shown isn't what would actually be installed.
 	if verify.Manifest != plan.result.Manifest {
 		return errors.New("rendered manifests changed between plan and apply; re-run 'deployah deploy' to see the current plan")
-	}
-
-	crdStats, crdErr := applyBundleCRDs(c, sess, cluster, bundle, opts)
-	if crdErr != nil {
-		return crdErr
 	}
 
 	if len(resizes) > 0 {
@@ -430,7 +353,7 @@ func applyDeploy(c *nabat.Context, sess *session.Session, cluster *session.Clust
 	title := fmt.Sprintf("Deploying to '%s'%s...", opts.Environment, ctxSuffix)
 
 	// k8sClient/k8sErr come from runDeploy's single cluster.Kubernetes()
-	// call; the required-API check already ran there, before confirmation.
+	// call.
 	var watcher *DeployWatcher
 	if k8sErr != nil {
 		// K8s client is best-effort: skip the event watcher rather than
@@ -450,7 +373,7 @@ func applyDeploy(c *nabat.Context, sess *session.Session, cluster *session.Clust
 				watcher.Run(watchCtx, st)
 			})
 		}
-		helmErr := helmClient.InstallApp(c, false, resolved, postRenderer)
+		helmErr := helmClient.InstallApp(c, false, resolved, postRenderer, bundle.CRDs, opts.SkipCRDs)
 		if cancel != nil {
 			cancel()
 		}
@@ -467,25 +390,8 @@ func applyDeploy(c *nabat.Context, sess *session.Session, cluster *session.Clust
 	}
 
 	summary := buildSummaryMsg(watcher)
-	c.Success("Deployed"+summary+crdApplySuffix(crdStats), "project", manifest.Project, "environment", opts.Environment)
+	c.Success("Deployed"+summary, "project", manifest.Project, "environment", opts.Environment)
 	return nil
-}
-
-// crdApplySuffix appends a short CRD count when this deploy created or
-// replaced any CRDs (already-present-only is silent on the Helm path).
-func crdApplySuffix(stats extras.CRDStats) string {
-	if stats.Created == 0 && stats.Replaced == 0 {
-		return ""
-	}
-	parts := make([]string, 0, 2)
-	if stats.Created > 0 {
-		parts = append(parts, fmt.Sprintf("%d created", stats.Created))
-	}
-	if stats.Replaced > 0 {
-		parts = append(parts, fmt.Sprintf("%d replaced", stats.Replaced))
-	}
-	n := stats.Created + stats.Replaced
-	return fmt.Sprintf("; applied %d %s (%s)", n, crdNoun(n), strings.Join(parts, ", "))
 }
 
 // checkHostnameGuard blocks FQDN changes relative to the last successful
@@ -590,29 +496,6 @@ func buildSummaryMsg(w *DeployWatcher) string {
 		return ""
 	}
 	return " (" + summary + ")"
-}
-
-// filterCoveredAPIs drops requirements that will be satisfied by CRDs this
-// deploy installs from .deployah/crds/ (any one matching group/version is
-// enough, matching [k8s.CheckAPIRequirements]).
-func filterCoveredAPIs(reqs []k8s.APIRequirement, covered map[string]struct{}) []k8s.APIRequirement {
-	if len(covered) == 0 || len(reqs) == 0 {
-		return reqs
-	}
-	out := make([]k8s.APIRequirement, 0, len(reqs))
-	for _, req := range reqs {
-		pending := false
-		for _, gv := range req.GroupVersions {
-			if _, ok := covered[gv]; ok {
-				pending = true
-				break
-			}
-		}
-		if !pending {
-			out = append(out, req)
-		}
-	}
-	return out
 }
 
 // warnContextMismatch emits a warning when the --context flag overrides the

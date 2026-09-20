@@ -55,24 +55,6 @@ func helmOrigin() semantic.ResourceOrigin {
 	}
 }
 
-func crdCreate(name string) semantic.ResourceChange {
-	return semantic.ResourceChange{
-		Resource: semantic.ResourceRef{
-			APIVersion: "apiextensions.k8s.io/v1",
-			Kind:       "CustomResourceDefinition",
-			Name:       name,
-		},
-		Origin: semantic.ResourceOrigin{Kind: semantic.OriginCRD},
-		Action: semantic.Create,
-		After: &semantic.ResourceSnapshot{Object: map[string]any{
-			"apiVersion": "apiextensions.k8s.io/v1",
-			"kind":       "CustomResourceDefinition",
-			"metadata":   map[string]any{"name": name},
-		}},
-		Apply: writeCreate(),
-	}
-}
-
 func nsCreate(name string) semantic.ResourceChange {
 	return semantic.ResourceChange{
 		Resource: semantic.ResourceRef{APIVersion: "v1", Kind: "Namespace", Name: name},

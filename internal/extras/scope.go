@@ -29,8 +29,8 @@ import (
 
 // ScopeResolver reports whether a GVK is known and whether it is namespaced.
 type ScopeResolver interface {
-	// Known reports whether gvk is a built-in kind, declared by an in-repo
-	// CRD, or present in live discovery.
+	// Known reports whether gvk is a built-in kind or present in live
+	// discovery.
 	Known(gvk schema.GroupVersionKind) (bool, error)
 	// Namespaced reports whether gvk is namespaced. When Known is false and
 	// discovery is unavailable, callers may still use this; unknown kinds
@@ -136,35 +136,20 @@ var builtInScope = map[string]bool{
 	"monitoring.coreos.com/alertmanagerconfig": true,
 }
 
-// TableResolver resolves scope from a built-in group/kind table and optional
-// CRD-provided scopes. Unknown kinds are not Known; Namespaced defaults
-// them to namespaced when called anyway.
-type TableResolver struct {
-	// CRDScope maps "group/kind" (lowercase) to namespaced, from .deployah/crds.
-	CRDScope map[string]bool
-}
+// TableResolver resolves scope from a built-in group/kind table.
+// Unknown kinds are not Known; Namespaced defaults them to namespaced
+// when called anyway.
+type TableResolver struct{}
 
 // Known implements ScopeResolver.
 func (r *TableResolver) Known(gvk schema.GroupVersionKind) (bool, error) {
-	key := crdScopeKey(gvk.Group, gvk.Kind)
-	if r != nil && r.CRDScope != nil {
-		if _, ok := r.CRDScope[key]; ok {
-			return true, nil
-		}
-	}
-	_, ok := builtInScope[key]
+	_, ok := builtInScope[scopeKey(gvk.Group, gvk.Kind)]
 	return ok, nil
 }
 
 // Namespaced implements ScopeResolver.
 func (r *TableResolver) Namespaced(gvk schema.GroupVersionKind) (bool, error) {
-	key := crdScopeKey(gvk.Group, gvk.Kind)
-	if r != nil && r.CRDScope != nil {
-		if ns, ok := r.CRDScope[key]; ok {
-			return ns, nil
-		}
-	}
-	if ns, ok := builtInScope[key]; ok {
+	if ns, ok := builtInScope[scopeKey(gvk.Group, gvk.Kind)]; ok {
 		return ns, nil
 	}
 	return true, nil
@@ -178,8 +163,8 @@ type DiscoveryResolver struct {
 
 // NewDiscoveryResolver builds a ScopeResolver from a rest.Config. When cfg
 // is nil, it returns a table-only resolver.
-func NewDiscoveryResolver(cfg *rest.Config, crdScope map[string]bool) (ScopeResolver, error) {
-	table := TableResolver{CRDScope: crdScope}
+func NewDiscoveryResolver(cfg *rest.Config) (ScopeResolver, error) {
+	table := TableResolver{}
 	if cfg == nil {
 		return &table, nil
 	}
@@ -212,82 +197,6 @@ func (r *DiscoveryResolver) Namespaced(gvk schema.GroupVersionKind) (bool, error
 	return r.Table.Namespaced(gvk)
 }
 
-func crdScopeKey(group, kind string) string {
+func scopeKey(group, kind string) string {
 	return strings.ToLower(group) + "/" + strings.ToLower(kind)
-}
-
-// scopeFromCRDObjects extracts group/kind -> namespaced from CRD Objects.
-func scopeFromCRDObjects(crds []Object) map[string]bool {
-	out := make(map[string]bool)
-	for i := range crds {
-		group, _ := unstructuredNestedString(crds[i].Obj.Object, "spec", "group")
-		kind, _ := unstructuredNestedString(crds[i].Obj.Object, "spec", "names", "kind")
-		scope, _ := unstructuredNestedString(crds[i].Obj.Object, "spec", "scope")
-		if group == "" || kind == "" {
-			continue
-		}
-		out[crdScopeKey(group, kind)] = !strings.EqualFold(scope, "Cluster")
-	}
-	return out
-}
-
-// GroupVersionsFromCRDs returns the set of "group/version" strings declared by
-// the given CRD objects (every entry under spec.versions). Used to skip
-// required-API checks for APIs this deploy is about to install.
-func GroupVersionsFromCRDs(crds []Object) map[string]struct{} {
-	out := make(map[string]struct{})
-	for i := range crds {
-		group, ok := unstructuredNestedString(crds[i].Obj.Object, "spec", "group")
-		if !ok || group == "" {
-			continue
-		}
-		versions, hasVersions := unstructuredNestedSlice(crds[i].Obj.Object, "spec", "versions")
-		if !hasVersions {
-			continue
-		}
-		for _, v := range versions {
-			vm, isMap := v.(map[string]any)
-			if !isMap {
-				continue
-			}
-			name, isString := vm["name"].(string)
-			if !isString || name == "" {
-				continue
-			}
-			out[group+"/"+name] = struct{}{}
-		}
-	}
-	return out
-}
-
-func unstructuredNestedString(obj map[string]any, fields ...string) (string, bool) {
-	cur := any(obj)
-	for _, f := range fields {
-		m, ok := cur.(map[string]any)
-		if !ok {
-			return "", false
-		}
-		cur, ok = m[f]
-		if !ok {
-			return "", false
-		}
-	}
-	s, ok := cur.(string)
-	return s, ok
-}
-
-func unstructuredNestedSlice(obj map[string]any, fields ...string) ([]any, bool) {
-	cur := any(obj)
-	for _, f := range fields {
-		m, ok := cur.(map[string]any)
-		if !ok {
-			return nil, false
-		}
-		cur, ok = m[f]
-		if !ok {
-			return nil, false
-		}
-	}
-	s, ok := cur.([]any)
-	return s, ok
 }

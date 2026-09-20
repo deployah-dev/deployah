@@ -363,7 +363,7 @@ func renderOfflineScheduled(t *testing.T, manifest *spec.Spec, env string) (*ren
 	require.NoError(t, err)
 	client, err := NewClient(WithNamespace("default"))
 	require.NoError(t, err)
-	return client.RenderOffline(t.Context(), resolved, nil)
+	return client.RenderOffline(t.Context(), resolved, nil, nil)
 }
 
 func mustRenderScheduled(t *testing.T, manifest *spec.Spec, env, releaseName, kubeVersion string) *render.RenderResult {
@@ -385,7 +385,7 @@ func renderScheduled(t *testing.T, manifest *spec.Spec, env, releaseName, kubeVe
 	client, err := NewClient(WithNamespace("default"))
 	require.NoError(t, err)
 
-	ch, _, cleanup, err := client.prepareAndLoadChart(t.Context(), resolved)
+	ch, _, cleanup, err := client.prepareAndLoadChart(t.Context(), resolved, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -402,7 +402,6 @@ func renderScheduled(t *testing.T, manifest *spec.Spec, env, releaseName, kubeVe
 	install.DryRunStrategy = action.DryRunClient
 	install.DisableOpenAPIValidation = true
 	install.Labels = labels
-	install.APIVersions = chartcommon.VersionSet{offlineMonitorAPIVersion}
 	if kubeVersion != "" {
 		kv, parseErr := chartcommon.ParseKubeVersion(kubeVersion)
 		require.NoError(t, parseErr)

@@ -313,7 +313,7 @@ func offlineUpgradeResult(result *render.RenderResult, revision int) *render.Ren
 
 func renderOffline(t *testing.T, client *helm.Client, resolved *spec.ResolvedSpec) *render.RenderResult {
 	t.Helper()
-	result, cleanup, err := client.RenderOffline(t.Context(), resolved, nil)
+	result, cleanup, err := client.RenderOffline(t.Context(), resolved, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, cleanup)
 	t.Cleanup(cleanup)
@@ -379,7 +379,6 @@ func buildSemanticPlan(t *testing.T, client plan.SemanticBuildClient, cluster pr
 	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, plan.SemanticBuildInput{
 		ClusterContext: productClusterContext,
 		Resolved:       resolved,
-		CRDPolicy:      extras.PolicyCreate,
 	})
 	require.NotNil(t, cleanup)
 	t.Cleanup(cleanup)
@@ -396,6 +395,7 @@ func (c *fakeBuildClient) RenderManifestsWithPrep(
 	_ context.Context,
 	_ *spec.ResolvedSpec,
 	_ postrenderer.PostRenderer,
+	_ []extras.RawFile,
 ) (*render.RenderResult, helm.ReleasePrep, func(), error) {
 	return c.result, c.prep, func() {}, nil
 }

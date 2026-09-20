@@ -64,7 +64,7 @@ func TestRenderDeployment_EnvConfigMapAndOverlappingEnv(t *testing.T) {
 
 	client, err := NewClient(WithNamespace("default"))
 	require.NoError(t, err)
-	result, cleanup, err := client.RenderOffline(t.Context(), resolved, nil)
+	result, cleanup, err := client.RenderOffline(t.Context(), resolved, nil, nil)
 	require.NoError(t, err)
 	if cleanup != nil {
 		t.Cleanup(cleanup)
@@ -307,7 +307,7 @@ func TestHelmHook_EnvConfigMapWeightAndDeletePolicy(t *testing.T) {
 
 	client, err := NewClient(WithNamespace("default"))
 	require.NoError(t, err)
-	result, cleanup, err := client.RenderOffline(t.Context(), resolved, nil)
+	result, cleanup, err := client.RenderOffline(t.Context(), resolved, nil, nil)
 	require.NoError(t, err)
 	if cleanup != nil {
 		t.Cleanup(cleanup)
@@ -348,7 +348,7 @@ func TestHelmHook_EnvConfigMapWeightFollowsJob(t *testing.T) {
 
 	client, err := NewClient(WithNamespace("default"))
 	require.NoError(t, err)
-	result, cleanup, err := client.RenderOffline(t.Context(), resolved, nil)
+	result, cleanup, err := client.RenderOffline(t.Context(), resolved, nil, nil)
 	require.NoError(t, err)
 	if cleanup != nil {
 		t.Cleanup(cleanup)
@@ -428,7 +428,7 @@ func renderEnvManifest(t *testing.T, m *spec.Spec, env string) *render.RenderRes
 	resolved := resolveChart(t, m, env)
 	client, err := NewClient(WithNamespace("default"))
 	require.NoError(t, err)
-	result, cleanup, err := client.RenderOffline(t.Context(), resolved, nil)
+	result, cleanup, err := client.RenderOffline(t.Context(), resolved, nil, nil)
 	require.NoError(t, err)
 	if cleanup != nil {
 		t.Cleanup(cleanup)

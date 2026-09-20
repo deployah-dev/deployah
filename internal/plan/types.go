@@ -163,6 +163,44 @@ type Plan struct {
 	// Tasks lists spec tasks active in this environment, grouped by the
 	// renderer into preDeploy, postDeploy, schedule, and manual.
 	Tasks []PlannedTask
+
+	// ChartCRDs are lifecycle entries for documents under .deployah/crds/.
+	// They are not predicted Kubernetes resource mutations.
+	ChartCRDs []ChartCRD
+}
+
+// ChartCRDLifecycle is Helm's install-only handling of one chart CRD
+// document in this invocation.
+type ChartCRDLifecycle string
+
+const (
+	// ChartCRDProcess means a fresh install will ask Helm to process the
+	// chart CRD. It does not claim Kubernetes will create versus apply.
+	ChartCRDProcess ChartCRDLifecycle = "process"
+	// ChartCRDSkip means the CRD is in the chart but --skip-crds disabled
+	// install-time processing.
+	ChartCRDSkip ChartCRDLifecycle = "skip"
+	// ChartCRDUpgrade means the CRD is in the chart and Helm Upgrade will
+	// not process it.
+	ChartCRDUpgrade ChartCRDLifecycle = "upgrade"
+)
+
+// ChartCRD is one chart CRD document for plan presentation. YAML is the
+// original source document; it is not a live-object snapshot.
+type ChartCRD struct {
+	// Source is the display path under .deployah/crds/.
+	Source string
+	// Index is the 0-based position among non-empty YAML documents in that
+	// file. Parse errors use a 1-based YAML document number that also
+	// counts empty documents.
+	Index int
+	Kind  string
+	Name  string
+	// Lifecycle is Helm's handling of this document in this invocation.
+	Lifecycle ChartCRDLifecycle
+	// WillProcess is true only when Lifecycle is [ChartCRDProcess].
+	WillProcess bool
+	YAML        string
 }
 
 const (
@@ -202,10 +240,20 @@ func (p *Plan) FirstInstallTaskNote() string {
 }
 
 // HasChanges reports whether applying this plan would change the cluster:
-// any resource-level change, or a hook-only change.
+// any resource-level change, a hook-only change, or chart CRDs Helm will
+// process on this install.
 func (p *Plan) HasChanges() bool {
 	if p == nil {
 		return false
 	}
-	return len(p.Changes) > 0 || p.HooksChanged
+	return len(p.Changes) > 0 || p.HooksChanged || p.chartCRDsPending()
+}
+
+func (p *Plan) chartCRDsPending() bool {
+	for _, c := range p.ChartCRDs {
+		if c.WillProcess {
+			return true
+		}
+	}
+	return false
 }

@@ -265,7 +265,7 @@ func TestInstallApp_PendingReleaseRejects(t *testing.T) {
 		Namespace: "default",
 	}))
 
-	err = c.InstallApp(t.Context(), false, resolved, nil)
+	err = c.InstallApp(t.Context(), false, resolved, nil, nil, false)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrReleasePending)
 }

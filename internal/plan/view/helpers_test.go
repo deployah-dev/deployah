@@ -55,12 +55,6 @@ func writeApply() semantic.ApplySemantics {
 	}
 }
 
-func writeForceApply() semantic.ApplySemantics {
-	a := writeApply()
-	a.Write.ForceConflicts = true
-	return a
-}
-
 func deleteApply() semantic.ApplySemantics {
 	return semantic.ApplySemantics{
 		Delete: &semantic.DeleteSemantics{Propagation: semantic.PropagationBackground},

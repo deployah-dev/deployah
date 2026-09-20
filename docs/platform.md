@@ -83,7 +83,7 @@ A component's expose block resolves against the active environment's
 |---|---|
 | `selfSigned` | Deployah generates and manages a self-signed certificate. Used by the local cluster. |
 | `secretName` | Use a pre-existing Kubernetes TLS secret in the target namespace. Set `secretName` to its name. |
-| `certManager` | Provision the certificate through [cert-manager](https://cert-manager.io/). Set `issuer` to a `ClusterIssuer` or `Issuer` name. |
+| `certManager` | Configure the Ingress for [cert-manager](https://cert-manager.io/). Set `issuer` to a `ClusterIssuer` or `Issuer` name. Deployah does not check that cert-manager or the issuer exist; both must be installed for certificates to be issued. |
 
 ## Storage classes
 

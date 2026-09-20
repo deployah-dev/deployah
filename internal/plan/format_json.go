@@ -22,12 +22,12 @@ import (
 
 // jsonFormatVersion is the schema version emitted by [NewJSONDocument]. Bump
 // it, and document the change, whenever a field is added, removed, or
-// changes meaning. Two deliberate omissions (no next revision, no
-// spec-vocabulary path) keep 1.0 stable.
-const jsonFormatVersion = "1.0"
+// changes meaning. 1.1 adds chart_crds. Two deliberate omissions from 1.0
+// (no next revision, no spec-vocabulary path) stay.
+const jsonFormatVersion = "1.1"
 
 // JSONDocument is the "--output json" wire format for a [Plan]
-// (format_version "1.0"). Field names use snake_case.
+// (format_version "1.1"). Field names use snake_case.
 type JSONDocument struct {
 	FormatVersion string `json:"format_version"`
 	Project       string `json:"project"`
@@ -49,10 +49,22 @@ type JSONDocument struct {
 	// Drift and DriftIncomplete are omitted when there is nothing to report
 	// (either --drift wasn't requested, or it found nothing); the schema
 	// does not distinguish those two cases.
-	Drift            []JSONChange `json:"drift,omitempty"`
-	DriftIncomplete  []string     `json:"drift_incomplete,omitempty"`
-	Tasks            []JSONTask   `json:"tasks,omitempty"`
-	FirstInstallNote string       `json:"first_install_note,omitempty"`
+	Drift            []JSONChange   `json:"drift,omitempty"`
+	DriftIncomplete  []string       `json:"drift_incomplete,omitempty"`
+	Tasks            []JSONTask     `json:"tasks,omitempty"`
+	FirstInstallNote string         `json:"first_install_note,omitempty"`
+	ChartCRDs        []JSONChartCRD `json:"chart_crds,omitempty"`
+}
+
+// JSONChartCRD is one entry in [JSONDocument.ChartCRDs]. It is Helm
+// chart-CRD lifecycle, not a predicted Kubernetes create or update.
+type JSONChartCRD struct {
+	Source      string `json:"source"`
+	Index       int    `json:"index"`
+	Kind        string `json:"kind"`
+	Name        string `json:"name"`
+	Lifecycle   string `json:"lifecycle"`
+	WillProcess bool   `json:"will_process"`
 }
 
 // JSONTask is one entry in [JSONDocument.Tasks].
@@ -92,7 +104,7 @@ type JSONSummary struct {
 	Destroy int `json:"destroy"`
 }
 
-// NewJSONDocument converts p into the format_version "1.0" JSON document.
+// NewJSONDocument converts p into the format_version "1.1" JSON document.
 // It masks secret field values unconditionally (calling [ApplyMasking] is
 // safe to repeat): JSON output ignores --show-secrets by design, so a CI
 // job can pipe it anywhere without a credential-leak review.
@@ -134,6 +146,16 @@ func NewJSONDocument(p *Plan) *JSONDocument {
 		doc.Tasks = append(doc.Tasks, JSONTask(task))
 	}
 	doc.FirstInstallNote = p.FirstInstallTaskNote()
+	for _, crd := range p.ChartCRDs {
+		doc.ChartCRDs = append(doc.ChartCRDs, JSONChartCRD{
+			Source:      crd.Source,
+			Index:       crd.Index,
+			Kind:        crd.Kind,
+			Name:        crd.Name,
+			Lifecycle:   string(crd.Lifecycle),
+			WillProcess: crd.WillProcess,
+		})
+	}
 
 	return doc
 }
@@ -168,7 +190,7 @@ func toJSONChange(c Change) JSONChange {
 	return jc
 }
 
-// RenderJSON writes p to w as pretty-printed format_version "1.0" JSON; see
+// RenderJSON writes p to w as pretty-printed format_version "1.1" JSON; see
 // [NewJSONDocument].
 func RenderJSON(w io.Writer, p *Plan) error {
 	if p == nil {

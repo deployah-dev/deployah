@@ -21,7 +21,6 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"deployah.dev/deployah/internal/extras"
 	"deployah.dev/deployah/internal/plan/semantic"
 	"deployah.dev/deployah/internal/predict"
 )
@@ -190,24 +189,6 @@ func writeApply() semantic.ApplySemantics {
 			Method:         semantic.WriteServerSide,
 			FieldManager:   kube.ManagedFieldsManager,
 			ForceConflicts: false,
-		},
-	}
-}
-
-func writeCreate() semantic.ApplySemantics {
-	return semantic.ApplySemantics{
-		Write: &semantic.WriteSemantics{
-			Method: semantic.WriteCreate,
-		},
-	}
-}
-
-func writeCRDApply() semantic.ApplySemantics {
-	return semantic.ApplySemantics{
-		Write: &semantic.WriteSemantics{
-			Method:         semantic.WriteServerSide,
-			FieldManager:   extras.CRDFieldManager,
-			ForceConflicts: true,
 		},
 	}
 }

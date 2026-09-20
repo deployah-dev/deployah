@@ -71,12 +71,12 @@ pass `--context kind-deployah`).
 
 ## Custom manifest and CRD errors
 
-**Unknown type / add its CRD under `.deployah/crds/`.**
+**Unknown type / install that API on the cluster first.**
 
-The kind is not a built-in type, not on the small operator allowlist, and not
-declared by an in-repo CRD. Put the `CustomResourceDefinition` under
-`.deployah/crds/`, or install that API on the cluster before deploying. See
-[Custom manifests and CRDs](custom-manifests-and-crds.md).
+The kind is not a built-in type and not on the small operator allowlist.
+Install that API on the cluster before deploying. Putting a CRD file under
+`.deployah/crds/` does not teach Deployah the custom resource type or
+scope. See [Custom manifests and CRDs](custom-manifests-and-crds.md).
 
 **Extra collides with a generated object.**
 
@@ -84,10 +84,14 @@ An object in `.deployah/manifests/` has the same apiVersion, kind, namespace,
 and name as something the chart already generates. Rename the extra, or stop
 generating that resource from the spec.
 
-**CRD must use `apiVersion: apiextensions.k8s.io/v1`.**
+**Helm or Kubernetes rejected a chart CRD.**
 
-Older `apiextensions.k8s.io/v1beta1` CRDs are rejected. Convert the document to
-v1.
+Deployah copies `.deployah/crds/` files as-is. It does not require
+`apiextensions.k8s.io/v1` or validate CRD document semantics. If Helm or the
+API server rejects a file, fix the YAML and retry `deployah deploy`. Only
+after a successful install are later ordinary deploys upgrades that do not
+process chart CRDs. See
+[Custom manifests and CRDs](custom-manifests-and-crds.md).
 
 ## Deploy succeeds but the app returns 503 / times out over HTTPS
 

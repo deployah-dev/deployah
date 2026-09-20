@@ -46,6 +46,25 @@ func (id Identity) Key() string {
 	return strings.Join([]string{id.APIVersion, id.Kind, id.Namespace, id.Name}, "\x00")
 }
 
+// RawFile is one source file under .deployah/crds/. Raw is the exact
+// file bytes Helm copies into the chart. Presentation identity lives on
+// [CRDDoc], not here, so Helm transport cannot consult spec fields.
+type RawFile struct {
+	Path string
+	Raw  []byte
+}
+
+// CRDDoc is presentation identity for one YAML document in a [RawFile].
+// Index is the 0-based non-empty document number in that file. YAML is
+// the original document bytes; it is never marshaled back for Helm.
+type CRDDoc struct {
+	Path  string
+	Index int
+	Kind  string
+	Name  string
+	YAML  []byte
+}
+
 // Object is one Kubernetes document loaded from an extras file.
 type Object struct {
 	Path string

@@ -136,6 +136,8 @@ func TestNew_TasksAlwaysNonNil(t *testing.T) {
 	assert.Empty(t, p.Changes)
 	require.NotNil(t, p.Diagnostics)
 	assert.Empty(t, p.Diagnostics)
+	require.NotNil(t, p.ChartCRDs)
+	assert.Empty(t, p.ChartCRDs)
 	assert.Equal(t, semantic.CompletenessComplete, p.Completeness)
 	assert.Equal(t, semantic.HelmUpgrade, p.HelmAction)
 	assert.Equal(t, 0, p.Summary.Total())
@@ -809,7 +811,6 @@ func TestNew_HelmNoneContent(t *testing.T) {
 		wantErr string
 	}{
 		{name: "empty"},
-		{name: "origin crd", changes: []semantic.ResourceChange{crdCreate("widgets.example.com")}},
 		{
 			name:    "origin helm",
 			changes: []semantic.ResourceChange{createChange("app", "v1")},
@@ -889,29 +890,6 @@ func TestNew_OriginNamespaceRequiresInstall(t *testing.T) {
 	}
 }
 
-func TestNew_OriginCRDAllowedWithEveryHelmAction(t *testing.T) {
-	t.Parallel()
-	change := crdCreate("widgets.example.com")
-	tests := []struct {
-		name       string
-		header     semantic.Header
-		helmAction semantic.HelmAction
-	}{
-		{name: "none", helmAction: semantic.HelmNone},
-		{name: "install", header: semantic.Header{FreshInstall: true}, helmAction: semantic.HelmInstall},
-		{name: "upgrade", helmAction: semantic.HelmUpgrade},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			p, err := semantic.New(tt.header, tt.helmAction, []semantic.ResourceChange{change}, nil, nil)
-			require.NoError(t, err)
-			assert.Equal(t, tt.helmAction, p.HelmAction)
-			assert.Equal(t, semantic.OriginCRD, p.Changes[0].Origin.Kind)
-		})
-	}
-}
-
 func TestNew_OriginPayload(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -937,31 +915,6 @@ func TestNew_OriginPayload(t *testing.T) {
 				Apply:    writeApply(),
 			},
 			wantErr: "helm origin requires helm details",
-		},
-		{
-			name:       "crd without helm",
-			helmAction: semantic.HelmNone,
-			change:     crdCreate("widgets.example.com"),
-		},
-		{
-			name:       "crd with helm",
-			helmAction: semantic.HelmNone,
-			change: semantic.ResourceChange{
-				Resource: semantic.ResourceRef{
-					APIVersion: "apiextensions.k8s.io/v1",
-					Kind:       "CustomResourceDefinition",
-					Name:       "widgets.example.com",
-				},
-				Origin: semantic.ResourceOrigin{Kind: semantic.OriginCRD, Helm: helmOrigin().Helm},
-				Action: semantic.Create,
-				After: &semantic.ResourceSnapshot{Object: map[string]any{
-					"apiVersion": "apiextensions.k8s.io/v1",
-					"kind":       "CustomResourceDefinition",
-					"metadata":   map[string]any{"name": "widgets.example.com"},
-				}},
-				Apply: writeCreate(),
-			},
-			wantErr: "crd origin must not include helm details",
 		},
 		{
 			name:       "namespace without helm",
@@ -1003,11 +956,6 @@ func TestNew_OriginPayload(t *testing.T) {
 
 func TestNew_OriginContracts(t *testing.T) {
 	t.Parallel()
-	crdAfter := &semantic.ResourceSnapshot{Object: map[string]any{
-		"apiVersion": "apiextensions.k8s.io/v1",
-		"kind":       "CustomResourceDefinition",
-		"metadata":   map[string]any{"name": "widgets.example.com"},
-	}}
 	nsAfter := &semantic.ResourceSnapshot{Object: map[string]any{
 		"apiVersion": "v1",
 		"kind":       "Namespace",
@@ -1020,99 +968,6 @@ func TestNew_OriginContracts(t *testing.T) {
 		change     semantic.ResourceChange
 		wantErr    string
 	}{
-		{
-			name:       "crd wrong kind",
-			helmAction: semantic.HelmNone,
-			change: semantic.ResourceChange{
-				Resource: ref("ConfigMap", "app"),
-				Origin:   semantic.ResourceOrigin{Kind: semantic.OriginCRD},
-				Action:   semantic.Create,
-				After:    &semantic.ResourceSnapshot{Object: cm("app", "v1")},
-				Apply:    writeCreate(),
-			},
-			wantErr: "crd origin requires apiextensions.k8s.io/v1 CustomResourceDefinition",
-		},
-		{
-			name:       "crd namespaced",
-			helmAction: semantic.HelmNone,
-			change: semantic.ResourceChange{
-				Resource: semantic.ResourceRef{
-					APIVersion: "apiextensions.k8s.io/v1",
-					Kind:       "CustomResourceDefinition",
-					Namespace:  "prod",
-					Name:       "widgets.example.com",
-				},
-				Origin: semantic.ResourceOrigin{Kind: semantic.OriginCRD},
-				Action: semantic.Create,
-				After:  crdAfter,
-				Apply:  writeCreate(),
-			},
-			wantErr: "crd origin must be cluster-scoped",
-		},
-		{
-			name:       "crd delete forbidden",
-			helmAction: semantic.HelmNone,
-			change: semantic.ResourceChange{
-				Resource: semantic.ResourceRef{
-					APIVersion: "apiextensions.k8s.io/v1",
-					Kind:       "CustomResourceDefinition",
-					Name:       "widgets.example.com",
-				},
-				Origin: semantic.ResourceOrigin{Kind: semantic.OriginCRD},
-				Action: semantic.Delete,
-				Before: crdAfter,
-				Apply:  deleteApply(),
-			},
-			wantErr: "crd origin does not support delete",
-		},
-		{
-			name:       "crd create without force ssa",
-			helmAction: semantic.HelmNone,
-			change: semantic.ResourceChange{
-				Resource: semantic.ResourceRef{
-					APIVersion: "apiextensions.k8s.io/v1",
-					Kind:       "CustomResourceDefinition",
-					Name:       "widgets.example.com",
-				},
-				Origin: semantic.ResourceOrigin{Kind: semantic.OriginCRD},
-				Action: semantic.Create,
-				After:  crdAfter,
-				Apply:  writeApply(),
-			},
-			wantErr: "crd create server_side_apply requires force conflicts",
-		},
-		{
-			name:       "crd create with force ssa",
-			helmAction: semantic.HelmNone,
-			change: semantic.ResourceChange{
-				Resource: semantic.ResourceRef{
-					APIVersion: "apiextensions.k8s.io/v1",
-					Kind:       "CustomResourceDefinition",
-					Name:       "widgets.example.com",
-				},
-				Origin: semantic.ResourceOrigin{Kind: semantic.OriginCRD},
-				Action: semantic.Create,
-				After:  crdAfter,
-				Apply:  writeForceApply(),
-			},
-		},
-		{
-			name:       "crd update without force",
-			helmAction: semantic.HelmNone,
-			change: semantic.ResourceChange{
-				Resource: semantic.ResourceRef{
-					APIVersion: "apiextensions.k8s.io/v1",
-					Kind:       "CustomResourceDefinition",
-					Name:       "widgets.example.com",
-				},
-				Origin: semantic.ResourceOrigin{Kind: semantic.OriginCRD},
-				Action: semantic.Update,
-				Before: crdAfter,
-				After:  crdAfter,
-				Apply:  writeApply(),
-			},
-			wantErr: "crd update requires server_side_apply with force conflicts",
-		},
 		{
 			name:       "namespace write create forbidden",
 			header:     semantic.Header{FreshInstall: true},
@@ -1165,33 +1020,6 @@ func TestNew_OriginContracts(t *testing.T) {
 			require.NoError(t, err)
 		})
 	}
-}
-
-func TestNew_CRDEmptyFieldsStillHasEffects(t *testing.T) {
-	t.Parallel()
-	obj := map[string]any{
-		"apiVersion": "apiextensions.k8s.io/v1",
-		"kind":       "CustomResourceDefinition",
-		"metadata":   map[string]any{"name": "widgets.example.com"},
-		"spec":       map[string]any{"group": "example.com"},
-	}
-	p, err := semantic.New(semantic.Header{}, semantic.HelmNone, []semantic.ResourceChange{{
-		Resource: semantic.ResourceRef{
-			APIVersion: "apiextensions.k8s.io/v1",
-			Kind:       "CustomResourceDefinition",
-			Name:       "widgets.example.com",
-		},
-		Origin: semantic.ResourceOrigin{Kind: semantic.OriginCRD},
-		Action: semantic.Update,
-		Before: &semantic.ResourceSnapshot{Object: obj},
-		After:  &semantic.ResourceSnapshot{Object: obj},
-		Apply:  writeForceApply(),
-	}}, nil, nil)
-	require.NoError(t, err)
-	require.Len(t, p.Changes, 1)
-	assert.Empty(t, p.Changes[0].Fields)
-	assert.True(t, p.HasEffects())
-	assert.Equal(t, semantic.CompletenessComplete, p.Completeness)
 }
 
 func TestNew_WriteSemantics(t *testing.T) {
@@ -1276,8 +1104,9 @@ func TestPlan_HasEffects(t *testing.T) {
 		{name: "empty none", helmAction: semantic.HelmNone},
 		{
 			name:       "resource change",
-			helmAction: semantic.HelmNone,
-			changes:    []semantic.ResourceChange{crdCreate("widgets.example.com")},
+			header:     semantic.Header{FreshInstall: true},
+			helmAction: semantic.HelmInstall,
+			changes:    []semantic.ResourceChange{nsCreate("prod")},
 			want:       true,
 		},
 		{
@@ -1347,11 +1176,6 @@ func TestPlan_IsNoOp(t *testing.T) {
 				Category: semantic.CategoryPredictionLimitation,
 				Message:  "prediction is not exact",
 			}},
-		},
-		{
-			name:       "E helm none with origin crd",
-			helmAction: semantic.HelmNone,
-			changes:    []semantic.ResourceChange{crdCreate("widgets.example.com")},
 		},
 		{
 			name:       "install with origin namespace",

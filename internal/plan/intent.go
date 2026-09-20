@@ -14,15 +14,11 @@
 
 package plan
 
-import "deployah.dev/deployah/internal/extras"
-
 // DeploymentIntent is the mutation and executability flags a deploy would
 // use. Presentation flags such as output format are not part of intent.
-// The zero value is not a valid intent: CRDs is empty, which extras
-// rejects. Callers should use [DefaultDeploymentIntent].
+// Chart CRD skip lives on deploy.Options, not here: Helm install owns
+// that flag, and this struct is not the Helm action.
 type DeploymentIntent struct {
-	// CRDs is how missing or existing CRDs are applied.
-	CRDs extras.Policy
 	// ResizeVolumes enables persistent volume claim expansion.
 	ResizeVolumes bool
 	// Reapply forces Helm to run even when the rendered spec is unchanged.
@@ -32,8 +28,8 @@ type DeploymentIntent struct {
 	ForceHostnameChange bool
 }
 
-// DefaultDeploymentIntent returns the deploy defaults: create-only CRDs
-// and the boolean flags unset.
+// DefaultDeploymentIntent returns the deploy defaults: all boolean flags
+// unset.
 func DefaultDeploymentIntent() DeploymentIntent {
-	return DeploymentIntent{CRDs: extras.PolicyCreate}
+	return DeploymentIntent{}
 }

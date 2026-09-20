@@ -26,6 +26,12 @@ import (
 	"deployah.dev/deployah/internal/extras"
 )
 
+func TestPostRendererFor_NilWhenEmpty(t *testing.T) {
+	t.Parallel()
+	assert.Nil(t, (*extras.Bundle)(nil).PostRendererFor())
+	assert.Nil(t, (&extras.Bundle{}).PostRendererFor())
+}
+
 // TestPostRenderer_AppendsAndPreservesBraces exercises extras package behavior.
 func TestPostRenderer_AppendsAndPreservesBraces(t *testing.T) {
 	t.Parallel()

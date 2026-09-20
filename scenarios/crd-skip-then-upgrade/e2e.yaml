@@ -1,0 +1,36 @@
+# $schema: ../../internal/testing/e2e.schema.json
+env: dev
+parallel: false
+steps:
+  - deploy:
+      args: [--skip-crds]
+    resources:
+      - match:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: crd-skip-then-upgrade-dev-web
+          status:
+            readyReplicas: 1
+      - minCount: 0
+        match:
+          apiVersion: apiextensions.k8s.io/v1
+          kind: CustomResourceDefinition
+          metadata:
+            name: skipwidgets.example.com
+  - deploy:
+      args: [--reapply]
+    resources:
+      - match:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: crd-skip-then-upgrade-dev-web
+          status:
+            readyReplicas: 1
+      - minCount: 0
+        match:
+          apiVersion: apiextensions.k8s.io/v1
+          kind: CustomResourceDefinition
+          metadata:
+            name: skipwidgets.example.com

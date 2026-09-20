@@ -24,29 +24,26 @@ import (
 	"helm.sh/helm/v4/pkg/chart/v2/loader"
 	"helm.sh/helm/v4/pkg/postrenderer"
 
+	"deployah.dev/deployah/internal/extras"
 	"deployah.dev/deployah/internal/render"
 	"deployah.dev/deployah/internal/spec"
 
-	chartcommon "helm.sh/helm/v4/pkg/chart/common"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 )
-
-// offlineMonitorAPIVersion lets ServiceMonitor/PodMonitor templates
-// render when there is no discovery client.
-const offlineMonitorAPIVersion = "monitoring.coreos.com/v1"
 
 // RenderManifests renders the chart from [spec.ResolvedSpec] client-side.
 // The cluster must be reachable. Use [Client.RenderOffline] when there is
 // no Kubernetes API access. Callers must run the returned cleanup func.
-func (c *Client) RenderManifests(ctx context.Context, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) (*render.RenderResult, func(), error) {
-	result, _, cleanup, err := c.RenderManifestsWithPrep(ctx, resolved, postRenderer)
+func (c *Client) RenderManifests(ctx context.Context, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer, crds []extras.RawFile) (*render.RenderResult, func(), error) {
+	result, _, cleanup, err := c.RenderManifestsWithPrep(ctx, resolved, postRenderer, crds)
 	return result, cleanup, err
 }
 
 // RenderManifestsWithPrep renders the chart from [spec.ResolvedSpec]
 // client-side and returns the [ReleasePrep] used to choose install or
-// upgrade. Cleanup is nil on error; on success the caller must run it once.
-func (c *Client) RenderManifestsWithPrep(ctx context.Context, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) (*render.RenderResult, ReleasePrep, func(), error) {
+// upgrade. crds are written into the per-invocation chart copy. Cleanup is
+// nil on error; on success the caller must run it once.
+func (c *Client) RenderManifestsWithPrep(ctx context.Context, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer, crds []extras.RawFile) (*render.RenderResult, ReleasePrep, func(), error) {
 	releaseName, labels, err := releaseIdentity(resolved)
 	if err != nil {
 		return nil, ReleasePrep{}, nil, err
@@ -57,7 +54,7 @@ func (c *Client) RenderManifestsWithPrep(ctx context.Context, resolved *spec.Res
 		return nil, ReleasePrep{}, nil, err
 	}
 
-	ch, chartPath, cleanup, err := c.prepareAndLoadChart(ctx, resolved)
+	ch, chartPath, cleanup, err := c.prepareAndLoadChart(ctx, resolved, crds)
 	if err != nil {
 		return nil, ReleasePrep{}, nil, err
 	}
@@ -84,13 +81,13 @@ func (c *Client) RenderManifestsWithPrep(ctx context.Context, resolved *spec.Res
 // RenderOffline renders the chart from [spec.ResolvedSpec] as a fresh
 // install without Kubernetes API access. A nil or unresolved spec is an
 // error. Callers must run the returned cleanup func.
-func (c *Client) RenderOffline(ctx context.Context, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer) (result *render.RenderResult, cleanup func(), err error) {
+func (c *Client) RenderOffline(ctx context.Context, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer, crds []extras.RawFile) (result *render.RenderResult, cleanup func(), err error) {
 	releaseName, labels, err := releaseIdentity(resolved)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	ch, chartPath, cleanup, err := c.prepareAndLoadChart(ctx, resolved)
+	ch, chartPath, cleanup, err := c.prepareAndLoadChart(ctx, resolved, crds)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -107,9 +104,10 @@ func (c *Client) RenderOffline(ctx context.Context, resolved *spec.ResolvedSpec,
 }
 
 // prepareAndLoadChart generates or caches the Helm chart from resolved
-// and loads it. Cleanup removes the temp dir unless WithDebug(true).
-func (c *Client) prepareAndLoadChart(ctx context.Context, resolved *spec.ResolvedSpec) (ch *chart.Chart, chartPath string, cleanup func(), err error) {
-	chartPath, err = PrepareChart(ctx, resolved, c.chartCache)
+// and loads it. crds are written into the returned copy. Cleanup removes
+// the temp dir unless WithDebug(true).
+func (c *Client) prepareAndLoadChart(ctx context.Context, resolved *spec.ResolvedSpec, crds []extras.RawFile) (ch *chart.Chart, chartPath string, cleanup func(), err error) {
+	chartPath, err = PrepareChart(ctx, resolved, c.chartCache, crds)
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("failed to prepare chart: %w", err)
 	}
@@ -169,12 +167,9 @@ func (c *Client) renderInstall(ctx context.Context, releaseName string, ch *char
 	// Dry-run install mutates the shared config. Restore when this returns.
 	defer restoreCapabilitiesForDryRun(c.config)()
 
-	install := c.newInstallAction(releaseName, labels, postRenderer)
+	install := c.newInstallAction(releaseName, labels, postRenderer, false)
 	install.DryRunStrategy = action.DryRunClient
 	install.DisableOpenAPIValidation = true
-	// Client dry-run sees only built-in APIs. Add the monitor GV so
-	// ServiceMonitor templates still render.
-	install.APIVersions = chartcommon.VersionSet{offlineMonitorAPIVersion}
 
 	rel, runErr := install.RunWithContext(ctx, ch, values)
 	if runErr != nil {

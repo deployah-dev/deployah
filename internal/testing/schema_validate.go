@@ -28,7 +28,8 @@ import (
 // emit that [validateAgainstScheme] cannot check against [scheme.Scheme]:
 //
 //   - ServiceMonitor, PodMonitor, PrometheusRule: Prometheus Operator CRDs.
-//   - ClusterWidget, IdempotentWidget: fixture CRDs used by extras/e2e scenarios.
+//   - ClusterWidget, IdempotentWidget, LifecycleWidget: fixture CRDs used
+//     by extras/e2e scenarios.
 //   - HorizontalPodAutoscaler: [helm.Client.RenderOffline] has no live
 //     cluster, so Capabilities.KubeVersion falls back to Helm's pre-1.23
 //     default, making the chart select the removed autoscaling/v2beta1 API
@@ -41,6 +42,7 @@ var unregisteredSchemeKinds = []string{
 	"PrometheusRule",
 	"ClusterWidget",
 	"IdempotentWidget",
+	"LifecycleWidget",
 	"HorizontalPodAutoscaler",
 }
 

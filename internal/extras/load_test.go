@@ -403,19 +403,11 @@ metadata:
 	assert.Contains(t, err.Error(), "must not set metadata.namespace")
 }
 
-// TestLoad_CRDsMergedWithoutEnvironment exercises extras package behavior.
-func TestLoad_CRDsMergedWithoutEnvironment(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, ".deployah", "crds", "widget.yaml"), `
+const widgetCRDBody = `
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   name: widgets.example.com
-  labels:
-    deployah.dev/environment: should-strip
-    deployah.dev/managed-by: impostor
-    keep: custom
 spec:
   group: example.com
   scope: Namespaced
@@ -429,7 +421,94 @@ spec:
       schema:
         openAPIV3Schema:
           type: object
-`)
+`
+
+func TestLoad_CRDsKeepExactSourceBytes(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		body      string
+		wantNames []string
+	}{
+		{name: "valid crd", body: widgetCRDBody, wantNames: []string{"widgets.example.com"}},
+		{
+			name: "user metadata unchanged",
+			body: `
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: widgets.example.com
+  namespace: foo
+  labels:
+    keep: custom
+    deployah.dev/source: user-source
+  annotations:
+    note: keep
+    deployah.dev/project: user-project
+spec:
+  group: example.com
+  scope: Namespaced
+  names:
+    kind: Widget
+    plural: widgets
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+`,
+			wantNames: []string{"widgets.example.com"},
+		},
+		{
+			name:      "multi-document file stays one RawFile",
+			body:      widgetCRDBody + "---\napiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\nmetadata:\n  name: gadgets.example.com\n",
+			wantNames: []string{"widgets.example.com", "gadgets.example.com"},
+		},
+		{
+			name:      "comments quotes and helm-looking text",
+			body:      "# keep comments\nkind: CustomResourceDefinition\nmetadata:\n  name: widgets.example.com\n  annotations:\n    note: \"{{ .Release.Name }}\"\n",
+			wantNames: []string{"widgets.example.com"},
+		},
+		{
+			name:      "comment-only leading document stays in raw file",
+			body:      "# CRDs used by the widget controller\n---\nkind: CustomResourceDefinition\nmetadata:\n  name: widgets.example.com\n",
+			wantNames: []string{"widgets.example.com"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			path := filepath.Join(dir, ".deployah", "crds", "widget.yaml")
+			writeFile(t, path, tc.body)
+			bundle, err := extras.Load(extras.LoadConfig{
+				SpecDir:          dir,
+				Project:          "demo",
+				Environment:      "prod",
+				DeclaredEnvs:     []string{"prod"},
+				ReleaseNamespace: "default",
+				Scope:            &extras.TableResolver{},
+			})
+			require.NoError(t, err)
+			require.Len(t, bundle.CRDs, 1)
+			assert.Equal(t, path, bundle.CRDs[0].Path)
+			assert.Equal(t, tc.body, string(bundle.CRDs[0].Raw))
+			require.Len(t, bundle.CRDDocs, len(tc.wantNames))
+			for i, wantName := range tc.wantNames {
+				assert.Equal(t, "CustomResourceDefinition", bundle.CRDDocs[i].Kind)
+				assert.Equal(t, wantName, bundle.CRDDocs[i].Name)
+			}
+		})
+	}
+}
+
+func TestLoad_CRDSnapshotIgnoresLaterDiskWrites(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".deployah", "crds", "widget.yaml")
+	writeFile(t, path, widgetCRDBody)
 	bundle, err := extras.Load(extras.LoadConfig{
 		SpecDir:          dir,
 		Project:          "demo",
@@ -440,15 +519,8 @@ spec:
 	})
 	require.NoError(t, err)
 	require.Len(t, bundle.CRDs, 1)
-	obj := bundle.CRDs[0].Obj
-	assert.Equal(t, spec.SourceCRDs, obj.GetAnnotations()[spec.AnnotationSource])
-	assert.Equal(t, "demo", obj.GetAnnotations()[spec.AnnotationProject])
-	assert.Equal(t, "demo", obj.GetLabels()[spec.LabelProject])
-	assert.Equal(t, "custom", obj.GetLabels()["keep"])
-	assert.NotContains(t, obj.GetLabels(), spec.LabelEnvironment)
-	assert.NotContains(t, obj.GetLabels(), spec.LabelInstance)
-	assert.NotContains(t, obj.GetLabels(), spec.LabelManagedBy)
-	assert.NotContains(t, obj.GetAnnotations(), spec.AnnotationEnvironmentInstance)
+	writeFile(t, path, widgetCRDBody+"# mutated\n")
+	assert.Equal(t, widgetCRDBody, string(bundle.CRDs[0].Raw))
 }
 
 // TestLoad_MissingRequiredFieldsFails exercises extras package behavior.
@@ -521,11 +593,11 @@ metadata:
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown type")
-	assert.Contains(t, err.Error(), ".deployah/crds/")
+	assert.Contains(t, err.Error(), "install that API on the cluster first")
 }
 
 // TestLoad_OfflineAllowsUnknownType lets plan --offline load custom
-// resources without discovery or an in-repo CRD (scope defaults to namespaced).
+// resources without discovery (scope defaults to namespaced).
 func TestLoad_OfflineAllowsUnknownType(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -549,85 +621,11 @@ metadata:
 	assert.Equal(t, "apps", bundle.Manifests[0].Obj.GetNamespace())
 }
 
-// TestLoad_CRDWrongAPIVersionFails rejects non-v1 CRD apiVersions at load.
-func TestLoad_CRDWrongAPIVersionFails(t *testing.T) {
+// TestLoad_CRDsRejectSubdirectories keeps the flat .deployah/crds/ contract.
+func TestLoad_CRDsRejectSubdirectories(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, ".deployah", "crds", "old.yaml"), `
-apiVersion: example.com/v1
-kind: CustomResourceDefinition
-metadata:
-  name: widgets.example.com
-spec:
-  group: example.com
-`)
-	_, err := extras.Load(extras.LoadConfig{
-		SpecDir:          dir,
-		Project:          "demo",
-		Environment:      "prod",
-		DeclaredEnvs:     []string{"prod"},
-		ReleaseNamespace: "default",
-		Scope:            &extras.TableResolver{},
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "apiextensions.k8s.io/v1")
-	assert.Contains(t, err.Error(), "example.com/v1")
-}
-
-// TestLoad_RequiresScopeAndProject rejects incomplete LoadConfig.
-func TestLoad_RequiresScopeAndProject(t *testing.T) {
-	t.Parallel()
-	_, err := extras.Load(extras.LoadConfig{Project: "demo"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "ScopeResolver is required")
-
-	_, err = extras.Load(extras.LoadConfig{Scope: &extras.TableResolver{}})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "Project is required")
-}
-
-// TestLoad_NonCRDUnderCRDsFails rejects ordinary objects in .deployah/crds/.
-func TestLoad_NonCRDUnderCRDsFails(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, ".deployah", "crds", "cm.yaml"), `
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: nope
-`)
-	_, err := extras.Load(extras.LoadConfig{
-		SpecDir:          dir,
-		Project:          "demo",
-		Environment:      "prod",
-		DeclaredEnvs:     []string{"prod"},
-		ReleaseNamespace: "default",
-		Scope:            &extras.TableResolver{},
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "only CustomResourceDefinition")
-}
-
-// TestLoad_CRDSubdirForbidden rejects nested dirs under .deployah/crds/.
-func TestLoad_CRDSubdirForbidden(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, ".deployah", "crds", "nested", "x.yaml"), `
-apiVersion: apiextensions.k8s.io/v1
-kind: CustomResourceDefinition
-metadata:
-  name: widgets.example.com
-spec:
-  group: example.com
-  scope: Namespaced
-  names:
-    kind: Widget
-    plural: widgets
-  versions:
-    - name: v1
-      served: true
-      storage: true
-`)
+	writeFile(t, filepath.Join(dir, ".deployah", "crds", "nested", "x.yaml"), widgetCRDBody)
 	_, err := extras.Load(extras.LoadConfig{
 		SpecDir:          dir,
 		Project:          "demo",
@@ -638,6 +636,35 @@ spec:
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "subdirectories are not allowed")
+}
+
+// TestLoad_RequiresScopeAndProject rejects incomplete LoadConfig.
+func TestLoad_RequiresScopeAndProject(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		cfg     extras.LoadConfig
+		wantErr string
+	}{
+		{
+			name:    "missing scope",
+			cfg:     extras.LoadConfig{Project: "demo"},
+			wantErr: "ScopeResolver is required",
+		},
+		{
+			name:    "missing project",
+			cfg:     extras.LoadConfig{Scope: &extras.TableResolver{}},
+			wantErr: "Project is required",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := extras.Load(tc.cfg)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantErr)
+		})
+	}
 }
 
 // TestLoad_NestedManifestDirFails rejects nesting under an env subdir.
@@ -708,36 +735,17 @@ func (rejectAllScope) Namespaced(schema.GroupVersionKind) (bool, error) {
 	return true, nil
 }
 
-// TestLoad_ChainedScopeFromCustomResolver covers withCRDScope's default branch.
-func TestLoad_ChainedScopeFromCustomResolver(t *testing.T) {
+func TestLoad_CustomResolverIgnoresCRDFiles(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, ".deployah", "crds", "widget.yaml"), `
-apiVersion: apiextensions.k8s.io/v1
-kind: CustomResourceDefinition
-metadata:
-  name: widgets.example.com
-spec:
-  group: example.com
-  scope: Namespaced
-  names:
-    kind: Widget
-    plural: widgets
-  versions:
-    - name: v1
-      served: true
-      storage: true
-      schema:
-        openAPIV3Schema:
-          type: object
-`)
+	writeFile(t, filepath.Join(dir, ".deployah", "crds", "widget.yaml"), widgetCRDBody)
 	writeFile(t, filepath.Join(dir, ".deployah", "manifests", "w.yaml"), `
 apiVersion: example.com/v1
 kind: Widget
 metadata:
   name: one
 `)
-	bundle, err := extras.Load(extras.LoadConfig{
+	_, err := extras.Load(extras.LoadConfig{
 		SpecDir:          dir,
 		Project:          "demo",
 		Environment:      "prod",
@@ -745,51 +753,8 @@ metadata:
 		ReleaseNamespace: "apps",
 		Scope:            rejectAllScope{},
 	})
-	require.NoError(t, err)
-	require.Len(t, bundle.Manifests, 1)
-	assert.Equal(t, "apps", bundle.Manifests[0].Obj.GetNamespace())
-}
-
-// TestLoad_DiscoveryResolverMergesCRDScope covers the DiscoveryResolver branch
-// of withCRDScope (mapper nil falls back to the table + CRD scope).
-func TestLoad_DiscoveryResolverMergesCRDScope(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, ".deployah", "crds", "widget.yaml"), `
-apiVersion: apiextensions.k8s.io/v1
-kind: CustomResourceDefinition
-metadata:
-  name: widgets.example.com
-spec:
-  group: example.com
-  scope: Namespaced
-  names:
-    kind: Widget
-    plural: widgets
-  versions:
-    - name: v1
-      served: true
-      storage: true
-      schema:
-        openAPIV3Schema:
-          type: object
-`)
-	writeFile(t, filepath.Join(dir, ".deployah", "manifests", "w.yaml"), `
-apiVersion: example.com/v1
-kind: Widget
-metadata:
-  name: one
-`)
-	bundle, err := extras.Load(extras.LoadConfig{
-		SpecDir:          dir,
-		Project:          "demo",
-		Environment:      "prod",
-		DeclaredEnvs:     []string{"prod"},
-		ReleaseNamespace: "apps",
-		Scope:            &extras.DiscoveryResolver{},
-	})
-	require.NoError(t, err)
-	require.Len(t, bundle.Manifests, 1)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "unknown type")
 }
 
 // TestLoadFromSpec_Offline loads extras without a rest.Config.
