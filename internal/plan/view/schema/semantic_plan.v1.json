@@ -11,6 +11,7 @@
     "helmAction",
     "changes",
     "tasks",
+    "chartCRDs",
     "diagnostics",
     "summary",
     "completeness"
@@ -37,6 +38,12 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/Task"
+      }
+    },
+    "chartCRDs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ChartCRD"
       }
     },
     "diagnostics": {
@@ -818,6 +825,71 @@
               },
               "fields": {
                 "maxItems": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "ChartCRD": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "index", "kind", "name", "lifecycle", "willProcess"],
+      "properties": {
+        "source": {
+          "type": "string"
+        },
+        "index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "kind": {
+          "type": "string",
+          "const": "CustomResourceDefinition"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "lifecycle": {
+          "type": "string",
+          "enum": ["process", "skip", "upgrade"]
+        },
+        "willProcess": {
+          "type": "boolean"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "lifecycle": {
+                "const": "process"
+              }
+            },
+            "required": ["lifecycle"]
+          },
+          "then": {
+            "properties": {
+              "willProcess": {
+                "const": true
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "lifecycle": {
+                "enum": ["skip", "upgrade"]
+              }
+            },
+            "required": ["lifecycle"]
+          },
+          "then": {
+            "properties": {
+              "willProcess": {
+                "const": false
               }
             }
           }

@@ -173,7 +173,7 @@ func newDocument(p semantic.Plan, opts Options) (document, error) {
 		crds = append(crds, toChartCRDDTO(c))
 	}
 	return document{
-		Schema:       SchemaV2ID,
+		Schema:       SchemaV1ID,
 		Header:       toHeaderDTO(prepared.Header),
 		HelmAction:   prepared.HelmAction.String(),
 		Changes:      changes,

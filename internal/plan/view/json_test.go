@@ -44,7 +44,7 @@ func TestWriteJSON_SchemaAndTasks(t *testing.T) {
 	var buf bytes.Buffer
 	require.NoError(t, view.WriteJSON(&buf, p, view.Options{}))
 	assert.JSONEq(t, `{
-		"schema": "https://deployah.dev/schemas/plan/v2/schema.json",
+		"schema": "https://deployah.dev/schemas/plan/v1/schema.json",
 		"header": {
 			"project": "web",
 			"environment": "prod",
@@ -107,7 +107,7 @@ func TestWriteJSON_TasksContract(t *testing.T) {
 	var buf bytes.Buffer
 	require.NoError(t, view.WriteJSON(&buf, p, view.Options{}))
 	assert.JSONEq(t, `{
-		"schema": "https://deployah.dev/schemas/plan/v2/schema.json",
+		"schema": "https://deployah.dev/schemas/plan/v1/schema.json",
 		"header": {
 			"project": "web",
 			"environment": "prod",
@@ -174,7 +174,7 @@ func TestWriteJSON_ChartCRDs(t *testing.T) {
 			require.NoError(t, view.WriteJSON(&buf, p, view.Options{}))
 			var doc map[string]any
 			require.NoError(t, json.Unmarshal(buf.Bytes(), &doc))
-			assert.Equal(t, view.SchemaV2ID, doc["schema"])
+			assert.Equal(t, view.SchemaV1ID, doc["schema"])
 			crds := jsonObjects(t, doc["chartCRDs"])
 			require.Len(t, crds, 1)
 			entry := crds[0]
@@ -491,10 +491,10 @@ func limitationFor(res semantic.ResourceRef) semantic.Diagnostic {
 func compilePlanSchema(t *testing.T) *jsonschema.Schema {
 	t.Helper()
 	compiler := jsonschema.NewCompiler()
-	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(view.SchemaV2()))
+	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(view.SchemaV1()))
 	require.NoError(t, err)
-	require.NoError(t, compiler.AddResource(view.SchemaV2ID, doc))
-	sch, err := compiler.Compile(view.SchemaV2ID)
+	require.NoError(t, compiler.AddResource(view.SchemaV1ID, doc))
+	sch, err := compiler.Compile(view.SchemaV1ID)
 	require.NoError(t, err)
 	return sch
 }

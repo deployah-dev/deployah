@@ -26,7 +26,7 @@ import (
 	"deployah.dev/deployah/internal/plan/view"
 )
 
-func TestSchemaV1ID_MatchesEmbedded(t *testing.T) {
+func TestSchemaV1ID_MatchesEmbeddedAndRendered(t *testing.T) {
 	t.Parallel()
 	assert.Equal(t, "https://deployah.dev/schemas/plan/v1/schema.json", view.SchemaV1ID)
 
@@ -37,23 +37,27 @@ func TestSchemaV1ID_MatchesEmbedded(t *testing.T) {
 	props, ok := sch["properties"].(map[string]any)
 	require.True(t, ok)
 	_, hasChartCRDs := props["chartCRDs"]
-	assert.False(t, hasChartCRDs)
-}
+	assert.True(t, hasChartCRDs)
+	required, ok := sch["required"].([]any)
+	require.True(t, ok)
+	assert.Contains(t, required, "chartCRDs")
 
-func TestSchemaV2ID_MatchesEmbeddedAndRendered(t *testing.T) {
-	t.Parallel()
-	assert.Equal(t, "https://deployah.dev/schemas/plan/v2/schema.json", view.SchemaV2ID)
-
-	var sch map[string]any
-	require.NoError(t, json.Unmarshal(view.SchemaV2(), &sch))
-	assert.Equal(t, view.SchemaV2ID, sch["$id"])
-	assert.Equal(t, "https://json-schema.org/draft/2020-12/schema", sch["$schema"])
+	defs, ok := sch["$defs"].(map[string]any)
+	require.True(t, ok)
+	origin, ok := defs["Origin"].(map[string]any)
+	require.True(t, ok)
+	originProps, ok := origin["properties"].(map[string]any)
+	require.True(t, ok)
+	kind, ok := originProps["kind"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, []any{"helm", "namespace"}, kind["enum"])
+	assert.NotContains(t, kind["enum"], "crd")
 
 	doc := mustPlanDoc(t, mustPlan(t, semantic.HelmNone, nil, nil))
-	assert.Equal(t, view.SchemaV2ID, doc["schema"])
+	assert.Equal(t, view.SchemaV1ID, doc["schema"])
 }
 
-func TestSchemaV2_RejectsMalformedDocuments(t *testing.T) {
+func TestSchemaV1_RejectsMalformedDocuments(t *testing.T) {
 	t.Parallel()
 	res := ref("ConfigMap", "app")
 	update := mustPlanDoc(t, mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
@@ -242,6 +246,9 @@ func TestSchemaV2_RejectsMalformedDocuments(t *testing.T) {
 		{name: "none with origin helm", raw: patched(t, update, func(d map[string]any) {
 			d["helmAction"] = "none"
 		})},
+		{name: "origin kind crd", raw: patched(t, update, func(d map[string]any) {
+			asObject(t, firstChange(t, d)["origin"])["kind"] = "crd"
+		})},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -251,7 +258,7 @@ func TestSchemaV2_RejectsMalformedDocuments(t *testing.T) {
 	}
 }
 
-func TestSchemaV2_AcceptsHelmActionOrigins(t *testing.T) {
+func TestSchemaV1_AcceptsHelmActionOrigins(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name string
@@ -285,8 +292,38 @@ func TestSchemaV2_AcceptsHelmActionOrigins(t *testing.T) {
 	}
 }
 
-func TestSchemaV2_ChartCRDs(t *testing.T) {
+func TestSchemaV1_ChartCRDs(t *testing.T) {
 	t.Parallel()
+	valid := []struct {
+		name        string
+		header      semantic.Header
+		action      semantic.HelmAction
+		lifecycle   semantic.ChartCRDLifecycle
+		willProcess bool
+	}{
+		{name: "process", header: semantic.Header{Project: "web", FreshInstall: true}, action: semantic.HelmInstall, lifecycle: semantic.ChartCRDProcess, willProcess: true},
+		{name: "skip", header: semantic.Header{Project: "web", FreshInstall: true}, action: semantic.HelmInstall, lifecycle: semantic.ChartCRDSkip},
+		{name: "upgrade", header: semantic.Header{Project: "web"}, action: semantic.HelmUpgrade, lifecycle: semantic.ChartCRDUpgrade},
+	}
+	for _, tc := range valid {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p := mustPlanWithHeader(t, tc.header, tc.action, nil, nil, nil)
+			var attachErr error
+			p, attachErr = semantic.AttachChartCRDs(p, []semantic.ChartCRD{{
+				Source:      ".deployah/crds/widgets.yaml",
+				Kind:        "CustomResourceDefinition",
+				Name:        "widgets.example.com",
+				Lifecycle:   tc.lifecycle,
+				WillProcess: tc.willProcess,
+			}})
+			require.NoError(t, attachErr)
+			raw, err := json.Marshal(mustPlanDoc(t, p))
+			require.NoError(t, err)
+			validatePlanSchema(t, raw)
+		})
+	}
+
 	p := mustPlan(t, semantic.HelmUpgrade, nil, nil)
 	var err error
 	p, err = semantic.AttachChartCRDs(p, []semantic.ChartCRD{{
@@ -297,17 +334,25 @@ func TestSchemaV2_ChartCRDs(t *testing.T) {
 	}})
 	require.NoError(t, err)
 	base := mustPlanDoc(t, p)
-	raw, err := json.Marshal(base)
-	require.NoError(t, err)
-	validatePlanSchema(t, raw)
 
 	tests := []struct {
 		name string
 		fn   func(map[string]any)
 	}{
 		{name: "unknown property", fn: func(d map[string]any) { firstChartCRD(t, d)["action"] = "create" }},
+		{name: "origin field", fn: func(d map[string]any) { firstChartCRD(t, d)["origin"] = "helm" }},
 		{name: "lifecycle create", fn: func(d map[string]any) { firstChartCRD(t, d)["lifecycle"] = "create" }},
 		{name: "upgrade willProcess true", fn: func(d map[string]any) { firstChartCRD(t, d)["willProcess"] = true }},
+		{name: "process willProcess false", fn: func(d map[string]any) {
+			crd := firstChartCRD(t, d)
+			crd["lifecycle"] = "process"
+			crd["willProcess"] = false
+		}},
+		{name: "skip willProcess true", fn: func(d map[string]any) {
+			crd := firstChartCRD(t, d)
+			crd["lifecycle"] = "skip"
+			crd["willProcess"] = true
+		}},
 		{name: "missing name", fn: func(d map[string]any) { delete(firstChartCRD(t, d), "name") }},
 		{name: "apiVersion field", fn: func(d map[string]any) { firstChartCRD(t, d)["apiVersion"] = "apiextensions.k8s.io/v1" }},
 	}
