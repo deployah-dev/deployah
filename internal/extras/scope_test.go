@@ -120,6 +120,9 @@ metadata:
 	require.NoError(t, err)
 	require.Len(t, bundle.CRDs, 1)
 	assert.Equal(t, clusterCRD, string(bundle.CRDs[0].Raw))
+	require.Len(t, bundle.CRDDocs, 1)
+	assert.Equal(t, "CustomResourceDefinition", bundle.CRDDocs[0].Kind)
+	assert.Equal(t, "clusterwidgets.example.com", bundle.CRDDocs[0].Name)
 	require.Len(t, bundle.Manifests, 1)
 	assert.Equal(t, "apps", bundle.Manifests[0].Obj.GetNamespace())
 }

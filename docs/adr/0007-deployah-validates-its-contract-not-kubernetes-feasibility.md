@@ -53,10 +53,11 @@ If that YAML includes `metadata.namespace`, Deployah does not rewrite
 the field. Later Kubernetes rejection is a runtime concern unless a
 Deployah invariant was violated.
 
-`.deployah/crds/` is an opaque Helm-chart file boundary. Deployah
-validates only the CRD source and file contract it owns. It does not
-inspect CRD document semantics. Kubernetes acceptance belongs to Helm
-and Kubernetes.
+`.deployah/crds/` is a Helm-chart file boundary. Deployah parses each
+document only for presentation identity (`kind` and `metadata.name`).
+It does not inspect CRD spec semantics, infer scope, or treat those
+files as Kubernetes objects it owns. Raw bytes are preserved for Helm.
+Kubernetes acceptance belongs to Helm and Kubernetes.
 
 If the planner needs discovery, REST mapping, or a Live GET to
 determine current state and the read fails, planning fails. That is

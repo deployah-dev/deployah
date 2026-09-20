@@ -16,6 +16,7 @@ package deploy
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -228,8 +229,77 @@ func TestSkipHelmApply(t *testing.T) {
 	}
 }
 
-// TestApplyDeploy_PassesCRDsToInstall forwards loaded CRDs to Helm
-// install and maps Options.SkipCRDs onto Install.SkipCRDs.
+// TestDeployPlan_ChartCRDsMatchSkipCRDs keeps the displayed plan aligned
+// with InstallApp skipCRDs: process on a fresh install, skip when requested,
+// and never treat chart CRDs as actionable on upgrade.
+func TestDeployPlan_ChartCRDsMatchSkipCRDs(t *testing.T) {
+	t.Parallel()
+	yamlBody := "kind: CustomResourceDefinition\nmetadata:\n  name: widgets.example.com\n"
+	docs := []extras.CRDDoc{{
+		Path: "widget.yaml",
+		Kind: "CustomResourceDefinition",
+		Name: "widgets.example.com",
+		YAML: []byte(yamlBody),
+	}}
+	tests := []struct {
+		name        string
+		upgrade     bool
+		skipCRDs    bool
+		wantProcess bool
+		wantNote    string
+		notContains []string
+		wantIdle    bool
+	}{
+		{
+			name:        "fresh default processes",
+			wantProcess: true,
+			wantNote:    "Helm install will process this chart CRD",
+			notContains: []string{"install-time CRD processing disabled"},
+		},
+		{
+			name:        "fresh skip",
+			skipCRDs:    true,
+			wantNote:    "install-time CRD processing disabled",
+			notContains: []string{"+ CustomResourceDefinition/", "Helm install will process this chart CRD"},
+		},
+		{
+			name:        "upgrade ignores skip flag for lifecycle",
+			upgrade:     true,
+			skipCRDs:    true,
+			wantNote:    "Helm upgrade will not process this chart CRD",
+			notContains: []string{"+ CustomResourceDefinition/", "install-time CRD processing disabled"},
+			wantIdle:    true,
+		},
+		{
+			name:        "upgrade without skip is not actionable",
+			upgrade:     true,
+			wantNote:    "Helm upgrade will not process this chart CRD",
+			notContains: []string{"+ CustomResourceDefinition/"},
+			wantIdle:    true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p := &planengine.Plan{}
+			planengine.StampChartCRDs(p, docs, tc.upgrade, tc.skipCRDs)
+			require.Len(t, p.ChartCRDs, 1)
+			assert.Equal(t, tc.wantProcess, p.ChartCRDs[0].WillProcess)
+			assert.Equal(t, tc.wantIdle, skipHelmApply(tc.upgrade, p.HasChanges(), false))
+			var buf strings.Builder
+			require.NoError(t, planengine.RenderText(&buf, p, planengine.TextOptions{}))
+			got := buf.String()
+			assert.Contains(t, got, "CustomResourceDefinition/widgets.example.com")
+			assert.Contains(t, got, tc.wantNote)
+			for _, s := range tc.notContains {
+				assert.NotContains(t, got, s)
+			}
+		})
+	}
+}
+
+// TestApplyDeploy_PassesCRDsToInstall copies chart CRD files into Helm and
+// maps Options.SkipCRDs onto Install.SkipCRDs.
 func TestApplyDeploy_PassesCRDsToInstall(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

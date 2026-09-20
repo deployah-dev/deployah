@@ -14,6 +14,8 @@
 
 // Package extras loads raw Kubernetes manifests and CRDs from .deployah/,
 // merges Deployah identity metadata into extra manifests, injects those
-// manifests into a Helm release via a post-renderer, and copies opaque
-// CRD source files into the generated chart crds/ directory.
+// manifests into a Helm release via a post-renderer, and copies CRD
+// source files unchanged into the generated chart crds/ directory.
+// CRD YAML is parsed only for presentation identity (kind and
+// metadata.name).
 package extras

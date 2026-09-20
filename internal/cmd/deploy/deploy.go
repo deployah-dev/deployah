@@ -193,10 +193,7 @@ func runDeploy(c *nabat.Context) error {
 		return err
 	}
 	defer plan.cleanup()
-
-	if note := extras.CRDLifecycleNote(bundle.CRDs, plan.result.IsUpgrade, opts.SkipCRDs); note != "" {
-		c.Println(note)
-	}
+	planengine.StampChartCRDs(plan.diff, bundle.CRDDocs, plan.result.IsUpgrade, opts.SkipCRDs)
 
 	textOpts := planengine.TextOptions{Mode: planengine.ModeCompact, Theme: c.Theme()}
 	if renderErr := planengine.RenderText(c.IO().Out, plan.diff, textOpts); renderErr != nil {

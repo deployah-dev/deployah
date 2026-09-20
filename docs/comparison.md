@@ -39,7 +39,8 @@ inside your cluster.
 > real Helm release, so a little Helm knowledge helps when you debug the release
 > itself (for example `helm history` or `helm get`). Custom CRDs under
 > `.deployah/crds/` are copied into the generated chart `crds/` directory as
-> opaque files. Helm installs them on a fresh release. An ordinary upgrade
+> raw files. Deployah reads only kind and name for plan output. Helm installs
+> them on a fresh release. An ordinary upgrade
 > does not update existing chart CRDs and does not install a CRD added after
 > that first install. Uninstall does not delete them. See
 > [Custom manifests and CRDs](custom-manifests-and-crds.md).

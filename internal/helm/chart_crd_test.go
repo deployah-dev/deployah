@@ -144,6 +144,13 @@ func TestPrepareChart_WritesSourceFiles(t *testing.T) {
 			},
 		},
 		{
+			name: "comments and unusual indentation stay exact",
+			crds: []extras.RawFile{{Path: "widgets.yaml", Raw: []byte("# keep\nkind: CustomResourceDefinition\nmetadata:\n    name: widgets.example.com\n")}},
+			wantFiles: map[string]string{
+				"widgets.yaml": "# keep\nkind: CustomResourceDefinition\nmetadata:\n    name: widgets.example.com\n",
+			},
+		},
+		{
 			name: "malformed yaml stays exact bytes",
 			crds: []extras.RawFile{{Path: "broken.yaml", Raw: []byte("not: [valid\n")}},
 			wantFiles: map[string]string{

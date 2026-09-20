@@ -43,7 +43,7 @@ func TestRenderJSON_HeaderAndMixedChanges(t *testing.T) {
 	var doc map[string]any
 	require.NoError(t, json.Unmarshal([]byte(buf.String()), &doc))
 
-	assert.Equal(t, "1.0", doc["format_version"])
+	assert.Equal(t, "1.1", doc["format_version"])
 	assert.Equal(t, "web", doc["project"])
 	assert.Equal(t, "production", doc["environment"])
 	assert.Equal(t, "web-production", doc["release"])

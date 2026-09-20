@@ -122,22 +122,18 @@ func RenderText(w io.Writer, p *Plan, opts TextOptions) error {
 		return err
 	}
 
-	if len(p.Changes) == 0 {
+	hasResourceChanges := len(p.Changes) > 0
+	if hasResourceChanges {
+		if _, err := fmt.Fprintln(w); err != nil {
+			return err
+		}
+		for _, c := range p.Changes {
+			if err := writeChange(w, c, opts); err != nil {
+				return err
+			}
+		}
+	} else if !p.chartCRDsPending() {
 		if _, err := fmt.Fprintln(w, opts.Theme.Style(theme.StatusSuccess).Render("No changes.")); err != nil {
-			return err
-		}
-		if err := writeHookNote(w, p, opts); err != nil {
-			return err
-		}
-		return writeDrift(w, p, opts)
-	}
-
-	if _, err := fmt.Fprintln(w); err != nil {
-		return err
-	}
-
-	for _, c := range p.Changes {
-		if err := writeChange(w, c, opts); err != nil {
 			return err
 		}
 	}
@@ -145,9 +141,14 @@ func RenderText(w io.Writer, p *Plan, opts TextOptions) error {
 	if err := writeHookNote(w, p, opts); err != nil {
 		return err
 	}
-
-	if _, err := fmt.Fprintf(w, "\nPlan: %s.\n", p.Summary.String()); err != nil {
+	if err := writeChartCRDs(w, p, opts); err != nil {
 		return err
+	}
+
+	if hasResourceChanges {
+		if _, err := fmt.Fprintf(w, "\nPlan: %s.\n", p.Summary.String()); err != nil {
+			return err
+		}
 	}
 
 	return writeDrift(w, p, opts)
@@ -374,6 +375,91 @@ func writeHookNote(w io.Writer, p *Plan, opts TextOptions) error {
 	note := opts.Theme.Style(theme.TextMuted).Render("Note: Helm hooks changed for this release (not shown above).")
 	_, err := fmt.Fprintln(w, "\n"+note)
 	return err
+}
+
+func writeChartCRDs(w io.Writer, p *Plan, opts TextOptions) error {
+	if len(p.ChartCRDs) == 0 {
+		return nil
+	}
+	if _, err := fmt.Fprintln(w); err != nil {
+		return err
+	}
+	for i, crd := range p.ChartCRDs {
+		if i > 0 {
+			if _, err := fmt.Fprintln(w); err != nil {
+				return err
+			}
+		}
+		if err := writeChartCRD(w, crd, opts); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func writeChartCRD(w io.Writer, crd ChartCRD, opts TextOptions) error {
+	title := fmt.Sprintf("%s/%s", crd.Kind, crd.Name)
+	note := chartCRDNote(crd.Lifecycle)
+	if crd.WillProcess {
+		line := opts.Theme.Style(theme.StatusSuccess).Render("+ " + title)
+		if _, err := fmt.Fprintln(w, line); err != nil {
+			return err
+		}
+		muted := opts.Theme.Style(theme.TextMuted).Render("    " + note)
+		if _, err := fmt.Fprintln(w, muted); err != nil {
+			return err
+		}
+		if crd.Source != "" {
+			src := opts.Theme.Style(theme.TextMuted).Render("    source: " + crd.Source)
+			if _, err := fmt.Fprintln(w, src); err != nil {
+				return err
+			}
+		}
+		if crd.YAML == "" {
+			return nil
+		}
+		_, err := fmt.Fprintln(w, indentYAMLBlock(crd.YAML))
+		return err
+	}
+	line := opts.Theme.Style(theme.TextMuted).Render(title)
+	if _, err := fmt.Fprintln(w, line); err != nil {
+		return err
+	}
+	muted := opts.Theme.Style(theme.TextMuted).Render("    " + note)
+	if _, err := fmt.Fprintln(w, muted); err != nil {
+		return err
+	}
+	if crd.Source == "" {
+		return nil
+	}
+	src := opts.Theme.Style(theme.TextMuted).Render("    source: " + crd.Source)
+	_, err := fmt.Fprintln(w, src)
+	return err
+}
+
+func chartCRDNote(lifecycle ChartCRDLifecycle) string {
+	switch lifecycle {
+	case ChartCRDProcess:
+		return "Helm install will process this chart CRD"
+	case ChartCRDSkip:
+		return "present in chart; install-time CRD processing disabled"
+	case ChartCRDUpgrade:
+		return "Helm upgrade will not process this chart CRD"
+	default:
+		return "chart CRD lifecycle is not known"
+	}
+}
+
+func indentYAMLBlock(raw string) string {
+	raw = strings.TrimRight(raw, "\n")
+	if raw == "" {
+		return ""
+	}
+	lines := strings.Split(raw, "\n")
+	for i, line := range lines {
+		lines[i] = "    " + line
+	}
+	return strings.Join(lines, "\n")
 }
 
 func writeTasks(w io.Writer, p *Plan, opts TextOptions) error {

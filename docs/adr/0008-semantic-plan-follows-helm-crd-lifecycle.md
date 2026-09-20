@@ -16,9 +16,10 @@ install. Docs and the executed lifecycle are not the same thing.
 Deployah follows the CRD lifecycle its Helm 4.3 server-side apply path
 actually performs. It does not invent a parallel CRD controller.
 
-`.deployah/crds/` is opaque root-chart `crds/` input. Deployah
-preserves the source files and does not interpret or mutate their
-Kubernetes semantics. Helm owns CRD lifecycle.
+`.deployah/crds/` is root-chart `crds/` input. Deployah preserves the
+source files for Helm. It parses documents only for plan presentation
+identity (`kind` and `metadata.name`) and does not interpret or mutate
+Kubernetes CRD semantics. Helm owns CRD lifecycle.
 
 Helm applies chart `crds/` objects only on install, before ordinary
 release resources. With server-side apply enabled, that Create can

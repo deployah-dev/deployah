@@ -53,7 +53,7 @@ type SemanticBuildInput struct {
 	Resolved *spec.ResolvedSpec
 	// PostRenderer, when non-nil, is forwarded once to the render client.
 	PostRenderer postrenderer.PostRenderer
-	// CRDs are already-loaded opaque source files from .deployah/crds/.
+	// CRDs are already-loaded source files from .deployah/crds/.
 	// They are forwarded to Helm chart materialization only.
 	CRDs []extras.RawFile
 }

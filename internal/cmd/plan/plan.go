@@ -192,8 +192,8 @@ func runOffline(c *nabat.Context, sess *session.Session, platform *spec.Platform
 	}
 
 	c.Println(fmt.Sprintf("Rendered %d resources for environment '%s' (no cluster comparison).", count, opts.Environment))
-	if note := extras.CRDLifecycleNote(bundle.CRDs, false, false); note != "" {
-		c.Println(note)
+	for _, d := range bundle.CRDDocs {
+		c.Println(fmt.Sprintf("  %s/%s", d.Kind, d.Name))
 	}
 	c.Println("validation: OK")
 	return nil
@@ -246,10 +246,7 @@ func runOnline(c *nabat.Context, sess *session.Session, platform *spec.PlatformC
 	if err != nil {
 		return fmt.Errorf("%w%s", err, cmdopts.ClusterHint(err))
 	}
-
-	if note := extras.CRDLifecycleNote(bundle.CRDs, result.IsUpgrade, false); note != "" {
-		c.Println(note)
-	}
+	planengine.StampChartCRDs(p, bundle.CRDDocs, result.IsUpgrade, false)
 
 	if opts.Drift {
 		if driftErr := checkDrift(c, cluster, p, result.Manifest); driftErr != nil {

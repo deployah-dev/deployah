@@ -38,8 +38,11 @@ type Bundle struct {
 	// Manifests are objects from .deployah/manifests/ for the selected environment.
 	Manifests []Object
 	// CRDs are one entry per source file under .deployah/crds/. Bytes are
-	// the exact file contents; they are never parsed or rewritten for Helm.
+	// the exact file contents Helm copies into the chart.
 	CRDs []RawFile
+	// CRDDocs is presentation identity for every non-empty CRD document.
+	// Load parses only kind and metadata.name (and apiVersion when present).
+	CRDDocs []CRDDoc
 }
 
 // LoadConfig configures [Load].
@@ -64,8 +67,10 @@ type LoadConfig struct {
 
 // Load reads .deployah/manifests and .deployah/crds under SpecDir and
 // returns a deploy-ready Bundle. It validates extra manifests and merges
-// Deployah identity metadata into them. Chart CRDs are loaded as opaque
-// source files. Missing directories yield an empty Bundle with a nil error.
+// Deployah identity metadata into them. Chart CRD files are kept as
+// exact bytes for Helm. Each CRD YAML document is parsed only for
+// presentation identity (kind and metadata.name). Missing directories
+// yield an empty Bundle with a nil error.
 func Load(cfg LoadConfig) (*Bundle, error) {
 	if cfg.Scope == nil {
 		return nil, errors.New("extras: ScopeResolver is required")
@@ -107,12 +112,18 @@ func Load(cfg LoadConfig) (*Bundle, error) {
 	}
 
 	var crds []RawFile
+	var crdDocs []CRDDoc
 	for _, path := range crdFiles {
 		raw, readErr := os.ReadFile(path) // #nosec G304 -- path from extras dir listing under SpecDir
 		if readErr != nil {
 			return nil, fmt.Errorf("read %s: %w", path, readErr)
 		}
+		docs, parseErr := parseCRDDocuments(path, raw)
+		if parseErr != nil {
+			return nil, parseErr
+		}
 		crds = append(crds, RawFile{Path: path, Raw: raw})
+		crdDocs = append(crdDocs, docs...)
 	}
 
 	for i := range manifests {
@@ -137,7 +148,7 @@ func Load(cfg LoadConfig) (*Bundle, error) {
 		return nil, dupErr
 	}
 
-	return &Bundle{Manifests: manifests, CRDs: crds}, nil
+	return &Bundle{Manifests: manifests, CRDs: crds, CRDDocs: crdDocs}, nil
 }
 
 func checkDuplicateIdentities(objs []Object) error {

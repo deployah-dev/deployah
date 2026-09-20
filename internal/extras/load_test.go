@@ -426,10 +426,11 @@ spec:
 func TestLoad_CRDsKeepExactSourceBytes(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name string
-		body string
+		name      string
+		body      string
+		wantNames []string
 	}{
-		{name: "valid crd", body: widgetCRDBody},
+		{name: "valid crd", body: widgetCRDBody, wantNames: []string{"widgets.example.com"}},
 		{
 			name: "user metadata unchanged",
 			body: `
@@ -458,23 +459,17 @@ spec:
         openAPIV3Schema:
           type: object
 `,
+			wantNames: []string{"widgets.example.com"},
 		},
 		{
-			name: "non-crd yaml still loads",
-			body: `
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: nope
-`,
+			name:      "multi-document file stays one RawFile",
+			body:      widgetCRDBody + "---\napiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\nmetadata:\n  name: gadgets.example.com\n",
+			wantNames: []string{"widgets.example.com", "gadgets.example.com"},
 		},
 		{
-			name: "invalid yaml still loads",
-			body: "not: [valid\n",
-		},
-		{
-			name: "multi-document file stays one RawFile",
-			body: widgetCRDBody + "---\napiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\nmetadata:\n  name: gadgets.example.com\n",
+			name:      "comments quotes and helm-looking text",
+			body:      "# keep comments\nkind: CustomResourceDefinition\nmetadata:\n  name: widgets.example.com\n  annotations:\n    note: \"{{ .Release.Name }}\"\n",
+			wantNames: []string{"widgets.example.com"},
 		},
 	}
 	for _, tc := range tests {
@@ -495,6 +490,11 @@ metadata:
 			require.Len(t, bundle.CRDs, 1)
 			assert.Equal(t, path, bundle.CRDs[0].Path)
 			assert.Equal(t, tc.body, string(bundle.CRDs[0].Raw))
+			require.Len(t, bundle.CRDDocs, len(tc.wantNames))
+			for i, wantName := range tc.wantNames {
+				assert.Equal(t, "CustomResourceDefinition", bundle.CRDDocs[i].Kind)
+				assert.Equal(t, wantName, bundle.CRDDocs[i].Name)
+			}
 		})
 	}
 }

@@ -7,12 +7,15 @@ a `NetworkPolicy`, or a CRD your app needs): drop manifests into
 
 Extra **manifests** join the same Helm release as your generated resources
 (via a Helm post-renderer). Extra **CRDs** are copied literally into the
-generated chart's `crds/` directory. Deployah does not inspect or
-validate CRD document semantics, and it does not use CRD content to
-decide custom-resource scope. Helm and Kubernetes process the files at
-runtime. Helm installs them on a fresh release, before ordinary
+generated chart's `crds/` directory. Deployah parses each YAML document
+only for presentation identity (`kind` and `metadata.name`) so plan
+output can name the CRD. It does not inspect CRD spec, infer
+custom-resource scope, or decide API availability from CRD contents.
+Raw file bytes stay unchanged for Helm. Helm and Kubernetes process the
+files at runtime. Helm installs them on a fresh release, before ordinary
 resources, unless you skip install-time processing. Deployah does not
-apply, patch, or delete those CRDs itself.
+apply, patch, or delete those CRDs itself. Plan identity parsing is not
+CRD lifecycle ownership.
 
 ## Layout
 
@@ -115,10 +118,11 @@ later.
   `metadata.name`.
 - Duplicate extra **manifests** (same apiVersion/kind/namespace/name) fail
   the load.
-- `.deployah/crds/` is an opaque Helm-chart file set. Deployah checks the
-  filesystem rules above. It does not require a CRD `apiVersion` or reject
-  duplicate CRD logical identity. Deployah does not validate CRD document
-  semantics. Helm and Kubernetes process the files at runtime and may
+- Each extra **CRD** document needs `kind: CustomResourceDefinition` and
+  `metadata.name`. YAML must be parseable enough to read those fields.
+  Empty YAML documents are ignored. Deployah does not require a CRD
+  `apiVersion`, does not inspect `spec`, and does not reject duplicate
+  CRD names. Helm and Kubernetes process the files at runtime and may
   reject invalid or unsupported content.
 - An extra that collides with a generated chart object fails the render
   (Deployah will not overwrite chart resources).
@@ -135,9 +139,11 @@ later.
 ## Plan vs deploy
 
 - `deployah plan` includes extra manifests in the rendered diff. It does
-  not apply CRDs. When `.deployah/crds/` is non-empty it lists the source
-  files and Helm's install-only lifecycle for them. It does not parse
-  those files to invent Kubernetes object names.
+  not apply CRDs. Chart CRDs appear as lifecycle entries with `kind` and
+  `metadata.name`. On a fresh install the plan shows each CRD document
+  Helm will process. It does not claim Kubernetes will create versus
+  apply the object. On upgrade, CRDs are listed as present in the chart
+  but not processed.
 - `deployah deploy` copies those CRD files into the generated chart, then
   runs Helm. On a fresh install Helm processes `crds/` before ordinary
   resources. On upgrade Helm leaves chart CRDs alone, including CRDs added
@@ -184,7 +190,10 @@ Helm's install-time CRD step and the rest of the release are **not** one
 atomic operation. Helm installs chart CRDs first (unless skipped), waits for
 each to become `Established`, then applies ordinary resources. If the
 resource step fails after CRDs succeed, those CRDs stay in the cluster.
-Re-run `deployah deploy` after you fix the failure. An existing release is
-an upgrade, so chart CRDs will not be written again.
+
+Deployah uses Helm 4.3 with `RollbackOnFailure` on install. A failed first
+install does not always leave a Helm release. If a release does remain, the
+next deploy is an Upgrade, and Helm will not process chart CRDs again.
+Re-run `deployah deploy` after you fix the failure.
 
 See the [README](../README.md) for the project overview and the other guides.

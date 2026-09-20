@@ -16,7 +16,6 @@ package extras
 
 import (
 	"path/filepath"
-	"strings"
 
 	"helm.sh/helm/v4/pkg/postrenderer"
 	"k8s.io/client-go/rest"
@@ -54,37 +53,9 @@ func (b *Bundle) PostRendererFor() postrenderer.PostRenderer {
 	return &PostRenderer{Manifests: b.Manifests}
 }
 
-// CRDLifecycleNote describes Helm's install-only processing of the loaded
-// .deployah/crds/ source files. upgrade is true for an existing release.
-// skipInstall is true when this invocation disables install-time CRD
-// processing. The files stay in the chart either way. The note lists
-// source filenames; it does not interpret file contents.
-func CRDLifecycleNote(files []RawFile, upgrade, skipInstall bool) string {
-	if len(files) == 0 {
-		return ""
-	}
-	var header string
-	mark := "  "
-	switch {
-	case upgrade:
-		header = "CRD files not processed on upgrade:"
-	case skipInstall:
-		header = "CRD files in chart (install-time processing disabled):"
-	default:
-		header = "CRD files to process on install:"
-		mark = "  + "
-	}
-	var b strings.Builder
-	b.WriteString(header)
-	for i := range files {
-		b.WriteByte('\n')
-		b.WriteString(mark)
-		b.WriteString(crdDisplayPath(files[i].Path))
-	}
-	return b.String()
-}
-
-func crdDisplayPath(path string) string {
+// CRDDisplayPath returns the stable .deployah/crds/<basename> path shown
+// in plan output for a CRD source file.
+func CRDDisplayPath(path string) string {
 	name := filepath.Base(path)
 	if name == "" || name == "." || name == "/" {
 		name = path
