@@ -8,7 +8,7 @@ require (
 	github.com/adrg/xdg v0.5.3
 	github.com/aymanbagabas/go-udiff v0.4.1
 	github.com/distribution/reference v0.6.0
-	github.com/dustin/go-humanize v1.0.1
+	github.com/dustin/go-humanize v1.1.0
 	github.com/fatih/color v1.19.0
 	github.com/fluxcd/pkg/envsubst v1.8.0
 	github.com/go-viper/mapstructure/v2 v2.5.0
