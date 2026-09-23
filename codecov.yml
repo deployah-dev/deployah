@@ -1,5 +1,16 @@
 codecov:
   require_ci_to_pass: true
+  notify:
+    # Wait for all three coverage uploads before posting, not just the first.
+    # Only coverage reports count (unittests, integration, e2e); JUnit
+    # test_results go to Test Analytics and do not. A suite with no countable
+    # coverage after the ignore globs is dropped and won't count.
+    after_n_builds: 3
+
+github_checks:
+  # Skip inline per-line annotations in the PR diff; the PR comment already
+  # summarizes coverage, and annotations on every uncovered line add noise.
+  annotations: false
 
 coverage:
   precision: 2
@@ -31,13 +42,8 @@ flag_management:
         target: auto
         threshold: 1%
       # Patch coverage is gated once under coverage.status.patch. Flags only
-      # report project trends so unit and integration uploads are not each
-      # held to a separate patch target.
-  individual_flags:
-    - name: unittests
-      carryforward: true
-    - name: integration
-      carryforward: true
+      # report project trends so each suite upload is not held to a separate
+      # patch target.
 
 ignore:
   - "**/examples/**"
