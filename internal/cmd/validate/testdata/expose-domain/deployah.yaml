@@ -1,0 +1,10 @@
+apiVersion: v1-alpha.5
+project: shop
+components:
+  api:
+    image: nginx:1.27
+    port: 80
+    expose:
+      domain: public
+environments:
+  dev: {}
