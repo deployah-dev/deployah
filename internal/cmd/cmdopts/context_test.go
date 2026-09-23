@@ -15,26 +15,24 @@
 package cmdopts
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"nabat.dev/nabat"
-	"nabat.dev/nabat/nabattest"
 
 	"deployah.dev/deployah/internal/session"
+	"deployah.dev/deployah/internal/testing/nabatctx"
 )
 
 func TestWarnContextFallback_ExplicitContext(t *testing.T) {
 	t.Parallel()
 
-	c, _, errOut := nabatContextWithErr(t)
+	h := nabatctx.New(t, "test")
 	cluster := mustTarget(t, session.New(session.WithKubeContext("cli-context")), "")
-	WarnContextFallback(c, cluster, "production")
-	assert.Empty(t, errOut.String())
+	WarnContextFallback(h.Context, cluster, "production")
+	assert.Empty(t, h.Stderr.String())
 }
 
 func TestWarnContextFallback_PlatformContext(t *testing.T) {
@@ -50,10 +48,10 @@ environments:
         baseDomain: example.com
 `), 0o600))
 
-	c, _, errOut := nabatContextWithErr(t)
+	h := nabatctx.New(t, "test")
 	cluster := mustTarget(t, session.New(session.WithPlatformFile(platformPath)), "production")
-	WarnContextFallback(c, cluster, "production")
-	assert.Empty(t, errOut.String())
+	WarnContextFallback(h.Context, cluster, "production")
+	assert.Empty(t, h.Stderr.String())
 }
 
 func TestWarnContextFallback_KubeconfigCurrentContext(t *testing.T) {
@@ -62,11 +60,11 @@ func TestWarnContextFallback_KubeconfigCurrentContext(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "kubeconfig")
 	require.NoError(t, os.WriteFile(path, []byte(minimalKubeconfig), 0o600))
 
-	c, _, errOut := nabatContextWithErr(t)
+	h := nabatctx.New(t, "test")
 	cluster := mustTarget(t, session.New(session.WithKubeconfig(path)), "production")
-	WarnContextFallback(c, cluster, "production")
+	WarnContextFallback(h.Context, cluster, "production")
 
-	got := errOut.String()
+	got := h.Stderr.String()
 	assert.Contains(t, got, `environment "production" has no context in the platform file and no --context was given`)
 	assert.Contains(t, got, `the current kubeconfig context "test-context"`)
 }
@@ -74,13 +72,13 @@ func TestWarnContextFallback_KubeconfigCurrentContext(t *testing.T) {
 func TestWarnContextFallback_EmptyCurrentContext(t *testing.T) {
 	t.Parallel()
 
-	c, _, errOut := nabatContextWithErr(t)
+	h := nabatctx.New(t, "test")
 	cluster := mustTarget(t, session.New(
 		session.WithKubeconfig(filepath.Join(t.TempDir(), "missing-kubeconfig")),
 	), "")
-	WarnContextFallback(c, cluster, "")
+	WarnContextFallback(h.Context, cluster, "")
 
-	got := errOut.String()
+	got := h.Stderr.String()
 	assert.Contains(t, got, "no context is configured (platform file or --context)")
 	assert.Contains(t, got, "the kubeconfig's current context")
 }
@@ -90,13 +88,6 @@ func mustTarget(t *testing.T, sess *session.Session, env string) *session.Cluste
 	cluster, err := sess.Target(t.Context(), env)
 	require.NoError(t, err)
 	return cluster
-}
-
-func nabatContextWithErr(t *testing.T) (*nabat.Context, *nabat.App, *bytes.Buffer) {
-	t.Helper()
-	io, _, _, errOut := nabattest.NewIO()
-	app := nabat.MustNew("test", nabat.WithIO(io))
-	return nabattest.Context(t, app), app, errOut
 }
 
 const minimalKubeconfig = `apiVersion: v1

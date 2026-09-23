@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"deployah.dev/deployah/internal/spec"
+	"deployah.dev/deployah/internal/testing/nabatctx"
 
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 	v1 "helm.sh/helm/v4/pkg/release/v1"
@@ -184,7 +185,7 @@ func TestHasStatefulWithPersistence(t *testing.T) {
 
 func TestEmitWorkloadWarnings_HPAOnStatefulWithPersistence(t *testing.T) {
 	t.Parallel()
-	c, _, _, stderr := nabatContextWithIO(t)
+	h := nabatctx.New(t, "test")
 	manifest := &spec.Spec{
 		Components: map[string]spec.Component{
 			"cache": {
@@ -194,13 +195,13 @@ func TestEmitWorkloadWarnings_HPAOnStatefulWithPersistence(t *testing.T) {
 			},
 		},
 	}
-	emitWorkloadWarnings(c, manifest, "dev", map[string]map[string]any{})
-	assert.Contains(t, stderr.String(), "retains PVCs on scale-down")
+	emitWorkloadWarnings(h.Context, manifest, "dev", map[string]map[string]any{})
+	assert.Contains(t, h.Stderr.String(), "retains PVCs on scale-down")
 }
 
 func TestEmitWorkloadWarnings_ExposeMultiReplicaStateful(t *testing.T) {
 	t.Parallel()
-	c, _, _, stderr := nabatContextWithIO(t)
+	h := nabatctx.New(t, "test")
 	replicas := 3
 	manifest := &spec.Spec{
 		Components: map[string]spec.Component{
@@ -211,13 +212,13 @@ func TestEmitWorkloadWarnings_ExposeMultiReplicaStateful(t *testing.T) {
 			},
 		},
 	}
-	emitWorkloadWarnings(c, manifest, "dev", map[string]map[string]any{})
-	assert.Contains(t, stderr.String(), "expose with replicas > 1")
+	emitWorkloadWarnings(h.Context, manifest, "dev", map[string]map[string]any{})
+	assert.Contains(t, h.Stderr.String(), "expose with replicas > 1")
 }
 
 func TestEmitWorkloadWarnings_MountPathChange(t *testing.T) {
 	t.Parallel()
-	c, _, _, stderr := nabatContextWithIO(t)
+	h := nabatctx.New(t, "test")
 	prev := map[string]map[string]any{
 		"db": {
 			"workloadKind":         "StatefulSet",
@@ -233,22 +234,22 @@ func TestEmitWorkloadWarnings_MountPathChange(t *testing.T) {
 			},
 		},
 	}
-	emitWorkloadWarnings(c, manifest, "dev", prev)
-	assert.Contains(t, stderr.String(), "persistence.mountPath change")
-	assert.Contains(t, stderr.String(), "/old/data")
-	assert.Contains(t, stderr.String(), "/new/data")
+	emitWorkloadWarnings(h.Context, manifest, "dev", prev)
+	assert.Contains(t, h.Stderr.String(), "persistence.mountPath change")
+	assert.Contains(t, h.Stderr.String(), "/old/data")
+	assert.Contains(t, h.Stderr.String(), "/new/data")
 }
 
 func TestEmitWorkloadWarnings_NoWarningsWhenClean(t *testing.T) {
 	t.Parallel()
-	c, _, _, stderr := nabatContextWithIO(t)
+	h := nabatctx.New(t, "test")
 	manifest := &spec.Spec{
 		Components: map[string]spec.Component{
 			"web": {Kind: spec.ComponentKindStateless},
 		},
 	}
-	emitWorkloadWarnings(c, manifest, "dev", map[string]map[string]any{})
-	assert.Empty(t, stderr.String())
+	emitWorkloadWarnings(h.Context, manifest, "dev", map[string]map[string]any{})
+	assert.Empty(t, h.Stderr.String())
 }
 
 func TestComponentActiveInEnv(t *testing.T) {

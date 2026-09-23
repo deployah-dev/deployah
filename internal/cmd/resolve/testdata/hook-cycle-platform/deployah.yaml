@@ -1,0 +1,20 @@
+apiVersion: v1-alpha.5
+project: shop
+components:
+  api:
+    image: busybox
+    env:
+      LOG_LEVEL: debug
+tasks:
+  migrate:
+    from: api
+    "on": preDeploy
+    after: [seed]
+    command: [migrate]
+  seed:
+    from: api
+    "on": preDeploy
+    after: [migrate]
+    command: [seed]
+environments:
+  staging: {}

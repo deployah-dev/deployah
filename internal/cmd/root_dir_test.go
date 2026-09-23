@@ -15,7 +15,6 @@
 package cmd_test
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -25,29 +24,8 @@ import (
 	"nabat.dev/nabat/nabattest"
 
 	"deployah.dev/deployah/internal/cmd"
+	"deployah.dev/deployah/internal/testing/testpath"
 )
-
-// cwdDir returns testdata/cwd/<name> relative to this package.
-func cwdDir(tb testing.TB, name string) string {
-	tb.Helper()
-
-	dir := filepath.Join("testdata", "cwd", name)
-	info, err := os.Stat(dir)
-	require.NoError(tb, err)
-	require.Truef(tb, info.IsDir(), "cwd case %s is not a directory", name)
-
-	return dir
-}
-
-// absCwdDir returns an absolute cwdDir.
-func absCwdDir(tb testing.TB, name string) string {
-	tb.Helper()
-
-	abs, err := filepath.Abs(cwdDir(tb, name))
-	require.NoError(tb, err)
-
-	return abs
-}
 
 // TestWithDirResolvesSpec loads the spec through WithDir
 // and leaves the process directory unchanged.
@@ -86,7 +64,7 @@ func TestWithDirResolvesSpec(t *testing.T) {
 
 			appIO, _, out, errOut := nabattest.NewIO()
 			app := cmd.NewApp(nabat.WithIO(appIO))
-			err := nabattest.RunParallel(t, app, tt.args, nabattest.WithDir(cwdDir(t, tt.dir)))
+			err := nabattest.RunParallel(t, app, tt.args, nabattest.WithDir(testpath.Dir(t, "testdata", "cwd", tt.dir)))
 			require.NoErrorf(t, err, "%s under WithDir\nstderr:\n%s", tt.args[0], errOut.String())
 			assert.Contains(t, out.String(), tt.wantStdout)
 		})
@@ -97,8 +75,8 @@ func TestWithDirResolvesSpec(t *testing.T) {
 func TestCwdFlagResolvesSpec(t *testing.T) {
 	t.Parallel()
 
-	withEnv := absCwdDir(t, "with-env")
-	explicit := absCwdDir(t, "explicit-spec")
+	withEnv := testpath.AbsDir(t, "testdata", "cwd", "with-env")
+	explicit := testpath.AbsDir(t, "testdata", "cwd", "explicit-spec")
 
 	tests := []struct {
 		name       string
@@ -118,7 +96,7 @@ func TestCwdFlagResolvesSpec(t *testing.T) {
 		},
 		{
 			name:       "relative --cwd",
-			args:       []string{"resolve", "dev", "--cwd", cwdDir(t, "with-env")},
+			args:       []string{"resolve", "dev", "--cwd", testpath.Dir(t, "testdata", "cwd", "with-env")},
 			wantStdout: "LOG_LEVEL: info",
 		},
 		{
@@ -129,7 +107,7 @@ func TestCwdFlagResolvesSpec(t *testing.T) {
 		{
 			name:       "--cwd wins over WithDir",
 			args:       []string{"resolve", "dev", "--cwd", withEnv},
-			opts:       []nabattest.RunOption{nabattest.WithDir(cwdDir(t, "literal"))},
+			opts:       []nabattest.RunOption{nabattest.WithDir(testpath.Dir(t, "testdata", "cwd", "literal"))},
 			wantStdout: "LOG_LEVEL: info",
 		},
 	}
@@ -162,7 +140,7 @@ func TestResolveSpec_Error(t *testing.T) {
 		{
 			name:    "missing required substitution variable",
 			args:    []string{"plan", "dev", "--offline"},
-			opts:    []nabattest.RunOption{nabattest.WithDir(cwdDir(t, "missing-var"))},
+			opts:    []nabattest.RunOption{nabattest.WithDir(testpath.Dir(t, "testdata", "cwd", "missing-var"))},
 			wantErr: "variable",
 		},
 		{

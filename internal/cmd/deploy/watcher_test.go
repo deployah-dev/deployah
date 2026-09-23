@@ -29,6 +29,7 @@ import (
 	"nabat.dev/nabat/nabattest"
 
 	"deployah.dev/deployah/internal/k8s"
+	"deployah.dev/deployah/internal/testing/nabatctx"
 
 	corev1 "k8s.io/api/core/v1"
 	clienttesting "k8s.io/client-go/testing"
@@ -56,16 +57,17 @@ func makeDeployEvent(uid types.UID, evType, reason, object, message string, coun
 // written to stderr (the title + plain-text row table).
 func runStatus(t *testing.T, fn func(*nabat.Status), title string) string {
 	t.Helper()
-	io, _, _, _ := nabattest.NewIO()
-	app := nabat.MustNew("test", nabat.WithIO(io))
-	app.MustCommand("run", nabat.WithRun(func(c *nabat.Context) error {
+
+	h := nabatctx.New(t, "test")
+	h.App.MustCommand("run", nabat.WithRun(func(c *nabat.Context) error {
 		return c.Status(func(st *nabat.Status) error {
 			fn(st)
 			return nil
 		}, nabat.WithTitle(title))
 	}))
-	got := nabattest.Capture(t, app, []string{"run"})
+	got := nabattest.Capture(t, h.App, []string{"run"})
 	require.NoError(t, got.Err)
+
 	return got.Stderr.String()
 }
 
@@ -73,6 +75,7 @@ func runStatus(t *testing.T, fn func(*nabat.Status), title string) string {
 // only Warning-type events appear in the warnings list.
 func TestDeployWatcher_Warnings_CollectsOnlyWarningEvents(t *testing.T) {
 	t.Parallel()
+
 	w := newWatcher()
 
 	w.trackWarning(makeDeployEvent("uid-norm", corev1.EventTypeNormal, "Scheduled", "pod/abc", "ok", 1))

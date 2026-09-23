@@ -1,0 +1,17 @@
+apiVersion: v1-alpha.5
+project: shop
+components:
+  api:
+    image: busybox
+tasks:
+  migrate:
+    from: api
+    "on": preDeploy
+    after: [cleanup]
+    command: [migrate]
+  cleanup:
+    from: api
+    "on": postDeploy
+    command: [cleanup]
+environments:
+  staging: {}

@@ -9,14 +9,13 @@
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing the License.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
-package cmd_test
+package resolve_test
 
 import (
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -25,38 +24,15 @@ import (
 	"nabat.dev/nabat/nabattest"
 
 	"deployah.dev/deployah/internal/cmd"
+	"deployah.dev/deployah/internal/testing/testpath"
 )
 
-const resolveJSONSpec = `apiVersion: v1-alpha.5
-project: shop
-components:
-  api:
-    image: nginx:1.27
-    port: 80
-    env:
-      LOG_LEVEL: debug
-    envFile: api.env
-tasks:
-  migrate:
-    from: api
-    "on": preDeploy
-    command: [migrate]
-    env:
-      MIGRATION_MODE: safe
-environments:
-  staging: {}
-`
-
-func TestResolve_JSONContract(t *testing.T) {
+func TestResolve_JSONRuntimeValues(t *testing.T) {
 	t.Parallel()
-
-	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "deployah.yaml"), []byte(resolveJSONSpec), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "api.env"), []byte("REGION=eu\n"), 0o600))
 
 	appIO, _, out, errOut := nabattest.NewIO()
 	app := cmd.NewApp(nabat.WithIO(appIO))
-	err := nabattest.RunParallel(t, app, []string{"resolve", "staging", "--output", "json"}, nabattest.WithDir(dir))
+	err := nabattest.RunParallel(t, app, []string{"resolve", "staging", "--output", "json"}, nabattest.WithDir(testpath.Dir(t, "testdata", "json")))
 	require.NoErrorf(t, err, "stderr:\n%s", errOut.String())
 
 	var got struct {

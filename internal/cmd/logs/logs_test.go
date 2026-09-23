@@ -19,8 +19,9 @@ import (
 	"github.com/stern/stern/stern"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"nabat.dev/nabat"
 	"nabat.dev/nabat/nabattest"
+
+	"deployah.dev/deployah/internal/testing/nabatctx"
 )
 
 func TestLogContainerStates_IncludesTerminated(t *testing.T) {
@@ -60,10 +61,10 @@ func TestRunLogs_FlagValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			io, _, _, _ := nabattest.NewIO()
-			app := nabat.MustNew("deployah", nabat.WithIO(io))
-			Register(app)
-			err := nabattest.Run(t, app, tt.args)
+
+			h := nabatctx.New(t, "deployah")
+			Register(h.App)
+			err := nabattest.Run(t, h.App, tt.args)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tt.want)
 		})

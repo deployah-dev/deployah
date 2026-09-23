@@ -1,0 +1,12 @@
+apiVersion: v1-alpha.5
+project: shop
+components:
+  api:
+    image: nginx:1.27
+    port: 80
+    env:
+      LOG_LEVEL: ${LEVEL}
+environments:
+  production:
+    variables:
+      LEVEL: from-variables

@@ -15,15 +15,13 @@
 package resolve
 
 import (
-	"bytes"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"nabat.dev/nabat"
-	"nabat.dev/nabat/nabattest"
 
 	"deployah.dev/deployah/internal/spec"
+	"deployah.dev/deployah/internal/testing/nabatctx"
 )
 
 func TestHasDisplayableComponentResolution(t *testing.T) {
@@ -36,6 +34,8 @@ func TestHasDisplayableComponentResolution(t *testing.T) {
 	}{
 		{name: "FQDN", rc: spec.ResolvedComponent{FQDN: "api.example.com"}, want: true},
 		{name: "TLS", rc: spec.ResolvedComponent{TLSMode: spec.TLSModeCertManager}, want: true},
+		{name: "TLS issuer", rc: spec.ResolvedComponent{TLSIssuer: "letsencrypt"}, want: true},
+		{name: "TLS secret name", rc: spec.ResolvedComponent{TLSSecretName: "api-tls"}, want: true},
 		{name: "Profiles", rc: spec.ResolvedComponent{Profiles: []string{"default"}}, want: true},
 		{name: "MergedProfile", rc: spec.ResolvedComponent{MergedProfile: &spec.PlatformProfile{}}, want: true},
 		{name: "StorageClass", rc: spec.ResolvedComponent{StorageClass: "fast-ssd"}, want: true},
@@ -47,6 +47,7 @@ func TestHasDisplayableComponentResolution(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
+
 			assert.Equal(t, tt.want, hasDisplayableComponentResolution(tt.rc))
 		})
 	}
@@ -55,14 +56,14 @@ func TestHasDisplayableComponentResolution(t *testing.T) {
 func TestOutputText_StorageClassOnlyComponent(t *testing.T) {
 	t.Parallel()
 
-	c, out := nabatContextWithOut(t)
-	require.NoError(t, outputText(c, &spec.ResolvedSpec{
+	h := nabatctx.New(t, "test")
+	require.NoError(t, outputText(h.Context, &spec.ResolvedSpec{
 		Components: map[string]spec.ResolvedComponent{
 			"api": {StorageClass: "fast-ssd"},
 		},
 	}, &spec.ResolutionReport{Env: spec.NormalizeEnv("staging")}))
 
-	got := out.String()
+	got := h.Stdout.String()
 	assert.Contains(t, got, "api:")
 	assert.Contains(t, got, "storageClass: fast-ssd")
 }
@@ -70,22 +71,15 @@ func TestOutputText_StorageClassOnlyComponent(t *testing.T) {
 func TestOutputText_EmptyComponentOmitted(t *testing.T) {
 	t.Parallel()
 
-	c, out := nabatContextWithOut(t)
-	require.NoError(t, outputText(c, &spec.ResolvedSpec{
+	h := nabatctx.New(t, "test")
+	require.NoError(t, outputText(h.Context, &spec.ResolvedSpec{
 		Components: map[string]spec.ResolvedComponent{
 			"api": {},
 		},
 	}, &spec.ResolutionReport{Env: spec.NormalizeEnv("staging")}))
 
-	got := out.String()
+	got := h.Stdout.String()
 	assert.NotContains(t, got, "api:")
 	assert.NotContains(t, got, "storageClass")
 	assert.NotContains(t, got, "Components:")
-}
-
-func nabatContextWithOut(t *testing.T) (*nabat.Context, *bytes.Buffer) {
-	t.Helper()
-	io, _, out, _ := nabattest.NewIO()
-	app := nabat.MustNew("test", nabat.WithIO(io))
-	return nabattest.Context(t, app), out
 }

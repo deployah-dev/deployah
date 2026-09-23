@@ -1,7 +1,6 @@
 package deploy
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -13,14 +12,13 @@ import (
 	"helm.sh/helm/v4/pkg/postrenderer"
 	"helm.sh/helm/v4/pkg/release/common"
 	"k8s.io/apimachinery/pkg/labels"
-	"nabat.dev/nabat"
-	"nabat.dev/nabat/nabattest"
 
 	"deployah.dev/deployah/internal/extras"
 	"deployah.dev/deployah/internal/helm"
 	"deployah.dev/deployah/internal/render"
 	"deployah.dev/deployah/internal/session"
 	"deployah.dev/deployah/internal/spec"
+	"deployah.dev/deployah/internal/testing/nabatctx"
 
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 	v1 "helm.sh/helm/v4/pkg/release/v1"
@@ -110,24 +108,6 @@ func (s *stubHelmClient) RollbackRelease(context.Context, string, int, time.Dura
 }
 
 var _ session.HelmClient = (*stubHelmClient)(nil)
-
-// nabatContext builds a minimal *nabat.Context for tests that call functions
-// requiring it (e.g. checkHostnameGuard, which logs warnings).
-func nabatContext(t *testing.T) *nabat.Context {
-	t.Helper()
-	c, _, _, _ := nabatContextWithIO(t)
-	return c
-}
-
-// nabatContextWithIO is like [nabatContext] but also returns the captured
-// stdin/stdout/stderr buffers, for tests that assert on printed output. The
-// returned Context reports as non-interactive (no TTY).
-func nabatContextWithIO(t *testing.T) (*nabat.Context, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
-	t.Helper()
-	io, in, out, errOut := nabattest.NewIO()
-	app := nabat.MustNew("test", nabat.WithIO(io))
-	return nabattest.Context(t, app), in, out, errOut
-}
 
 // releaseWithResolvedFQDN builds a prior release whose deployah.resolved
 // block records component's FQDN. An empty component name yields an empty
@@ -240,17 +220,9 @@ func TestCheckHostnameGuard(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			var (
-				c      *nabat.Context
-				stderr *bytes.Buffer
-			)
-			if len(tt.wantStderr) > 0 {
-				c, _, _, stderr = nabatContextWithIO(t)
-			} else {
-				c = nabatContext(t)
-			}
+			h := nabatctx.New(t, "test")
 
-			err := checkHostnameGuard(c, tt.stub, "shop", "production", tt.resolved, tt.force)
+			err := checkHostnameGuard(h.Context, tt.stub, "shop", "production", tt.resolved, tt.force)
 			if tt.wantErr {
 				require.Error(t, err)
 				for _, s := range tt.errContains {
@@ -260,7 +232,7 @@ func TestCheckHostnameGuard(t *testing.T) {
 			}
 			require.NoError(t, err)
 			for _, s := range tt.wantStderr {
-				assert.Contains(t, stderr.String(), s)
+				assert.Contains(t, h.Stderr.String(), s)
 			}
 		})
 	}

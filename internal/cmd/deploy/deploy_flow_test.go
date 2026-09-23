@@ -31,6 +31,7 @@ import (
 	"deployah.dev/deployah/internal/session"
 	"deployah.dev/deployah/internal/spec"
 	"deployah.dev/deployah/internal/target"
+	"deployah.dev/deployah/internal/testing/nabatctx"
 
 	planengine "deployah.dev/deployah/internal/plan"
 	corev1 "k8s.io/api/core/v1"
@@ -120,8 +121,8 @@ func TestConfirmApply(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			c := nabatContext(t) // nabattest.NewIO reports non-TTY by default
-			proceed, err := confirmApply(c, tt.opts, "Apply these changes?")
+			h := nabatctx.New(t, "test")
+			proceed, err := confirmApply(h.Context, tt.opts, "Apply these changes?")
 			if tt.wantErrIs != nil {
 				require.ErrorIs(t, err, tt.wantErrIs)
 				assert.False(t, proceed)
@@ -156,11 +157,11 @@ func TestApplyDeploy_RenderMismatch_AbortsBeforeApply(t *testing.T) {
 		cleanup: func() {},
 	}
 
-	c := nabatContext(t)
+	h := nabatctx.New(t, "test")
 	opts := &Options{Environment: "production"}
 	manifest := &spec.Spec{Project: "web"}
 
-	err := applyDeploy(c, sess, cluster, stub, nil, manifest, opts, nil, planned, nil, nil, &extras.Bundle{}, nil, nil)
+	err := applyDeploy(h.Context, sess, cluster, stub, nil, manifest, opts, nil, planned, nil, nil, &extras.Bundle{}, nil, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "changed between plan and apply")
 	assert.Equal(t, 1, stub.renderCallCount, "must re-render exactly once before comparing")
@@ -187,7 +188,7 @@ func TestSkipDeploy_NoChanges_ShowsReadinessSummary(t *testing.T) {
 			},
 		},
 	)
-	c, _, stdout, stderr := nabatContextWithIO(t)
+	h := nabatctx.New(t, "test")
 	plan := &deployPlan{
 		diff: &planengine.Plan{
 			Header: planengine.Header{Release: "web-production", Revision: 7},
@@ -196,11 +197,11 @@ func TestSkipDeploy_NoChanges_ShowsReadinessSummary(t *testing.T) {
 		cleanup: func() {},
 	}
 
-	err := skipDeploy(c, k8sClient, nil, plan)
+	err := skipDeploy(h.Context, k8sClient, nil, plan)
 	require.NoError(t, err)
-	assert.Contains(t, stderr.String(), "No changes. Release web-production unchanged (revision 7).")
-	assert.Contains(t, stdout.String(), "Readiness:")
-	assert.Contains(t, stdout.String(), "web: 1/1")
+	assert.Contains(t, h.Stderr.String(), "No changes. Release web-production unchanged (revision 7).")
+	assert.Contains(t, h.Stdout.String(), "Readiness:")
+	assert.Contains(t, h.Stdout.String(), "web: 1/1")
 }
 
 // TestSkipHelmApply locks the idle gate: upgrades with no rendered
@@ -323,17 +324,17 @@ func TestApplyDeploy_PassesCRDsToInstall(t *testing.T) {
 				result:  testRenderResult(manifest),
 				cleanup: func() {},
 			}
-			c, _, _, stderr := nabatContextWithIO(t)
+			h := nabatctx.New(t, "test")
 			opts := &Options{Environment: "production", SkipCRDs: tc.skipCRDs}
 			bundle := &extras.Bundle{CRDs: []extras.RawFile{{Path: "widget.yaml"}}}
 
-			err := applyDeploy(c, sess, cluster, stub, nil, &spec.Spec{Project: "web"}, opts, nil, planned, nil, assertNever{}, bundle, nil, nil)
+			err := applyDeploy(h.Context, sess, cluster, stub, nil, &spec.Spec{Project: "web"}, opts, nil, planned, nil, assertNever{}, bundle, nil, nil)
 			require.NoError(t, err)
 			assert.Equal(t, 1, stub.installCallCount)
 			assert.Equal(t, tc.skipCRDs, stub.lastSkipCRDs)
 			require.Len(t, stub.lastCRDs, 1)
 			for _, want := range tc.wantStderr {
-				assert.Contains(t, stderr.String(), want)
+				assert.Contains(t, h.Stderr.String(), want)
 			}
 		})
 	}
@@ -354,10 +355,10 @@ func TestApplyDeploy_PropagatesInstallError(t *testing.T) {
 		result:  testRenderResult(manifest),
 		cleanup: func() {},
 	}
-	c := nabatContext(t)
+	h := nabatctx.New(t, "test")
 	opts := &Options{Environment: "production"}
 
-	err := applyDeploy(c, sess, cluster, stub, nil, &spec.Spec{Project: "web"}, opts, nil, planned, nil, assertNever{}, &extras.Bundle{}, nil, nil)
+	err := applyDeploy(h.Context, sess, cluster, stub, nil, &spec.Spec{Project: "web"}, opts, nil, planned, nil, assertNever{}, &extras.Bundle{}, nil, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "deploy failed")
 	assert.Contains(t, err.Error(), "helm boom")
@@ -368,17 +369,16 @@ func TestApplyDeploy_PropagatesInstallError(t *testing.T) {
 func TestDeployFlags_SkipCRDsAcceptedCRDsRemoved(t *testing.T) {
 	t.Parallel()
 
-	io, _, out, errOut := nabattest.NewIO()
-	app := nabat.MustNew("deployah", nabat.WithIO(io))
-	Register(app)
-	err := nabattest.Run(t, app, []string{"deploy", "--help"})
+	h := nabatctx.New(t, "deployah")
+	Register(h.App)
+	err := nabattest.Run(t, h.App, []string{"deploy", "--help"})
 	require.NoError(t, err)
-	help := out.String() + errOut.String()
+	help := h.Stdout.String() + h.Stderr.String()
 	assert.Contains(t, help, "--skip-crds")
 	assert.NotContains(t, help, "--crds")
 	assert.NotContains(t, help, "create-replace")
 
-	err = nabattest.Run(t, app, []string{"deploy", "prod", "--crds", "create"})
+	err = nabattest.Run(t, h.App, []string{"deploy", "prod", "--crds", "create"})
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "cluster")
 
