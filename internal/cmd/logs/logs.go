@@ -132,9 +132,10 @@ func runLogs(c *nabat.Context) error {
 	var templateString string
 	switch {
 	case opts.TemplateFile != "":
-		templateBytes, readErr := os.ReadFile(opts.TemplateFile)
+		templatePath := c.Abs(opts.TemplateFile)
+		templateBytes, readErr := os.ReadFile(templatePath) // #nosec G304 -- CLI --template-file path
 		if readErr != nil {
-			return fmt.Errorf("read template file %q: %w", opts.TemplateFile, readErr)
+			return fmt.Errorf("read template file %q: %w", templatePath, readErr)
 		}
 		templateString = string(templateBytes)
 	case opts.Template != "":

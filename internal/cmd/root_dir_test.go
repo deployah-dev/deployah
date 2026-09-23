@@ -27,128 +27,158 @@ import (
 	"deployah.dev/deployah/internal/cmd"
 )
 
-const specWithImageVar = `apiVersion: v1-alpha.5
-project: withdir
-components:
-  web:
-    image: ${IMAGE}
-    port: 80
-    environments: [dev]
-environments:
-  dev:
-    variables:
-      IMAGE: nginx:1.27
-`
+// cwdDir returns testdata/cwd/<name> relative to this package.
+func cwdDir(tb testing.TB, name string) string {
+	tb.Helper()
 
-const specLiteralImage = `apiVersion: v1-alpha.5
-project: withdir
-components:
-  web:
-    image: nginx:latest
-    port: 80
-    environments: [dev]
-environments:
-  dev: {}
-`
+	dir := filepath.Join("testdata", "cwd", name)
+	info, err := os.Stat(dir)
+	require.NoError(tb, err)
+	require.Truef(tb, info.IsDir(), "cwd case %s is not a directory", name)
 
-func writeWithDirFixture(t *testing.T, specFile, spec, envBody string) string {
-	t.Helper()
-	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, specFile), []byte(spec), 0o600))
-	if envBody != "" {
-		require.NoError(t, os.WriteFile(filepath.Join(dir, ".env.dev"), []byte(envBody), 0o600))
-	}
 	return dir
 }
 
-// TestWithDirResolvesSpecAndEnvFile checks that nabattest.WithDir and
-// c.Abs resolve --spec and dotenv files against the virtual directory
-// rather than the process working directory. The test never calls [os.Chdir].
-func TestWithDirResolvesSpecAndEnvFile(t *testing.T) {
+// absCwdDir returns an absolute cwdDir.
+func absCwdDir(tb testing.TB, name string) string {
+	tb.Helper()
+
+	abs, err := filepath.Abs(cwdDir(tb, name))
+	require.NoError(tb, err)
+
+	return abs
+}
+
+// TestWithDirResolvesSpec loads the spec through WithDir
+// and leaves the process directory unchanged.
+func TestWithDirResolvesSpec(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name       string
-		spec       string
-		specFile   string
-		envBody    string
+		dir        string
 		args       []string
 		wantStdout string
 	}{
 		{
 			name:       "env file relative to virtual dir",
-			spec:       specWithImageVar,
-			specFile:   "deployah.yaml",
-			envBody:    "LOG_LEVEL=info\n",
+			dir:        "with-env",
 			args:       []string{"resolve", "dev"},
 			wantStdout: "LOG_LEVEL: info",
 		},
 		{
 			name:       "explicit --spec is Abs against virtual dir",
-			spec:       specWithImageVar,
-			specFile:   "app.yaml",
-			envBody:    "LOG_LEVEL=info\n",
+			dir:        "explicit-spec",
 			args:       []string{"resolve", "dev", "--spec", "app.yaml"},
 			wantStdout: "LOG_LEVEL: info",
 		},
 		{
-			name:     "literal image without env file",
-			spec:     specLiteralImage,
-			specFile: "deployah.yaml",
-			args:     []string{"plan", "dev", "--offline"},
+			name:       "literal image without env file",
+			dir:        "literal",
+			args:       []string{"plan", "dev", "--offline"},
+			wantStdout: "validation: OK",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			dir := writeWithDirFixture(t, tt.specFile, tt.spec, tt.envBody)
+
 			appIO, _, out, errOut := nabattest.NewIO()
 			app := cmd.NewApp(nabat.WithIO(appIO))
-			err := nabattest.RunParallel(t, app, tt.args, nabattest.WithDir(dir))
+			err := nabattest.RunParallel(t, app, tt.args, nabattest.WithDir(cwdDir(t, tt.dir)))
 			require.NoErrorf(t, err, "%s under WithDir\nstderr:\n%s", tt.args[0], errOut.String())
-			if tt.wantStdout != "" {
-				assert.Contains(t, out.String(), tt.wantStdout)
-			}
+			assert.Contains(t, out.String(), tt.wantStdout)
 		})
 	}
 }
 
-func TestWithDirResolvesSpecAndEnvFile_Error(t *testing.T) {
+// TestCwdFlagResolvesSpec resolves the spec through --cwd and -C.
+func TestCwdFlagResolvesSpec(t *testing.T) {
 	t.Parallel()
 
+	withEnv := absCwdDir(t, "with-env")
+	explicit := absCwdDir(t, "explicit-spec")
+
 	tests := []struct {
-		name     string
-		spec     string
-		specFile string
-		args     []string
-		wantErr  string
+		name       string
+		args       []string
+		opts       []nabattest.RunOption
+		wantStdout string
 	}{
 		{
-			name: "missing required substitution variable",
-			spec: `apiVersion: v1-alpha.5
-project: withdir
-components:
-  web:
-    image: ${IMAGE}
-    port: 80
-    environments: [dev]
-environments:
-  dev: {}
-`,
-			specFile: "deployah.yaml",
-			args:     []string{"plan", "dev", "--offline"},
-			wantErr:  "variable",
+			name:       "absolute --cwd",
+			args:       []string{"resolve", "dev", "--cwd", withEnv},
+			wantStdout: "LOG_LEVEL: info",
+		},
+		{
+			name:       "short -C before the command",
+			args:       []string{"-C", withEnv, "resolve", "dev"},
+			wantStdout: "LOG_LEVEL: info",
+		},
+		{
+			name:       "relative --cwd",
+			args:       []string{"resolve", "dev", "--cwd", cwdDir(t, "with-env")},
+			wantStdout: "LOG_LEVEL: info",
+		},
+		{
+			name:       "relative --spec is joined to --cwd",
+			args:       []string{"resolve", "dev", "--cwd", explicit, "--spec", "app.yaml"},
+			wantStdout: "LOG_LEVEL: info",
+		},
+		{
+			name:       "--cwd wins over WithDir",
+			args:       []string{"resolve", "dev", "--cwd", withEnv},
+			opts:       []nabattest.RunOption{nabattest.WithDir(cwdDir(t, "literal"))},
+			wantStdout: "LOG_LEVEL: info",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			dir := writeWithDirFixture(t, tt.specFile, tt.spec, "")
+
+			appIO, _, out, errOut := nabattest.NewIO()
+			app := cmd.NewApp(nabat.WithIO(appIO))
+			err := nabattest.RunParallel(t, app, tt.args, tt.opts...)
+			require.NoErrorf(t, err, "stderr:\n%s", errOut.String())
+			assert.Contains(t, out.String(), tt.wantStdout)
+		})
+	}
+}
+
+// TestResolveSpec_Error fails when that directory cannot supply a usable spec.
+func TestResolveSpec_Error(t *testing.T) {
+	t.Parallel()
+
+	empty := t.TempDir()
+
+	tests := []struct {
+		name    string
+		args    []string
+		opts    []nabattest.RunOption
+		wantErr string
+	}{
+		{
+			name:    "missing required substitution variable",
+			args:    []string{"plan", "dev", "--offline"},
+			opts:    []nabattest.RunOption{nabattest.WithDir(cwdDir(t, "missing-var"))},
+			wantErr: "variable",
+		},
+		{
+			name:    "missing spec",
+			args:    []string{"resolve", "dev", "--cwd", empty},
+			wantErr: filepath.Join(empty, "deployah.yaml"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			appIO, _, _, _ := nabattest.NewIO()
 			app := cmd.NewApp(nabat.WithIO(appIO))
-			err := nabattest.RunParallel(t, app, tt.args, nabattest.WithDir(dir))
+			err := nabattest.RunParallel(t, app, tt.args, tt.opts...)
 			require.Error(t, err)
 			assert.ErrorContains(t, err, tt.wantErr)
 		})

@@ -124,11 +124,11 @@ func runUp(c *nabat.Context) error {
 		return fmt.Errorf("write kubeconfig: %w", err)
 	}
 
-	// Scaffold deployah.platform.yaml in the current working directory.
+	// Scaffold deployah.platform.yaml in the command directory.
 	// - Absent:  create with local environment.
 	// - Exists, has local key: skip, print hint.
 	// - Exists, no local key: print the YAML block to add (do NOT mutate).
-	ensureLocalPlatformFile(c, spec.DefaultPlatformPath, localkube.DefaultIngressIP)
+	ensureLocalPlatformFile(c, c.Abs(spec.DefaultPlatformPath), localkube.DefaultIngressIP)
 
 	if opts.SyncRegistryAuth {
 		if syncErr := m.SyncRegistryAuth(c, clusterName, "default"); syncErr != nil {

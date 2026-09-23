@@ -14,6 +14,7 @@ deployah [flags]
 
 ```text
       --context string         Kubernetes context to use (overrides the current context and any environment 'context' field)
+  -C, --cwd string             Run as if deployah was started in this directory instead of the current working directory
   -d, --debug                  Enable debug mode (verbose logging and keep temporary files)
   -h, --help                   show help for this command
   -k, --kubeconfig string      Path to the kubeconfig file to use (defaults to standard kubeconfig resolution)
