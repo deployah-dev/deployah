@@ -15,7 +15,6 @@
 package plan
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -28,8 +27,6 @@ import (
 	"helm.sh/helm/v4/pkg/postrenderer"
 	"helm.sh/helm/v4/pkg/release/common"
 	"k8s.io/apimachinery/pkg/labels"
-	"nabat.dev/nabat"
-	"nabat.dev/nabat/nabattest"
 
 	"deployah.dev/deployah/internal/extras"
 	"deployah.dev/deployah/internal/helm"
@@ -37,6 +34,7 @@ import (
 	"deployah.dev/deployah/internal/session"
 	"deployah.dev/deployah/internal/spec"
 	"deployah.dev/deployah/internal/target"
+	"deployah.dev/deployah/internal/testing/nabatctx"
 
 	planengine "deployah.dev/deployah/internal/plan"
 	v1 "helm.sh/helm/v4/pkg/release/v1"
@@ -103,20 +101,6 @@ func (s *stubHelmClient) RollbackRelease(context.Context, string, int, time.Dura
 }
 
 var _ session.HelmClient = (*stubHelmClient)(nil)
-
-// nabatContext returns a bare *nabat.Context and its captured stdout buffer.
-func nabatContext(t *testing.T) (*nabat.Context, *bytes.Buffer) {
-	t.Helper()
-	c, _, out, _ := nabatContextWithIO(t)
-	return c, out
-}
-
-func nabatContextWithIO(t *testing.T) (*nabat.Context, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
-	t.Helper()
-	io, in, out, errOut := nabattest.NewIO()
-	app := nabat.MustNew("test", nabat.WithIO(io))
-	return nabattest.Context(t, app), in, out, errOut
-}
 
 // sessionWithStub builds a [session.Session] whose Helm client is stub.
 func sessionWithStub(stub *stubHelmClient) *session.Session {
@@ -315,18 +299,18 @@ func TestRunOnline(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			sess := sessionWithStub(tt.stub)
-			c, out := nabatContext(t)
+			h := nabatctx.New(t, "test")
 			opts := testOptions()
 			opts.DetailedExitCode = tt.detailed
 
-			err := runOnline(c, sess, nil, testManifest(), opts, testResolved(nil))
+			err := runOnline(h.Context, sess, nil, testManifest(), opts, testResolved(nil))
 			if tt.wantErrIs != nil {
 				require.Error(t, err)
 				assert.ErrorIs(t, err, tt.wantErrIs)
 				return
 			}
 			require.NoError(t, err)
-			got := out.String()
+			got := h.Stdout.String()
 			for _, s := range tt.contains {
 				assert.Contains(t, got, s)
 			}
@@ -348,20 +332,18 @@ func TestRunOnline_DriftOnFreshInstall_NoStdoutFootprint(t *testing.T) {
 	}
 	sess := sessionWithStub(stub)
 
-	io, _, out, errOut := nabattest.NewIO()
-	app := nabat.MustNew("test", nabat.WithIO(io))
-	c := nabattest.Context(t, app)
+	h := nabatctx.New(t, "test")
 
 	opts := testOptions()
 	opts.Drift = true
-	err := runOnline(c, sess, nil, testManifest(), opts, testResolved(nil))
+	err := runOnline(h.Context, sess, nil, testManifest(), opts, testResolved(nil))
 	require.NoError(t, err, "checkDrift must short-circuit cleanly without a working cluster config")
 
-	assert.NotContains(t, out.String(), "Drift (cluster changed outside deployah):",
+	assert.NotContains(t, h.Stdout.String(), "Drift (cluster changed outside deployah):",
 		"a fresh install must not grow a stdout Drift section")
-	assert.NotContains(t, out.String(), "no-op on a fresh install",
+	assert.NotContains(t, h.Stdout.String(), "no-op on a fresh install",
 		"the explanation must not appear in the captured diff body")
-	assert.Contains(t, errOut.String(), "no-op on a fresh install",
+	assert.Contains(t, h.Stderr.String(), "no-op on a fresh install",
 		"the explanation belongs on stderr, via c.Info")
 }
 
@@ -373,16 +355,16 @@ func TestRunOffline_RendersResourceCount(t *testing.T) {
 		offlineResult: renderResult(deploymentV1 + "---\n" + configMap),
 	}
 	sess := sessionWithStub(stub)
-	c, out := nabatContext(t)
-	c.SetContext(session.WithContext(c.Context(), sess))
+	h := nabatctx.New(t, "test")
+	h.Context.SetContext(session.WithContext(h.Context.Context(), sess))
 
 	opts := testOptions()
 	opts.Offline = true
-	err := runOffline(c, sess, nil, testManifest(), opts, nil)
+	err := runOffline(h.Context, sess, nil, testManifest(), opts, nil)
 
 	require.NoError(t, err)
-	assert.Contains(t, out.String(), "Rendered 2 resources for environment 'production' (no cluster comparison).")
-	assert.Contains(t, out.String(), "validation: OK")
+	assert.Contains(t, h.Stdout.String(), "Rendered 2 resources for environment 'production' (no cluster comparison).")
+	assert.Contains(t, h.Stdout.String(), "validation: OK")
 }
 
 func writePlanExtras(t *testing.T, dir, relative, content string) {
@@ -410,11 +392,11 @@ func TestRunOffline_LoadExtrasError(t *testing.T) {
 			return stub, nil
 		}),
 	)
-	c, _ := nabatContext(t)
+	h := nabatctx.New(t, "test")
 	opts := testOptions()
 	opts.Offline = true
 
-	err := runOffline(c, sess, nil, testManifest(), opts, nil)
+	err := runOffline(h.Context, sess, nil, testManifest(), opts, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "load extras")
 }
@@ -434,13 +416,13 @@ func TestRunOffline_PrintsCRDs(t *testing.T) {
 			return stub, nil
 		}),
 	)
-	c, out := nabatContext(t)
+	h := nabatctx.New(t, "test")
 	opts := testOptions()
 	opts.Offline = true
 
-	err := runOffline(c, sess, nil, testManifest(), opts, nil)
+	err := runOffline(h.Context, sess, nil, testManifest(), opts, nil)
 	require.NoError(t, err)
-	assert.Contains(t, out.String(), "CustomResourceDefinition/widgets.example.com")
+	assert.Contains(t, h.Stdout.String(), "CustomResourceDefinition/widgets.example.com")
 }
 
 func TestRunOnline_PrintsCRDs(t *testing.T) {
@@ -459,12 +441,12 @@ func TestRunOnline_PrintsCRDs(t *testing.T) {
 			return stub, nil
 		}),
 	)
-	c, out := nabatContext(t)
-	c.SetContext(session.WithContext(c.Context(), sess))
+	h := nabatctx.New(t, "test")
+	h.Context.SetContext(session.WithContext(h.Context.Context(), sess))
 
-	err := runOnline(c, sess, nil, testManifest(), testOptions(), testResolved(nil))
+	err := runOnline(h.Context, sess, nil, testManifest(), testOptions(), testResolved(nil))
 	require.NoError(t, err)
-	got := out.String()
+	got := h.Stdout.String()
 	assert.Contains(t, got, "+ CustomResourceDefinition/widgets.example.com")
 	assert.Contains(t, got, "Helm install will process this chart CRD")
 	assert.Contains(t, got, "name: widgets.example.com")
@@ -513,12 +495,12 @@ func TestRunOnline_PrintsCRDsOnUpgrade(t *testing.T) {
 					return stub, nil
 				}),
 			)
-			c, out := nabatContext(t)
-			c.SetContext(session.WithContext(c.Context(), sess))
+			h := nabatctx.New(t, "test")
+			h.Context.SetContext(session.WithContext(h.Context.Context(), sess))
 
-			err := runOnline(c, sess, nil, testManifest(), testOptions(), testResolved(nil))
+			err := runOnline(h.Context, sess, nil, testManifest(), testOptions(), testResolved(nil))
 			require.NoError(t, err)
-			got := out.String()
+			got := h.Stdout.String()
 			assert.Contains(t, got, "CustomResourceDefinition/widgets.example.com")
 			assert.Contains(t, got, "Helm upgrade will not process this chart CRD")
 			assert.NotContains(t, got, "+ CustomResourceDefinition/")
@@ -559,20 +541,20 @@ func TestRunOnline_JSONStdoutUnmarshalsWithCRDs(t *testing.T) {
 					return stub, nil
 				}),
 			)
-			c, _, out, errOut := nabatContextWithIO(t)
-			c.SetContext(session.WithContext(c.Context(), sess))
+			h := nabatctx.New(t, "test")
+			h.Context.SetContext(session.WithContext(h.Context.Context(), sess))
 			opts := testOptions()
 			opts.OutputFormat = outputFormatJSON
 
-			err := runOnline(c, sess, nil, testManifest(), opts, testResolved(nil))
+			err := runOnline(h.Context, sess, nil, testManifest(), opts, testResolved(nil))
 			require.NoError(t, err)
-			stdout := out.String()
+			stdout := h.Stdout.String()
 			var doc map[string]any
 			require.NoError(t, json.Unmarshal([]byte(stdout), &doc), "stdout must be a single JSON document")
 			assert.NotContains(t, stdout, "Helm install will process this chart CRD")
 			assert.NotContains(t, stdout, "Helm upgrade will not process this chart CRD")
 			assert.NotContains(t, stdout, "CRD files to process")
-			assert.NotContains(t, errOut.String(), "Helm install will process this chart CRD")
+			assert.NotContains(t, h.Stderr.String(), "Helm install will process this chart CRD")
 			crds, ok := doc["chart_crds"].([]any)
 			require.True(t, ok)
 			require.Len(t, crds, 1)
@@ -597,18 +579,18 @@ func TestOutputPlan_JSONSkipCRDsStdoutUnmarshals(t *testing.T) {
 		Name: "widgets.example.com",
 		YAML: []byte(planCRDBody),
 	}}, false, true)
-	c, _, out, errOut := nabatContextWithIO(t)
+	h := nabatctx.New(t, "test")
 	opts := testOptions()
 	opts.OutputFormat = outputFormatJSON
 	opts.DetailedExitCode = true
 
-	err := outputPlan(c, p, opts)
+	err := outputPlan(h.Context, p, opts)
 	require.NoError(t, err)
-	stdout := out.String()
+	stdout := h.Stdout.String()
 	var doc map[string]any
 	require.NoError(t, json.Unmarshal([]byte(stdout), &doc), "stdout must be a single JSON document")
 	assert.NotContains(t, stdout, "install-time CRD processing disabled")
-	assert.Empty(t, errOut.String())
+	assert.Empty(t, h.Stderr.String())
 	crds, ok := doc["chart_crds"].([]any)
 	require.True(t, ok)
 	require.Len(t, crds, 1)
@@ -656,11 +638,11 @@ func TestRunOnline_DetailedExitCode_ChartCRDs(t *testing.T) {
 					return stub, nil
 				}),
 			)
-			c, _ := nabatContext(t)
-			c.SetContext(session.WithContext(c.Context(), sess))
+			h := nabatctx.New(t, "test")
+			h.Context.SetContext(session.WithContext(h.Context.Context(), sess))
 			opts := testOptions()
 			opts.DetailedExitCode = true
-			err := runOnline(c, sess, nil, testManifest(), opts, testResolved(nil))
+			err := runOnline(h.Context, sess, nil, testManifest(), opts, testResolved(nil))
 			if tc.wantErrIs != nil {
 				require.ErrorIs(t, err, tc.wantErrIs)
 				return

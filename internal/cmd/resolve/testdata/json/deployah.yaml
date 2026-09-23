@@ -1,0 +1,18 @@
+apiVersion: v1-alpha.5
+project: shop
+components:
+  api:
+    image: nginx:1.27
+    port: 80
+    env:
+      LOG_LEVEL: debug
+    envFile: api.env
+tasks:
+  migrate:
+    from: api
+    "on": preDeploy
+    command: [migrate]
+    env:
+      MIGRATION_MODE: safe
+environments:
+  staging: {}

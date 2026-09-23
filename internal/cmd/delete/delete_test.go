@@ -21,10 +21,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"helm.sh/helm/v4/pkg/release/common"
-	"nabat.dev/nabat"
-	"nabat.dev/nabat/nabattest"
 
 	"deployah.dev/deployah/internal/cli"
+	"deployah.dev/deployah/internal/testing/nabatctx"
 
 	v1 "helm.sh/helm/v4/pkg/release/v1"
 )
@@ -179,19 +178,19 @@ func TestRenderDryRunPreview(t *testing.T) {
 
 	t.Run("nothing to delete", func(t *testing.T) {
 		t.Parallel()
-		c := nabatContext(t)
+		c := nabatctx.New(t, "test").Context
 		require.NoError(t, renderDryRunPreview(c, "shop", "dev", nil, nil, false, cli.OutputFormatTree))
 	})
 
 	t.Run("leftover jobs tree", func(t *testing.T) {
 		t.Parallel()
-		c := nabatContext(t)
+		c := nabatctx.New(t, "test").Context
 		require.NoError(t, renderDryRunPreview(c, "shop", "dev", nil, []string{"shop-dev-backfill-abc"}, false, cli.OutputFormatTree))
 	})
 
 	t.Run("release with resources", func(t *testing.T) {
 		t.Parallel()
-		c := nabatContext(t)
+		c := nabatctx.New(t, "test").Context
 		rel := &v1.Release{
 			Name:      "shop-dev",
 			Namespace: "default",
@@ -218,22 +217,15 @@ func TestRenderDryRunPreview(t *testing.T) {
 
 	t.Run("json leftover jobs", func(t *testing.T) {
 		t.Parallel()
-		c := nabatContext(t)
+		c := nabatctx.New(t, "test").Context
 		require.NoError(t, renderDryRunPreview(c, "shop", "dev", nil, []string{"job-a"}, false, cli.OutputFormatJSON))
 	})
 
 	t.Run("yaml leftover jobs", func(t *testing.T) {
 		t.Parallel()
-		c := nabatContext(t)
+		c := nabatctx.New(t, "test").Context
 		require.NoError(t, renderDryRunPreview(c, "shop", "dev", nil, []string{"job-a"}, false, cli.OutputFormatYAML))
 	})
-}
-
-func nabatContext(t *testing.T) *nabat.Context {
-	t.Helper()
-	io, _, _, _ := nabattest.NewIO()
-	app := nabat.MustNew("test", nabat.WithIO(io))
-	return nabattest.Context(t, app)
 }
 
 func TestDeleteConfirmPrompt(t *testing.T) {

@@ -11,6 +11,7 @@ import (
 	"nabat.dev/nabat/nabattest"
 
 	"deployah.dev/deployah/internal/spec"
+	"deployah.dev/deployah/internal/testing/nabatctx"
 )
 
 // TestCheckOverwrite verifies --force skips the prompt and a missing file
@@ -51,11 +52,9 @@ func TestCheckOverwrite(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			io, _, _, _ := nabattest.NewIO()
-			app := nabat.MustNew("test", nabat.WithIO(io))
-			c := nabattest.Context(t, app)
+			h := nabatctx.New(t, "test")
 
-			proceed, err := checkOverwrite(c, tt.path, tt.skipPrompt)
+			proceed, err := checkOverwrite(h.Context, tt.path, tt.skipPrompt)
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantProceed, proceed)
 		})
@@ -68,11 +67,8 @@ func TestCheckOverwrite_RequiresTTY(t *testing.T) {
 	existing := filepath.Join(t.TempDir(), "deployah.yaml")
 	require.NoError(t, os.WriteFile(existing, []byte("apiVersion: v1-alpha.5\n"), 0o600))
 
-	io, _, _, _ := nabattest.NewIO()
-	app := nabat.MustNew("test", nabat.WithIO(io))
-	c := nabattest.Context(t, app)
-
-	proceed, err := checkOverwrite(c, existing, false)
+	h := nabatctx.New(t, "test")
+	proceed, err := checkOverwrite(h.Context, existing, false)
 	require.ErrorIs(t, err, nabat.ErrConfirmationRequired)
 	var ce *nabat.ConfirmationError
 	require.ErrorAs(t, err, &ce)
@@ -88,11 +84,8 @@ func TestCheckOverwrite_StatError(t *testing.T) {
 	require.NoError(t, os.WriteFile(notDir, []byte("x"), 0o600))
 	target := filepath.Join(notDir, "deployah.yaml")
 
-	io, _, _, _ := nabattest.NewIO()
-	app := nabat.MustNew("test", nabat.WithIO(io))
-	c := nabattest.Context(t, app)
-
-	proceed, err := checkOverwrite(c, target, false)
+	h := nabatctx.New(t, "test")
+	proceed, err := checkOverwrite(h.Context, target, false)
 	require.Error(t, err)
 	assert.False(t, proceed)
 	assert.ErrorContains(t, err, "stat")
@@ -190,17 +183,15 @@ func TestPrintInitCompleted(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			io, _, _, stderr := nabattest.NewIO()
-			app := nabat.MustNew("test", nabat.WithIO(io))
-			c := nabattest.Context(t, app)
-			printInitCompleted(c, &ProjectConfig{
+			h := nabatctx.New(t, "test")
+			printInitCompleted(h.Context, &ProjectConfig{
 				Name:             "shop",
 				EnvironmentNames: []string{"local"},
 				Components:       map[string]spec.Component{"web": {}},
 				SpecPath:         "deployah.yaml",
 				DryRun:           tt.dryRun,
 			})
-			got := stderr.String()
+			got := h.Stderr.String()
 			assert.Contains(t, got, tt.want)
 			if tt.notWant != "" {
 				assert.NotContains(t, got, tt.notWant)
@@ -212,19 +203,17 @@ func TestPrintInitCompleted(t *testing.T) {
 func TestRunInit_NoTTYIsInteractiveError(t *testing.T) {
 	t.Parallel()
 
-	io, _, _, _ := nabattest.NewIO()
-	app := nabat.MustNew("deployah", nabat.WithIO(io))
-	Register(app)
-	err := nabattest.Run(t, app, []string{"init"})
+	h := nabatctx.New(t, "deployah")
+	Register(h.App)
+	err := nabattest.Run(t, h.App, []string{"init"})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, errNotInteractive)
 }
 
 func TestCollectProjectName_RequiresTTY(t *testing.T) {
 	t.Parallel()
-	io, _, _, _ := nabattest.NewIO()
-	app := nabat.MustNew("test", nabat.WithIO(io))
-	err := collectProjectName(nabattest.Context(t, app), &ProjectConfig{})
+	h := nabatctx.New(t, "test")
+	err := collectProjectName(h.Context, &ProjectConfig{})
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "failed to collect project name")
 }

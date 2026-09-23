@@ -6,8 +6,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"nabat.dev/nabat"
-	"nabat.dev/nabat/nabattest"
+
+	"deployah.dev/deployah/internal/testing/nabatctx"
 )
 
 func TestValidateOtherEnvironmentInput(t *testing.T) {
@@ -127,10 +127,9 @@ func TestParseEnvironmentNames_Error(t *testing.T) {
 
 func TestCollectEnvironments_LocalDefault(t *testing.T) {
 	t.Parallel()
-	io, _, _, _ := nabattest.NewIO()
-	app := nabat.MustNew("test", nabat.WithIO(io))
+	h := nabatctx.New(t, "test")
 	config := &ProjectConfig{}
-	require.NoError(t, collectEnvironments(nabattest.Context(t, app), config))
+	require.NoError(t, collectEnvironments(h.Context, config))
 	assert.Equal(t, []string{DefaultEnvironmentName}, config.EnvironmentNames)
 }
 
@@ -143,9 +142,8 @@ func TestApplyEnvironmentAnswers_Error(t *testing.T) {
 
 func TestCollectEnvironmentVariables_RequiresTTY(t *testing.T) {
 	t.Parallel()
-	io, _, _, _ := nabattest.NewIO()
-	app := nabat.MustNew("test", nabat.WithIO(io))
-	_, err := collectEnvironmentVariables(nabattest.Context(t, app))
+	h := nabatctx.New(t, "test")
+	_, err := collectEnvironmentVariables(h.Context)
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "failed to collect variable details")
 }

@@ -24,11 +24,11 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
-	"nabat.dev/nabat"
 	"nabat.dev/nabat/nabattest"
 
 	"deployah.dev/deployah/internal/k8s"
 	"deployah.dev/deployah/internal/spec"
+	"deployah.dev/deployah/internal/testing/nabatctx"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -72,6 +72,7 @@ func TestResolveTask(t *testing.T) {
 
 	t.Run("merges from parent", func(t *testing.T) {
 		t.Parallel()
+
 		rt, err := spec.ResolveTask(m, nil, spec.NormalizeEnv("dev"), "migrate")
 		require.NoError(t, err)
 		assert.Equal(t, "ghcr.io/acme/shop:1.2.3", rt.Task.Image)
@@ -81,6 +82,7 @@ func TestResolveTask(t *testing.T) {
 
 	t.Run("scheduled task is runnable", func(t *testing.T) {
 		t.Parallel()
+
 		rt, err := spec.ResolveTask(m, nil, spec.NormalizeEnv("dev"), "cleanup")
 		require.NoError(t, err)
 		assert.Equal(t, spec.TaskOnSchedule, rt.Task.On)
@@ -90,6 +92,7 @@ func TestResolveTask(t *testing.T) {
 
 	t.Run("empty inherited profiles do not require a platform file", func(t *testing.T) {
 		t.Parallel()
+
 		local := testManifest()
 		api := local.Components["api"]
 		api.Profiles = []string{}
@@ -101,6 +104,7 @@ func TestResolveTask(t *testing.T) {
 
 	t.Run("expose without platform still resolves runtime", func(t *testing.T) {
 		t.Parallel()
+
 		dir := t.TempDir()
 		require.NoError(t, os.WriteFile(filepath.Join(dir, ".env.dev"), []byte("REGION=eu\n"), 0o600))
 		local := testManifest()
@@ -224,10 +228,9 @@ func TestRunTask_FlagValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			io, _, _, _ := nabattest.NewIO()
-			app := nabat.MustNew("deployah", nabat.WithIO(io))
-			Register(app)
-			err := nabattest.Run(t, app, tt.args)
+			h := nabatctx.New(t, "deployah")
+			Register(h.App)
+			err := nabattest.Run(t, h.App, tt.args)
 			require.Error(t, err)
 			assert.ErrorContains(t, err, tt.want)
 		})
@@ -247,9 +250,10 @@ func TestExecuteRun_DetachAndWait(t *testing.T) {
 
 	t.Run("detach returns after create", func(t *testing.T) {
 		t.Parallel()
+
 		cs := fake.NewSimpleClientset()
 		job := mustBuildJob(t, opts, "shop-dev-backfill-detach")
-		c := nabatContext(t)
+		c := nabatctx.New(t, "test").Context
 		require.NoError(t, executeRun(c, cs, time.Minute, job, nil, true))
 		got, err := cs.BatchV1().Jobs("default").Get(t.Context(), "shop-dev-backfill-detach", metav1.GetOptions{})
 		require.NoError(t, err)
@@ -258,17 +262,19 @@ func TestExecuteRun_DetachAndWait(t *testing.T) {
 
 	t.Run("wait succeeds when the job completes", func(t *testing.T) {
 		t.Parallel()
+
 		cs := fake.NewSimpleClientset()
 		jobGetWithStatus(cs, func(job *batchv1.Job) {
 			job.Status.Succeeded = 1
 		})
 		job := mustBuildJob(t, opts, "shop-dev-backfill-wait")
-		c := nabatContext(t)
+		c := nabatctx.New(t, "test").Context
 		require.NoError(t, executeRun(c, cs, time.Minute, job, nil, false))
 	})
 
 	t.Run("wait fails when the job fails", func(t *testing.T) {
 		t.Parallel()
+
 		cs := fake.NewSimpleClientset()
 		jobGetWithStatus(cs, func(job *batchv1.Job) {
 			job.Status.Conditions = []batchv1.JobCondition{{
@@ -278,7 +284,7 @@ func TestExecuteRun_DetachAndWait(t *testing.T) {
 			}}
 		})
 		job := mustBuildJob(t, opts, "shop-dev-backfill-fail")
-		c := nabatContext(t)
+		c := nabatctx.New(t, "test").Context
 		err := executeRun(c, cs, time.Minute, job, nil, false)
 		require.Error(t, err)
 		assert.ErrorContains(t, err, "backoff limit exceeded")
@@ -286,12 +292,13 @@ func TestExecuteRun_DetachAndWait(t *testing.T) {
 
 	t.Run("create error", func(t *testing.T) {
 		t.Parallel()
+
 		cs := fake.NewSimpleClientset()
 		cs.PrependReactor("create", "jobs", func(action k8stesting.Action) (bool, runtime.Object, error) {
 			return true, nil, fmt.Errorf("quota exceeded")
 		})
 		job := mustBuildJob(t, opts, "shop-dev-backfill-create")
-		c := nabatContext(t)
+		c := nabatctx.New(t, "test").Context
 		err := executeRun(c, cs, time.Minute, job, nil, true)
 		require.Error(t, err)
 		assert.ErrorContains(t, err, "quota exceeded")
@@ -300,10 +307,12 @@ func TestExecuteRun_DetachAndWait(t *testing.T) {
 
 func mustBuildJob(t *testing.T, opts k8s.TaskJobOptions, name string) *batchv1.Job {
 	t.Helper()
+
 	job, err := k8s.BuildTaskJob(opts)
 	require.NoError(t, err)
 	job.Name = name
 	job.GenerateName = ""
+
 	return job
 }
 
@@ -325,11 +334,4 @@ func jobGetWithStatus(cs *fake.Clientset, mutate func(*batchv1.Job)) {
 		mutate(job)
 		return true, job, nil
 	})
-}
-
-func nabatContext(t *testing.T) *nabat.Context {
-	t.Helper()
-	io, _, _, _ := nabattest.NewIO()
-	app := nabat.MustNew("test", nabat.WithIO(io))
-	return nabattest.Context(t, app)
 }

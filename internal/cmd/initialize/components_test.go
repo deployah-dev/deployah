@@ -7,20 +7,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"nabat.dev/nabat"
-	"nabat.dev/nabat/nabattest"
 
 	"deployah.dev/deployah/internal/spec"
+	"deployah.dev/deployah/internal/testing/nabatctx"
 )
-
-// nonInteractiveContext returns a Context whose IO is not a TTY. Prompts
-// without WithDefault or WithPrefill fail; Select and MultiSelect return
-// their defaults.
-func nonInteractiveContext(t *testing.T) *nabat.Context {
-	t.Helper()
-	io, _, _, _ := nabattest.NewIO()
-	app := nabat.MustNew("test", nabat.WithIO(io))
-	return nabattest.Context(t, app)
-}
 
 // TestPresetLabel verifies each preset label includes the preset name and
 // its request-level CPU/memory values.
@@ -30,6 +20,7 @@ func TestPresetLabel(t *testing.T) {
 	for _, item := range presets {
 		t.Run(string(item.value), func(t *testing.T) {
 			t.Parallel()
+
 			label := presetLabel(item.value)
 			assert.Equal(t, item.label, label)
 			assert.Contains(t, label, string(item.value))
@@ -59,6 +50,7 @@ func TestPresetFromLabel(t *testing.T) {
 	for _, item := range presets {
 		t.Run(string(item.value), func(t *testing.T) {
 			t.Parallel()
+
 			got, ok := presets.fromLabel(item.label)
 			assert.True(t, ok)
 			assert.Equal(t, item.value, got)
@@ -75,6 +67,7 @@ func TestPresetFromLabel(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
+
 			got, ok := presets.fromLabel(tt.label)
 			assert.False(t, ok)
 			assert.Empty(t, got)
@@ -102,6 +95,7 @@ func TestRoleFromLabel(t *testing.T) {
 	for _, item := range roles {
 		t.Run(string(item.value), func(t *testing.T) {
 			t.Parallel()
+
 			got, ok := roles.fromLabel(item.label)
 			assert.True(t, ok)
 			assert.Equal(t, item.value, got)
@@ -110,6 +104,7 @@ func TestRoleFromLabel(t *testing.T) {
 
 	t.Run("unrecognized label does not match a role", func(t *testing.T) {
 		t.Parallel()
+
 		got, ok := roles.fromLabel("not a real label")
 		assert.False(t, ok)
 		assert.Empty(t, got)
@@ -124,6 +119,7 @@ func TestKindFromLabel(t *testing.T) {
 	for _, item := range kinds {
 		t.Run(string(item.value), func(t *testing.T) {
 			t.Parallel()
+
 			got, ok := kinds.fromLabel(item.label)
 			assert.True(t, ok)
 			assert.Equal(t, item.value, got)
@@ -132,6 +128,7 @@ func TestKindFromLabel(t *testing.T) {
 
 	t.Run("unrecognized label does not match a kind", func(t *testing.T) {
 		t.Parallel()
+
 		got, ok := kinds.fromLabel("not a real label")
 		assert.False(t, ok)
 		assert.Empty(t, got)
@@ -167,7 +164,7 @@ func TestShlexSplit(t *testing.T) {
 func TestCollectComponentMetricsPort_DefaultDeclines(t *testing.T) {
 	t.Parallel()
 
-	c := nonInteractiveContext(t)
+	c := nabatctx.New(t, "test").Context
 	comp := &spec.Component{Role: spec.ComponentRoleWorker}
 	require.NoError(t, collectComponentMetricsPort(c, comp, "worker"))
 	assert.Nil(t, comp.Metrics)
@@ -178,7 +175,7 @@ func TestCollectComponentMetricsPort_DefaultDeclines(t *testing.T) {
 func TestCollectComponentExecHealth_DefaultDeclines(t *testing.T) {
 	t.Parallel()
 
-	c := nonInteractiveContext(t)
+	c := nabatctx.New(t, "test").Context
 	comp := &spec.Component{Role: spec.ComponentRoleWorker}
 	require.NoError(t, collectComponentExecHealth(c, comp, "worker"))
 	assert.Nil(t, comp.Health)
@@ -189,7 +186,7 @@ func TestCollectComponentExecHealth_DefaultDeclines(t *testing.T) {
 func TestCollectComponentAdvanced_DefaultSkips(t *testing.T) {
 	t.Parallel()
 
-	c := nonInteractiveContext(t)
+	c := nabatctx.New(t, "test").Context
 	comp := &spec.Component{Role: spec.ComponentRoleWorker, Image: "worker:1"}
 	require.NoError(t, collectComponentAdvanced(c, comp, "worker", []string{"dev"}))
 	assert.Empty(t, comp.Kind)
@@ -416,14 +413,14 @@ func TestLabeledListLabels(t *testing.T) {
 func TestCollectComponentKind_DefaultStateless(t *testing.T) {
 	t.Parallel()
 	comp := &spec.Component{}
-	require.NoError(t, collectComponentKind(nonInteractiveContext(t), comp, "web"))
+	require.NoError(t, collectComponentKind(nabatctx.New(t, "test").Context, comp, "web"))
 	assert.Equal(t, spec.ComponentKindStateless, comp.Kind)
 }
 
 func TestCollectComponentReplicas_Default(t *testing.T) {
 	t.Parallel()
 	comp := &spec.Component{}
-	require.NoError(t, collectComponentReplicas(nonInteractiveContext(t), comp, "db"))
+	require.NoError(t, collectComponentReplicas(nabatctx.New(t, "test").Context, comp, "db"))
 	require.NotNil(t, comp.Replicas)
 	assert.Equal(t, 1, *comp.Replicas)
 }
@@ -431,39 +428,53 @@ func TestCollectComponentReplicas_Default(t *testing.T) {
 func TestCollectComponentCommand_DefaultSkips(t *testing.T) {
 	t.Parallel()
 	comp := &spec.Component{}
-	require.NoError(t, collectComponentCommand(nonInteractiveContext(t), comp, "web"))
+	require.NoError(t, collectComponentCommand(nabatctx.New(t, "test").Context, comp, "web"))
 	assert.Nil(t, comp.Command)
 }
 
 func TestCollectComponentArgs_DefaultSkips(t *testing.T) {
 	t.Parallel()
 	comp := &spec.Component{}
-	require.NoError(t, collectComponentArgs(nonInteractiveContext(t), comp, "web"))
+	require.NoError(t, collectComponentArgs(nabatctx.New(t, "test").Context, comp, "web"))
 	assert.Nil(t, comp.Args)
 }
 
 func TestCollectComponentEnvironments(t *testing.T) {
 	t.Parallel()
 
-	t.Run("single environment is assigned without a prompt", func(t *testing.T) {
-		t.Parallel()
-		comp := &spec.Component{}
-		require.NoError(t, collectComponentEnvironments(nonInteractiveContext(t), comp, "web", []string{"local"}))
-		assert.Equal(t, []string{"local"}, comp.Environments)
-	})
+	tests := []struct {
+		name         string
+		environments []string
+	}{
+		{
+			name:         "single environment is assigned without a prompt",
+			environments: []string{"local"},
+		},
+		{
+			name:         "multiple environments keep the default selection",
+			environments: []string{"local", "staging"},
+		},
+	}
 
-	t.Run("multiple environments keep the default selection", func(t *testing.T) {
-		t.Parallel()
-		comp := &spec.Component{}
-		require.NoError(t, collectComponentEnvironments(nonInteractiveContext(t), comp, "web", []string{"local", "staging"}))
-		assert.Equal(t, []string{"local", "staging"}, comp.Environments)
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			comp := &spec.Component{}
+			require.NoError(t, collectComponentEnvironments(
+				nabatctx.New(t, "test").Context,
+				comp,
+				"web",
+				tt.environments,
+			))
+			assert.Equal(t, tt.environments, comp.Environments)
+		})
+	}
 }
 
 func TestCollectComponentEnvironments_Error(t *testing.T) {
 	t.Parallel()
 	comp := &spec.Component{}
-	err := collectComponentEnvironments(nonInteractiveContext(t), comp, "web", nil)
+	err := collectComponentEnvironments(nabatctx.New(t, "test").Context, comp, "web", nil)
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "no environments available")
 }
@@ -471,7 +482,7 @@ func TestCollectComponentEnvironments_Error(t *testing.T) {
 func TestCollectComponentAdvancedDetails_WorkerUsesSelectDefaults(t *testing.T) {
 	t.Parallel()
 	comp := &spec.Component{Role: spec.ComponentRoleWorker, Image: "worker:1"}
-	err := collectComponentAdvancedDetails(nonInteractiveContext(t), comp, "worker", []string{"local"})
+	err := collectComponentAdvancedDetails(nabatctx.New(t, "test").Context, comp, "worker", []string{"local"})
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "failed to get config files preference")
 	assert.Equal(t, spec.ComponentKindStateless, comp.Kind)
@@ -483,63 +494,63 @@ func TestCollectComponentAdvancedDetails_WorkerUsesSelectDefaults(t *testing.T) 
 func TestCollectComponents_NameRequiresTTY(t *testing.T) {
 	t.Parallel()
 	config := &ProjectConfig{Components: map[string]spec.Component{}}
-	err := collectComponents(nonInteractiveContext(t), config)
+	err := collectComponents(nabatctx.New(t, "test").Context, config)
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "failed to collect component name")
 }
 
 func TestCollectComponentName_RequiresTTY(t *testing.T) {
 	t.Parallel()
-	_, err := collectComponentName(nonInteractiveContext(t), map[string]spec.Component{})
+	_, err := collectComponentName(nabatctx.New(t, "test").Context, map[string]spec.Component{})
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "failed to collect component name")
 }
 
 func TestCollectComponentConfigFiles_RequiresTTY(t *testing.T) {
 	t.Parallel()
-	err := collectComponentConfigFiles(nonInteractiveContext(t), &spec.Component{}, "web")
+	err := collectComponentConfigFiles(nabatctx.New(t, "test").Context, &spec.Component{}, "web")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, nabat.ErrConfirmationRequired)
 }
 
 func TestCollectComponentEssentials_ImageRequiresTTY(t *testing.T) {
 	t.Parallel()
-	err := collectComponentEssentials(nonInteractiveContext(t), &spec.Component{}, "web", []string{"local"})
+	err := collectComponentEssentials(nabatctx.New(t, "test").Context, &spec.Component{}, "web", []string{"local"})
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "failed to collect component image")
 }
 
 func TestCollectComponentPersistence_RequiresTTY(t *testing.T) {
 	t.Parallel()
-	err := collectComponentPersistence(nonInteractiveContext(t), &spec.Component{}, "db")
+	err := collectComponentPersistence(nabatctx.New(t, "test").Context, &spec.Component{}, "db")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, nabat.ErrConfirmationRequired)
 }
 
 func TestCollectComponentAutoscaling_RequiresTTY(t *testing.T) {
 	t.Parallel()
-	err := collectComponentAutoscaling(nonInteractiveContext(t), &spec.Component{}, "web")
+	err := collectComponentAutoscaling(nabatctx.New(t, "test").Context, &spec.Component{}, "web")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, nabat.ErrConfirmationRequired)
 }
 
 func TestCollectComponentEnvironmentVariables_RequiresTTY(t *testing.T) {
 	t.Parallel()
-	err := collectComponentEnvironmentVariables(nonInteractiveContext(t), &spec.Component{}, "web")
+	err := collectComponentEnvironmentVariables(nabatctx.New(t, "test").Context, &spec.Component{}, "web")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, nabat.ErrConfirmationRequired)
 }
 
 func TestCollectComponentHealth_RequiresTTY(t *testing.T) {
 	t.Parallel()
-	err := collectComponentHealth(nonInteractiveContext(t), &spec.Component{}, "web")
+	err := collectComponentHealth(nabatctx.New(t, "test").Context, &spec.Component{}, "web")
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "failed to collect health check path")
 }
 
 func TestCollectComponentCustomResources_RequiresTTY(t *testing.T) {
 	t.Parallel()
-	err := collectComponentCustomResources(nonInteractiveContext(t), &spec.Component{}, "web")
+	err := collectComponentCustomResources(nabatctx.New(t, "test").Context, &spec.Component{}, "web")
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "failed to get custom resources")
 }
@@ -547,7 +558,7 @@ func TestCollectComponentCustomResources_RequiresTTY(t *testing.T) {
 func TestCollectComponentExposeOptions_RequiresTTY(t *testing.T) {
 	t.Parallel()
 	comp := &spec.Component{Expose: &spec.Expose{}}
-	err := collectComponentExposeOptions(nonInteractiveContext(t), comp, "web")
+	err := collectComponentExposeOptions(nabatctx.New(t, "test").Context, comp, "web")
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "failed to get expose options")
 }

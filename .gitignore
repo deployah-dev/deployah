@@ -3,20 +3,17 @@ deployah.platform.yaml
 deployah.yaml
 .env.*
 .env
-# Only the repo-root scaffold; fixture trees under scenarios/,
-# internal/e2e/testdata/, internal/cmd/testdata/, and examples/ keep their tracked contents.
+# Only the repo-root scaffold; fixture trees under scenarios/, internal
+# testdata directories, and examples/ keep their tracked contents.
 /.deployah/
 !scenarios/**/deployah.platform.yaml
 !scenarios/**/deployah.yaml
 !scenarios/**/.env.*
 !scenarios/**/.env
-!internal/e2e/testdata/**/deployah.platform.yaml
-!internal/e2e/testdata/**/deployah.yaml
-!internal/e2e/testdata/**/.env.*
-!internal/e2e/testdata/**/.env
-!internal/cmd/testdata/**/deployah.yaml
-!internal/cmd/testdata/**/.env.*
-!internal/cmd/testdata/**/.env
+!internal/**/testdata/**/deployah.platform.yaml
+!internal/**/testdata/**/deployah.yaml
+!internal/**/testdata/**/.env.*
+!internal/**/testdata/**/.env
 !examples/**/deployah.yaml
 !examples/**/deployah.platform.yaml
 !examples/**/.env.*

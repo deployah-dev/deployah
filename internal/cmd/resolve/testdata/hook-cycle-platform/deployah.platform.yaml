@@ -1,0 +1,3 @@
+apiVersion: platform/v1-alpha.3
+environments:
+  staging: {}

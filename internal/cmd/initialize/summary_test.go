@@ -8,10 +8,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/api/resource"
-	"nabat.dev/nabat"
-	"nabat.dev/nabat/nabattest"
 
 	"deployah.dev/deployah/internal/spec"
+	"deployah.dev/deployah/internal/testing/nabatctx"
 )
 
 func testConfig(t *testing.T, name string, envNames []string, components map[string]spec.Component) *ProjectConfig {
@@ -35,13 +34,11 @@ func readSpecFile(t *testing.T, path string) string {
 
 func captureShowSummary(t *testing.T, config *ProjectConfig) (out, errOut string) {
 	t.Helper()
-	io, _, stdout, stderr := nabattest.NewIO()
-	app := nabat.MustNew("test", nabat.WithIO(io))
-	c := nabattest.Context(t, app)
-	saved, err := showSummaryAndSave(c, config)
+	h := nabatctx.New(t, "test")
+	saved, err := showSummaryAndSave(h.Context, config)
 	require.NoError(t, err)
 	require.True(t, saved)
-	return stdout.String(), stderr.String()
+	return h.Stdout.String(), h.Stderr.String()
 }
 
 // TestShowSummaryAndSave_RoleAwareComponentsProduceValidSpec verifies a
@@ -127,7 +124,7 @@ func TestShowSummaryAndSave_ServiceHealthCheckWithoutPortIsValid(t *testing.T) {
 		},
 	})
 
-	c := nonInteractiveContext(t)
+	c := nabatctx.New(t, "test").Context
 	saved, err := showSummaryAndSave(c, config)
 	require.NoError(t, err)
 	require.True(t, saved)
@@ -206,7 +203,7 @@ func TestShowSummaryAndSave_PlatformWriteError(t *testing.T) {
 	})
 	require.NoError(t, os.Mkdir(config.PlatformPath, 0o750))
 
-	c := nonInteractiveContext(t)
+	c := nabatctx.New(t, "test").Context
 	saved, err := showSummaryAndSave(c, config)
 	require.Error(t, err)
 	assert.False(t, saved)
@@ -286,7 +283,7 @@ func TestShowSummaryAndSave_DryRunWritesNothing(t *testing.T) {
 	})
 	config.DryRun = true
 
-	c := nonInteractiveContext(t)
+	c := nabatctx.New(t, "test").Context
 	saved, err := showSummaryAndSave(c, config)
 	require.NoError(t, err)
 	require.True(t, saved)
@@ -531,10 +528,9 @@ func TestPrintPlatformSummary(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			io, _, stdout, _ := nabattest.NewIO()
-			app := nabat.MustNew("test", nabat.WithIO(io))
-			printPlatformSummary(nabattest.Context(t, app), "deployah.platform.yaml", tt.envNames, tt.platform)
-			got := stdout.String()
+			h := nabatctx.New(t, "test")
+			printPlatformSummary(h.Context, "deployah.platform.yaml", tt.envNames, tt.platform)
+			got := h.Stdout.String()
 			for _, want := range tt.want {
 				assert.Contains(t, got, want)
 			}
@@ -547,36 +543,33 @@ func TestPrintPlatformSummary(t *testing.T) {
 
 func TestPrintNextSteps_NoEnvironments(t *testing.T) {
 	t.Parallel()
-	io, _, stdout, _ := nabattest.NewIO()
-	app := nabat.MustNew("test", nabat.WithIO(io))
-	printNextSteps(nabattest.Context(t, app), &ProjectConfig{SpecPath: "deployah.yaml"})
-	got := stdout.String()
+	h := nabatctx.New(t, "test")
+	printNextSteps(h.Context, &ProjectConfig{SpecPath: "deployah.yaml"})
+	got := h.Stdout.String()
 	assert.Contains(t, got, "Fill in context and domains")
 	assert.NotContains(t, got, "deployah deploy ")
 }
 
 func TestWarnExposeWithoutDomains_NoExpose(t *testing.T) {
 	t.Parallel()
-	io, _, _, stderr := nabattest.NewIO()
-	app := nabat.MustNew("test", nabat.WithIO(io))
-	warnExposeWithoutDomains(nabattest.Context(t, app), &ProjectConfig{
+	h := nabatctx.New(t, "test")
+	warnExposeWithoutDomains(h.Context, &ProjectConfig{
 		EnvironmentNames: []string{"production"},
 		Components:       map[string]spec.Component{"web": {Image: "nginx:latest"}},
 	}, nil)
-	assert.NotContains(t, stderr.String(), "no domains yet")
+	assert.NotContains(t, h.Stderr.String(), "no domains yet")
 }
 
 func TestWarnExposeWithoutDomains_LocalOnly(t *testing.T) {
 	t.Parallel()
-	io, _, _, stderr := nabattest.NewIO()
-	app := nabat.MustNew("test", nabat.WithIO(io))
-	warnExposeWithoutDomains(nabattest.Context(t, app), &ProjectConfig{
+	h := nabatctx.New(t, "test")
+	warnExposeWithoutDomains(h.Context, &ProjectConfig{
 		EnvironmentNames: []string{"local"},
 		Components: map[string]spec.Component{
 			"web": {Image: "nginx:latest", Expose: &spec.Expose{}},
 		},
 	}, nil)
-	assert.NotContains(t, stderr.String(), "no domains yet")
+	assert.NotContains(t, h.Stderr.String(), "no domains yet")
 }
 
 func TestWriteSpecFile_EmptyPathUsesDefault(t *testing.T) {
@@ -613,7 +606,7 @@ func TestShowSummaryAndSave_EmptyPlatformPath(t *testing.T) {
 		},
 		SpecPath: filepath.Join(dir, "deployah.yaml"),
 	}
-	saved, err := showSummaryAndSave(nonInteractiveContext(t), config)
+	saved, err := showSummaryAndSave(nabatctx.New(t, "test").Context, config)
 	require.NoError(t, err)
 	require.True(t, saved)
 	require.FileExists(t, filepath.Join(dir, spec.DefaultPlatformPath))
