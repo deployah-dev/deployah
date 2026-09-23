@@ -1,0 +1,11 @@
+apiVersion: v1-alpha.5
+project: withdir
+components:
+  web:
+    image: ${IMAGE}
+    port: 80
+    environments: [dev]
+environments:
+  dev:
+    variables:
+      IMAGE: nginx:1.27

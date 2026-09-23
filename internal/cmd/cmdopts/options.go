@@ -12,4 +12,7 @@ type GlobalOptions struct {
 	PlatformFile string        `nabat:"platform-file"`
 	Debug        bool          `nabat:"debug"`
 	Timeout      time.Duration `nabat:"timeout"`
+	// CWD is the directory for this command.
+	// An empty value leaves the context directory unchanged.
+	CWD string `nabat:"cwd"`
 }

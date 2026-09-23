@@ -69,6 +69,7 @@ func NewApp(opts ...nabat.Option) *nabat.App {
 		nabat.WithFlag("kubeconfig", "", nabat.WithShort('k'), nabat.WithUsage("Path to the kubeconfig file to use (defaults to standard kubeconfig resolution)"), nabat.WithPersistent()),
 		nabat.WithFlag("context", "", nabat.WithUsage("Kubernetes context to use (overrides the current context and any environment 'context' field)"), nabat.WithPersistent()),
 		nabat.WithFlag("timeout", session.DefaultTimeout, nabat.WithShort('t'), nabat.WithUsage("Timeout for Deployah operations (install/upgrade, list, status, logs, delete, run)"), nabat.WithPersistent()),
+		nabat.WithFlag("cwd", "", nabat.WithShort('C'), nabat.WithUsage("Run as if deployah was started in this directory instead of the current working directory"), nabat.WithPersistent()),
 		nabat.WithExtension(logging.New(logging.WithVerboseFlag("debug"))),
 		// plan.ErrChangesPresent is a normal CI signal (exit code 2, see
 		// Execute), not a failure, so it gets no error banner. Every other
@@ -89,6 +90,9 @@ func NewApp(opts ...nabat.Option) *nabat.App {
 		if err := c.Bind(&opts); err != nil {
 			return fmt.Errorf("binding global options: %w", err)
 		}
+
+		// An empty value leaves the directory already stored on the context.
+		c.SetDir(opts.CWD)
 
 		// Make the local cluster's kubeconfig discoverable without polluting
 		// ~/.kube/config. Missing file is silently skipped by client-go.
