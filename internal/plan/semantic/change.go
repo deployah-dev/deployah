@@ -14,7 +14,8 @@
 
 package semantic
 
-// ResourceChange is one Live -> Predicted Kubernetes resource mutation.
+// ResourceChange describes a visible Kubernetes resource consequence
+// of this invocation.
 type ResourceChange struct {
 	Resource ResourceRef
 	Origin   ResourceOrigin

@@ -33,16 +33,6 @@ Resources
   - data:
   -   key: v1
 
-  -/+ replace v1/ConfigMap "rs"
-    apiVersion: v1
-    kind: ConfigMap
-    metadata:
-      name: rs
-      namespace: prod
-    data:
-  -   key: v1
-  +   key: v2
-
   ~ update v1/ConfigMap "web"
     data:
   -   key: v1
@@ -121,5 +111,5 @@ Tasks
       +   schedule: 0 3 * * *
 
 Summary
-  Resources: 1 create, 2 update, 1 delete, 1 replace
+  Resources: 1 create, 2 update, 1 delete
   Tasks: 3 to run, 1 schedule changed

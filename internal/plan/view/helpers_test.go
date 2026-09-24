@@ -61,13 +61,6 @@ func deleteApply() semantic.ApplySemantics {
 	}
 }
 
-func bothApply() semantic.ApplySemantics {
-	return semantic.ApplySemantics{
-		Write:  writeApply().Write,
-		Delete: deleteApply().Delete,
-	}
-}
-
 func snap(obj map[string]any) *semantic.ResourceSnapshot {
 	return &semantic.ResourceSnapshot{Object: obj}
 }

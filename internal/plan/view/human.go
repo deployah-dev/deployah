@@ -27,14 +27,14 @@ import (
 	"deployah.dev/deployah/internal/plan/semantic"
 )
 
-// yamlDiffContextLines is small because Update and Replace diffs are
+// yamlDiffContextLines is small because Update diffs are
 // ancestor-projected, not whole-object dumps.
 const yamlDiffContextLines = 3
 
 const headerLabelWidth = 10
 
 // WriteHuman writes a deterministic YAML-oriented rendering of p. It
-// does not mutate p. Resource headings use +, ~, -, and -/+ markers.
+// does not mutate p. Resource headings use +, ~, and - markers.
 // The footer is a Summary of resource counts and, when tasks exist,
 // task counts.
 func WriteHuman(w io.Writer, p semantic.Plan, opts Options) error {
@@ -44,14 +44,6 @@ func WriteHuman(w io.Writer, p semantic.Plan, opts Options) error {
 	}
 	if herr := writeHumanHeader(w, prepared.Header, opts); herr != nil {
 		return herr
-	}
-	if prepared.Completeness == semantic.CompletenessPartial {
-		if werr := writeln(w, opts, theme.StatusWarning, "Warning: prediction is incomplete"); werr != nil {
-			return werr
-		}
-		if _, ferr := fmt.Fprintln(w); ferr != nil {
-			return ferr
-		}
 	}
 	owned := ownedResourceKeys(prepared.Tasks)
 	indexed := indexChanges(prepared.Changes)
@@ -311,44 +303,9 @@ func writeActionBody(
 		}
 		beforeProj, afterProj := projectFields(beforeObj, afterObj, renderFields)
 		return writeProjectedDiff(w, beforeProj, afterProj, indent, opts)
-	case semantic.Replace:
-		if err := writeReplaceIdentity(w, afterObj, indent, opts); err != nil {
-			return err
-		}
-		beforeProj, afterProj := projectFields(beforeObj, afterObj, restFields(renderFields))
-		return writeProjectedDiff(w, beforeProj, afterProj, indent, opts)
 	default:
 		return nil
 	}
-}
-
-func restFields(fields []semantic.FieldChange) []semantic.FieldChange {
-	out := make([]semantic.FieldChange, 0, len(fields))
-	for _, f := range fields {
-		if f.Path == "/apiVersion" || f.Path == "/kind" || f.Path == "/metadata" || strings.HasPrefix(f.Path, "/metadata/") {
-			continue
-		}
-		out = append(out, f)
-	}
-	return out
-}
-
-func writeReplaceIdentity(w io.Writer, after map[string]any, indent string, opts Options) error {
-	id := map[string]any{}
-	if v, ok := after["apiVersion"]; ok {
-		id["apiVersion"] = v
-	}
-	if v, ok := after["kind"]; ok {
-		id["kind"] = v
-	}
-	if v, ok := after["metadata"]; ok {
-		id["metadata"] = v
-	}
-	text, err := marshalOrderedYAML(id)
-	if err != nil {
-		return err
-	}
-	return writePrefixedYAML(w, text, indent+"  ", theme.TextMuted, opts)
 }
 
 func writeProjectedDiff(w io.Writer, before, after map[string]any, indent string, opts Options) error {
@@ -436,7 +393,7 @@ func writeHumanFooter(w io.Writer, p semantic.Plan, opts Options) error {
 		return err
 	}
 	s := p.Summary
-	resourceLine := fmt.Sprintf("  Resources: %d create, %d update, %d delete, %d replace", s.Create, s.Update, s.Delete, s.Replace)
+	resourceLine := fmt.Sprintf("  Resources: %d create, %d update, %d delete", s.Create, s.Update, s.Delete)
 	if err := writeln(w, opts, theme.TextPrimary, resourceLine); err != nil {
 		return err
 	}
@@ -503,8 +460,6 @@ func actionMarker(action semantic.Action) string {
 		return "~"
 	case semantic.Delete:
 		return "-"
-	case semantic.Replace:
-		return "-/+"
 	default:
 		return ""
 	}
@@ -518,8 +473,6 @@ func actionHeadingToken(action semantic.Action) theme.Token {
 		return theme.StatusError
 	case semantic.Update:
 		return theme.StatusWarning
-	case semantic.Replace:
-		return theme.AccentPrimary
 	default:
 		return theme.StatusWarning
 	}

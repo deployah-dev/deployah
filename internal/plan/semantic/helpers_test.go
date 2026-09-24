@@ -165,14 +165,3 @@ func deleteChange(name, value string) semantic.ResourceChange {
 		Apply:    deleteApply(),
 	}
 }
-
-func replaceChange(name, before, after string) semantic.ResourceChange {
-	return semantic.ResourceChange{
-		Resource: ref("ConfigMap", name),
-		Origin:   helmOrigin(),
-		Action:   semantic.Replace,
-		Before:   &semantic.ResourceSnapshot{Object: cm(name, before)},
-		After:    &semantic.ResourceSnapshot{Object: cm(name, after)},
-		Apply:    bothApply(),
-	}
-}

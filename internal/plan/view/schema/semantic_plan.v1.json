@@ -13,8 +13,7 @@
     "tasks",
     "chartCRDs",
     "diagnostics",
-    "summary",
-    "completeness"
+    "summary"
   ],
   "properties": {
     "schema": {
@@ -54,10 +53,6 @@
     },
     "summary": {
       "$ref": "#/$defs/Summary"
-    },
-    "completeness": {
-      "type": "string",
-      "enum": ["complete", "partial"]
     }
   },
   "allOf": [
@@ -218,7 +213,7 @@
         },
         "action": {
           "type": "string",
-          "enum": ["create", "update", "delete", "replace"]
+          "enum": ["create", "update", "delete"]
         },
         "before": {
           "$ref": "#/$defs/Snapshot"
@@ -324,29 +319,6 @@
                 "not": {
                   "required": ["write"]
                 }
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "action": {
-                "const": "replace"
-              }
-            },
-            "required": ["action"]
-          },
-          "then": {
-            "properties": {
-              "before": {
-                "type": "object"
-              },
-              "after": {
-                "type": "object"
-              },
-              "apply": {
-                "required": ["write", "delete"]
               }
             }
           }
@@ -600,7 +572,7 @@
     "Summary": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["create", "update", "delete", "replace", "total"],
+      "required": ["create", "update", "delete", "total"],
       "properties": {
         "create": {
           "type": "integer",
@@ -611,10 +583,6 @@
           "minimum": 0
         },
         "delete": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "replace": {
           "type": "integer",
           "minimum": 0
         },

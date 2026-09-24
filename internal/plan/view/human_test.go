@@ -28,7 +28,7 @@ import (
 	"deployah.dev/deployah/internal/plan/view"
 )
 
-func TestWriteHuman_CreateUpdateDeleteReplace(t *testing.T) {
+func TestWriteHuman_CreateUpdateDelete(t *testing.T) {
 	t.Parallel()
 	p := allActionsPlan(t)
 	var buf bytes.Buffer
@@ -47,7 +47,6 @@ func TestWriteHuman_CreateUpdateDeleteReplace(t *testing.T) {
 	assert.Contains(t, text, "-     example.com/keep: yes")
 	assert.Contains(t, text, "-     app: web")
 	assert.Contains(t, text, "-   key: v1")
-	assert.Contains(t, text, `-/+ replace v1/ConfigMap "rs"`)
 	assert.Contains(t, text, "Tasks")
 	assert.Contains(t, text, "  preDeploy")
 	assert.Contains(t, text, "~ migrate  changed, will run")
@@ -75,12 +74,11 @@ func TestWriteHuman_CreateUpdateDeleteReplace(t *testing.T) {
 	assert.Contains(t, text, "+   schedule: 0 3 * * *")
 	assert.NotContains(t, text, "jobTemplate:")
 	assert.Equal(t, 1, strings.Count(text, `batch/v1/CronJob "web-cleanup"`))
-	assert.Contains(t, text, "  Resources: 1 create, 2 update, 1 delete, 1 replace")
+	assert.Contains(t, text, "  Resources: 1 create, 2 update, 1 delete")
 	assert.Contains(t, text, "  Tasks: 3 to run, 1 schedule changed")
 	assert.NotContains(t, text, "~ ConfigMap/prod/rs")
-	assert.NotContains(t, text, "-/+ ConfigMap/prod/web")
+	assert.NotContains(t, text, "-/+")
 	assert.NotContains(t, strings.ToLower(text), "recreate")
-	assert.NotContains(t, text, "-/+ apiVersion")
 	assert.NotContains(t, text, "Actions:")
 	assert.NotContains(t, text, "create helm")
 	assert.NotContains(t, text, "completeness:")
@@ -92,8 +90,6 @@ func TestWriteHuman_CreateUpdateDeleteReplace(t *testing.T) {
 	assert.Contains(t, text, "- apiVersion: v1")
 	assert.Contains(t, text, "-   key: v1")
 	assert.Contains(t, text, "+   key: v2")
-	assert.Contains(t, text, "  kind: ConfigMap")
-	assert.Contains(t, text, "  apiVersion: v1")
 	assert.NotContains(t, text, "before:")
 	assert.NotContains(t, text, "after:")
 	assert.NotContains(t, text, "--- before")
@@ -110,11 +106,10 @@ func TestWriteHuman_NoOpLimitationDiagnosticsOnly(t *testing.T) {
 		Message:  "prediction is not exact: prediction used the currently installed CRD, but that CRD's spec changes before Helm executes",
 		Resource: &widget,
 	}})
-	assert.Equal(t, semantic.CompletenessPartial, p.Completeness)
 	assert.False(t, p.IsNoOp())
 	text := writeHuman(t, p)
 	assertGolden(t, "human_noop_limitation", text)
-	assert.Contains(t, text, "Warning: prediction is incomplete")
+	assert.NotContains(t, text, "Warning: prediction is incomplete")
 	assert.Contains(t, text, "Diagnostics")
 	assert.Contains(t, text, `example.com/v1/Widget "app"`)
 	assert.NotContains(t, text, "\nResources\n")
@@ -168,16 +163,15 @@ func TestWriteHuman_Prerequisites(t *testing.T) {
 	assert.Contains(t, text, "Diagnostics")
 }
 
-func TestWriteHuman_DiagnosticPartial(t *testing.T) {
+func TestWriteHuman_UpdateWithLimitationDiagnostic(t *testing.T) {
 	t.Parallel()
 	res := ref("ConfigMap", "web")
 	p := mustPlanWithHeader(t, humanHeader(), semantic.HelmUpgrade, []semantic.ResourceChange{
 		knownConfigMapUpdate(res),
 	}, nil, []semantic.Diagnostic{predictionLimitation(res)})
-	assert.Equal(t, semantic.CompletenessPartial, p.Completeness)
 	text := writeHuman(t, p)
-	assertGolden(t, "human_partial", text) // full-output contract; Contains below are invariants only
-	assert.Contains(t, text, "Warning: prediction is incomplete")
+	assertGolden(t, "human_limitation", text) // full-output contract; Contains below are invariants only
+	assert.NotContains(t, text, "Warning: prediction is incomplete")
 	assert.Contains(t, text, `~ update v1/ConfigMap "web"`)
 	assert.Contains(t, text, "-   key: v1")
 	assert.Contains(t, text, "+   key: v2")
@@ -186,24 +180,22 @@ func TestWriteHuman_DiagnosticPartial(t *testing.T) {
 	assert.NotContains(t, text, "Actions:")
 }
 
-func TestWriteHuman_PartialPreservesKnownDetails(t *testing.T) {
+func TestWriteHuman_LimitationDiagnosticPreservesKnownDetails(t *testing.T) {
 	t.Parallel()
 	header, changes, tasks := allActionsInputs()
-	complete := mustPlanWithHeader(t, header, semantic.HelmUpgrade, changes, tasks, nil)
-	partial := mustPlanWithHeader(t, header, semantic.HelmUpgrade, changes, tasks, []semantic.Diagnostic{
+	plain := mustPlanWithHeader(t, header, semantic.HelmUpgrade, changes, tasks, nil)
+	withDiag := mustPlanWithHeader(t, header, semantic.HelmUpgrade, changes, tasks, []semantic.Diagnostic{
 		predictionLimitation(ref("ConfigMap", "web")),
 	})
-	assert.Equal(t, semantic.CompletenessComplete, complete.Completeness)
-	assert.Equal(t, semantic.CompletenessPartial, partial.Completeness)
-	assert.Equal(t, complete.Summary, partial.Summary)
+	assert.Equal(t, plain.Summary, withDiag.Summary)
 
-	completeText := writeHuman(t, complete)
-	partialText := writeHuman(t, partial)
-	assert.Contains(t, partialText, "Warning: prediction is incomplete")
-	assert.Contains(t, partialText, "Diagnostics")
-	assert.NotContains(t, completeText, "Warning: prediction is incomplete")
-	assert.NotContains(t, completeText, "Diagnostics")
-	require.Equal(t, completeText, stripPartialPresentation(t, partialText))
+	plainText := writeHuman(t, plain)
+	withDiagText := writeHuman(t, withDiag)
+	assert.Contains(t, withDiagText, "Diagnostics")
+	assert.NotContains(t, plainText, "Warning: prediction is incomplete")
+	assert.NotContains(t, withDiagText, "Warning: prediction is incomplete")
+	assert.NotContains(t, plainText, "Diagnostics")
+	require.Equal(t, plainText, stripDiagnostics(t, withDiagText))
 }
 
 func TestWriteHuman_DeterministicMapOrder(t *testing.T) {
@@ -252,7 +244,7 @@ func TestWriteHuman_InvalidZero(t *testing.T) {
 	t.Parallel()
 	err := view.WriteHuman(&bytes.Buffer{}, semantic.Plan{}, view.Options{})
 	require.Error(t, err)
-	assert.ErrorContains(t, err, "invalid completeness")
+	assert.ErrorContains(t, err, "invalid helmAction")
 }
 
 func TestWriteHuman_DoesNotMutatePlan(t *testing.T) {
@@ -472,7 +464,7 @@ func TestWriteHuman_EmptyPlan(t *testing.T) {
 	assert.NotContains(t, text, "completeness:")
 	assert.NotContains(t, text, "Executions:")
 	assertHumanLayout(t, text)
-	assert.Contains(t, text, "  Resources: 0 create, 0 update, 0 delete, 0 replace")
+	assert.Contains(t, text, "  Resources: 0 create, 0 update, 0 delete")
 	assert.NotContains(t, text, "  Tasks:")
 	assert.NotContains(t, text, "create helm")
 	assert.NotContains(t, text, "Actions:")
@@ -544,38 +536,6 @@ func TestWriteHuman_UnknownGVKActions(t *testing.T) {
 				Apply:    deleteApply(),
 			},
 			contains: []string{`- delete example.com/v1/Widget "d"`, "- apiVersion: example.com/v1", "size: large"},
-		},
-		{
-			name: "replace identity then projected rest",
-			change: semantic.ResourceChange{
-				Resource: semantic.ResourceRef{APIVersion: "example.com/v1", Kind: "Widget", Namespace: "prod", Name: "w"},
-				Origin:   helmOrigin(),
-				Action:   semantic.Replace,
-				Before: snap(map[string]any{
-					"apiVersion": "example.com/v1",
-					"kind":       "Widget",
-					"metadata":   map[string]any{"name": "w", "namespace": "prod"},
-					"spec":       map[string]any{"color": "blue", "keep": "yes"},
-					"status":     map[string]any{"ready": true},
-				}),
-				After: snap(map[string]any{
-					"apiVersion": "example.com/v1",
-					"kind":       "Widget",
-					"metadata":   map[string]any{"name": "w", "namespace": "prod"},
-					"spec":       map[string]any{"color": "red", "keep": "yes"},
-					"status":     map[string]any{"ready": true},
-				}),
-				Apply: bothApply(),
-			},
-			contains: []string{
-				`-/+ replace example.com/v1/Widget "w"`,
-				"apiVersion: example.com/v1",
-				"kind: Widget",
-				"metadata:",
-				"color: blue",
-				"color: red",
-			},
-			omits: []string{"keep: yes"},
 		},
 	}
 	for _, tt := range tests {
@@ -810,7 +770,7 @@ func TestWriteHuman_ScheduledTaskNotDuplicated(t *testing.T) {
 	require.Greater(t, tasksIdx, resourcesIdx)
 	assert.NotContains(t, text[resourcesIdx:tasksIdx], `CronJob "cleanup"`)
 	assertHumanLayout(t, text)
-	assert.Contains(t, text, "  Resources: 1 create, 1 update, 0 delete, 0 replace")
+	assert.Contains(t, text, "  Resources: 1 create, 1 update, 0 delete")
 	assert.Contains(t, text, "  Tasks: 0 to run, 1 schedule changed")
 }
 
@@ -850,7 +810,7 @@ func TestWriteHuman_ScheduleCreateDeleteRendersFullObject(t *testing.T) {
 			contains: append([]string{
 				"+ cleanup  new",
 				`+ create batch/v1/CronJob "web-cleanup"`,
-				"  Resources: 1 create, 0 update, 0 delete, 0 replace",
+				"  Resources: 1 create, 0 update, 0 delete",
 			}, body...),
 			omits: []string{"will run", "\nResources\n"},
 		},
@@ -872,7 +832,7 @@ func TestWriteHuman_ScheduleCreateDeleteRendersFullObject(t *testing.T) {
 			contains: append([]string{
 				"- cleanup  removed",
 				`- delete batch/v1/CronJob "web-cleanup"`,
-				"  Resources: 0 create, 0 update, 1 delete, 0 replace",
+				"  Resources: 0 create, 0 update, 1 delete",
 			}, body...),
 			omits: []string{"will run", "\nResources\n"},
 		},
@@ -963,7 +923,7 @@ func TestWriteHuman_TaskFooter(t *testing.T) {
 			require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
 			text := buf.String()
 			assertHumanLayout(t, text)
-			assert.Contains(t, text, "  Resources: 0 create, 0 update, 0 delete, 0 replace")
+			assert.Contains(t, text, "  Resources: 0 create, 0 update, 0 delete")
 			for _, s := range tt.wantContains {
 				assert.Contains(t, text, s)
 			}
@@ -1002,7 +962,7 @@ func TestWriteHuman_BlockSpacing(t *testing.T) {
 			}, nil),
 			contains: []string{
 				"+   key: v1\n\n  + create v1/ConfigMap \"old\"",
-				"  Resources: 2 create, 0 update, 0 delete, 0 replace",
+				"  Resources: 2 create, 0 update, 0 delete",
 			},
 		},
 		{
@@ -1089,7 +1049,7 @@ func TestWriteHuman_SummaryOmitsTasksWhenAbsent(t *testing.T) {
 	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
 	text := buf.String()
 	assertHumanLayout(t, text)
-	assert.Contains(t, text, "  Resources: 1 create, 0 update, 0 delete, 0 replace")
+	assert.Contains(t, text, "  Resources: 1 create, 0 update, 0 delete")
 	assert.NotContains(t, text, "  Tasks:")
 }
 
@@ -1126,14 +1086,6 @@ func allActionsInputs() (semantic.Header, []semantic.ResourceChange, []semantic.
 			Action:   semantic.Delete,
 			Before:   snap(cmWithMeta("old", "v1")),
 			Apply:    deleteApply(),
-		},
-		{
-			Resource: ref("ConfigMap", "rs"),
-			Origin:   helmOrigin(),
-			Action:   semantic.Replace,
-			Before:   snap(cm("rs", "v1")),
-			After:    snap(cm("rs", "v2")),
-			Apply:    bothApply(),
 		},
 		{
 			Resource: cron,
@@ -1226,11 +1178,8 @@ func predictionLimitation(res semantic.ResourceRef) semantic.Diagnostic {
 	}
 }
 
-func stripPartialPresentation(t *testing.T, text string) string {
+func stripDiagnostics(t *testing.T, text string) string {
 	t.Helper()
-	const warning = "Warning: prediction is incomplete\n\n"
-	require.Contains(t, text, warning)
-	text = strings.Replace(text, warning, "", 1)
 	diagStart := strings.Index(text, "\nDiagnostics\n")
 	summaryStart := strings.Index(text, "\nSummary\n")
 	require.Greater(t, diagStart, -1)

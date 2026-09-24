@@ -31,7 +31,6 @@ func TestActionMarker(t *testing.T) {
 		{action: semantic.Create, want: "+"},
 		{action: semantic.Update, want: "~"},
 		{action: semantic.Delete, want: "-"},
-		{action: semantic.Replace, want: "-/+"},
 		{action: 0, want: ""},
 	}
 	for _, tt := range tests {

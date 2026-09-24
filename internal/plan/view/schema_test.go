@@ -41,9 +41,18 @@ func TestSchemaV1ID_MatchesEmbeddedAndRendered(t *testing.T) {
 	required, ok := sch["required"].([]any)
 	require.True(t, ok)
 	assert.Contains(t, required, "chartCRDs")
+	assert.NotContains(t, required, "completeness")
+	_, hasCompleteness := props["completeness"]
+	assert.False(t, hasCompleteness)
 
 	defs, ok := sch["$defs"].(map[string]any)
 	require.True(t, ok)
+	summary, ok := defs["Summary"].(map[string]any)
+	require.True(t, ok)
+	summaryProps, ok := summary["properties"].(map[string]any)
+	require.True(t, ok)
+	_, hasReplace := summaryProps["replace"]
+	assert.False(t, hasReplace)
 	origin, ok := defs["Origin"].(map[string]any)
 	require.True(t, ok)
 	originProps, ok := origin["properties"].(map[string]any)
@@ -81,14 +90,6 @@ func TestSchemaV1_RejectsMalformedDocuments(t *testing.T) {
 		Action:   semantic.Delete,
 		Before:   snap(cm("app", "v1")),
 		Apply:    deleteApply(),
-	}}, nil))
-	replace := mustPlanDoc(t, mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
-		Resource: res,
-		Origin:   helmOrigin(),
-		Action:   semantic.Replace,
-		Before:   snap(cm("app", "v1")),
-		After:    snap(cm("app", "v2")),
-		Apply:    bothApply(),
 	}}, nil))
 	createWrite := mustPlanDoc(t, mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 		Resource: res,
@@ -182,17 +183,11 @@ func TestSchemaV1_RejectsMalformedDocuments(t *testing.T) {
 		{name: "delete missing delete", raw: patched(t, deleteDoc, func(d map[string]any) {
 			delete(applyOf(t, d), "delete")
 		})},
-		{name: "replace with after null", raw: patched(t, replace, func(d map[string]any) {
-			firstChange(t, d)["after"] = nil
+		{name: "top-level completeness", raw: patched(t, update, func(d map[string]any) {
+			d["completeness"] = "complete"
 		})},
-		{name: "replace with before null", raw: patched(t, replace, func(d map[string]any) {
-			firstChange(t, d)["before"] = nil
-		})},
-		{name: "replace missing write", raw: patched(t, replace, func(d map[string]any) {
-			delete(applyOf(t, d), "write")
-		})},
-		{name: "replace missing delete", raw: patched(t, replace, func(d map[string]any) {
-			delete(applyOf(t, d), "delete")
+		{name: "action replace", raw: patched(t, update, func(d map[string]any) {
+			firstChange(t, d)["action"] = "replace"
 		})},
 		{name: "unknown top-level executions", raw: patched(t, update, func(d map[string]any) {
 			d["executions"] = []any{}
