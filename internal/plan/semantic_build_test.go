@@ -627,7 +627,6 @@ func TestBuildSemanticPlan_NoChange(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, p.Changes)
 	assert.Equal(t, 0, p.Summary.Total())
-	assert.Equal(t, semantic.CompletenessComplete, p.Completeness)
 	assert.Equal(t, semantic.HelmNone, p.HelmAction)
 	assert.False(t, p.HasEffects())
 	assert.True(t, p.IsNoOp())

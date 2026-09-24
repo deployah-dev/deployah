@@ -284,7 +284,6 @@ func TestWriteRenderers_CopyIsolation(t *testing.T) {
 	t.Parallel()
 	helm := &semantic.HelmOrigin{Release: "web", Namespace: "prod"}
 	write := &semantic.WriteSemantics{Method: semantic.WriteServerSide, FieldManager: "deployah"}
-	del := &semantic.DeleteSemantics{Propagation: semantic.PropagationBackground}
 	res := ref("Secret", "s")
 	diag := semantic.Diagnostic{
 		Severity: semantic.DiagnosticWarning,
@@ -302,10 +301,10 @@ func TestWriteRenderers_CopyIsolation(t *testing.T) {
 	p, err := semantic.New(semantic.Header{Release: "web", Namespace: "prod"}, semantic.HelmUpgrade, []semantic.ResourceChange{{
 		Resource: res,
 		Origin:   semantic.ResourceOrigin{Kind: semantic.OriginHelm, Helm: helm},
-		Action:   semantic.Replace,
+		Action:   semantic.Update,
 		Before:   snap(beforeObj),
 		After:    snap(secretObj("s", "new", "tok2")),
-		Apply:    semantic.ApplySemantics{Write: write, Delete: del},
+		Apply:    semantic.ApplySemantics{Write: write},
 	}}, nil, []semantic.Diagnostic{diag})
 	require.NoError(t, err)
 	require.NotEmpty(t, p.Changes[0].Fields)
@@ -313,7 +312,6 @@ func TestWriteRenderers_CopyIsolation(t *testing.T) {
 	fieldAfter := p.Changes[0].Fields[0].After
 	helmRelease := p.Changes[0].Origin.Helm.Release
 	fieldManager := p.Changes[0].Apply.Write.FieldManager
-	propagation := p.Changes[0].Apply.Delete.Propagation
 	diagName := p.Diagnostics[0].Resource.Name
 
 	require.NoError(t, view.WriteHuman(&bytes.Buffer{}, p, view.Options{}))
@@ -321,7 +319,6 @@ func TestWriteRenderers_CopyIsolation(t *testing.T) {
 
 	assert.Equal(t, helmRelease, p.Changes[0].Origin.Helm.Release)
 	assert.Equal(t, fieldManager, p.Changes[0].Apply.Write.FieldManager)
-	assert.Equal(t, propagation, p.Changes[0].Apply.Delete.Propagation)
 	assert.Equal(t, diagName, p.Diagnostics[0].Resource.Name)
 	assert.Equal(t, "old", objectString(t, p.Changes[0].Before.Object, "stringData", "password"))
 	assert.Equal(t, "new", objectString(t, p.Changes[0].After.Object, "stringData", "password"))
@@ -334,9 +331,8 @@ func TestWriteRenderers_CopyIsolation(t *testing.T) {
 func TestWriteRenderers_ManualSnapshotShapes(t *testing.T) {
 	t.Parallel()
 	p := semantic.Plan{
-		Completeness: semantic.CompletenessComplete,
-		HelmAction:   semantic.HelmUpgrade,
-		Header:       semantic.Header{Release: "web"},
+		HelmAction: semantic.HelmUpgrade,
+		Header:     semantic.Header{Release: "web"},
 		Changes: []semantic.ResourceChange{
 			{
 				Resource: ref("ConfigMap", "app"),
@@ -376,9 +372,8 @@ func TestWriteRenderers_ManualSnapshotShapes(t *testing.T) {
 func TestWriteRenderers_NilTasks(t *testing.T) {
 	t.Parallel()
 	p := semantic.Plan{
-		Completeness: semantic.CompletenessComplete,
-		HelmAction:   semantic.HelmNone,
-		Header:       semantic.Header{Release: "web"},
+		HelmAction: semantic.HelmNone,
+		Header:     semantic.Header{Release: "web"},
 	}
 	assert.Nil(t, p.Tasks)
 	require.NoError(t, view.WriteHuman(&bytes.Buffer{}, p, view.Options{}))

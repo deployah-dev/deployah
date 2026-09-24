@@ -78,7 +78,6 @@ func TestBuildSemanticPlan_InstallCreatesNamespace(t *testing.T) {
 	assert.Equal(t, semantic.Create, p.Changes[0].Action)
 	assert.Equal(t, semantic.WriteServerSide, p.Changes[0].Apply.Write.Method)
 	assert.False(t, p.Changes[0].Apply.Write.ForceConflicts)
-	assert.Equal(t, semantic.CompletenessPartial, p.Completeness)
 	require.NotEmpty(t, p.Diagnostics)
 	assert.Contains(t, p.Diagnostics[0].Message, "target namespace is created earlier in this deployment")
 	require.Len(t, cluster.applies, 1)
@@ -392,7 +391,6 @@ data:
 	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, buildInput("ctx", resolvedSpec(), nil))
 	t.Cleanup(cleanup)
 	require.NoError(t, err)
-	assert.Equal(t, semantic.CompletenessPartial, p.Completeness)
 	var gens []string
 	for _, d := range p.Diagnostics {
 		if d.Resource != nil {

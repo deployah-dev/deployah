@@ -33,10 +33,6 @@ func prepareRender(p semantic.Plan, opts Options) (semantic.Plan, error) {
 }
 
 func validateRenderable(p semantic.Plan) error {
-	if err := requireEnum("completeness", p.Completeness.String(),
-		semantic.CompletenessComplete.String(), semantic.CompletenessPartial.String()); err != nil {
-		return err
-	}
 	if err := requireEnum("helmAction", p.HelmAction.String(),
 		semantic.HelmNone.String(), semantic.HelmInstall.String(), semantic.HelmUpgrade.String()); err != nil {
 		return err
@@ -44,7 +40,7 @@ func validateRenderable(p semantic.Plan) error {
 	for i, c := range p.Changes {
 		if err := requireEnum(fmt.Sprintf("change %d action", i), c.Action.String(),
 			semantic.Create.String(), semantic.Update.String(),
-			semantic.Delete.String(), semantic.Replace.String()); err != nil {
+			semantic.Delete.String()); err != nil {
 			return err
 		}
 		if err := requireEnum(fmt.Sprintf("change %d origin", i), c.Origin.Kind.String(),

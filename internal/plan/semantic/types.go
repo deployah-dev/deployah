@@ -28,9 +28,6 @@ const (
 	Update
 	// Delete is a prune of a live resource.
 	Delete
-	// Replace is a delete of the live object plus a write of a
-	// replacement. Stage C stores the action; it does not generate it.
-	Replace
 )
 
 func (a Action) String() string {
@@ -41,8 +38,6 @@ func (a Action) String() string {
 		return "update"
 	case Delete:
 		return "delete"
-	case Replace:
-		return "replace"
 	default:
 		return fmt.Sprintf("Action(%d)", int(a))
 	}
@@ -50,7 +45,7 @@ func (a Action) String() string {
 
 func (a Action) valid() bool {
 	switch a {
-	case Create, Update, Delete, Replace:
+	case Create, Update, Delete:
 		return true
 	default:
 		return false
@@ -63,35 +58,10 @@ func actionRank(a Action) int {
 		return 0
 	case Update:
 		return 1
-	case Replace:
-		return 2
 	case Delete:
+		return 2
+	default:
 		return 3
-	default:
-		return 4
-	}
-}
-
-// Completeness says whether every predicted After is exact. The zero
-// value is invalid.
-type Completeness int
-
-const (
-	// CompletenessComplete means every resource change has an exact
-	// prediction.
-	CompletenessComplete Completeness = iota + 1
-	// CompletenessPartial means at least one prediction is not exact.
-	CompletenessPartial
-)
-
-func (c Completeness) String() string {
-	switch c {
-	case CompletenessComplete:
-		return "complete"
-	case CompletenessPartial:
-		return "partial"
-	default:
-		return fmt.Sprintf("Completeness(%d)", int(c))
 	}
 }
 
@@ -174,7 +144,7 @@ func (r ResourceRef) String() string {
 type OriginKind int
 
 const (
-	// OriginHelm is a Helm-predicted resource.
+	// OriginHelm is a resource rendered by the Helm release.
 	OriginHelm OriginKind = iota + 1
 	// OriginNamespace is the target Namespace created as part of a
 	// Helm install. It is invalid with [HelmNone] or [HelmUpgrade].
@@ -281,9 +251,8 @@ type DeleteSemantics struct {
 	Propagation DeletePropagation
 }
 
-// ApplySemantics is the mutation semantics that produced a prediction.
-// Create and Update set Write only. Delete sets Delete only. Replace
-// sets both.
+// ApplySemantics is the mutation semantics of a resource consequence.
+// Create and Update set Write only. Delete sets Delete only.
 type ApplySemantics struct {
 	Write  *WriteSemantics
 	Delete *DeleteSemantics
@@ -469,7 +438,7 @@ func (l ChartCRDLifecycle) valid() bool {
 }
 
 // ChartCRD is one chart CRD document for plan presentation. It is Helm
-// chart-CRD lifecycle, not a predicted Kubernetes mutation.
+// chart-CRD lifecycle, not a resource consequence.
 type ChartCRD struct {
 	// Source is the display path under .deployah/crds/.
 	Source string

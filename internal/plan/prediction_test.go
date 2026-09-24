@@ -63,12 +63,10 @@ func TestSemanticPlanFromResults_ActionMapping(t *testing.T) {
 	require.Len(t, p.Changes, 3)
 	assert.NotNil(t, p.Tasks)
 	assert.Empty(t, p.Tasks)
-	assert.Equal(t, semantic.CompletenessComplete, p.Completeness)
 
 	byName := map[string]semantic.ResourceChange{}
 	for _, c := range p.Changes {
 		byName[c.Resource.Name] = c
-		assert.NotEqual(t, semantic.Replace, c.Action)
 	}
 	require.Contains(t, byName, "app")
 	assert.Equal(t, semantic.Create, byName["app"].Action)
@@ -109,7 +107,6 @@ func TestSemanticPlanFromResults_NoOpOmitted(t *testing.T) {
 	}})
 	require.NoError(t, err)
 	assert.Empty(t, p.Changes)
-	assert.Equal(t, semantic.CompletenessComplete, p.Completeness)
 }
 
 func TestSemanticPlanFromResults_LimitationKeepsPredicted(t *testing.T) {
@@ -126,7 +123,6 @@ func TestSemanticPlanFromResults_LimitationKeepsPredicted(t *testing.T) {
 	assert.Equal(t, semantic.Update, p.Changes[0].Action)
 	require.NotNil(t, p.Changes[0].After)
 	assert.Equal(t, "new", predictionObjectString(t, p.Changes[0].After.Object, "data", "key"))
-	assert.Equal(t, semantic.CompletenessPartial, p.Completeness)
 	require.Len(t, p.Diagnostics, 1)
 	assert.Equal(t, semantic.CategoryPredictionLimitation, p.Diagnostics[0].Category)
 	assert.Contains(t, p.Diagnostics[0].Message, predict.LimitationManagedFieldsMigration)
@@ -144,7 +140,8 @@ func TestSemanticPlanFromResults_LimitationDoesNotFabricateAfter(t *testing.T) {
 	require.Len(t, p.Changes, 1)
 	assert.Nil(t, p.Changes[0].After)
 	assert.Empty(t, p.Changes[0].Fields)
-	assert.Equal(t, semantic.CompletenessPartial, p.Completeness)
+	require.Len(t, p.Diagnostics, 1)
+	assert.Equal(t, semantic.CategoryPredictionLimitation, p.Diagnostics[0].Category)
 }
 
 func TestSemanticPlanFromResults_UnknownAction(t *testing.T) {
@@ -255,7 +252,6 @@ func TestSemanticPlanFromResults_NoOpWithLimitation(t *testing.T) {
 	}})
 	require.NoError(t, err)
 	assert.Empty(t, p.Changes)
-	assert.Equal(t, semantic.CompletenessPartial, p.Completeness)
 	require.Len(t, p.Diagnostics, 1)
 	assert.Equal(t, semantic.CategoryPredictionLimitation, p.Diagnostics[0].Category)
 	assert.Contains(t, p.Diagnostics[0].Message, predict.LimitationManagedFieldsMigration)
@@ -294,20 +290,6 @@ func TestSemanticPlanFromResults_NilObjectSnapshot(t *testing.T) {
 	require.Len(t, p.Changes, 1)
 	require.NotNil(t, p.Changes[0].After)
 	assert.Nil(t, p.Changes[0].After.Object)
-}
-
-func TestSemanticPlanFromResults_NeverEmitsReplace(t *testing.T) {
-	t.Parallel()
-	p, err := semanticPlanFromResults(semantic.Header{Release: "web", Namespace: "prod"}, []predict.Result{
-		{Identity: predictionIdentity("a"), Action: predict.ActionCreate, Predicted: predictionConfigMap("a", "prod", "1")},
-		{Identity: predictionIdentity("b"), Action: predict.ActionUpdate, Live: predictionConfigMap("b", "prod", "1"), Predicted: predictionConfigMap("b", "prod", "2")},
-		{Identity: predictionIdentity("c"), Action: predict.ActionDelete, Live: predictionConfigMap("c", "prod", "1")},
-		{Identity: predictionIdentity("d"), Action: predict.ActionNoOp, Live: predictionConfigMap("d", "prod", "1"), Predicted: predictionConfigMap("d", "prod", "1")},
-	})
-	require.NoError(t, err)
-	for _, c := range p.Changes {
-		assert.NotEqual(t, semantic.Replace, c.Action)
-	}
 }
 
 func predictionObjectString(tb testing.TB, obj map[string]any, keys ...string) string {

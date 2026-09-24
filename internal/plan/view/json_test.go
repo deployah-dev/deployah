@@ -60,11 +60,17 @@ func TestWriteJSON_SchemaAndTasks(t *testing.T) {
 			"create": 0,
 			"update": 0,
 			"delete": 0,
-			"replace": 0,
 			"total": 0
-		},
-		"completeness": "complete"
+		}
 	}`, buf.String())
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &doc))
+	_, hasCompleteness := doc["completeness"]
+	assert.False(t, hasCompleteness)
+	summary, ok := doc["summary"].(map[string]any)
+	require.True(t, ok)
+	_, hasReplace := summary["replace"]
+	assert.False(t, hasReplace)
 	assertNoJSONKeysFromBytes(t, buf.Bytes())
 	validatePlanSchema(t, buf.Bytes())
 }
@@ -137,8 +143,7 @@ func TestWriteJSON_TasksContract(t *testing.T) {
 		}],
 		"chartCRDs": [],
 		"diagnostics": [],
-		"summary": {"create": 0, "update": 0, "delete": 0, "replace": 0, "total": 0},
-		"completeness": "complete"
+		"summary": {"create": 0, "update": 0, "delete": 0, "total": 0}
 	}`, buf.String())
 	validatePlanSchema(t, buf.Bytes())
 	assertNoJSONKeysFromBytes(t, buf.Bytes())
@@ -264,7 +269,7 @@ func TestWriteJSON_InvalidZero(t *testing.T) {
 	t.Parallel()
 	err := view.WriteJSON(&bytes.Buffer{}, semantic.Plan{}, view.Options{})
 	require.Error(t, err)
-	assert.ErrorContains(t, err, "invalid completeness")
+	assert.ErrorContains(t, err, "invalid helmAction")
 }
 
 func TestWriteJSON_ShowSecrets(t *testing.T) {
@@ -391,21 +396,13 @@ func TestWriteJSON_MatchesSchemaForRepresentativePlans(t *testing.T) {
 			Before:   snap(cm("app", "v1")),
 			Apply:    deleteApply(),
 		}}, nil)},
-		{name: "partial update", plan: mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
+		{name: "update without after", plan: mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 			Resource: res,
 			Origin:   helmOrigin(),
 			Action:   semantic.Update,
 			Before:   snap(cm("app", "v1")),
 			Apply:    writeApply(),
 		}}, []semantic.Diagnostic{limitationFor(res)})},
-		{name: "replace", plan: mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
-			Resource: res,
-			Origin:   helmOrigin(),
-			Action:   semantic.Replace,
-			Before:   snap(cm("app", "v1")),
-			After:    snap(cm("app", "v2")),
-			Apply:    bothApply(),
-		}}, nil)},
 		{name: "create write create", plan: mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 			Resource: res,
 			Origin:   helmOrigin(),

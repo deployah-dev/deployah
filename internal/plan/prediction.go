@@ -27,7 +27,7 @@ import (
 
 // semanticPlanFromResults maps [predict.Result] values onto a semantic
 // [semantic.Plan]. It does not mutate results or the unstructured objects
-// they hold. Current predictor actions never produce [semantic.Replace].
+// they hold.
 //
 // Write FieldManager values come from [kube.ManagedFieldsManager]. This
 // helper always emits [semantic.WriteServerSide] writes. [semantic.New]

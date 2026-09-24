@@ -19,27 +19,27 @@ import (
 	"slices"
 )
 
-// Plan is the Live -> Predicted semantic result. Construct it with [New].
-// Chart CRDs are attached with [AttachChartCRDs]; [New] leaves them empty.
-// Snapshots and field values are unredacted. This type is not a JSON
-// rendering contract.
+// Plan is the semantic plan for one invocation: Deployah's intended
+// operations and their visible resource consequences. Construct it with
+// [New]. Chart CRDs are attached with [AttachChartCRDs]; [New] leaves
+// them empty. Snapshots and field values are unredacted. This type is
+// not a JSON rendering contract.
 type Plan struct {
-	Header       Header
-	HelmAction   HelmAction
-	Changes      []ResourceChange
-	Tasks        []TaskPlan
-	ChartCRDs    []ChartCRD
-	Diagnostics  []Diagnostic
-	Summary      Summary
-	Completeness Completeness
+	Header      Header
+	HelmAction  HelmAction
+	Changes     []ResourceChange
+	Tasks       []TaskPlan
+	ChartCRDs   []ChartCRD
+	Diagnostics []Diagnostic
+	Summary     Summary
 }
 
 // New validates helmAction, header, changes, tasks, and diagnostics,
-// sorts them, derives [Summary] and [Completeness], and returns a plan
-// whose slices are non-nil. ChartCRDs is empty; call [AttachChartCRDs]
-// to set them. Task references to [ResourceChange] values must be
-// consistent; it fails closed on dangling or duplicate ownership.
-// helmAction is stored as provided; [New] does not derive or mutate it.
+// sorts them, derives [Summary], and returns a plan whose slices are
+// non-nil. ChartCRDs is empty; call [AttachChartCRDs] to set them. Task
+// references to [ResourceChange] values must be consistent; it fails
+// closed on dangling or duplicate ownership. helmAction is stored as
+// provided; [New] does not derive or mutate it.
 func New(header Header, helmAction HelmAction, changes []ResourceChange, tasks []TaskPlan, diagnostics []Diagnostic) (Plan, error) {
 	if !helmAction.valid() {
 		return Plan{}, fmt.Errorf("invalid helm action %s", helmAction)
@@ -92,14 +92,13 @@ func New(header Header, helmAction HelmAction, changes []ResourceChange, tasks [
 	sortDiagnostics(copiedDiags)
 
 	return Plan{
-		Header:       header,
-		HelmAction:   helmAction,
-		Changes:      copiedChanges,
-		Tasks:        copiedTasks,
-		ChartCRDs:    []ChartCRD{},
-		Diagnostics:  copiedDiags,
-		Summary:      Summarize(copiedChanges),
-		Completeness: deriveCompleteness(copiedChanges, copiedDiags),
+		Header:      header,
+		HelmAction:  helmAction,
+		Changes:     copiedChanges,
+		Tasks:       copiedTasks,
+		ChartCRDs:   []ChartCRD{},
+		Diagnostics: copiedDiags,
+		Summary:     Summarize(copiedChanges),
 	}, nil
 }
 
@@ -152,11 +151,10 @@ func (p Plan) HasEffects() bool {
 	return false
 }
 
-// IsNoOp reports whether the plan is a complete, non-install HelmNone
-// with no known effects. Keep this expression verbatim.
+// IsNoOp reports whether the plan is a non-install [HelmNone] with no
+// known effects.
 func (p Plan) IsNoOp() bool {
 	return !p.Header.FreshInstall &&
-		p.Completeness == CompletenessComplete &&
 		p.HelmAction == HelmNone &&
 		!p.HasEffects()
 }
@@ -168,7 +166,7 @@ func normalizeChange(c ResourceChange) (ResourceChange, error) {
 	c.Apply = copyApply(c.Apply)
 	c.Fields = copyFields(c.Fields)
 	switch {
-	case (c.Action == Update || c.Action == Replace) && c.After != nil:
+	case c.Action == Update && c.After != nil:
 		fields, err := DiffFields(snapshotObject(c.Before), snapshotObject(c.After))
 		if err != nil {
 			return ResourceChange{}, err
@@ -323,20 +321,6 @@ func validateDefinition(d HookDefinition) error {
 	return nil
 }
 
-func deriveCompleteness(changes []ResourceChange, diags []Diagnostic) Completeness {
-	for _, d := range diags {
-		if d.Category == CategoryPredictionLimitation {
-			return CompletenessPartial
-		}
-	}
-	for _, c := range changes {
-		if c.Action == Update && c.After == nil {
-			return CompletenessPartial
-		}
-	}
-	return CompletenessComplete
-}
-
 func validateChange(c ResourceChange, diags []Diagnostic) error {
 	if !c.Action.valid() {
 		return fmt.Errorf("invalid action %s", c.Action)
@@ -426,17 +410,6 @@ func validateApply(action Action, apply ApplySemantics) error {
 		}
 		if apply.Delete == nil {
 			return fmt.Errorf("delete requires delete semantics")
-		}
-		return validateDelete(*apply.Delete)
-	case Replace:
-		if apply.Write == nil {
-			return fmt.Errorf("replace requires write semantics")
-		}
-		if apply.Delete == nil {
-			return fmt.Errorf("replace requires delete semantics")
-		}
-		if err := validateWrite(*apply.Write); err != nil {
-			return err
 		}
 		return validateDelete(*apply.Delete)
 	default:
@@ -537,13 +510,6 @@ func validateSnapshots(c ResourceChange, diags []Diagnostic) error {
 		}
 		if c.After != nil {
 			return fmt.Errorf("delete must not have an after snapshot")
-		}
-	case Replace:
-		if c.Before == nil {
-			return fmt.Errorf("replace requires a before snapshot")
-		}
-		if c.After == nil {
-			return fmt.Errorf("replace requires an after snapshot")
 		}
 	}
 	return nil

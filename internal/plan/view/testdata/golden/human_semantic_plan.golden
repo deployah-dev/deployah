@@ -312,5 +312,5 @@ Tasks
       +   schedule: 0 3 * * *
 
 Summary
-  Resources: 1 create, 2 update, 1 delete, 0 replace
+  Resources: 1 create, 2 update, 1 delete
   Tasks: 2 to run, 1 schedule changed

@@ -154,14 +154,14 @@ func TestNew_TaskValidation(t *testing.T) {
 			wantErr: "invalid action",
 		},
 		{
-			name: "hook replace action",
+			name: "hook unknown action",
 			tasks: []semantic.TaskPlan{{
 				Name:   "migrate",
 				Phase:  semantic.TaskPreDeploy,
 				Action: semantic.TaskUpdate,
 				Definitions: []semantic.HookDefinition{{
 					Resource: app,
-					Action:   semantic.Replace,
+					Action:   semantic.Action(0),
 					Before:   &semantic.ResourceSnapshot{Object: cm("app", "v1")},
 					After:    &semantic.ResourceSnapshot{Object: cm("app", "v2")},
 				}},

@@ -5,8 +5,6 @@ Namespace: prod
 Release:   web
 Revision:  1
 
-Warning: prediction is incomplete
-
 Resources
 
   + create v1/Namespace "prod"
@@ -32,4 +30,4 @@ Diagnostics
   warning prediction_limitation example.com/v1/Widget "app": target namespace is created earlier in this deployment
 
 Summary
-  Resources: 2 create, 0 update, 0 delete, 0 replace
+  Resources: 2 create, 0 update, 0 delete

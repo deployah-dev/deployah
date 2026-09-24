@@ -42,24 +42,17 @@ func TestPrepareRender_InvalidEnums(t *testing.T) {
 		wantErr string
 	}{
 		{
-			name:    "invalid completeness",
-			plan:    semantic.Plan{},
-			wantErr: "invalid completeness",
-		},
-		{
 			name: "invalid action",
 			plan: semantic.Plan{
-				Completeness: semantic.CompletenessComplete,
-				HelmAction:   semantic.HelmUpgrade,
-				Changes:      []semantic.ResourceChange{{Origin: helmOrigin()}},
+				HelmAction: semantic.HelmUpgrade,
+				Changes:    []semantic.ResourceChange{{Origin: helmOrigin()}},
 			},
 			wantErr: "invalid change 0 action",
 		},
 		{
 			name: "invalid origin",
 			plan: semantic.Plan{
-				Completeness: semantic.CompletenessComplete,
-				HelmAction:   semantic.HelmUpgrade,
+				HelmAction: semantic.HelmUpgrade,
 				Changes: []semantic.ResourceChange{{
 					Action: semantic.Create,
 				}},
@@ -69,8 +62,7 @@ func TestPrepareRender_InvalidEnums(t *testing.T) {
 		{
 			name: "invalid write method",
 			plan: semantic.Plan{
-				Completeness: semantic.CompletenessComplete,
-				HelmAction:   semantic.HelmUpgrade,
+				HelmAction: semantic.HelmUpgrade,
 				Changes: []semantic.ResourceChange{{
 					Action: semantic.Create,
 					Origin: helmOrigin(),
@@ -82,8 +74,7 @@ func TestPrepareRender_InvalidEnums(t *testing.T) {
 		{
 			name: "invalid delete propagation",
 			plan: semantic.Plan{
-				Completeness: semantic.CompletenessComplete,
-				HelmAction:   semantic.HelmUpgrade,
+				HelmAction: semantic.HelmUpgrade,
 				Changes: []semantic.ResourceChange{{
 					Action: semantic.Delete,
 					Origin: helmOrigin(),
@@ -97,15 +88,14 @@ func TestPrepareRender_InvalidEnums(t *testing.T) {
 			plan: func() semantic.Plan {
 				c := validChange()
 				c.Fields = []semantic.FieldChange{{Path: "/data/key"}}
-				return semantic.Plan{Completeness: semantic.CompletenessComplete, HelmAction: semantic.HelmUpgrade, Changes: []semantic.ResourceChange{c}}
+				return semantic.Plan{HelmAction: semantic.HelmUpgrade, Changes: []semantic.ResourceChange{c}}
 			}(),
 			wantErr: "invalid change 0 field 0 op",
 		},
 		{
 			name: "invalid diagnostic severity",
 			plan: semantic.Plan{
-				Completeness: semantic.CompletenessComplete,
-				HelmAction:   semantic.HelmUpgrade,
+				HelmAction: semantic.HelmUpgrade,
 				Diagnostics: []semantic.Diagnostic{{
 					Category: semantic.CategoryPredictionLimitation,
 					Message:  "x",
@@ -116,8 +106,7 @@ func TestPrepareRender_InvalidEnums(t *testing.T) {
 		{
 			name: "invalid diagnostic category",
 			plan: semantic.Plan{
-				Completeness: semantic.CompletenessComplete,
-				HelmAction:   semantic.HelmUpgrade,
+				HelmAction: semantic.HelmUpgrade,
 				Diagnostics: []semantic.Diagnostic{{
 					Severity: semantic.DiagnosticWarning,
 					Message:  "x",

@@ -23,15 +23,14 @@ import (
 )
 
 type document struct {
-	Schema       string        `json:"schema"`
-	Header       headerDTO     `json:"header"`
-	HelmAction   string        `json:"helmAction"`
-	Changes      []changeDTO   `json:"changes"`
-	Tasks        []taskDTO     `json:"tasks"`
-	ChartCRDs    []chartCRDDTO `json:"chartCRDs"`
-	Diagnostics  []diagDTO     `json:"diagnostics"`
-	Summary      summaryDTO    `json:"summary"`
-	Completeness string        `json:"completeness"`
+	Schema      string        `json:"schema"`
+	Header      headerDTO     `json:"header"`
+	HelmAction  string        `json:"helmAction"`
+	Changes     []changeDTO   `json:"changes"`
+	Tasks       []taskDTO     `json:"tasks"`
+	ChartCRDs   []chartCRDDTO `json:"chartCRDs"`
+	Diagnostics []diagDTO     `json:"diagnostics"`
+	Summary     summaryDTO    `json:"summary"`
 }
 
 type headerDTO struct {
@@ -102,11 +101,10 @@ type diagDTO struct {
 }
 
 type summaryDTO struct {
-	Create  int `json:"create"`
-	Update  int `json:"update"`
-	Delete  int `json:"delete"`
-	Replace int `json:"replace"`
-	Total   int `json:"total"`
+	Create int `json:"create"`
+	Update int `json:"update"`
+	Delete int `json:"delete"`
+	Total  int `json:"total"`
 }
 
 type taskDTO struct {
@@ -173,15 +171,14 @@ func newDocument(p semantic.Plan, opts Options) (document, error) {
 		crds = append(crds, toChartCRDDTO(c))
 	}
 	return document{
-		Schema:       SchemaV1ID,
-		Header:       toHeaderDTO(prepared.Header),
-		HelmAction:   prepared.HelmAction.String(),
-		Changes:      changes,
-		Tasks:        tasks,
-		ChartCRDs:    crds,
-		Diagnostics:  diags,
-		Summary:      toSummaryDTO(prepared.Summary),
-		Completeness: prepared.Completeness.String(),
+		Schema:      SchemaV1ID,
+		Header:      toHeaderDTO(prepared.Header),
+		HelmAction:  prepared.HelmAction.String(),
+		Changes:     changes,
+		Tasks:       tasks,
+		ChartCRDs:   crds,
+		Diagnostics: diags,
+		Summary:     toSummaryDTO(prepared.Summary),
 	}, nil
 }
 
@@ -270,11 +267,10 @@ func toDiagDTO(d semantic.Diagnostic) diagDTO {
 
 func toSummaryDTO(s semantic.Summary) summaryDTO {
 	return summaryDTO{
-		Create:  s.Create,
-		Update:  s.Update,
-		Delete:  s.Delete,
-		Replace: s.Replace,
-		Total:   s.Total(),
+		Create: s.Create,
+		Update: s.Update,
+		Delete: s.Delete,
+		Total:  s.Total(),
 	}
 }
 
