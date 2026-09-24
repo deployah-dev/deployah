@@ -25,40 +25,6 @@ import (
 	"deployah.dev/deployah/internal/predict"
 )
 
-// semanticPlanFromResults maps [predict.Result] values onto a semantic
-// [semantic.Plan]. It does not mutate results or the unstructured objects
-// they hold.
-//
-// Write FieldManager values come from [kube.ManagedFieldsManager]. This
-// helper always emits [semantic.WriteServerSide] writes. [semantic.New]
-// rejects those without a field manager, so callers must import
-// [deployah.dev/deployah/internal/helm] (or otherwise pin that global)
-// before calling this function.
-func semanticPlanFromResults(header semantic.Header, results []predict.Result) (semantic.Plan, error) {
-	origin := semantic.ResourceOrigin{
-		Kind: semantic.OriginHelm,
-		Helm: &semantic.HelmOrigin{
-			Release:   header.Release,
-			Namespace: header.Namespace,
-		},
-	}
-
-	changes, diags, err := mapPredictResults(origin, results)
-	if err != nil {
-		return semantic.Plan{}, err
-	}
-	if orderErr := stampHelmApplyOrder(changes); orderErr != nil {
-		return semantic.Plan{}, orderErr
-	}
-	helmAction := semantic.HelmUpgrade
-	if header.FreshInstall {
-		helmAction = semantic.HelmInstall
-	} else if len(changes) == 0 {
-		helmAction = semantic.HelmNone
-	}
-	return semantic.New(header, helmAction, changes, nil, diags)
-}
-
 func mapPredictResults(origin semantic.ResourceOrigin, results []predict.Result) ([]semantic.ResourceChange, []semantic.Diagnostic, error) {
 	changes := make([]semantic.ResourceChange, 0, len(results))
 	diags := make([]semantic.Diagnostic, 0)

@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: web
+  name: other
+  namespace: prod
+data:
+  key: same

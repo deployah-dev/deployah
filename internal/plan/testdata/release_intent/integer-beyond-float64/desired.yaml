@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: web
+  namespace: prod
+data:
+  n: 9007199254740995

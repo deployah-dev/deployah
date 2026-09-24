@@ -76,8 +76,8 @@ const (
 	// HelmInstall is a fresh Helm install. It requires
 	// [Header.FreshInstall].
 	HelmInstall
-	// HelmUpgrade is a Helm upgrade. Zero known effects remain valid
-	// for a future reapply.
+	// HelmUpgrade is a Helm upgrade. Zero resource consequences remain
+	// valid when release intent changed and Live already matches Desired.
 	HelmUpgrade
 )
 

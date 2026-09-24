@@ -1,0 +1,8 @@
+# Source: chart/templates/cm.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: web
+  namespace: prod
+data:
+  key: same
