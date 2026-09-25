@@ -15,33 +15,35 @@
 package plan
 
 import (
+	"errors"
+	"fmt"
+
 	"deployah.dev/deployah/internal/helm"
 	"deployah.dev/deployah/internal/plan/semantic"
+
+	v1 "helm.sh/helm/v4/pkg/release/v1"
 )
 
-func deriveHelmAction(op helm.Operation, changes []semantic.ResourceChange, tasks []semantic.TaskPlan) semantic.HelmAction {
-	if op == helm.OperationInstall {
-		return semantic.HelmInstall
-	}
-	if requiresHelmUpgrade(changes, tasks) {
-		return semantic.HelmUpgrade
-	}
-	return semantic.HelmNone
-}
-
-func requiresHelmUpgrade(changes []semantic.ResourceChange, tasks []semantic.TaskPlan) bool {
-	for _, c := range changes {
-		if c.Origin.Kind == semantic.OriginHelm {
-			return true
+// deriveHelmAction picks install, upgrade, or none by comparing
+// prep.Current with the rendered manifest and hooks. Live state never
+// affects the result.
+func deriveHelmAction(prep helm.ReleasePrep, desiredManifest string, desiredHooks []*v1.Hook) (semantic.HelmAction, error) {
+	switch prep.Operation {
+	case helm.OperationInstall:
+		return semantic.HelmInstall, nil
+	case helm.OperationUpgrade:
+		if prep.Current == nil {
+			return 0, errors.New("upgrade prep requires a current release")
 		}
-	}
-	for _, t := range tasks {
-		if t.Phase == semantic.TaskSchedule {
-			continue
+		changed, err := releaseIntentChanged(prep.Current.Manifest, prep.Current.Hooks, desiredManifest, desiredHooks)
+		if err != nil {
+			return 0, err
 		}
-		if t.Action != semantic.TaskUnchanged {
-			return true
+		if changed {
+			return semantic.HelmUpgrade, nil
 		}
+		return semantic.HelmNone, nil
+	default:
+		return 0, fmt.Errorf("invalid helm operation %d", prep.Operation)
 	}
-	return false
 }

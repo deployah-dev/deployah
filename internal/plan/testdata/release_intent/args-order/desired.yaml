@@ -1,0 +1,13 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: prod
+spec:
+  template:
+    spec:
+      containers:
+        - name: api
+          args:
+            - --bar
+            - --foo

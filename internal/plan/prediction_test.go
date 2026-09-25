@@ -29,6 +29,31 @@ import (
 	_ "deployah.dev/deployah/internal/helm"
 )
 
+// semanticPlanFromResults maps predict results onto a semantic plan for
+// tests. HelmAction is fixed from the header: install when FreshInstall
+// is set, otherwise upgrade. It is not derived from the results.
+func semanticPlanFromResults(header semantic.Header, results []predict.Result) (semantic.Plan, error) {
+	origin := semantic.ResourceOrigin{
+		Kind: semantic.OriginHelm,
+		Helm: &semantic.HelmOrigin{
+			Release:   header.Release,
+			Namespace: header.Namespace,
+		},
+	}
+	changes, diags, err := mapPredictResults(origin, results)
+	if err != nil {
+		return semantic.Plan{}, err
+	}
+	if orderErr := stampHelmApplyOrder(changes); orderErr != nil {
+		return semantic.Plan{}, orderErr
+	}
+	helmAction := semantic.HelmUpgrade
+	if header.FreshInstall {
+		helmAction = semantic.HelmInstall
+	}
+	return semantic.New(header, helmAction, changes, nil, diags)
+}
+
 func TestSemanticPlanFromResults_ActionMapping(t *testing.T) {
 	t.Parallel()
 	header := semantic.Header{Release: "web", Namespace: "prod"}

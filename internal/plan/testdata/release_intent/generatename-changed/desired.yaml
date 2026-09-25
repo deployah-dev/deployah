@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  generateName: app-
+  namespace: prod
+data:
+  key: v2

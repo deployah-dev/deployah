@@ -545,7 +545,7 @@ func TestBuildSemanticPlan_InvalidPrep(t *testing.T) {
 	p, result, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, buildInput("ctx", resolvedSpec(), nil))
 	t.Cleanup(cleanup)
 	require.Error(t, err)
-	assert.ErrorContains(t, err, "build prediction input:")
+	assert.ErrorContains(t, err, "determine helm release intent:")
 	assert.ErrorContains(t, err, "upgrade prep requires a current release")
 	assert.Zero(t, p)
 	assert.Nil(t, result)
@@ -822,6 +822,214 @@ func TestBuildSemanticPlan_ScheduleCronJobChange(t *testing.T) {
 	require.Len(t, p.Changes, 1)
 	assert.Equal(t, "CronJob", p.Changes[0].Resource.Kind)
 	assert.Equal(t, semantic.Update, p.Changes[0].Action)
+}
+
+func TestBuildSemanticPlan_HelmActionIgnoresLive(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		previous    string
+		desired     string
+		live        string
+		wantAction  semantic.HelmAction
+		wantActions []semantic.Action
+		wantApplies int
+	}{
+		{name: "unchanged live matches", previous: "same", desired: "same", live: "same", wantAction: semantic.HelmNone, wantActions: []semantic.Action{}},
+		{name: "drift only", previous: "same", desired: "same", live: "drift", wantAction: semantic.HelmNone, wantActions: []semantic.Action{}},
+		{name: "missing live", previous: "same", desired: "same", wantAction: semantic.HelmNone, wantActions: []semantic.Action{}},
+		{name: "release changed live desired", previous: "old", desired: "new", live: "new", wantAction: semantic.HelmUpgrade, wantActions: []semantic.Action{}, wantApplies: 1},
+		{name: "release changed live differs", previous: "old", desired: "new", live: "old", wantAction: semantic.HelmUpgrade, wantActions: []semantic.Action{semantic.Update}, wantApplies: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			current := &v1.Release{Version: 3, Manifest: configMapYAML("app", "prod", tt.previous)}
+			client := &fakeBuildClient{
+				result: upgradeResult(configMapYAML("app", "prod", tt.desired), 4),
+				prep: helm.ReleasePrep{
+					Operation:    helm.OperationUpgrade,
+					Current:      current,
+					Newest:       current,
+					NextRevision: 4,
+				},
+				cleanup: func() {},
+			}
+			cluster := readyCluster()
+			if tt.live != "" {
+				cluster.store(ownedConfigMap("app", "prod", "web", tt.live))
+			}
+			p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, buildInput("ctx", resolvedSpec(), nil))
+			t.Cleanup(cleanup)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantAction, p.HelmAction)
+			actions := make([]semantic.Action, 0, len(p.Changes))
+			for _, c := range p.Changes {
+				actions = append(actions, c.Action)
+			}
+			assert.Equal(t, tt.wantActions, actions)
+			assert.Len(t, cluster.applies, tt.wantApplies)
+		})
+	}
+}
+
+func TestBuildSemanticPlan_UnchangedReleaseSkipsWritePrediction(t *testing.T) {
+	t.Parallel()
+	manifest := configMapYAML("app", "prod", "same")
+	current := &v1.Release{Version: 3, Manifest: manifest}
+	client := &fakeBuildClient{
+		result: upgradeResult(manifest, 4),
+		prep: helm.ReleasePrep{
+			Operation:    helm.OperationUpgrade,
+			Current:      current,
+			Newest:       current,
+			NextRevision: 4,
+		},
+		cleanup: func() {},
+	}
+	cluster := readyCluster()
+	id := predict.Identity{Version: "v1", Kind: "ConfigMap", Namespace: "prod", Name: "app"}
+	cluster.getErr[clusterKey(id)] = errors.New("get failed")
+	cluster.applyErr = errors.New("apply failed")
+	cluster.createErr = errors.New("create failed")
+
+	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, buildInput("ctx", resolvedSpec(), nil))
+	t.Cleanup(cleanup)
+	require.NoError(t, err)
+	assert.Equal(t, semantic.HelmNone, p.HelmAction)
+	assert.Empty(t, p.Changes)
+	assert.Empty(t, cluster.applies)
+	assert.Empty(t, cluster.creates)
+}
+
+func TestBuildSemanticPlan_UnchangedReleaseSkipsNamespacePrediction(t *testing.T) {
+	t.Parallel()
+	manifest := configMapYAML("app", "prod", "same")
+	current := &v1.Release{Version: 3, Manifest: manifest}
+	client := &fakeBuildClient{
+		result: upgradeResult(manifest, 4),
+		prep: helm.ReleasePrep{
+			Operation:    helm.OperationUpgrade,
+			Current:      current,
+			Newest:       current,
+			NextRevision: 4,
+		},
+		cleanup: func() {},
+	}
+	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, newFakeCluster(), buildInput("ctx", resolvedSpec(), nil))
+	t.Cleanup(cleanup)
+	require.NoError(t, err)
+	assert.Equal(t, semantic.HelmNone, p.HelmAction)
+}
+
+func TestBuildSemanticPlan_UpgradeGenerateName(t *testing.T) {
+	t.Parallel()
+	unchanged := "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  generateName: app-\n  namespace: prod\ndata:\n  key: v1\n"
+	changed := "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  generateName: app-\n  namespace: prod\ndata:\n  key: v2\n"
+	tests := []struct {
+		name    string
+		desired string
+		want    semantic.HelmAction
+	}{
+		{name: "unchanged", desired: unchanged, want: semantic.HelmNone},
+		{name: "changed", desired: changed, want: semantic.HelmUpgrade},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			current := &v1.Release{Version: 3, Manifest: unchanged}
+			client := &fakeBuildClient{
+				result: upgradeResult(tt.desired, 4),
+				prep: helm.ReleasePrep{
+					Operation:    helm.OperationUpgrade,
+					Current:      current,
+					Newest:       current,
+					NextRevision: 4,
+				},
+				cleanup: func() {},
+			}
+			p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, readyCluster(), buildInput("ctx", resolvedSpec(), nil))
+			t.Cleanup(cleanup)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, p.HelmAction)
+		})
+	}
+}
+
+func TestBuildSemanticPlan_ReleaseChangeLiveCurrentUnchangedHookWillRun(t *testing.T) {
+	t.Parallel()
+	hook := planHook("migrate", "busybox")
+	result := upgradeResult(configMapYAML("app", "prod", "new"), 4)
+	result.Hooks = []*v1.Hook{hook}
+	resolved := resolvedSpec()
+	resolved.Tasks = map[string]spec.ResolvedTask{
+		"migrate": {Task: spec.Task{On: spec.TaskOnPreDeploy}, HookWeight: 1},
+	}
+	client := &fakeBuildClient{
+		result:  result,
+		prep:    upgradePrepWithHook(configMapYAML("app", "prod", "old"), 3, 4, hook),
+		cleanup: func() {},
+	}
+	cluster := readyCluster()
+	cluster.store(ownedConfigMap("app", "prod", "web", "new"))
+	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, buildInput("ctx", resolved, nil))
+	t.Cleanup(cleanup)
+	require.NoError(t, err)
+	assert.Equal(t, semantic.HelmUpgrade, p.HelmAction)
+	assert.Empty(t, p.Changes)
+	require.Len(t, p.Tasks, 1)
+	assert.Equal(t, semantic.TaskUnchanged, p.Tasks[0].Action)
+	assert.True(t, p.Tasks[0].WillRun)
+}
+
+func TestBuildSemanticPlan_DriftUnchangedHooksWillNotRun(t *testing.T) {
+	t.Parallel()
+	manifest := configMapYAML("app", "prod", "same")
+	pre := planHook("migrate", "busybox")
+	post := planHook("smoke", "busybox")
+	post.Events = []v1.HookEvent{v1.HookPostInstall, v1.HookPostUpgrade}
+	result := upgradeResult(manifest, 4)
+	result.Hooks = []*v1.Hook{pre, post}
+	resolved := resolvedSpec()
+	resolved.Tasks = map[string]spec.ResolvedTask{
+		"migrate": {Task: spec.Task{On: spec.TaskOnPreDeploy}, HookWeight: 1},
+		"smoke":   {Task: spec.Task{On: spec.TaskOnPostDeploy}, HookWeight: 2},
+	}
+	current := &v1.Release{
+		Version:  3,
+		Manifest: manifest,
+		Hooks:    []*v1.Hook{pre, post},
+		Config: map[string]any{
+			"deployah": map[string]any{
+				"resolved": map[string]any{
+					"tasks": map[string]any{
+						"migrate": map[string]any{"on": "preDeploy", "hookWeight": 1},
+						"smoke":   map[string]any{"on": "postDeploy", "hookWeight": 2},
+					},
+				},
+			},
+		},
+	}
+	client := &fakeBuildClient{
+		result: result,
+		prep: helm.ReleasePrep{
+			Operation:    helm.OperationUpgrade,
+			Current:      current,
+			Newest:       current,
+			NextRevision: 4,
+		},
+		cleanup: func() {},
+	}
+	cluster := readyCluster()
+	cluster.store(ownedConfigMap("app", "prod", "web", "drift"))
+	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, buildInput("ctx", resolved, nil))
+	t.Cleanup(cleanup)
+	require.NoError(t, err)
+	assert.Equal(t, semantic.HelmNone, p.HelmAction)
+	require.Len(t, p.Tasks, 2)
+	for _, task := range p.Tasks {
+		assert.False(t, task.WillRun)
+	}
 }
 
 func planHook(name, image string) *v1.Hook {

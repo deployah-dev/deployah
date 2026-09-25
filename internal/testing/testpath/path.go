@@ -35,6 +35,18 @@ func Dir(tb testing.TB, elems ...string) string {
 	return dir
 }
 
+// ReadFile joins elems, reads that file, and returns its contents. It
+// fails the test if the file cannot be read.
+func ReadFile(tb testing.TB, elems ...string) string {
+	tb.Helper()
+
+	path := filepath.Clean(filepath.Join(elems...))
+	raw, err := os.ReadFile(path) // #nosec G304 -- test fixture path chosen by the caller
+	require.NoErrorf(tb, err, "read fixture %s", path)
+
+	return string(raw)
+}
+
 // AbsDir returns the absolute path to the fixture directory formed by elems.
 func AbsDir(tb testing.TB, elems ...string) string {
 	tb.Helper()

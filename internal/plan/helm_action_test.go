@@ -29,39 +29,74 @@ import (
 
 func TestDeriveHelmAction(t *testing.T) {
 	t.Parallel()
-	helmChange := labeledCreate("app", "app")
-	nsChange := semantic.ResourceChange{
-		Resource: semantic.ResourceRef{APIVersion: "v1", Kind: "Namespace", Name: "prod"},
-		Origin:   semantic.ResourceOrigin{Kind: semantic.OriginNamespace},
-		Action:   semantic.Create,
+	same := configMapManifest("app", "same")
+	changed := configMapManifest("app", "new")
+	hookA := testHook("Job", "migrate", "migrate", "busybox", 1)
+	hookB := testHook("Job", "migrate", "migrate", "alpine", 1)
+	hookC := testHook("Job", "smoke", "smoke", "busybox", 2)
+	upgrade := func(manifest string, hooks []*v1.Hook) helm.ReleasePrep {
+		return helm.ReleasePrep{
+			Operation: helm.OperationUpgrade,
+			Current:   &v1.Release{Manifest: manifest, Hooks: hooks},
+		}
 	}
-	unchanged := semantic.TaskPlan{Name: "seed", Phase: semantic.TaskPreDeploy, Action: semantic.TaskUnchanged}
-	hookCreate := semantic.TaskPlan{Name: "migrate", Phase: semantic.TaskPreDeploy, Action: semantic.TaskCreate}
-	hookDelete := semantic.TaskPlan{Name: "old", Phase: semantic.TaskPreDeploy, Action: semantic.TaskDelete}
-	schedule := semantic.TaskPlan{Name: "cleanup", Phase: semantic.TaskSchedule, Action: semantic.TaskCreate}
 	tests := []struct {
 		name    string
-		op      helm.Operation
-		changes []semantic.ResourceChange
-		tasks   []semantic.TaskPlan
+		prep    helm.ReleasePrep
+		desired string
+		hooks   []*v1.Hook
 		want    semantic.HelmAction
 	}{
-		{name: "install", op: helm.OperationInstall, want: semantic.HelmInstall},
-		{name: "install ignores changes", op: helm.OperationInstall, changes: []semantic.ResourceChange{nsChange}, want: semantic.HelmInstall},
-		{name: "upgrade with helm change", op: helm.OperationUpgrade, changes: []semantic.ResourceChange{helmChange}, want: semantic.HelmUpgrade},
-		{name: "upgrade with hook create", op: helm.OperationUpgrade, tasks: []semantic.TaskPlan{hookCreate}, want: semantic.HelmUpgrade},
-		{name: "upgrade with hook delete", op: helm.OperationUpgrade, tasks: []semantic.TaskPlan{hookDelete}, want: semantic.HelmUpgrade},
-		{name: "namespace plus helm upgrades", op: helm.OperationUpgrade, changes: []semantic.ResourceChange{nsChange, helmChange}, want: semantic.HelmUpgrade},
-		{name: "namespace change does not upgrade", op: helm.OperationUpgrade, changes: []semantic.ResourceChange{nsChange}, want: semantic.HelmNone},
-		{name: "schedule change does not upgrade", op: helm.OperationUpgrade, tasks: []semantic.TaskPlan{schedule}, want: semantic.HelmNone},
-		{name: "unchanged hooks none", op: helm.OperationUpgrade, tasks: []semantic.TaskPlan{unchanged}, want: semantic.HelmNone},
+		{name: "install", prep: helm.ReleasePrep{Operation: helm.OperationInstall}, desired: changed, want: semantic.HelmInstall},
+		{
+			name: "install ignores previous release",
+			prep: helm.ReleasePrep{
+				Operation: helm.OperationInstall,
+				Current:   &v1.Release{Manifest: same, Hooks: []*v1.Hook{hookA}},
+			},
+			desired: changed,
+			hooks:   []*v1.Hook{hookB},
+			want:    semantic.HelmInstall,
+		},
+		{name: "unchanged", prep: upgrade(same, []*v1.Hook{hookA}), desired: same, hooks: []*v1.Hook{hookA}, want: semantic.HelmNone},
+		{name: "manifest change", prep: upgrade(same, []*v1.Hook{hookA}), desired: changed, hooks: []*v1.Hook{hookA}, want: semantic.HelmUpgrade},
+		{name: "hook change", prep: upgrade(same, []*v1.Hook{hookA}), desired: same, hooks: []*v1.Hook{hookB}, want: semantic.HelmUpgrade},
+		{name: "hook added", prep: upgrade(same, nil), desired: same, hooks: []*v1.Hook{hookA}, want: semantic.HelmUpgrade},
+		{name: "hook removed", prep: upgrade(same, []*v1.Hook{hookA, hookC}), desired: same, hooks: []*v1.Hook{hookA}, want: semantic.HelmUpgrade},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, tt.want, deriveHelmAction(tt.op, tt.changes, tt.tasks))
+			got, err := deriveHelmAction(tt.prep, tt.desired, tt.hooks)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func TestDeriveHelmAction_Errors(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		prep helm.ReleasePrep
+		want string
+	}{
+		{name: "invalid operation", prep: helm.ReleasePrep{}, want: "invalid helm operation"},
+		{name: "nil current", prep: helm.ReleasePrep{Operation: helm.OperationUpgrade}, want: "upgrade prep requires a current release"},
+		{name: "unparseable manifest", prep: helm.ReleasePrep{Operation: helm.OperationUpgrade, Current: &v1.Release{Manifest: ":\n  - ["}}, want: "previous manifest:"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := deriveHelmAction(tt.prep, "", nil)
+			require.Error(t, err)
+			assert.ErrorContains(t, err, tt.want)
+		})
+	}
+}
+
+func configMapManifest(name, data string) string {
+	return "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: " + name + "\n  namespace: prod\ndata:\n  key: " + data + "\n"
 }
 
 func TestApplyHelmWillRun_UnchangedHook(t *testing.T) {
