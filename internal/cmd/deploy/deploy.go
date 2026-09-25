@@ -16,6 +16,7 @@ import (
 	"deployah.dev/deployah/internal/cmd/cmdopts"
 	"deployah.dev/deployah/internal/extras"
 	"deployah.dev/deployah/internal/k8s"
+	"deployah.dev/deployah/internal/plan/semantic"
 	"deployah.dev/deployah/internal/readiness"
 	"deployah.dev/deployah/internal/render"
 	"deployah.dev/deployah/internal/session"
@@ -70,12 +71,15 @@ deployah plan prod --offline`),
 }
 
 // deployPlan bundles the shown diff with the render that produced it, so
-// callers reuse one render instead of recomputing. cleanup releases the
-// chart temp dir behind result.ChartPath; runDeploy defers it.
+// callers reuse one render instead of recomputing. helmAction is the
+// semantic install, upgrade, or none decision for that same render.
+// cleanup releases the chart temp dir behind result.ChartPath; runDeploy
+// defers it.
 type deployPlan struct {
-	diff    *planengine.Plan
-	result  *render.RenderResult
-	cleanup func()
+	diff       *planengine.Plan
+	result     *render.RenderResult
+	helmAction semantic.HelmAction
+	cleanup    func()
 }
 
 func runDeploy(c *nabat.Context) error {
@@ -285,7 +289,12 @@ func computePlan(c *nabat.Context, helmClient session.HelmClient, cluster *sessi
 		cleanup()
 		return nil, fmt.Errorf("%w%s", err, cmdopts.ClusterHint(err))
 	}
-	return &deployPlan{diff: p, result: result, cleanup: cleanup}, nil
+	helmAction, err := planengine.HelmActionFromRender(result)
+	if err != nil {
+		cleanup()
+		return nil, fmt.Errorf("determine helm release intent: %w", err)
+	}
+	return &deployPlan{diff: p, result: result, helmAction: helmAction, cleanup: cleanup}, nil
 }
 
 // skipDeploy handles an unchanged upgrade: Helm is never invoked, but pod

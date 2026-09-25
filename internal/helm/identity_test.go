@@ -127,6 +127,8 @@ func TestRenderOffline_ChartAndReleaseAgree(t *testing.T) {
 
 	assert.Equal(t, wantName, result.ReleaseName)
 	assert.Equal(t, GenerateReleaseName(resolved.Spec.Project, resolved.Env.Original), result.ReleaseName)
+	assert.Nil(t, result.Previous)
+	assert.False(t, result.IsUpgrade)
 
 	dep := findRenderedDeployment(t, result.Manifest, "-api")
 	assert.Equal(t, resolved.Spec.Project, dep.Labels[spec.LabelProject])

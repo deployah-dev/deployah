@@ -27,6 +27,7 @@ import (
 	"helm.sh/helm/v4/pkg/storage"
 	"helm.sh/helm/v4/pkg/storage/driver"
 
+	"deployah.dev/deployah/internal/render"
 	"deployah.dev/deployah/internal/spec"
 
 	chartcommon "helm.sh/helm/v4/pkg/chart/common"
@@ -222,13 +223,36 @@ func TestRenderManifestsWithPrep_FreshInstall(t *testing.T) {
 	assert.Equal(t, 1, prep.NextRevision)
 	assert.False(t, result.IsUpgrade)
 	assert.Equal(t, 1, result.Revision)
+	assert.Nil(t, result.Previous)
 }
 
 func TestRenderManifestsWithPrep_Upgrade(t *testing.T) {
 	t.Parallel()
 
 	c, cfg, resolved, releaseName := memoryHelmApp(t, "upgrade-prep")
-	seedRelease(t, cfg, releaseName, 2, common.StatusDeployed, applySSA)
+	ran := time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)
+	manifest := "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: app\n"
+	hooks := []*v1.Hook{
+		{
+			Name:              "migrate",
+			Kind:              "Job",
+			Path:              "templates/migrate.yaml",
+			Manifest:          "kind: Job\nmetadata:\n  name: migrate\n",
+			Events:            []v1.HookEvent{v1.HookPreUpgrade},
+			Weight:            1,
+			DeletePolicies:    []v1.HookDeletePolicy{v1.HookBeforeHookCreation},
+			OutputLogPolicies: []v1.HookOutputLogPolicy{v1.HookOutputOnSucceeded},
+		},
+		{
+			Name:     "smoke",
+			Kind:     "Pod",
+			Manifest: "kind: Pod\nmetadata:\n  name: smoke\n",
+			Events:   []v1.HookEvent{v1.HookPostUpgrade},
+			Weight:   2,
+			LastRun:  v1.HookExecution{StartedAt: ran, CompletedAt: ran, Phase: v1.HookPhaseSucceeded},
+		},
+	}
+	seedReleaseIntent(t, cfg, releaseName, 2, common.StatusDeployed, applySSA, manifest, hooks)
 
 	result, prep, cleanup, err := c.RenderManifestsWithPrep(t.Context(), resolved, nil, nil)
 	if cleanup != nil {
@@ -242,14 +266,39 @@ func TestRenderManifestsWithPrep_Upgrade(t *testing.T) {
 	assert.Equal(t, 3, prep.NextRevision)
 	assert.True(t, result.IsUpgrade)
 	assert.Equal(t, 3, result.Revision)
+	require.NotNil(t, result.Previous)
+	assert.Equal(t, prep.Current.Manifest, result.Previous.Manifest)
+	assert.Equal(t, []*render.HookIntent{
+		{
+			Name:              "migrate",
+			Kind:              "Job",
+			Path:              "templates/migrate.yaml",
+			Manifest:          "kind: Job\nmetadata:\n  name: migrate\n",
+			Events:            []v1.HookEvent{v1.HookPreUpgrade},
+			Weight:            1,
+			DeletePolicies:    []v1.HookDeletePolicy{v1.HookBeforeHookCreation},
+			OutputLogPolicies: []v1.HookOutputLogPolicy{v1.HookOutputOnSucceeded},
+		},
+		{
+			Name:     "smoke",
+			Kind:     "Pod",
+			Manifest: "kind: Pod\nmetadata:\n  name: smoke\n",
+			Events:   []v1.HookEvent{v1.HookPostUpgrade},
+			Weight:   2,
+		},
+	}, result.Previous.Hooks)
 }
 
 func TestRenderManifestsWithPrep_NewestDiffersFromCurrent(t *testing.T) {
 	t.Parallel()
 
 	c, cfg, resolved, releaseName := memoryHelmApp(t, "newest-current")
-	seedRelease(t, cfg, releaseName, 3, common.StatusDeployed, applySSA)
-	seedRelease(t, cfg, releaseName, 4, common.StatusFailed, applySSA)
+	currentManifest := "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: current\n"
+	newestManifest := "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: newest\n"
+	currentHook := &v1.Hook{Name: "current", Manifest: "kind: Job\nmetadata:\n  name: current\n"}
+	newestHook := &v1.Hook{Name: "newest", Manifest: "kind: Job\nmetadata:\n  name: newest\n"}
+	seedReleaseIntent(t, cfg, releaseName, 3, common.StatusDeployed, applySSA, currentManifest, []*v1.Hook{currentHook})
+	seedReleaseIntent(t, cfg, releaseName, 4, common.StatusFailed, applySSA, newestManifest, []*v1.Hook{newestHook})
 
 	result, prep, cleanup, err := c.RenderManifestsWithPrep(t.Context(), resolved, nil, nil)
 	if cleanup != nil {
@@ -265,13 +314,42 @@ func TestRenderManifestsWithPrep_NewestDiffersFromCurrent(t *testing.T) {
 	assert.Equal(t, 5, prep.NextRevision)
 	assert.True(t, result.IsUpgrade)
 	assert.Equal(t, 5, result.Revision)
+	require.NotNil(t, result.Previous)
+	assert.Equal(t, currentManifest, result.Previous.Manifest)
+	assert.Equal(t, []*render.HookIntent{{Name: "current", Manifest: currentHook.Manifest}}, result.Previous.Hooks)
+	assert.NotEqual(t, newestManifest, result.Previous.Manifest)
+}
+
+func TestRenderManifestsWithPrep_FailedOnlyHistory(t *testing.T) {
+	t.Parallel()
+
+	c, cfg, resolved, releaseName := memoryHelmApp(t, "failed-only")
+	manifest := "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: failed\n"
+	hook := &v1.Hook{Name: "failed", Kind: "Job", Manifest: "kind: Job\nmetadata:\n  name: failed\n"}
+	seedReleaseIntent(t, cfg, releaseName, 1, common.StatusFailed, applySSA, manifest, []*v1.Hook{hook})
+
+	result, prep, cleanup, err := c.RenderManifestsWithPrep(t.Context(), resolved, nil, nil)
+	if cleanup != nil {
+		t.Cleanup(cleanup)
+	}
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotNil(t, prep.Current)
+	assert.Equal(t, OperationUpgrade, prep.Operation)
+	assert.Equal(t, 1, prep.Current.Version)
+	assert.Equal(t, common.StatusFailed, prep.Current.Info.Status)
+	require.NotNil(t, result.Previous)
+	assert.Equal(t, manifest, result.Previous.Manifest)
+	assert.Equal(t, []*render.HookIntent{{Name: "failed", Kind: "Job", Manifest: hook.Manifest}}, result.Previous.Hooks)
 }
 
 func TestRenderManifests_MatchesWithPrepResult(t *testing.T) {
 	t.Parallel()
 
 	c, cfg, resolved, releaseName := memoryHelmApp(t, "compat-render")
-	seedRelease(t, cfg, releaseName, 1, common.StatusDeployed, applySSA)
+	manifest := "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: compat\n"
+	hook := &v1.Hook{Name: "compat", Manifest: "kind: Job\nmetadata:\n  name: compat\n"}
+	seedReleaseIntent(t, cfg, releaseName, 1, common.StatusDeployed, applySSA, manifest, []*v1.Hook{hook})
 
 	withPrep, prep, cleanup, err := c.RenderManifestsWithPrep(t.Context(), resolved, nil, nil)
 	if cleanup != nil {
@@ -291,6 +369,8 @@ func TestRenderManifests_MatchesWithPrepResult(t *testing.T) {
 	assert.Equal(t, withPrep.Revision, wrapped.Revision)
 	assert.Equal(t, withPrep.ReleaseName, wrapped.ReleaseName)
 	assert.Equal(t, withPrep.Namespace, wrapped.Namespace)
+	require.NotNil(t, withPrep.Previous)
+	assert.Equal(t, withPrep.Previous, wrapped.Previous)
 }
 
 func memoryHelmApp(t *testing.T, project string) (*Client, *action.Configuration, *spec.ResolvedSpec, string) {
@@ -321,6 +401,11 @@ func memoryHelmApp(t *testing.T, project string) (*Client, *action.Configuration
 
 func seedRelease(t *testing.T, cfg *action.Configuration, name string, version int, status common.Status, applyMethod string) {
 	t.Helper()
+	seedReleaseIntent(t, cfg, name, version, status, applyMethod, "", nil)
+}
+
+func seedReleaseIntent(t *testing.T, cfg *action.Configuration, name string, version int, status common.Status, applyMethod, manifest string, hooks []*v1.Hook) {
+	t.Helper()
 
 	now := time.Now()
 	require.NoError(t, cfg.Releases.Create(&v1.Release{
@@ -343,6 +428,8 @@ func seedRelease(t *testing.T, cfg *action.Configuration, name string, version i
 		},
 		Version:     version,
 		Namespace:   "default",
+		Manifest:    manifest,
+		Hooks:       hooks,
 		ApplyMethod: applyMethod,
 	}))
 }
