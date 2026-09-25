@@ -71,10 +71,11 @@ type SemanticBuildInput struct {
 // history itself. PostRenderer, when non-nil, is forwarded once to the
 // render client.
 //
-// Helm runs on a fresh install, or on an upgrade whose Previous release
-// intent differs from the rendered Desired manifest or hooks. An unchanged
-// release is [semantic.HelmNone] and runs no Namespace or Helm write
-// prediction. When Helm will run, the install target Namespace is predicted
+// The plan's HelmAction is [semantic.HelmInstall] on a fresh install, or
+// [semantic.HelmUpgrade] when the Previous release intent differs from the
+// rendered Desired manifest or hooks. An unchanged release is
+// [semantic.HelmNone] and runs no Namespace or Helm write prediction. When
+// the plan has a Helm transition, the install target Namespace is predicted
 // on cluster first, then Helm [predict.Predict] runs against a plan-local
 // wrapper so a same-deploy missing target namespace is not fatal. Chart CRD
 // files are forwarded to Helm only; they are not parsed into resource
@@ -158,7 +159,7 @@ func BuildSemanticPlan(
 	if err != nil {
 		return semantic.Plan{}, nil, cleanup, fmt.Errorf("assemble semantic plan: %w", err)
 	}
-	applyHelmWillRun(tasks, helmAction)
+	stampTaskWillRun(tasks, helmAction)
 	p, err := semantic.New(header, helmAction, changes, tasks, diags)
 	if err != nil {
 		return semantic.Plan{}, nil, cleanup, fmt.Errorf("assemble semantic plan: %w", err)

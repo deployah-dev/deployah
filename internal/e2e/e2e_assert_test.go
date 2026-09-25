@@ -119,7 +119,7 @@ func (s *E2ESuite) retryLogs(t *testing.T, dir string, args []string, contains s
 func stepArgs(project, env, ns string, step inttest.Step) []string {
 	switch step.OpName() {
 	case "deploy":
-		args := []string{"deploy", env, "--context", kindContext, "--yes", "--namespace", ns}
+		args := []string{"deploy", env, "--context", kindContext, "--namespace", ns}
 		if step.Deploy != nil && step.Deploy.Spec != "" {
 			args = append(args, "--spec", step.Deploy.Spec)
 		}

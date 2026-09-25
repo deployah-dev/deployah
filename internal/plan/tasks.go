@@ -47,9 +47,9 @@ func assembleTasks(
 	desiredHooks []*v1.Hook,
 	changes []semantic.ResourceChange,
 ) ([]semantic.TaskPlan, error) {
-	// WillRun stays false. Callers stamp it with applyHelmWillRun after
+	// WillRun stays false. Callers stamp it with stampTaskWillRun after
 	// deriveHelmAction. HelmAction is the source of truth for whether
-	// Helm executes.
+	// the plan has a Helm transition.
 	if resolved == nil {
 		return []semantic.TaskPlan{}, nil
 	}
@@ -272,8 +272,8 @@ func hookTask(
 	}, nil
 }
 
-func applyHelmWillRun(tasks []semantic.TaskPlan, helmAction semantic.HelmAction) {
-	helmWillRun := helmAction == semantic.HelmInstall || helmAction == semantic.HelmUpgrade
+func stampTaskWillRun(tasks []semantic.TaskPlan, helmAction semantic.HelmAction) {
+	helmTransition := helmAction == semantic.HelmInstall || helmAction == semantic.HelmUpgrade
 	for i, t := range tasks {
 		if t.Phase == semantic.TaskSchedule {
 			tasks[i].WillRun = false
@@ -286,7 +286,7 @@ func applyHelmWillRun(tasks []semantic.TaskPlan, helmAction semantic.HelmAction)
 			tasks[i].WillRun = false
 			continue
 		}
-		tasks[i].WillRun = helmWillRun
+		tasks[i].WillRun = helmTransition
 	}
 }
 

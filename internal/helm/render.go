@@ -40,10 +40,8 @@ func (c *Client) RenderManifests(ctx context.Context, resolved *spec.ResolvedSpe
 }
 
 // RenderManifestsWithPrep renders [spec.ResolvedSpec] and returns the
-// [ReleasePrep] for that install or upgrade. result.Previous is
-// prep.Current's manifest and hooks when a current release exists.
-// crds are copied into the chart. Cleanup is nil on error; the caller
-// runs it once on success.
+// [ReleasePrep] for that install or upgrade. crds are copied into the
+// chart. Cleanup is nil on error; the caller runs it once on success.
 func (c *Client) RenderManifestsWithPrep(ctx context.Context, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer, crds []extras.RawFile) (*render.RenderResult, ReleasePrep, func(), error) {
 	releaseName, labels, err := releaseIdentity(resolved)
 	if err != nil {
@@ -76,12 +74,6 @@ func (c *Client) RenderManifestsWithPrep(ctx context.Context, resolved *spec.Res
 		return nil, ReleasePrep{}, nil, err
 	}
 	result.ChartPath = chartPath
-	if prep.Current != nil {
-		result.Previous = &render.ReleaseIntent{
-			Manifest: prep.Current.Manifest,
-			Hooks:    render.HookIntents(prep.Current.Hooks),
-		}
-	}
 	return result, prep, cleanup, nil
 }
 

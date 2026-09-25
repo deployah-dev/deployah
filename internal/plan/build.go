@@ -38,19 +38,18 @@ type BuildClient interface {
 	RenderManifests(ctx context.Context, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer, crds []extras.RawFile) (*render.RenderResult, func(), error)
 }
 
-// BuildPlan renders [spec.ResolvedSpec] via client and diffs the result
-// against the last successful release, returning the fully populated Plan
-// (Header included) alongside the render result. It is the single
-// render-diff-header pipeline shared by `deployah plan` and the plan
-// `deployah deploy` shows before confirming. Project, environment, and
-// chart content all come from resolved.
+// BuildPlan renders resolved and compares that render with the last
+// successful Helm release. It returns the Plan, header included, and the
+// render result. deployah plan uses this.
 //
-// The caller must invoke the returned cleanup func once done with
-// result.ChartPath (same contract as [helm.Client.RenderManifests]). On
-// error, cleanup is still returned when a chart was prepared and must be
-// called. postRenderer, when non-nil, is forwarded to RenderManifests so
-// extras appear in the diff. crds are written into the per-invocation
-// chart copy so Helm sees the same files as apply.
+// Project, environment, and chart content come from resolved.
+//
+// Call the returned cleanup once, after you are done with
+// result.ChartPath. Call it even when BuildPlan returns an error, if a
+// chart was prepared. This is the same contract as
+// [helm.Client.RenderManifests]. A non-nil postRenderer is passed through
+// so extra manifests show up in the diff. crds are copied into that chart
+// so Helm sees the same files deploy applies.
 func BuildPlan(ctx context.Context, client BuildClient, clusterContext string, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer, crds []extras.RawFile) (*Plan, *render.RenderResult, func(), error) {
 	if resolved == nil || resolved.Spec == nil {
 		return nil, nil, func() {}, fmt.Errorf("plan requires resolved spec; call spec.Resolve first")

@@ -110,7 +110,7 @@ func (s *E2ESuite) TestWildcardInstances() {
 
 func (s *E2ESuite) deployWildcard(t *testing.T, dir, ns, env string) {
 	t.Helper()
-	runIn(t, dir, "deploy", env, "--context", kindContext, "--yes", "--namespace", ns)
+	runIn(t, dir, "deploy", env, "--context", kindContext, "--namespace", ns)
 }
 
 func (s *E2ESuite) waitWildcardReady(t *testing.T, ns, original, release, slot string) {

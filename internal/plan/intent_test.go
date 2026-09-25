@@ -25,7 +25,6 @@ func TestDefaultDeploymentIntent(t *testing.T) {
 
 	got := DefaultDeploymentIntent()
 	assert.False(t, got.ResizeVolumes)
-	assert.False(t, got.Reapply)
 	assert.False(t, got.ForceHostnameChange)
 }
 
@@ -41,7 +40,6 @@ func TestDeploymentIntent_ZeroValueMatchesDefault(t *testing.T) {
 // presentation field or CRD skip flag is added.
 type deploymentIntentFields struct {
 	ResizeVolumes       bool
-	Reapply             bool
 	ForceHostnameChange bool
 }
 
@@ -52,6 +50,5 @@ func TestDeploymentIntent_BoolsDefaultFalse(t *testing.T) {
 
 	got := deploymentIntentFields(DefaultDeploymentIntent())
 	assert.False(t, got.ResizeVolumes)
-	assert.False(t, got.Reapply)
 	assert.False(t, got.ForceHostnameChange)
 }

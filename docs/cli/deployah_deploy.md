@@ -4,7 +4,7 @@ Deploy a project to a Kubernetes cluster on a given environment
 
 ### Synopsis
 
-Deploy a project to a Kubernetes cluster on a given environment. Shows what would change and asks for confirmation before applying, unless --yes is set.
+Deploy a project to a Kubernetes cluster for an environment. Deployah validates the spec and runs its deploy guards, then runs Helm: an install for a new release, an upgrade for an existing one. An existing release is always upgraded, even when nothing changed, so Helm creates a new revision and runs upgrade hooks. To inspect changes first, run `deployah plan <environment>`.
 
 ```text
 deployah deploy <environment> [flags]
@@ -15,10 +15,8 @@ deployah deploy <environment> [flags]
 ```text
       --explain                 Print the resolution report before cluster checks (visible even when cluster is unreachable)
       --force-hostname-change   Allow changing the resolved hostname even though it may break existing traffic (skips the hostname guard)
-      --reapply                 Upgrade the release even when the plan shows no changes
       --resize-volumes          Allow persistence.size increases by expanding PVCs; StatefulSet controllers are orphan-deleted when needed so volumeClaimTemplates can be rewritten
       --skip-crds               Skip installing CustomResourceDefinitions from the chart on a fresh Helm install
-  -y, --yes                     Apply without an interactive confirmation prompt
 ```
 
 ### Options inherited from parent commands

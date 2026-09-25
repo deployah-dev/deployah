@@ -10,7 +10,7 @@ You need Docker or Podman. From the repo root:
 ```sh
 cd examples/nginx
 deployah cluster up
-deployah deploy local --yes
+deployah deploy local
 deployah cluster status
 ```
 

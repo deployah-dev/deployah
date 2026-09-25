@@ -15,8 +15,10 @@
 // Package plan computes and renders a preview of the changes a deploy
 // would make. [BuildPlan] diffs the rendered manifest against the last
 // successful Helm release. [BuildSemanticPlan] renders Desired state,
-// decides whether Helm runs by comparing the previous release with that
-// render, and predicts writes only when Helm will run.
+// derives the plan's Helm release-intent transition by comparing the
+// previous release with that render, and predicts writes only when the
+// plan has a Helm transition. That transition does not control whether
+// `deployah deploy` invokes Helm.
 //
 // [ComputeDiff] is the older diff: it parses two rendered Kubernetes
 // manifests, matches resources by (apiVersion, kind, namespace, name), and
@@ -30,11 +32,12 @@
 // [SemanticBuildClient.RenderManifestsWithPrep], then picks install,
 // upgrade, or none from the Helm operation and a comparison of the
 // previous release (prep.Current) with the rendered manifest and hooks.
-// Live state and predictor output do not make that choice. If Helm will
-// not run, Namespace and Helm write prediction are skipped, so the plan
-// has no Helm writes. If Helm will install or upgrade, Namespace
-// prediction and [deployah.dev/deployah/internal/predict.Predict] still
-// produce those writes. Chart CRDs are passed through to Helm. The result
+// Live state and predictor output do not make that choice. If the plan
+// has no Helm transition, Namespace and Helm write prediction are
+// skipped, so the plan has no Helm writes. If the plan's transition is
+// install or upgrade, Namespace prediction and
+// [deployah.dev/deployah/internal/predict.Predict] still produce those
+// writes. Chart CRDs are passed through to Helm. The result
 // is a [deployah.dev/deployah/internal/plan/semantic.Plan]. Semantic types
 // live in plan/semantic. New rendering lives in plan/view.
 //

@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package deploy implements the deployah deploy command, which renders a
-// Deployah spec into a Helm chart and installs or upgrades the release on
-// the target cluster. To preview changes without touching the cluster, use
-// `deployah plan` instead.
+// Package deploy implements the deployah deploy command. It validates a
+// Deployah spec, runs deploy guards, and installs or upgrades the Helm
+// release on the target cluster. To inspect changes without applying them,
+// use `deployah plan`.
 package deploy

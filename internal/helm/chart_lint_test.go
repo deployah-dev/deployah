@@ -23,12 +23,11 @@ import (
 // nonDeterministicTemplateTokens are Go template / Sprig constructs whose
 // output can differ between two renders of the same chart values (e.g. a
 // live cluster lookup, or a random/CA-generating function), or that read
-// Helm's upgrade-only template context. Any of these breaks the plan/apply
-// determinism guarantee (docs/plan-proposal.md section 6): a chart template
-// that uses one of them WILL make `deployah deploy` abort every time with
-// "rendered manifests changed between plan and apply". This is exactly the
-// bug the self-signed TLS template used to have (genCA/genSignedCert +
-// lookup) before certs were moved to Go-side materialization.
+// Helm's upgrade-only template context. A chart template that uses one of
+// them makes `deployah plan` output differ from what deploy renders. This
+// is exactly the bug the self-signed TLS template used to have
+// (genCA/genSignedCert + lookup) before certs were moved to Go-side
+// materialization.
 var nonDeterministicTemplateTokens = []string{
 	"lookup",
 	".Release.Revision",

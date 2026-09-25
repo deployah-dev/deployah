@@ -55,8 +55,8 @@ type Options struct {
 // Register adds the plan command to app.
 func Register(app *nabat.App) {
 	app.MustCommand("plan",
-		nabat.WithDescription("Preview the changes a deploy would make"),
-		nabat.WithLongDescription("Render the chart for an environment and show what would change compared to the last successful release, without applying anything."),
+		nabat.WithDescription("Inspect changes for an environment"),
+		nabat.WithLongDescription("Render the chart for an environment and compare it with the last successful Helm release. With --drift, also compare the rendered manifests with live cluster state. Plan is read-only and never applies anything."),
 		nabat.WithArg("environment", "", nabat.WithRequired(), nabat.WithUsage("Environment to plan for"), nabat.WithPrompt("Environment", "", nabat.WithHint("e.g. prod, staging"))),
 		nabat.WithFlag("drift", false, nabat.WithUsage("Detect drift between the rendered manifests and the live cluster state (requires cluster access; not compatible with --offline)")),
 		nabat.WithFlag("offline", false, nabat.WithUsage("Render and validate the chart without contacting the cluster")),
@@ -67,7 +67,7 @@ func Register(app *nabat.App) {
 		nabat.WithFlag("detailed-exitcode", false, nabat.WithUsage("Exit 2 when the plan has pending changes, 0 when it does not, 1 on error (for CI)")),
 		nabat.WithValidation(validateOptions),
 		nabat.WithExample(`
-# Preview what a deploy would change
+# Inspect changes for production
 deployah plan production
 
 # Render and validate the chart without touching the cluster

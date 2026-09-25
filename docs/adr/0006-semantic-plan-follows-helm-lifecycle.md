@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted. Partially superseded by ADR-0016 for deploy execution semantics.
 
 ## Context
 

@@ -65,19 +65,23 @@ func actionRank(a Action) int {
 	}
 }
 
-// HelmAction is whether Helm will install, upgrade, or do neither. The
-// zero value is invalid.
+// HelmAction is the Helm release-intent transition a semantic plan
+// describes. It does not control whether deployah deploy invokes Helm.
+// The zero value is invalid.
 type HelmAction int
 
 const (
-	// HelmNone means Helm will not execute. OriginHelm changes and
-	// changed or WillRun preDeploy/postDeploy tasks are invalid.
+	// HelmNone means the semantic plan contains no Helm release-intent
+	// transition. It does not control whether `deployah deploy` invokes
+	// Helm. OriginHelm changes and changed or WillRun preDeploy/postDeploy
+	// tasks are invalid.
 	HelmNone HelmAction = iota + 1
-	// HelmInstall is a fresh Helm install. It requires
-	// [Header.FreshInstall].
+	// HelmInstall means the plan's transition is a fresh Helm install. It
+	// requires [Header.FreshInstall].
 	HelmInstall
-	// HelmUpgrade is a Helm upgrade. Zero resource consequences remain
-	// valid when release intent changed and Live already matches Desired.
+	// HelmUpgrade means the plan's transition is a Helm upgrade. Zero
+	// resource consequences remain valid when release intent changed and
+	// Live already matches Desired.
 	HelmUpgrade
 )
 
@@ -365,9 +369,12 @@ func (a TaskAction) valid() bool {
 // Plan.Changes; previous hook documents are not emitted as Kubernetes
 // deletes.
 type TaskPlan struct {
-	Name        string
-	Phase       TaskPhase
-	Action      TaskAction
+	Name   string
+	Phase  TaskPhase
+	Action TaskAction
+	// WillRun reports whether the task's hook takes part in the Helm
+	// transition the plan describes. It does not predict whether a later
+	// `deployah deploy` skips the hook.
 	WillRun     bool
 	Definitions []HookDefinition
 	Resources   []ResourceRef

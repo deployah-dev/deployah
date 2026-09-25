@@ -18,8 +18,7 @@ steps:
           kind: CustomResourceDefinition
           metadata:
             name: skipwidgets.example.com
-  - deploy:
-      args: [--reapply]
+  - deploy: {}
     resources:
       - match:
           apiVersion: apps/v1
