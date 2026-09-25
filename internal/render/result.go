@@ -23,8 +23,9 @@ import (
 )
 
 // RenderResult is the client-side render of a chart for one project and
-// environment. `deployah plan` diffs it against the last successful
-// release.
+// environment. deployah plan diffs it against the last successful
+// release. Deploy renders the same way before a volume resize, then
+// drops the result, so a chart that does not render never gets resized.
 type RenderResult struct {
 	// ReleaseName is the Helm release name computed for project/environment.
 	ReleaseName string

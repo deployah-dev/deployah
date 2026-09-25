@@ -49,8 +49,9 @@ Representative combinations:
 2. Previous present, Desired absent, Live absent: release change and
    missing-resource drift, no Delete.
 3. Previous present, Live absent, Desired unchanged: missing-resource
-   drift only. Missing Live state alone does not trigger Helm
-   (ADR-0006).
+   drift only. Missing Live state alone is not a release change
+   (ADR-0006). It does not decide whether a requested deployment
+   runs (ADR-0016).
 4. If Helm is already running for another release-intent change and a
    Desired resource that existed in Previous is missing Live, show
    Create plus missing-resource drift.
@@ -67,5 +68,6 @@ Adoption is ADR-0012.
 
 ### Negative
 
-- A missing Live object is not recreated until Helm runs for a
-  declared release-intent reason.
+- The plan does not show a recreate for a missing Live object
+  unless there is a release change. A requested deploy of an
+  existing release still follows Helm upgrade (ADR-0016).

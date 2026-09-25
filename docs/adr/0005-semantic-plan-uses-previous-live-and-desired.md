@@ -31,8 +31,9 @@ Those states answer different questions and are independent:
 - Live -> Desired: visible resource consequence when this invocation
   actually performs the relevant write (ADR-0011)
 
-Do not infer a deployment operation merely by comparing Live and
-Desired. Ordinary modified drift alone does not run Helm (ADR-0006).
+Do not infer a release change merely by comparing Live and Desired.
+Ordinary drift alone is not a release change (ADR-0006). Whether a
+requested deployment runs is ADR-0016.
 
 Drift is intrinsic. If Previous and Live are available, Previous ->
 Live is always evaluated. There is no opt-in drift mode. When there
