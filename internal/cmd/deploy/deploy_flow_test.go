@@ -16,28 +16,34 @@ package deploy
 
 import (
 	"errors"
-	"strings"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"helm.sh/helm/v4/pkg/release/common"
+	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 	"nabat.dev/nabat"
 	"nabat.dev/nabat/nabattest"
 
 	"deployah.dev/deployah/internal/extras"
-	"deployah.dev/deployah/internal/plan/semantic"
+	"deployah.dev/deployah/internal/helm"
 	"deployah.dev/deployah/internal/render"
 	"deployah.dev/deployah/internal/session"
 	"deployah.dev/deployah/internal/spec"
 	"deployah.dev/deployah/internal/target"
 	"deployah.dev/deployah/internal/testing/nabatctx"
 
-	planengine "deployah.dev/deployah/internal/plan"
+	chart "helm.sh/helm/v4/pkg/chart/v2"
 	v1 "helm.sh/helm/v4/pkg/release/v1"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
+	clienttesting "k8s.io/client-go/testing"
 )
 
 // newClusterWithStub builds a Session and Cluster whose Kubernetes client is
@@ -46,6 +52,7 @@ func newClusterWithStub(t *testing.T, stub *stubHelmClient, k8sClient kubernetes
 	t.Helper()
 
 	sess := session.New(
+		session.WithNamespace("default"),
 		session.WithHelmFactory(func(*target.Target, session.HelmConfig) (session.HelmClient, error) {
 			return stub, nil
 		}),
@@ -87,223 +94,151 @@ spec:
   replicas: 2
 `
 
-const deployFlowManifestV2 = `
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: web
-  namespace: default
-spec:
-  replicas: 3
+const deploySpec = `apiVersion: v1-alpha.5
+project: web
+components:
+  web:
+    image: nginx:latest
+    port: 80
+environments:
+  production: {}
 `
 
-// TestConfirmApply covers --yes and the non-interactive refusal path.
-func TestConfirmApply(t *testing.T) {
-	t.Parallel()
+const deploySpecResize = `apiVersion: v1-alpha.5
+project: web
+components:
+  web:
+    image: nginx:latest
+    port: 80
+    persistence:
+      size: 2Gi
+      mountPath: /data
+environments:
+  production: {}
+`
 
-	tests := []struct {
-		name        string
-		opts        *Options
-		wantProceed bool
-		wantErrIs   error
-		wantHint    string
-	}{
-		{
-			name:        "yes skips prompt",
-			opts:        &Options{Yes: true},
-			wantProceed: true,
-		},
-		{
-			name:      "non-interactive without yes refuses",
-			opts:      &Options{Yes: false},
-			wantErrIs: nabat.ErrConfirmationRequired,
-			wantHint:  "--yes",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			h := nabatctx.New(t, "test")
-			proceed, err := confirmApply(h.Context, tt.opts, "Apply these changes?")
-			if tt.wantErrIs != nil {
-				require.ErrorIs(t, err, tt.wantErrIs)
-				assert.False(t, proceed)
-				var ce *nabat.ConfirmationError
-				require.ErrorAs(t, err, &ce)
-				assert.Equal(t, tt.wantHint, ce.BypassHint)
-				return
-			}
-			require.NoError(t, err)
-			assert.Equal(t, tt.wantProceed, proceed)
-		})
-	}
+func writeDeploySpec(t *testing.T, body string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "deployah.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+	return path
 }
 
-// TestApplyDeploy_RenderMismatch_AbortsBeforeApply verifies that when the
-// chart renders differently the second time (a non-deterministic template),
-// applyDeploy aborts with a clear error and never calls InstallApp.
-func TestApplyDeploy_RenderMismatch_AbortsBeforeApply(t *testing.T) {
-	t.Parallel()
-
-	stub := &stubHelmClient{
-		renderResults: []*render.RenderResult{
-			testRenderResult(deployFlowManifestV1), // the apply-time re-render
-		},
-		installErr: nil, // would only matter if InstallApp were (wrongly) called
-	}
-	sess, cluster := newClusterWithStub(t, stub, nil)
-
-	planned := &deployPlan{
-		diff:    &planengine.Plan{},
-		result:  testRenderResult(deployFlowManifestV2), // differs from the re-render above
-		cleanup: func() {},
-	}
-
-	h := nabatctx.New(t, "test")
-	opts := &Options{Environment: "production"}
-	manifest := &spec.Spec{Project: "web"}
-
-	err := applyDeploy(h.Context, sess, cluster, stub, nil, manifest, opts, nil, planned, nil, nil, &extras.Bundle{}, nil, nil)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "changed between plan and apply")
-	assert.Equal(t, 1, stub.renderCallCount, "must re-render exactly once before comparing")
-}
-
-// TestSkipDeploy_NoChanges_ShowsReadinessSummary verifies that skipping a
-// no-op deploy still reports current pod readiness for the release, without
-// calling Helm at all.
-func TestSkipDeploy_NoChanges_ShowsReadinessSummary(t *testing.T) {
-	t.Parallel()
-	k8sClient := fake.NewSimpleClientset(
-		&corev1.Pod{
-			Name: "web-1", Namespace: "default",
-			Labels: map[string]string{
-				"app.kubernetes.io/instance":  "web-production",
-				"app.kubernetes.io/component": "web",
-			},
-			Status: corev1.PodStatus{
-				Phase:      corev1.PodRunning,
-				Conditions: []corev1.PodCondition{},
-				ContainerStatuses: []corev1.ContainerStatus{
-					{Ready: true},
+func releaseWithComponent(component map[string]any) *v1.Release {
+	return &v1.Release{
+		Name:     "web-production",
+		Version:  1,
+		Manifest: deployFlowManifestV1,
+		Info:     &v1.Info{Status: common.StatusDeployed},
+		Chart: &chart.Chart{
+			Values: map[string]any{
+				"deployah": map[string]any{
+					"resolved": map[string]any{
+						"components": map[string]any{"web": component},
+					},
 				},
 			},
 		},
-	)
-	h := nabatctx.New(t, "test")
-	plan := &deployPlan{
-		diff: &planengine.Plan{
-			Header: planengine.Header{Release: "web-production", Revision: 7},
-		},
-		result:  testRenderResult(deployFlowManifestV1),
-		cleanup: func() {},
 	}
-
-	err := skipDeploy(h.Context, k8sClient, nil, plan)
-	require.NoError(t, err)
-	assert.Contains(t, h.Stderr.String(), "No changes. Release web-production unchanged (revision 7).")
-	assert.Contains(t, h.Stdout.String(), "Readiness:")
-	assert.Contains(t, h.Stdout.String(), "web: 1/1")
 }
 
-// TestSkipHelmApply locks the idle gate: upgrades with no rendered
-// changes skip Helm unless --reapply is set. Fresh installs never skip,
-// even when the ordinary Manifest is empty. --skip-crds is not a trigger.
-func TestSkipHelmApply(t *testing.T) {
+func runDeployCommand(t *testing.T, specBody string, stub *stubHelmClient) (stdout, stderr string, err error) {
+	t.Helper()
+	specPath := writeDeploySpec(t, specBody)
+	sess := session.New(
+		session.WithSpecPath(specPath),
+		session.WithHelmFactory(func(*target.Target, session.HelmConfig) (session.HelmClient, error) {
+			return stub, nil
+		}),
+		session.WithKubernetesFactory(func(*target.Target) (kubernetes.Interface, error) {
+			return nil, assertNever{}
+		}),
+	)
+	h := nabatctx.New(t, "deployah")
+	Register(h.App)
+	require.NoError(t, h.App.OnPreRun(func(c *nabat.Context) error {
+		c.SetContext(session.WithContext(c.Context(), sess))
+		return nil
+	}))
+	err = nabattest.Run(t, h.App, []string{"deploy", "production"})
+	return h.Stdout.String(), h.Stderr.String(), err
+}
+
+// TestRunDeploy_ExecutesHelm proves a fresh release and an unchanged
+// existing release both invoke Helm once, with no render, plan, or prompt.
+func TestRunDeploy_ExecutesHelm(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name       string
-		isUpgrade  bool
-		hasChanges bool
-		reapply    bool
-		want       bool
+		name string
+		stub *stubHelmClient
 	}{
-		{name: "fresh install empty manifest", isUpgrade: false, hasChanges: false, want: false},
-		{name: "fresh install with changes", isUpgrade: false, hasChanges: true, want: false},
-		{name: "idle upgrade", isUpgrade: true, hasChanges: false, want: true},
-		{name: "idle upgrade reapply", isUpgrade: true, hasChanges: false, reapply: true, want: false},
-		{name: "upgrade with changes", isUpgrade: true, hasChanges: true, want: false},
+		{
+			name: "fresh release",
+			stub: &stubHelmClient{releaseErr: helm.ErrReleaseNotFound},
+		},
+		{
+			name: "unchanged existing release",
+			stub: &stubHelmClient{
+				release:      releaseWithComponent(map[string]any{"workloadKind": "Deployment"}),
+				renderResult: testRenderResult(deployFlowManifestV1),
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, tt.want, skipHelmApply(tt.isUpgrade, tt.hasChanges, tt.reapply))
+			stdout, stderr, err := runDeployCommand(t, deploySpec, tt.stub)
+			require.NoError(t, err)
+			assert.NotErrorIs(t, err, nabat.ErrConfirmationRequired)
+			assert.Equal(t, 1, tt.stub.installCallCount)
+			assert.Equal(t, 0, tt.stub.renderCallCount)
+			assert.NotContains(t, stdout, "Plan:")
+			assert.NotContains(t, stdout, "No changes")
+			assert.NotContains(t, stdout, "Apply these changes?")
+			assert.Contains(t, stderr, "Deployed")
 		})
 	}
 }
 
-// TestDeployPlan_ChartCRDsMatchSkipCRDs keeps the displayed plan aligned
-// with InstallApp skipCRDs: process on a fresh install, skip when requested,
-// and never treat chart CRDs as actionable on upgrade.
-func TestDeployPlan_ChartCRDsMatchSkipCRDs(t *testing.T) {
+// TestRunDeploy_GuardsBlockBeforeHelm proves workload and resize guards
+// stop the command before Helm or a render.
+func TestRunDeploy_GuardsBlockBeforeHelm(t *testing.T) {
 	t.Parallel()
-	yamlBody := "kind: CustomResourceDefinition\nmetadata:\n  name: widgets.example.com\n"
-	docs := []extras.CRDDoc{{
-		Path: "widget.yaml",
-		Kind: "CustomResourceDefinition",
-		Name: "widgets.example.com",
-		YAML: []byte(yamlBody),
-	}}
 	tests := []struct {
-		name        string
-		upgrade     bool
-		skipCRDs    bool
-		wantProcess bool
-		wantNote    string
-		notContains []string
-		wantIdle    bool
+		name     string
+		specBody string
+		release  *v1.Release
+		wantErr  string
 	}{
 		{
-			name:        "fresh default processes",
-			wantProcess: true,
-			wantNote:    "Helm install will process this chart CRD",
-			notContains: []string{"install-time CRD processing disabled"},
+			name:     "kind change",
+			specBody: deploySpec,
+			release:  releaseWithComponent(map[string]any{"workloadKind": "StatefulSet"}),
+			wantErr:  "kind change",
 		},
 		{
-			name:        "fresh skip",
-			skipCRDs:    true,
-			wantNote:    "install-time CRD processing disabled",
-			notContains: []string{"+ CustomResourceDefinition/", "Helm install will process this chart CRD"},
-		},
-		{
-			name:        "upgrade ignores skip flag for lifecycle",
-			upgrade:     true,
-			skipCRDs:    true,
-			wantNote:    "Helm upgrade will not process this chart CRD",
-			notContains: []string{"+ CustomResourceDefinition/", "install-time CRD processing disabled"},
-			wantIdle:    true,
-		},
-		{
-			name:        "upgrade without skip is not actionable",
-			upgrade:     true,
-			wantNote:    "Helm upgrade will not process this chart CRD",
-			notContains: []string{"+ CustomResourceDefinition/"},
-			wantIdle:    true,
+			name:     "resize without flag",
+			specBody: deploySpecResize,
+			release:  releaseWithComponent(map[string]any{"workloadKind": "Deployment", "persistenceSize": "1Gi"}),
+			wantErr:  "requires --resize-volumes",
 		},
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			p := &planengine.Plan{}
-			planengine.StampChartCRDs(p, docs, tc.upgrade, tc.skipCRDs)
-			require.Len(t, p.ChartCRDs, 1)
-			assert.Equal(t, tc.wantProcess, p.ChartCRDs[0].WillProcess)
-			assert.Equal(t, tc.wantIdle, skipHelmApply(tc.upgrade, p.HasChanges(), false))
-			var buf strings.Builder
-			require.NoError(t, planengine.RenderText(&buf, p, planengine.TextOptions{}))
-			got := buf.String()
-			assert.Contains(t, got, "CustomResourceDefinition/widgets.example.com")
-			assert.Contains(t, got, tc.wantNote)
-			for _, s := range tc.notContains {
-				assert.NotContains(t, got, s)
-			}
+			stub := &stubHelmClient{release: tt.release}
+			_, _, err := runDeployCommand(t, tt.specBody, stub)
+			require.Error(t, err)
+			assert.ErrorContains(t, err, tt.wantErr)
+			assert.Equal(t, 0, stub.installCallCount)
+			assert.Equal(t, 0, stub.renderCallCount)
 		})
 	}
 }
 
 // TestApplyDeploy_PassesCRDsToInstall copies chart CRD files into Helm and
-// maps Options.SkipCRDs onto Install.SkipCRDs.
+// maps Options.SkipCRDs onto Install.SkipCRDs. A deploy with no resize
+// does not render first.
 func TestApplyDeploy_PassesCRDsToInstall(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -317,23 +252,16 @@ func TestApplyDeploy_PassesCRDsToInstall(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			manifest := deployFlowManifestV1
-			stub := &stubHelmClient{
-				renderResults: []*render.RenderResult{testRenderResult(manifest)},
-			}
+			stub := &stubHelmClient{}
 			sess, cluster := newClusterWithStub(t, stub, nil)
-			planned := &deployPlan{
-				diff:    &planengine.Plan{Header: planengine.Header{Release: "web-production", Revision: 1}},
-				result:  testRenderResult(manifest),
-				cleanup: func() {},
-			}
 			h := nabatctx.New(t, "test")
 			opts := &Options{Environment: "production", SkipCRDs: tc.skipCRDs}
 			bundle := &extras.Bundle{CRDs: []extras.RawFile{{Path: "widget.yaml"}}}
 
-			err := applyDeploy(h.Context, sess, cluster, stub, nil, &spec.Spec{Project: "web"}, opts, nil, planned, nil, assertNever{}, bundle, nil, nil)
+			err := applyDeploy(h.Context, sess, cluster, stub, nil, &spec.Spec{Project: "web"}, opts, nil, "web-production", nil, assertNever{}, bundle, nil, nil)
 			require.NoError(t, err)
 			assert.Equal(t, 1, stub.installCallCount)
+			assert.Equal(t, 0, stub.renderCallCount)
 			assert.Equal(t, tc.skipCRDs, stub.lastSkipCRDs)
 			require.Len(t, stub.lastCRDs, 1)
 			for _, want := range tc.wantStderr {
@@ -347,29 +275,21 @@ func TestApplyDeploy_PassesCRDsToInstall(t *testing.T) {
 func TestApplyDeploy_PropagatesInstallError(t *testing.T) {
 	t.Parallel()
 
-	manifest := deployFlowManifestV1
-	stub := &stubHelmClient{
-		renderResults: []*render.RenderResult{testRenderResult(manifest)},
-		installErr:    errors.New("helm boom"),
-	}
+	stub := &stubHelmClient{installErr: errors.New("helm boom")}
 	sess, cluster := newClusterWithStub(t, stub, nil)
-	planned := &deployPlan{
-		diff:    &planengine.Plan{Header: planengine.Header{Release: "web-production", Revision: 1}},
-		result:  testRenderResult(manifest),
-		cleanup: func() {},
-	}
 	h := nabatctx.New(t, "test")
 	opts := &Options{Environment: "production"}
 
-	err := applyDeploy(h.Context, sess, cluster, stub, nil, &spec.Spec{Project: "web"}, opts, nil, planned, nil, assertNever{}, &extras.Bundle{}, nil, nil)
+	err := applyDeploy(h.Context, sess, cluster, stub, nil, &spec.Spec{Project: "web"}, opts, nil, "web-production", nil, assertNever{}, &extras.Bundle{}, nil, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "deploy failed")
 	assert.Contains(t, err.Error(), "helm boom")
 	assert.Equal(t, 1, stub.installCallCount)
+	assert.Equal(t, 0, stub.renderCallCount)
 }
 
-// TestDeployFlags_SkipCRDsAcceptedCRDsRemoved checks the deploy CLI surface.
-func TestDeployFlags_SkipCRDsAcceptedCRDsRemoved(t *testing.T) {
+// TestDeployFlags checks the deploy CLI surface.
+func TestDeployFlags(t *testing.T) {
 	t.Parallel()
 
 	h := nabatctx.New(t, "deployah")
@@ -380,123 +300,129 @@ func TestDeployFlags_SkipCRDsAcceptedCRDsRemoved(t *testing.T) {
 	assert.Contains(t, help, "--skip-crds")
 	assert.NotContains(t, help, "--crds")
 	assert.NotContains(t, help, "create-replace")
+	assert.NotContains(t, help, "--yes")
+	assert.NotContains(t, help, "-y,")
+	assert.NotContains(t, help, "--reapply")
+	assert.NotContains(t, help, "confirmation")
+	assert.NotContains(t, help, "Shows what would change")
 
 	err = nabattest.Run(t, h.App, []string{"deploy", "prod", "--crds", "create"})
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "cluster")
 
+	for _, args := range [][]string{
+		{"deploy", "prod", "--yes"},
+		{"deploy", "prod", "--reapply"},
+	} {
+		rejected := nabatctx.New(t, "deployah")
+		Register(rejected.App)
+		runErr := nabattest.Run(t, rejected.App, args)
+		require.Error(t, runErr)
+		assert.NotContains(t, runErr.Error(), "cluster")
+	}
+
 	var opts Options
 	assert.False(t, opts.SkipCRDs)
 }
 
-func TestComputePlan_HelmAction(t *testing.T) {
+// TestApplyDeploy_ResizePreflight proves a render failure stops before any
+// volume mutation, and a successful preflight resizes before Helm.
+func TestApplyDeploy_ResizePreflight(t *testing.T) {
 	t.Parallel()
-	same := deployFlowManifestV1
-	tests := []struct {
-		name    string
-		release *v1.Release
-		result  *render.RenderResult
-		want    semantic.HelmAction
-	}{
-		{
-			name:   "fresh install",
-			result: testRenderResult(same),
-			want:   semantic.HelmInstall,
+
+	resizes := []persistenceResize{{
+		Component: "db", PreviousSize: "10Gi", NewSize: "20Gi",
+		StorageClass: "fast-ssd", Stateful: true,
+	}}
+
+	t.Run("render failure", func(t *testing.T) {
+		t.Parallel()
+		log := &deployCallLog{}
+		stub := &stubHelmClient{renderErr: errors.New("bad chart"), log: log}
+		client := resizeClient(log)
+		sess, cluster := newClusterWithStub(t, stub, client)
+		h := nabatctx.New(t, "test")
+
+		err := applyDeploy(h.Context, sess, cluster, stub, nil, &spec.Spec{Project: "shop"}, &Options{Environment: "production"}, nil, "shop-production", client, nil, &extras.Bundle{}, nil, resizes)
+		require.Error(t, err)
+		assert.ErrorContains(t, err, "helm preflight before volume resize")
+		assert.Equal(t, []string{"render", "cleanup"}, log.snapshot())
+		assert.Equal(t, 1, stub.cleanupCalls)
+		assert.Equal(t, 0, stub.installCallCount)
+	})
+
+	t.Run("success", func(t *testing.T) {
+		t.Parallel()
+		log := &deployCallLog{}
+		stub := &stubHelmClient{renderResult: testRenderResult(deployFlowManifestV1), log: log}
+		client := resizeClient(log)
+		sess, cluster := newClusterWithStub(t, stub, client)
+		h := nabatctx.New(t, "test")
+
+		err := applyDeploy(h.Context, sess, cluster, stub, nil, &spec.Spec{Project: "shop"}, &Options{Environment: "production"}, nil, "shop-production", client, nil, &extras.Bundle{}, nil, resizes)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"render", "cleanup", "pvc-update", "sts-delete", "install"}, log.snapshot())
+		assert.Equal(t, 1, stub.renderCallCount)
+		assert.Equal(t, 1, stub.cleanupCalls)
+		assert.Equal(t, 1, stub.installCallCount)
+	})
+}
+
+func resizeClient(log *deployCallLog) *fake.Clientset {
+	sc := &storagev1.StorageClass{
+		Name:                 "fast-ssd",
+		AllowVolumeExpansion: new(true),
+	}
+	sts := &appsv1.StatefulSet{
+		Name:      "shop-production-db",
+		Namespace: "default",
+		Labels: map[string]string{
+			"app.kubernetes.io/instance": "shop-production",
+			spec.LabelComponent:          "db",
 		},
-		{
-			name:    "unchanged upgrade",
-			release: deployedRelease(same),
-			result:  upgradeRenderResult(same, same),
-			want:    semantic.HelmNone,
+	}
+	qty10 := resource.MustParse("10Gi")
+	pvc := &corev1.PersistentVolumeClaim{
+		Name:      "data-shop-production-db-0",
+		Namespace: "default",
+		Labels: map[string]string{
+			"app.kubernetes.io/instance": "shop-production",
+			spec.LabelComponent:          "db",
 		},
-		{
-			name:    "changed upgrade",
-			release: deployedRelease(deployFlowManifestV1),
-			result:  upgradeRenderResult(deployFlowManifestV1, deployFlowManifestV2),
-			want:    semantic.HelmUpgrade,
+		Spec: corev1.PersistentVolumeClaimSpec{
+			Resources: corev1.VolumeResourceRequirements{
+				Requests: corev1.ResourceList{corev1.ResourceStorage: qty10},
+			},
+			StorageClassName: new("fast-ssd"),
 		},
-		{
-			name:    "previous wins over last successful release",
-			release: deployedRelease(deployFlowManifestV1),
-			result:  upgradeRenderResult(deployFlowManifestV2, deployFlowManifestV2),
-			want:    semantic.HelmNone,
+		Status: corev1.PersistentVolumeClaimStatus{
+			Capacity: corev1.ResourceList{corev1.ResourceStorage: qty10},
+			Conditions: []corev1.PersistentVolumeClaimCondition{{
+				Type:   corev1.PersistentVolumeClaimFileSystemResizePending,
+				Status: corev1.ConditionTrue,
+			}},
 		},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			stub := &stubHelmClient{release: tt.release, renderResults: []*render.RenderResult{tt.result}}
-			_, cluster := newClusterWithStub(t, stub, nil)
-			h := nabatctx.New(t, "test")
-			plan, err := computePlan(h.Context, stub, cluster, deployResolved(), nil, nil)
-			require.NoError(t, err)
-			t.Cleanup(plan.cleanup)
-			assert.Equal(t, tt.want, plan.helmAction)
-			assert.Same(t, tt.result, plan.result)
-		})
+	pod := &corev1.Pod{
+		Name:      "db-0",
+		Namespace: "default",
+		Labels: map[string]string{
+			"app.kubernetes.io/instance": "shop-production",
+			spec.LabelComponent:          "db",
+		},
+		Status: corev1.PodStatus{
+			Phase:             corev1.PodRunning,
+			ContainerStatuses: []corev1.ContainerStatus{{Ready: true}},
+		},
 	}
-}
-
-// TestComputePlan_LegacyDiffIgnoresArgsReorder documents the transitional
-// divergence: dyff ignores a pure argument reorder, while the semantic
-// action is an upgrade. The execution gate still uses the legacy diff.
-func TestComputePlan_LegacyDiffIgnoresArgsReorder(t *testing.T) {
-	t.Parallel()
-	previous := deploymentArgs("--foo", "--bar")
-	desired := deploymentArgs("--bar", "--foo")
-	stub := &stubHelmClient{
-		release:       deployedRelease(previous),
-		renderResults: []*render.RenderResult{upgradeRenderResult(previous, desired)},
-	}
-	_, cluster := newClusterWithStub(t, stub, nil)
-	h := nabatctx.New(t, "test")
-	plan, err := computePlan(h.Context, stub, cluster, deployResolved(), nil, nil)
-	require.NoError(t, err)
-	t.Cleanup(plan.cleanup)
-	assert.False(t, plan.diff.HasChanges())
-	assert.Equal(t, semantic.HelmUpgrade, plan.helmAction)
-}
-
-func TestComputePlan_UpgradeWithoutPrevious(t *testing.T) {
-	t.Parallel()
-	result := testRenderResult(deployFlowManifestV1)
-	result.IsUpgrade = true
-	stub := &stubHelmClient{
-		release:       deployedRelease(deployFlowManifestV1),
-		renderResults: []*render.RenderResult{result},
-	}
-	_, cluster := newClusterWithStub(t, stub, nil)
-	h := nabatctx.New(t, "test")
-	plan, err := computePlan(h.Context, stub, cluster, deployResolved(), nil, nil)
-	require.Error(t, err)
-	assert.Nil(t, plan)
-	assert.ErrorContains(t, err, "determine helm release intent")
-	assert.Equal(t, 1, stub.cleanupCalls)
-}
-
-func deployResolved() *spec.ResolvedSpec {
-	return &spec.ResolvedSpec{
-		Spec: &spec.Spec{Project: "web"},
-		Env:  spec.EnvIdentity{Original: "production"},
-	}
-}
-
-func deployedRelease(manifest string) *v1.Release {
-	return &v1.Release{
-		Version:  2,
-		Manifest: manifest,
-		Info:     &v1.Info{Status: common.StatusDeployed},
-	}
-}
-
-func upgradeRenderResult(previous, desired string) *render.RenderResult {
-	result := testRenderResult(desired)
-	result.IsUpgrade = true
-	result.Revision = 3
-	result.Previous = &render.ReleaseIntent{Manifest: previous}
-	return result
-}
-
-func deploymentArgs(first, second string) string {
-	return "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: web\n  namespace: default\nspec:\n  template:\n    spec:\n      containers:\n        - name: api\n          args:\n            - " + first + "\n            - " + second + "\n"
+	client := fake.NewSimpleClientset(sc, sts, pvc, pod)
+	client.PrependReactor("update", "persistentvolumeclaims", func(clienttesting.Action) (bool, runtime.Object, error) {
+		log.add("pvc-update")
+		return false, nil, nil
+	})
+	client.PrependReactor("delete", "statefulsets", func(clienttesting.Action) (bool, runtime.Object, error) {
+		log.add("sts-delete")
+		return false, nil, nil
+	})
+	return client
 }

@@ -2,7 +2,6 @@ package deploy
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"slices"
@@ -16,9 +15,7 @@ import (
 	"deployah.dev/deployah/internal/cmd/cmdopts"
 	"deployah.dev/deployah/internal/extras"
 	"deployah.dev/deployah/internal/k8s"
-	"deployah.dev/deployah/internal/plan/semantic"
 	"deployah.dev/deployah/internal/readiness"
-	"deployah.dev/deployah/internal/render"
 	"deployah.dev/deployah/internal/session"
 	"deployah.dev/deployah/internal/spec"
 
@@ -31,8 +28,6 @@ type Options struct {
 	Explain             bool   `nabat:"explain"`
 	ForceHostnameChange bool   `nabat:"force-hostname-change"`
 	ResizeVolumes       bool   `nabat:"resize-volumes"`
-	Yes                 bool   `nabat:"yes"`
-	Reapply             bool   `nabat:"reapply"`
 	SkipCRDs            bool   `nabat:"skip-crds"`
 }
 
@@ -40,13 +35,11 @@ type Options struct {
 func Register(app *nabat.App) {
 	app.MustCommand("deploy",
 		nabat.WithDescription("Deploy a project to a Kubernetes cluster on a given environment"),
-		nabat.WithLongDescription("Deploy a project to a Kubernetes cluster on a given environment. Shows what would change and asks for confirmation before applying, unless --yes is set."),
+		nabat.WithLongDescription("Deploy a project to a Kubernetes cluster for an environment. Deployah validates the spec and runs its deploy guards, then runs Helm: an install for a new release, an upgrade for an existing one. An existing release is always upgraded, even when nothing changed, so Helm creates a new revision and runs upgrade hooks. To inspect changes first, run `deployah plan <environment>`."),
 		nabat.WithArg("environment", "", nabat.WithRequired(), nabat.WithUsage("Environment to deploy to"), nabat.WithPrompt("Environment", "", nabat.WithHint("e.g. prod, staging"))),
 		nabat.WithFlag("explain", false, nabat.WithUsage("Print the resolution report before cluster checks (visible even when cluster is unreachable)")),
 		nabat.WithFlag("force-hostname-change", false, nabat.WithUsage("Allow changing the resolved hostname even though it may break existing traffic (skips the hostname guard)")),
 		nabat.WithFlag("resize-volumes", false, nabat.WithUsage("Allow persistence.size increases by expanding PVCs; StatefulSet controllers are orphan-deleted when needed so volumeClaimTemplates can be rewritten")),
-		nabat.WithFlag("yes", false, nabat.WithShort('y'), nabat.WithUsage("Apply without an interactive confirmation prompt")),
-		nabat.WithFlag("reapply", false, nabat.WithUsage("Upgrade the release even when the plan shows no changes")),
 		nabat.WithFlag("skip-crds", false, nabat.WithUsage("Skip installing CustomResourceDefinitions from the chart on a fresh Helm install")),
 		nabat.WithExample(`
 # Deploy to production using the default spec path (./deployah.yaml)
@@ -55,31 +48,17 @@ deployah deploy prod
 # Deploy to staging with an explicit spec path
 deployah deploy staging -s ./path/to/deployah.yaml
 
-# Deploy without an interactive confirmation prompt (e.g. in CI)
-deployah deploy prod --yes
-
 # Skip chart CRDs on a first install
 deployah deploy prod --skip-crds
 
 # Show resolution report before deploying
 deployah deploy prod --explain
 
-# Preview what a deploy would change, without touching the cluster
-deployah plan prod --offline`),
+# Inspect changes, then deploy
+deployah plan prod
+deployah deploy prod`),
 		nabat.WithRun(runDeploy),
 	)
-}
-
-// deployPlan bundles the shown diff with the render that produced it, so
-// callers reuse one render instead of recomputing. helmAction is the
-// semantic install, upgrade, or none decision for that same render.
-// cleanup releases the chart temp dir behind result.ChartPath; runDeploy
-// defers it.
-type deployPlan struct {
-	diff       *planengine.Plan
-	result     *render.RenderResult
-	helmAction semantic.HelmAction
-	cleanup    func()
 }
 
 func runDeploy(c *nabat.Context) error {
@@ -174,8 +153,8 @@ func runDeploy(c *nabat.Context) error {
 		c.Logger().Debug("kubernetes client unavailable", "err", k8sErr)
 	}
 
-	// Materialize self-signed TLS certs once, before any render, so the plan
-	// render and the real apply see identical bytes (see applyDeploy).
+	// Materialize self-signed TLS certs once, before Helm, so the resize
+	// preflight and the real apply see identical bytes.
 	if resolvedSpec != nil {
 		if tlsErr := cmdopts.MaterializeSelfSignedTLS(c, k8sClient, k8sErr, cluster.Namespace(), resolvedSpec); tlsErr != nil {
 			return fmt.Errorf("materialize self-signed TLS: %w", tlsErr)
@@ -192,20 +171,7 @@ func runDeploy(c *nabat.Context) error {
 	}
 	postRenderer := bundle.PostRendererFor()
 
-	plan, err := computePlan(c, helmClient, cluster, resolvedSpec, postRenderer, bundle.CRDs)
-	if err != nil {
-		return err
-	}
-	defer plan.cleanup()
-	planengine.StampChartCRDs(plan.diff, bundle.CRDDocs, plan.result.IsUpgrade, opts.SkipCRDs)
-
-	textOpts := planengine.TextOptions{Mode: planengine.ModeCompact, Theme: c.Theme()}
-	if renderErr := planengine.RenderText(c.IO().Out, plan.diff, textOpts); renderErr != nil {
-		return fmt.Errorf("render plan: %w", renderErr)
-	}
-
 	// Hostname guard: block FQDN changes unless --force-hostname-change.
-	// Runs after the plan diff is shown, so a block is never a surprise.
 	if resolvedSpec != nil {
 		if guardErr := checkHostnameGuard(c, helmClient, manifest.Project, opts.Environment, resolvedSpec, opts.ForceHostnameChange); guardErr != nil {
 			return guardErr
@@ -226,11 +192,6 @@ func runDeploy(c *nabat.Context) error {
 		return resizeFlagErr
 	}
 
-	helmIdle := skipHelmApply(plan.result.IsUpgrade, plan.diff.HasChanges(), opts.Reapply)
-	if helmIdle {
-		return skipDeploy(c, k8sClient, k8sErr, plan)
-	}
-
 	if k8sErr == nil {
 		if hasStatefulWithPersistence(manifest, opts.Environment) {
 			if verErr := k8s.CheckMinimumVersion(
@@ -244,105 +205,38 @@ func runDeploy(c *nabat.Context) error {
 		}
 	}
 
-	proceed, confirmErr := confirmApply(c, opts, "Apply these changes?")
-	if confirmErr != nil {
-		return confirmErr
-	}
-	if !proceed {
-		c.Println("Aborted.")
-		return nil
-	}
-
-	return applyDeploy(c, sess, cluster, helmClient, platform, manifest, opts, resolvedSpec, plan, k8sClient, k8sErr, bundle, postRenderer, resizes)
+	return applyDeploy(c, sess, cluster, helmClient, platform, manifest, opts, resolvedSpec, envIdentity.ReleaseName(manifest.Project), k8sClient, k8sErr, bundle, postRenderer, resizes)
 }
 
-// skipHelmApply reports whether deploy should exit without invoking Helm:
-// an existing release whose rendered manifests are unchanged, unless
-// --reapply is set. Fresh installs are never skipped, even when the
-// ordinary Manifest is empty. Chart CRD files and --skip-crds do not
-// affect this gate.
-func skipHelmApply(isUpgrade, hasChanges, reapply bool) bool {
-	return isUpgrade && !hasChanges && !reapply
-}
-
-// confirmApply gates the real apply behind --yes or an interactive prompt.
-// proceed is false with a nil error on a clean "no"; err is non-nil when
-// non-interactive without --yes ([nabat.ErrConfirmationRequired]), or the
-// prompt fails. prompt must be non-empty.
-func confirmApply(c *nabat.Context, opts *Options, prompt string) (proceed bool, err error) {
-	confirmed, confirmErr := c.Confirm(prompt,
-		nabat.WithYes(opts.Yes),
-		nabat.WithBypassHint("--yes"),
-	)
-	if confirmErr != nil {
-		return false, confirmErr
+// helmPreflight renders the chart on the client before a volume resize
+// and does not keep the result. If rendering fails, the resize does not
+// start, so PVCs stay as they are and StatefulSets are not deleted.
+// Call it only when a resize is pending.
+func helmPreflight(c *nabat.Context, helmClient session.HelmClient, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer, crds []extras.RawFile) error {
+	_, cleanup, err := helmClient.RenderManifests(c, resolved, postRenderer, crds)
+	if cleanup != nil {
+		defer cleanup()
 	}
-	return confirmed, nil
-}
-
-// computePlan renders the chart client-side and diffs it against the last
-// successful release. It never mutates the cluster or Helm's release history.
-// The caller must invoke deployPlan.cleanup when finished with the result.
-func computePlan(c *nabat.Context, helmClient session.HelmClient, cluster *session.Cluster, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer, crds []extras.RawFile) (*deployPlan, error) {
-	p, result, cleanup, err := planengine.BuildPlan(c, helmClient, cluster.Context(), resolved, postRenderer, crds)
 	if err != nil {
-		cleanup()
-		return nil, fmt.Errorf("%w%s", err, cmdopts.ClusterHint(err))
-	}
-	helmAction, err := planengine.HelmActionFromRender(result)
-	if err != nil {
-		cleanup()
-		return nil, fmt.Errorf("determine helm release intent: %w", err)
-	}
-	return &deployPlan{diff: p, result: result, helmAction: helmAction, cleanup: cleanup}, nil
-}
-
-// skipDeploy handles an unchanged upgrade: Helm is never invoked, but pod
-// readiness for the release is still shown for parity with a real deploy.
-func skipDeploy(c *nabat.Context, k8sClient kubernetes.Interface, k8sErr error, plan *deployPlan) error {
-	c.Success(fmt.Sprintf("No changes. Release %s unchanged (revision %d).", plan.diff.Header.Release, plan.diff.Header.Revision))
-	return printReadiness(c, k8sClient, k8sErr, plan)
-}
-
-func printReadiness(c *nabat.Context, k8sClient kubernetes.Interface, k8sErr error, plan *deployPlan) error {
-	if k8sErr != nil {
-		c.Logger().Debug("skipping readiness summary: k8s client unavailable", "err", k8sErr)
-		return nil
-	}
-	statuses, pollErr := readiness.Poll(c, k8sClient, plan.result.Namespace, plan.result.ReleaseName)
-	if pollErr != nil {
-		c.Logger().Debug("skipping readiness summary: poll failed", "err", pollErr)
-		return nil
-	}
-	if summary := readiness.Summary(statuses); summary != "" {
-		c.Println("Readiness: " + summary)
+		return fmt.Errorf("helm preflight before volume resize: %w%s", err, cmdopts.ClusterHint(err))
 	}
 	return nil
 }
 
-// applyDeploy re-renders and verifies determinism before the real Helm
-// install/upgrade. When resizes is non-empty, PVC expansion (and
-// StatefulSet orphan-delete when needed) run before Helm.
-func applyDeploy(c *nabat.Context, sess *session.Session, cluster *session.Cluster, helmClient session.HelmClient, platform *spec.PlatformConfig, manifest *spec.Spec, opts *Options, resolved *spec.ResolvedSpec, plan *deployPlan, k8sClient kubernetes.Interface, k8sErr error, bundle *extras.Bundle, postRenderer postrenderer.PostRenderer, resizes []persistenceResize) error {
-	verify, verifyCleanup, err := helmClient.RenderManifests(c, resolved, postRenderer, bundle.CRDs)
-	if verifyCleanup != nil {
-		defer verifyCleanup()
-	}
-	if err != nil {
-		return fmt.Errorf("render manifests: %w%s", err, cmdopts.ClusterHint(err))
-	}
-	// A mismatch means the chart is non-deterministic (e.g. embeds a
-	// timestamp), so what was shown isn't what would actually be installed.
-	if verify.Manifest != plan.result.Manifest {
-		return errors.New("rendered manifests changed between plan and apply; re-run 'deployah deploy' to see the current plan")
-	}
-
+// applyDeploy runs Helm install or upgrade. When resizes is non-empty, a
+// client-side render preflight runs first, then PVC expansion (and
+// StatefulSet orphan-delete when needed) run before Helm. releaseName is
+// the Helm release for this project and environment.
+func applyDeploy(c *nabat.Context, sess *session.Session, cluster *session.Cluster, helmClient session.HelmClient, platform *spec.PlatformConfig, manifest *spec.Spec, opts *Options, resolved *spec.ResolvedSpec, releaseName string, k8sClient kubernetes.Interface, k8sErr error, bundle *extras.Bundle, postRenderer postrenderer.PostRenderer, resizes []persistenceResize) error {
 	if len(resizes) > 0 {
 		if k8sErr != nil {
 			return fmt.Errorf("resize volumes: kubernetes client unavailable: %w", k8sErr)
 		}
+		if preflightErr := helmPreflight(c, helmClient, resolved, postRenderer, bundle.CRDs); preflightErr != nil {
+			return preflightErr
+		}
 		c.Printf("Resizing volumes for %d component(s)...\n", len(resizes))
-		if resizeErr := resizeVolumes(c, k8sClient, cluster.Namespace(), plan.result.ReleaseName, resizes); resizeErr != nil {
+		if resizeErr := resizeVolumes(c, k8sClient, cluster.Namespace(), releaseName, resizes); resizeErr != nil {
 			return fmt.Errorf("%s: %w", resizeFailureHint(resizes), resizeErr)
 		}
 	}
@@ -369,10 +263,10 @@ func applyDeploy(c *nabat.Context, sess *session.Session, cluster *session.Clust
 		// failing the whole deploy.
 		c.Logger().Debug("skipping deploy watcher: k8s client unavailable", "err", k8sErr)
 	} else {
-		watcher = NewDeployWatcher(k8sClient, cluster.Namespace(), plan.result.ReleaseName)
+		watcher = NewDeployWatcher(k8sClient, cluster.Namespace(), releaseName)
 	}
 
-	err = c.Status(func(st *nabat.Status) error {
+	err := c.Status(func(st *nabat.Status) error {
 		var wg sync.WaitGroup
 		var cancel context.CancelFunc
 		if watcher != nil {

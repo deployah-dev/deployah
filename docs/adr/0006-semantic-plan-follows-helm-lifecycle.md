@@ -19,23 +19,17 @@ install.
 ## Decision
 
 Deployah follows the lifecycle Helm actually performs. The semantic
-plan describes the operations Deployah's real Helm execution path
-would attempt.
+plan uses Helm lifecycle semantics to describe release changes and
+their resource and task consequences. The plan does not decide
+whether a requested deployment runs (ADR-0016).
 
-Helm runs when this invocation is a Helm install, when Helm-managed
-release intent changed (Previous vs Desired, including hook
-definitions), or when the operator supplies explicit Helm re-execution
-intent. Ordinary Live drift, including a missing Live object, does not
-by itself cause Helm to run.
-
-Explicit re-execution exists because Deployah may otherwise skip Helm
-when release intent is unchanged. It is not a new HelmAction:
-HelmAction remains Install, Upgrade, or None. On an existing release
-it is an ordinary Upgrade; with no release it remains Install, with no
-second upgrade after that install. Helm running does not fabricate
-resource consequences (ADR-0011). Drift stays independent (ADR-0005).
-Unchanged preDeploy and postDeploy hooks still run on that upgrade
-(ADR-0014).
+The plan reports a release change when the desired release differs
+from the release Helm last recorded, including hook definitions.
+Ordinary live drift, including a missing live object, is not by
+itself a release change. A plan with no release change does not
+invent resource consequences (ADR-0011). Drift stays independent
+(ADR-0005). When Helm upgrades, unchanged preDeploy and postDeploy
+hooks still run (ADR-0014).
 
 CRD lifecycle is ADR-0008.
 
@@ -66,9 +60,9 @@ unknown final name does not make the semantic plan partial.
 
 ### Positive
 
-- Plan operations match the Helm install, upgrade, and uninstall path
-  Deployah actually runs, including server-side apply on install
-  Create.
+- Planned release changes and their consequences follow Helm's
+  install, upgrade, and uninstall lifecycle, including server-side
+  apply on an install Create.
 
 ### Negative
 

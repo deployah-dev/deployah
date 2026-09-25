@@ -9,30 +9,32 @@ Accepted
 Deployah tasks map onto Helm hooks, ordinary Helm resources, or a
 one-time operation outside the release. Treating leftover hook Jobs as
 declarative Drift, or listing a current manual task as a deploy
-resource, invents a lifecycle Helm does not run. When Helm runs is
-ADR-0006. Resource consequences are ADR-0011.
+resource, invents a lifecycle Helm does not run. The lifecycle the
+plan describes is ADR-0006. Whether a requested deployment runs is
+ADR-0016. Resource consequences are ADR-0011.
 
 ## Decision
 
 `preDeploy` and `postDeploy` definitions are Helm hooks. A change to
-those definitions is release intent change. If Helm upgrades for
-another reason, unchanged hook tasks still run because Helm executes
-them as part of the upgrade.
+those definitions is a release change. On a Helm upgrade, unchanged
+hook tasks still run, because Helm executes them as part of the
+upgrade.
 
 Scheduled tasks are ordinary Helm-managed resources, for example
-CronJobs. A schedule task does not independently decide whether Helm
-runs.
+CronJobs. A schedule task is a release change only when that
+resource changes. The task type does not by itself make one.
 
 A current manual task is outside the deploy semantic plan. It is not
-shown as a deploy Task by itself, has no release Resource entry merely
-because it exists in the spec, and does not trigger Helm.
+shown as a deploy Task by itself, and has no release Resource entry
+merely because it exists in the spec.
 
 Jobs or other objects created by executing `preDeploy` and
 `postDeploy` hooks are execution artifacts. Their existence, success,
-failure, or leftover presence is not declarative Drift. They do not
-independently trigger Helm. Semantic planning models the hook
-definition, the task-level action, and whether that hook will run in
-this invocation.
+failure, or leftover presence is not declarative Drift. They are not
+a release change. Semantic planning models the hook definition, the
+task-level action, and whether that hook is part of the planned
+release change. A requested deploy follows Helm's hook rules for the
+install or upgrade it runs (ADR-0016).
 
 Changing phase between Helm-managed phases is a Task Update.
 

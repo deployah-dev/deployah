@@ -15,7 +15,6 @@
 package plan
 
 import (
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -23,9 +22,7 @@ import (
 
 	"deployah.dev/deployah/internal/helm"
 	"deployah.dev/deployah/internal/plan/semantic"
-	"deployah.dev/deployah/internal/render"
 	"deployah.dev/deployah/internal/spec"
-	"deployah.dev/deployah/internal/testing/testpath"
 
 	v1 "helm.sh/helm/v4/pkg/release/v1"
 )
@@ -98,88 +95,11 @@ func TestDeriveHelmAction_Errors(t *testing.T) {
 	}
 }
 
-func TestHelmActionFromRender(t *testing.T) {
-	t.Parallel()
-	same := configMapManifest("app", "same")
-	changed := configMapManifest("app", "new")
-	hookA := testHook("Job", "migrate", "migrate", "busybox", 1)
-	hookB := testHook("Job", "migrate", "migrate", "alpine", 1)
-	argsDir := filepath.Join(releaseIntentFixtures, "args-order")
-	hookDir := filepath.Join(releaseIntentFixtures, "hook-formatting")
-	argsPrev := testpath.ReadFile(t, argsDir, "previous.yaml")
-	argsNext := testpath.ReadFile(t, argsDir, "desired.yaml")
-	fmtPrev := testpath.ReadFile(t, hookDir, "previous.yaml")
-	fmtNext := testpath.ReadFile(t, hookDir, "desired.yaml")
-	fmtPrevHooks := readHookFixtures(t, filepath.Join(hookDir, "previous.hooks"))
-	fmtNextHooks := readHookFixtures(t, filepath.Join(hookDir, "desired.hooks"))
-
-	tests := []struct {
-		name   string
-		result *render.RenderResult
-		want   semantic.HelmAction
-	}{
-		{name: "install", result: &render.RenderResult{Manifest: changed}, want: semantic.HelmInstall},
-		{name: "unchanged", result: upgradeRender(same, []*v1.Hook{hookA}, same, []*v1.Hook{hookA}), want: semantic.HelmNone},
-		{name: "manifest change", result: upgradeRender(same, []*v1.Hook{hookA}, changed, []*v1.Hook{hookA}), want: semantic.HelmUpgrade},
-		{name: "hook change", result: upgradeRender(same, []*v1.Hook{hookA}, same, []*v1.Hook{hookB}), want: semantic.HelmUpgrade},
-		{name: "args reorder", result: upgradeRender(argsPrev, nil, argsNext, nil), want: semantic.HelmUpgrade},
-		{name: "hook formatting", result: upgradeRender(fmtPrev, fmtPrevHooks, fmtNext, fmtNextHooks), want: semantic.HelmNone},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			got, err := HelmActionFromRender(tt.result)
-			require.NoError(t, err)
-			assert.Equal(t, tt.want, got)
-		})
-	}
-}
-
-func TestHelmActionFromRender_Errors(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name   string
-		result *render.RenderResult
-		want   string
-	}{
-		{name: "nil result", want: "render result is required"},
-		{name: "upgrade without previous", result: &render.RenderResult{IsUpgrade: true}, want: "upgrade render requires a previous release intent"},
-		{
-			name: "nil previous hook",
-			result: &render.RenderResult{
-				IsUpgrade: true,
-				Previous:  &render.ReleaseIntent{Hooks: []*render.HookIntent{nil}},
-			},
-			want: "previous hook 1 is nil",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			_, err := HelmActionFromRender(tt.result)
-			require.Error(t, err)
-			assert.ErrorContains(t, err, tt.want)
-		})
-	}
-}
-
-func upgradeRender(previous string, previousHooks []*v1.Hook, desired string, desiredHooks []*v1.Hook) *render.RenderResult {
-	return &render.RenderResult{
-		IsUpgrade: true,
-		Manifest:  desired,
-		Hooks:     desiredHooks,
-		Previous: &render.ReleaseIntent{
-			Manifest: previous,
-			Hooks:    render.HookIntents(previousHooks),
-		},
-	}
-}
-
 func configMapManifest(name, data string) string {
 	return "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: " + name + "\n  namespace: prod\ndata:\n  key: " + data + "\n"
 }
 
-func TestApplyHelmWillRun_UnchangedHook(t *testing.T) {
+func TestStampTaskWillRun_UnchangedHook(t *testing.T) {
 	t.Parallel()
 	unchanged := []semantic.TaskPlan{{
 		Name:   "seed",
@@ -199,7 +119,7 @@ func TestApplyHelmWillRun_UnchangedHook(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			tasks := append([]semantic.TaskPlan(nil), unchanged...)
-			applyHelmWillRun(tasks, tt.action)
+			stampTaskWillRun(tasks, tt.action)
 			assert.Equal(t, tt.wantRun, tasks[0].WillRun)
 		})
 	}
@@ -216,6 +136,6 @@ func TestAssembleTasks_DoesNotStampWillRun(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
 	assert.False(t, tasks[0].WillRun)
-	applyHelmWillRun(tasks, semantic.HelmInstall)
+	stampTaskWillRun(tasks, semantic.HelmInstall)
 	assert.True(t, tasks[0].WillRun)
 }

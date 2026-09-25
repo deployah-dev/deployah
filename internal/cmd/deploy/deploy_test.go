@@ -3,7 +3,8 @@ package deploy
 import (
 	"context"
 	"errors"
-	"fmt"
+	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -24,17 +25,38 @@ import (
 	v1 "helm.sh/helm/v4/pkg/release/v1"
 )
 
+// deployCallLog records Helm and resize steps in order. A nil log is a no-op.
+type deployCallLog struct {
+	mu    sync.Mutex
+	calls []string
+}
+
+func (l *deployCallLog) add(step string) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.calls = append(l.calls, step)
+}
+
+func (l *deployCallLog) snapshot() []string {
+	if l == nil {
+		return nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return slices.Clone(l.calls)
+}
+
 // stubHelmClient implements [session.HelmClient] for unit tests. Only
-// GetRelease and RenderManifests are wired; every other method panics if
-// called unexpectedly.
+// GetRelease, GetReleaseHistory, RenderManifests, and InstallApp are wired;
+// every other method panics if called unexpectedly.
 type stubHelmClient struct {
 	release    *v1.Release
 	releaseErr error
 
-	// renderResults is consumed in order across RenderManifests calls (Nth
-	// call can differ from the first); renderErr, if set, is returned on
-	// every call instead.
-	renderResults   []*render.RenderResult
+	renderResult    *render.RenderResult
 	renderErr       error
 	renderCallCount int
 	cleanupCalls    int
@@ -43,6 +65,8 @@ type stubHelmClient struct {
 	installCallCount int
 	lastCRDs         []extras.RawFile
 	lastSkipCRDs     bool
+
+	log *deployCallLog
 }
 
 func (s *stubHelmClient) IsReachable() error { return nil }
@@ -51,19 +75,21 @@ func (s *stubHelmClient) InstallApp(_ context.Context, _ bool, _ *spec.ResolvedS
 	s.installCallCount++
 	s.lastCRDs = crds
 	s.lastSkipCRDs = skipCRDs
+	s.log.add("install")
 	return s.installErr
 }
 
 func (s *stubHelmClient) RenderManifests(context.Context, *spec.ResolvedSpec, postrenderer.PostRenderer, []extras.RawFile) (*render.RenderResult, func(), error) {
-	if s.renderErr != nil {
-		return nil, func() { s.cleanupCalls++ }, s.renderErr
-	}
-	i := s.renderCallCount
 	s.renderCallCount++
-	if i >= len(s.renderResults) {
-		panic(fmt.Sprintf("unexpected RenderManifests call #%d: only %d result(s) configured", i+1, len(s.renderResults)))
+	s.log.add("render")
+	cleanup := func() {
+		s.cleanupCalls++
+		s.log.add("cleanup")
 	}
-	return s.renderResults[i], func() { s.cleanupCalls++ }, nil
+	if s.renderErr != nil {
+		return nil, cleanup, s.renderErr
+	}
+	return s.renderResult, cleanup, nil
 }
 
 func (s *stubHelmClient) RenderOffline(context.Context, *spec.ResolvedSpec, postrenderer.PostRenderer, []extras.RawFile) (*render.RenderResult, func(), error) {

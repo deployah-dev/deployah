@@ -133,7 +133,7 @@ place (no orphan-delete).
 1. Deploy with the flag:
 
    ```sh
-   deployah deploy <environment> --resize-volumes --yes
+   deployah deploy <environment> --resize-volumes
    ```
 
 1. Deployah then:

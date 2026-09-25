@@ -27,7 +27,6 @@ import (
 	"helm.sh/helm/v4/pkg/storage"
 	"helm.sh/helm/v4/pkg/storage/driver"
 
-	"deployah.dev/deployah/internal/render"
 	"deployah.dev/deployah/internal/spec"
 
 	chartcommon "helm.sh/helm/v4/pkg/chart/common"
@@ -191,6 +190,33 @@ func TestInstallApp_MissingReleaseIsInstall(t *testing.T) {
 	v1rel, err := releaserToV1(rel)
 	require.NoError(t, err)
 	assert.Equal(t, applySSA, v1rel.ApplyMethod)
+	assert.Equal(t, "Install complete", v1rel.Info.Description)
+}
+
+func TestInstallApp_ExistingReleaseIsUpgrade(t *testing.T) {
+	t.Parallel()
+
+	c, cfg, resolved, releaseName := memoryHelmApp(t, "upgrade-app")
+	require.NoError(t, c.InstallApp(t.Context(), false, resolved, nil, nil, false))
+	require.NoError(t, c.InstallApp(t.Context(), false, resolved, nil, nil, false))
+
+	rels, err := cfg.Releases.History(releaseName)
+	require.NoError(t, err)
+	require.Len(t, rels, 2)
+
+	byVersion := map[int]*v1.Release{}
+	for _, rel := range rels {
+		v1rel, convErr := releaserToV1(rel)
+		require.NoError(t, convErr)
+		byVersion[v1rel.Version] = v1rel
+	}
+	require.Contains(t, byVersion, 1)
+	require.Contains(t, byVersion, 2)
+	assert.Equal(t, common.StatusSuperseded, byVersion[1].Info.Status)
+	assert.Equal(t, "Install complete", byVersion[1].Info.Description)
+	assert.Equal(t, common.StatusDeployed, byVersion[2].Info.Status)
+	assert.Equal(t, "Upgrade complete", byVersion[2].Info.Description)
+	assert.Equal(t, applySSA, byVersion[2].ApplyMethod)
 }
 
 func TestRenderManifests_MissingReleaseIsInstall(t *testing.T) {
@@ -223,7 +249,6 @@ func TestRenderManifestsWithPrep_FreshInstall(t *testing.T) {
 	assert.Equal(t, 1, prep.NextRevision)
 	assert.False(t, result.IsUpgrade)
 	assert.Equal(t, 1, result.Revision)
-	assert.Nil(t, result.Previous)
 }
 
 func TestRenderManifestsWithPrep_Upgrade(t *testing.T) {
@@ -266,27 +291,8 @@ func TestRenderManifestsWithPrep_Upgrade(t *testing.T) {
 	assert.Equal(t, 3, prep.NextRevision)
 	assert.True(t, result.IsUpgrade)
 	assert.Equal(t, 3, result.Revision)
-	require.NotNil(t, result.Previous)
-	assert.Equal(t, prep.Current.Manifest, result.Previous.Manifest)
-	assert.Equal(t, []*render.HookIntent{
-		{
-			Name:              "migrate",
-			Kind:              "Job",
-			Path:              "templates/migrate.yaml",
-			Manifest:          "kind: Job\nmetadata:\n  name: migrate\n",
-			Events:            []v1.HookEvent{v1.HookPreUpgrade},
-			Weight:            1,
-			DeletePolicies:    []v1.HookDeletePolicy{v1.HookBeforeHookCreation},
-			OutputLogPolicies: []v1.HookOutputLogPolicy{v1.HookOutputOnSucceeded},
-		},
-		{
-			Name:     "smoke",
-			Kind:     "Pod",
-			Manifest: "kind: Pod\nmetadata:\n  name: smoke\n",
-			Events:   []v1.HookEvent{v1.HookPostUpgrade},
-			Weight:   2,
-		},
-	}, result.Previous.Hooks)
+	assert.Equal(t, manifest, prep.Current.Manifest)
+	assert.Equal(t, hooks, prep.Current.Hooks)
 }
 
 func TestRenderManifestsWithPrep_NewestDiffersFromCurrent(t *testing.T) {
@@ -314,10 +320,9 @@ func TestRenderManifestsWithPrep_NewestDiffersFromCurrent(t *testing.T) {
 	assert.Equal(t, 5, prep.NextRevision)
 	assert.True(t, result.IsUpgrade)
 	assert.Equal(t, 5, result.Revision)
-	require.NotNil(t, result.Previous)
-	assert.Equal(t, currentManifest, result.Previous.Manifest)
-	assert.Equal(t, []*render.HookIntent{{Name: "current", Manifest: currentHook.Manifest}}, result.Previous.Hooks)
-	assert.NotEqual(t, newestManifest, result.Previous.Manifest)
+	assert.Equal(t, currentManifest, prep.Current.Manifest)
+	assert.Equal(t, []*v1.Hook{currentHook}, prep.Current.Hooks)
+	assert.NotEqual(t, newestManifest, prep.Current.Manifest)
 }
 
 func TestRenderManifestsWithPrep_FailedOnlyHistory(t *testing.T) {
@@ -338,9 +343,8 @@ func TestRenderManifestsWithPrep_FailedOnlyHistory(t *testing.T) {
 	assert.Equal(t, OperationUpgrade, prep.Operation)
 	assert.Equal(t, 1, prep.Current.Version)
 	assert.Equal(t, common.StatusFailed, prep.Current.Info.Status)
-	require.NotNil(t, result.Previous)
-	assert.Equal(t, manifest, result.Previous.Manifest)
-	assert.Equal(t, []*render.HookIntent{{Name: "failed", Kind: "Job", Manifest: hook.Manifest}}, result.Previous.Hooks)
+	assert.Equal(t, manifest, prep.Current.Manifest)
+	assert.Equal(t, []*v1.Hook{hook}, prep.Current.Hooks)
 }
 
 func TestRenderManifests_MatchesWithPrepResult(t *testing.T) {
@@ -369,8 +373,6 @@ func TestRenderManifests_MatchesWithPrepResult(t *testing.T) {
 	assert.Equal(t, withPrep.Revision, wrapped.Revision)
 	assert.Equal(t, withPrep.ReleaseName, wrapped.ReleaseName)
 	assert.Equal(t, withPrep.Namespace, wrapped.Namespace)
-	require.NotNil(t, withPrep.Previous)
-	assert.Equal(t, withPrep.Previous, wrapped.Previous)
 }
 
 func memoryHelmApp(t *testing.T, project string) (*Client, *action.Configuration, *spec.ResolvedSpec, string) {

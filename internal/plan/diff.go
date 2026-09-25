@@ -147,7 +147,7 @@ func diffResource(prev, curr *yamlv3.Node) ([]FieldDiff, error) {
 				// A pure reordering of an already-identical list (e.g. env
 				// vars re-sorted by the template engine) has no effect on
 				// the applied resource, so it is not a meaningful change to
-				// show in a deploy-confirmation preview.
+				// show in the plan.
 			}
 		}
 	}

@@ -1,8 +1,7 @@
-# before.yaml and deployah.yaml are identical: the render is byte-for-byte
-# the same resource set, so the plan must be empty. This also covers the
-# "deploy twice" case (the second plan against an unchanged spec is
-# empty); the deploy-time skip-on-no-op behavior itself is a separate
-# integration concern tested elsewhere.
+# Planning only. before.yaml and deployah.yaml are identical, so the
+# render is the same resource set and the plan must be empty. A second
+# plan against an unchanged spec is empty too. Deployment execution is
+# independent of this plan result.
 freshInstall: false
 
 changes: []

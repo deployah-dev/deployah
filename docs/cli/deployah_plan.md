@@ -1,10 +1,10 @@
 ## deployah plan
 
-Preview the changes a deploy would make
+Inspect changes for an environment
 
 ### Synopsis
 
-Render the chart for an environment and show what would change compared to the last successful release, without applying anything.
+Render the chart for an environment and compare it with the last successful Helm release. With --drift, also compare the rendered manifests with live cluster state. Plan is read-only and never applies anything.
 
 ```text
 deployah plan <environment> [flags]

@@ -21,8 +21,6 @@ package plan
 type DeploymentIntent struct {
 	// ResizeVolumes enables persistent volume claim expansion.
 	ResizeVolumes bool
-	// Reapply forces Helm to run even when the rendered spec is unchanged.
-	Reapply bool
 	// ForceHostnameChange allows a hostname change that would otherwise be
 	// blocked.
 	ForceHostnameChange bool

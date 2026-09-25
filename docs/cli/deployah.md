@@ -32,7 +32,7 @@ deployah [flags]
 * [deployah init](deployah_init.md)  - Creates deployah.yaml and a platform file so you can deploy.
 * [deployah list](deployah_list.md)  - List deployed projects
 * [deployah logs](deployah_logs.md)  - View logs for a deployed project
-* [deployah plan](deployah_plan.md)  - Preview the changes a deploy would make
+* [deployah plan](deployah_plan.md)  - Inspect changes for an environment
 * [deployah resolve](deployah_resolve.md)  - Show the fully resolved configuration for an environment
 * [deployah run](deployah_run.md)  - Run a spec task as a one-off Job
 * [deployah shell](deployah_shell.md)  - Connect to a shell in a container

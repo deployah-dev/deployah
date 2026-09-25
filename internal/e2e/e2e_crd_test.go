@@ -86,7 +86,7 @@ func (s *E2ESuite) TestCRDLifecycle() {
 	})
 
 	widget := hideExtrasManifest(t, dir, "widget.yaml")
-	runIn(t, dir, "deploy", "dev", "--context", kindContext, "--yes",
+	runIn(t, dir, "deploy", "dev", "--context", kindContext,
 		"--namespace", ns)
 	crd := waitCRDEstablished(t, ext, crdLifecycleName)
 	assertCRDUserMetadata(t, crd)
@@ -94,7 +94,7 @@ func (s *E2ESuite) TestCRDLifecycle() {
 	require.NoError(t, os.WriteFile(
 		filepath.Join(dir, ".deployah", "manifests", "widget.yaml"),
 		[]byte(widget), 0o600))
-	runIn(t, dir, "deploy", "dev", "--context", kindContext, "--yes",
+	runIn(t, dir, "deploy", "dev", "--context", kindContext,
 		"--namespace", ns)
 	waitClusterResource(t, dyn, crdLifecycleGVR, crdLifecycleWidget)
 
@@ -107,8 +107,8 @@ func (s *E2ESuite) TestCRDLifecycle() {
 	require.NoError(t, os.WriteFile(
 		filepath.Join(dir, ".deployah", "crds", "clusterwidget.yaml"),
 		[]byte(patched), 0o600))
-	runIn(t, dir, "deploy", "dev", "--context", kindContext, "--yes",
-		"--namespace", ns, "--reapply")
+	runIn(t, dir, "deploy", "dev", "--context", kindContext,
+		"--namespace", ns)
 	crd = getCRD(t, ext, crdLifecycleName)
 	assert.Equal(t, "crd-lifecycle", crd.Labels["e2e-marker"],
 		"Helm upgrade must not rewrite chart CRDs")
@@ -178,7 +178,7 @@ func (s *E2ESuite) TestCRDNewlyAddedOnUpgrade() {
 	})
 
 	hideExtrasManifest(t, dir, "widget.yaml")
-	runIn(t, dir, "deploy", "dev", "--context", kindContext, "--yes",
+	runIn(t, dir, "deploy", "dev", "--context", kindContext,
 		"--namespace", ns)
 	waitCRDEstablished(t, ext, crdLifecycleName)
 	assertReleaseExists(t, dir, ns, "crd-lifecycle", "dev")
@@ -186,8 +186,8 @@ func (s *E2ESuite) TestCRDNewlyAddedOnUpgrade() {
 	require.NoError(t, os.WriteFile(
 		filepath.Join(dir, ".deployah", "crds", "addedwidget.yaml"),
 		[]byte(crdAddedYAML), 0o600))
-	runIn(t, dir, "deploy", "dev", "--context", kindContext, "--yes",
-		"--namespace", ns, "--reapply")
+	runIn(t, dir, "deploy", "dev", "--context", kindContext,
+		"--namespace", ns)
 
 	_, err := ext.ApiextensionsV1().CustomResourceDefinitions().Get(
 		t.Context(), crdAddedName, metav1.GetOptions{})
