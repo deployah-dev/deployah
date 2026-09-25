@@ -28,8 +28,8 @@ Those states answer different questions and are independent:
 
 - Previous -> Desired: declarative / release intent change
 - Previous -> Live: drift
-- Live -> Desired: visible resource consequence when this invocation
-  actually performs the relevant write (ADR-0011)
+- Live -> Desired: visible resource consequence when the semantic
+  plan includes the corresponding write (ADR-0011)
 
 Do not infer a release change merely by comparing Live and Desired.
 Ordinary drift alone is not a release change (ADR-0006). Whether a

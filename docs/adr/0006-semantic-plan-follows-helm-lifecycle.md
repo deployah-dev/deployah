@@ -19,9 +19,9 @@ install.
 ## Decision
 
 Deployah follows the lifecycle Helm actually performs. The semantic
-plan describes that lifecycle: which operations Helm would attempt,
-and which it would not. The plan does not decide whether a requested
-deployment runs (ADR-0016).
+plan uses Helm lifecycle semantics to describe release changes and
+their resource and task consequences. The plan does not decide
+whether a requested deployment runs (ADR-0016).
 
 The plan reports a release change when the desired release differs
 from the release Helm last recorded, including hook definitions.
@@ -60,9 +60,9 @@ unknown final name does not make the semantic plan partial.
 
 ### Positive
 
-- Plan operations match the Helm install, upgrade, and uninstall path
-  Deployah actually runs, including server-side apply on install
-  Create.
+- Planned release changes and their consequences follow Helm's
+  install, upgrade, and uninstall lifecycle, including server-side
+  apply on an install Create.
 
 ### Negative
 
