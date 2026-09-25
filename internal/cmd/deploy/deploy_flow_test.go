@@ -21,12 +21,14 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"helm.sh/helm/v4/pkg/release/common"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 	"nabat.dev/nabat"
 	"nabat.dev/nabat/nabattest"
 
 	"deployah.dev/deployah/internal/extras"
+	"deployah.dev/deployah/internal/plan/semantic"
 	"deployah.dev/deployah/internal/render"
 	"deployah.dev/deployah/internal/session"
 	"deployah.dev/deployah/internal/spec"
@@ -34,6 +36,7 @@ import (
 	"deployah.dev/deployah/internal/testing/nabatctx"
 
 	planengine "deployah.dev/deployah/internal/plan"
+	v1 "helm.sh/helm/v4/pkg/release/v1"
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -384,4 +387,116 @@ func TestDeployFlags_SkipCRDsAcceptedCRDsRemoved(t *testing.T) {
 
 	var opts Options
 	assert.False(t, opts.SkipCRDs)
+}
+
+func TestComputePlan_HelmAction(t *testing.T) {
+	t.Parallel()
+	same := deployFlowManifestV1
+	tests := []struct {
+		name    string
+		release *v1.Release
+		result  *render.RenderResult
+		want    semantic.HelmAction
+	}{
+		{
+			name:   "fresh install",
+			result: testRenderResult(same),
+			want:   semantic.HelmInstall,
+		},
+		{
+			name:    "unchanged upgrade",
+			release: deployedRelease(same),
+			result:  upgradeRenderResult(same, same),
+			want:    semantic.HelmNone,
+		},
+		{
+			name:    "changed upgrade",
+			release: deployedRelease(deployFlowManifestV1),
+			result:  upgradeRenderResult(deployFlowManifestV1, deployFlowManifestV2),
+			want:    semantic.HelmUpgrade,
+		},
+		{
+			name:    "previous wins over last successful release",
+			release: deployedRelease(deployFlowManifestV1),
+			result:  upgradeRenderResult(deployFlowManifestV2, deployFlowManifestV2),
+			want:    semantic.HelmNone,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			stub := &stubHelmClient{release: tt.release, renderResults: []*render.RenderResult{tt.result}}
+			_, cluster := newClusterWithStub(t, stub, nil)
+			h := nabatctx.New(t, "test")
+			plan, err := computePlan(h.Context, stub, cluster, deployResolved(), nil, nil)
+			require.NoError(t, err)
+			t.Cleanup(plan.cleanup)
+			assert.Equal(t, tt.want, plan.helmAction)
+			assert.Same(t, tt.result, plan.result)
+		})
+	}
+}
+
+// TestComputePlan_LegacyDiffIgnoresArgsReorder documents the transitional
+// divergence: dyff ignores a pure argument reorder, while the semantic
+// action is an upgrade. The execution gate still uses the legacy diff.
+func TestComputePlan_LegacyDiffIgnoresArgsReorder(t *testing.T) {
+	t.Parallel()
+	previous := deploymentArgs("--foo", "--bar")
+	desired := deploymentArgs("--bar", "--foo")
+	stub := &stubHelmClient{
+		release:       deployedRelease(previous),
+		renderResults: []*render.RenderResult{upgradeRenderResult(previous, desired)},
+	}
+	_, cluster := newClusterWithStub(t, stub, nil)
+	h := nabatctx.New(t, "test")
+	plan, err := computePlan(h.Context, stub, cluster, deployResolved(), nil, nil)
+	require.NoError(t, err)
+	t.Cleanup(plan.cleanup)
+	assert.False(t, plan.diff.HasChanges())
+	assert.Equal(t, semantic.HelmUpgrade, plan.helmAction)
+}
+
+func TestComputePlan_UpgradeWithoutPrevious(t *testing.T) {
+	t.Parallel()
+	result := testRenderResult(deployFlowManifestV1)
+	result.IsUpgrade = true
+	stub := &stubHelmClient{
+		release:       deployedRelease(deployFlowManifestV1),
+		renderResults: []*render.RenderResult{result},
+	}
+	_, cluster := newClusterWithStub(t, stub, nil)
+	h := nabatctx.New(t, "test")
+	plan, err := computePlan(h.Context, stub, cluster, deployResolved(), nil, nil)
+	require.Error(t, err)
+	assert.Nil(t, plan)
+	assert.ErrorContains(t, err, "determine helm release intent")
+	assert.Equal(t, 1, stub.cleanupCalls)
+}
+
+func deployResolved() *spec.ResolvedSpec {
+	return &spec.ResolvedSpec{
+		Spec: &spec.Spec{Project: "web"},
+		Env:  spec.EnvIdentity{Original: "production"},
+	}
+}
+
+func deployedRelease(manifest string) *v1.Release {
+	return &v1.Release{
+		Version:  2,
+		Manifest: manifest,
+		Info:     &v1.Info{Status: common.StatusDeployed},
+	}
+}
+
+func upgradeRenderResult(previous, desired string) *render.RenderResult {
+	result := testRenderResult(desired)
+	result.IsUpgrade = true
+	result.Revision = 3
+	result.Previous = &render.ReleaseIntent{Manifest: previous}
+	return result
+}
+
+func deploymentArgs(first, second string) string {
+	return "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: web\n  namespace: default\nspec:\n  template:\n    spec:\n      containers:\n        - name: api\n          args:\n            - " + first + "\n            - " + second + "\n"
 }

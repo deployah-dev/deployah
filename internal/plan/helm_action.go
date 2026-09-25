@@ -20,6 +20,7 @@ import (
 
 	"deployah.dev/deployah/internal/helm"
 	"deployah.dev/deployah/internal/plan/semantic"
+	"deployah.dev/deployah/internal/render"
 
 	v1 "helm.sh/helm/v4/pkg/release/v1"
 )
@@ -46,4 +47,38 @@ func deriveHelmAction(prep helm.ReleasePrep, desiredManifest string, desiredHook
 	default:
 		return 0, fmt.Errorf("invalid helm operation %d", prep.Operation)
 	}
+}
+
+// HelmActionFromRender picks install, upgrade, or none for result using
+// the same release-intent comparison as [BuildSemanticPlan]. It returns
+// an error when result is nil or an upgrade render has no Previous.
+func HelmActionFromRender(result *render.RenderResult) (semantic.HelmAction, error) {
+	if result == nil {
+		return 0, errors.New("render result is required")
+	}
+	prep := helm.ReleasePrep{Operation: helm.OperationInstall}
+	if result.IsUpgrade {
+		if result.Previous == nil {
+			return 0, errors.New("upgrade render requires a previous release intent")
+		}
+		prep.Operation = helm.OperationUpgrade
+		prep.Current = &v1.Release{
+			Manifest: result.Previous.Manifest,
+			Hooks:    releaseHooks(result.Previous.Hooks),
+		}
+	}
+	return deriveHelmAction(prep, result.Manifest, result.Hooks)
+}
+
+// releaseHooks rebuilds temporary Helm hooks from declarative intents.
+// Nil entries stay nil.
+func releaseHooks(hooks []*render.HookIntent) []*v1.Hook {
+	if hooks == nil {
+		return nil
+	}
+	out := make([]*v1.Hook, 0, len(hooks))
+	for _, h := range hooks {
+		out = append(out, h.Hook())
+	}
+	return out
 }

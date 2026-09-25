@@ -37,6 +37,7 @@ type stubHelmClient struct {
 	renderResults   []*render.RenderResult
 	renderErr       error
 	renderCallCount int
+	cleanupCalls    int
 
 	installErr       error
 	installCallCount int
@@ -55,14 +56,14 @@ func (s *stubHelmClient) InstallApp(_ context.Context, _ bool, _ *spec.ResolvedS
 
 func (s *stubHelmClient) RenderManifests(context.Context, *spec.ResolvedSpec, postrenderer.PostRenderer, []extras.RawFile) (*render.RenderResult, func(), error) {
 	if s.renderErr != nil {
-		return nil, func() {}, s.renderErr
+		return nil, func() { s.cleanupCalls++ }, s.renderErr
 	}
 	i := s.renderCallCount
 	s.renderCallCount++
 	if i >= len(s.renderResults) {
 		panic(fmt.Sprintf("unexpected RenderManifests call #%d: only %d result(s) configured", i+1, len(s.renderResults)))
 	}
-	return s.renderResults[i], func() {}, nil
+	return s.renderResults[i], func() { s.cleanupCalls++ }, nil
 }
 
 func (s *stubHelmClient) RenderOffline(context.Context, *spec.ResolvedSpec, postrenderer.PostRenderer, []extras.RawFile) (*render.RenderResult, func(), error) {
