@@ -12,21 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package plan computes and renders a preview of the changes a deploy
-// would make. [BuildPlan] diffs the rendered manifest against the last
-// successful Helm release. [BuildSemanticPlan] renders Desired state,
-// derives the plan's Helm release-intent transition by comparing the
-// previous release with that render, and predicts writes only when the
-// plan has a Helm transition. That transition does not control whether
-// `deployah deploy` invokes Helm.
+// Package plan computes and renders read-only deployment plans. Planning
+// inspects release changes and their consequences. It does not decide
+// whether `deployah deploy` runs Helm.
+//
+// [BuildPlan] diffs the rendered manifest against the last successful
+// Helm release. [BuildSemanticPlan] renders Desired state, derives the
+// plan's Helm release-intent transition by comparing the previous release
+// with that render, and records write consequences only when the plan has
+// a Helm transition.
 //
 // [ComputeDiff] is the older diff: it parses two rendered Kubernetes
 // manifests, matches resources by (apiVersion, kind, namespace, name), and
 // runs [github.com/homeport/dyff] field by field on resources present on
 // both sides. [Plan] is that model. [RenderText] prints it, and
-// [NewJSONDocument] encodes it as JSON. [DeploymentIntent] holds the flags
-// a deploy uses to decide what it may change. [BuildPlan] and
-// [ComputeDiff] stay while callers move to the semantic plan.
+// [NewJSONDocument] encodes it as JSON. [DeploymentIntent] records resize
+// and hostname flags. It does not decide whether deploy runs Helm.
+// [BuildPlan] and [ComputeDiff] stay while callers move to the semantic
+// plan.
 //
 // [BuildSemanticPlan] renders with
 // [SemanticBuildClient.RenderManifestsWithPrep], then picks install,
