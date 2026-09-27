@@ -71,7 +71,7 @@ spec:
 
 ```sh
 deployah plan prod          # extras appear in the plan diff
-deployah deploy prod -y     # Helm install processes chart CRDs, then the release
+deployah deploy prod        # Helm install processes chart CRDs, then the release
 ```
 
 ## Labels and annotations
@@ -126,12 +126,12 @@ later.
   reject invalid or unsupported content.
 - An extra that collides with a generated chart object fails the render
   (Deployah will not overwrite chart resources).
-- Custom resource kinds must be known to Deployah's built-in table or
-  live cluster discovery. A small offline allowlist covers common
-  operator APIs (cert-manager and prometheus-operator). Deployah does
-  not read `.deployah/crds/` to learn a custom resource's type or
-  scope. With `deployah plan --offline`, unknown kinds are allowed so
-  you can still preview; scope defaults to namespaced.
+- Custom resource kinds must be known to Deployah's built-in scope table
+  or live cluster discovery. The built-in table includes common operator
+  APIs such as cert-manager and prometheus-operator. Deployah does not
+  read `.deployah/crds/` to learn a custom resource's type or scope.
+  When no REST config is available, unknown kinds are accepted and
+  default to namespaced.
 - Helm hook annotations (`helm.sh/hook`, `helm.sh/hook-weight`,
   `helm.sh/hook-delete-policy`) are not supported on custom manifests. Use a
   Deployah `preDeploy` or `postDeploy` task for deploy hooks.

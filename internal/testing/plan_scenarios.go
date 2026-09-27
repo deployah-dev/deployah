@@ -28,7 +28,6 @@ import (
 	"go.yaml.in/yaml/v3"
 
 	"deployah.dev/deployah/internal/extras"
-	"deployah.dev/deployah/internal/helm"
 	"deployah.dev/deployah/internal/k8s"
 	"deployah.dev/deployah/internal/plan"
 	"deployah.dev/deployah/internal/spec"
@@ -216,7 +215,8 @@ func readRawManifestFile(t *testing.T, path string) (manifestSide, bool) {
 	return manifestSide{Manifest: string(data)}, true
 }
 
-// renderManifestFile loads dir/filename and renders it offline.
+// renderManifestFile loads dir/filename and renders it without Kubernetes
+// access.
 func renderManifestFile(t *testing.T, dir, filename string) manifestSide {
 	t.Helper()
 	ctx := t.Context()
@@ -241,18 +241,10 @@ func renderManifestFile(t *testing.T, dir, filename string) manifestSide {
 	require.NoError(t, resolveErr)
 	require.NoError(t, k8s.MaterializeSelfSignedTLS(ctx, nil, "", resolved))
 
-	// Pin the release namespace so goldens stay stable regardless of
-	// HELM_NAMESPACE or the ambient kubeconfig context.
-	client, err := helm.NewClient(helm.WithNamespace("default"))
-	require.NoError(t, err)
-
-	bundle, loadErr := extras.LoadFromSpec(specPath, manifest, platform, envName, client.Namespace(), nil)
+	bundle, loadErr := extras.LoadFromSpec(specPath, manifest, platform, envName, fixtureNamespace, nil)
 	require.NoError(t, loadErr)
 
-	result, cleanup, err := client.RenderOffline(ctx, resolved, bundle.PostRendererFor(), bundle.CRDs)
-	if cleanup != nil {
-		t.Cleanup(cleanup)
-	}
+	result, err := renderFixtureChart(t, resolved, bundle.PostRendererFor(), bundle.CRDs)
 	require.NoError(t, err)
 
 	return manifestSide{

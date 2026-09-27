@@ -92,10 +92,6 @@ func (s *stubHelmClient) RenderManifests(context.Context, *spec.ResolvedSpec, po
 	return s.renderResult, cleanup, nil
 }
 
-func (s *stubHelmClient) RenderOffline(context.Context, *spec.ResolvedSpec, postrenderer.PostRenderer, []extras.RawFile) (*render.RenderResult, func(), error) {
-	panic("unexpected RenderOffline call")
-}
-
 func (s *stubHelmClient) DeleteRelease(context.Context, string, string, bool) error {
 	panic("unexpected DeleteRelease call")
 }

@@ -53,8 +53,8 @@ func TestWithDirResolvesSpec(t *testing.T) {
 		{
 			name:       "literal image without env file",
 			dir:        "literal",
-			args:       []string{"plan", "dev", "--offline"},
-			wantStdout: "validation: OK",
+			args:       []string{"resolve", "dev"},
+			wantStdout: "Environment: dev",
 		},
 	}
 
@@ -139,7 +139,7 @@ func TestResolveSpec_Error(t *testing.T) {
 	}{
 		{
 			name:    "missing required substitution variable",
-			args:    []string{"plan", "dev", "--offline"},
+			args:    []string{"plan", "dev"},
 			opts:    []nabattest.RunOption{nabattest.WithDir(testpath.Dir(t, "testdata", "cwd", "missing-var"))},
 			wantErr: "variable",
 		},

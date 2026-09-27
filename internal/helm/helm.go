@@ -149,8 +149,8 @@ func NewClient(opts ...Option) (*Client, error) {
 	return c, nil
 }
 
-// Namespace returns the release namespace Helm will use for installs and
-// offline renders. It comes from [WithNamespace], or "default" when empty.
+// Namespace returns the release namespace configured for Helm operations.
+// It comes from [WithNamespace], or "default" when empty.
 func (c *Client) Namespace() string {
 	if c == nil || c.namespace == "" {
 		return "default"

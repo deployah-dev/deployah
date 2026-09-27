@@ -23,9 +23,30 @@ import (
 	"helm.sh/helm/v4/pkg/storage"
 	"helm.sh/helm/v4/pkg/storage/driver"
 
+	"deployah.dev/deployah/internal/extras"
+	"deployah.dev/deployah/internal/render"
+	"deployah.dev/deployah/internal/spec"
+
 	chartcommon "helm.sh/helm/v4/pkg/chart/common"
 	kubefake "helm.sh/helm/v4/pkg/kube/fake"
 )
+
+// renderFreshInstall renders resolved as a client-side fresh install in
+// namespace "default" without release lookup or Kubernetes access.
+func renderFreshInstall(t *testing.T, resolved *spec.ResolvedSpec, crds []extras.RawFile) *render.RenderResult {
+	t.Helper()
+	client, err := NewClient(WithNamespace("default"))
+	require.NoError(t, err)
+	releaseName, labels, err := releaseIdentity(resolved)
+	require.NoError(t, err)
+	ch, chartPath, cleanup, err := client.prepareAndLoadChart(t.Context(), resolved, crds)
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+	result, err := client.renderInstall(t.Context(), releaseName, ch, map[string]any{}, labels, nil)
+	require.NoError(t, err)
+	result.ChartPath = chartPath
+	return result
+}
 
 // newTestConfiguration builds an *action.Configuration with an in-memory
 // release store and a distinguishable "real" KubeClient/Capabilities pair,

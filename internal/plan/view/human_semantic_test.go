@@ -21,9 +21,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"helm.sh/helm/v4/pkg/action"
+	"helm.sh/helm/v4/pkg/chart/v2/loader"
 	"helm.sh/helm/v4/pkg/postrenderer"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -49,7 +52,7 @@ const (
 )
 
 // TestWriteHuman_SemanticPlan is the canonical human output of
-// RenderOffline -> prediction -> BuildSemanticPlan -> WriteHuman.
+// fixture render -> prediction -> BuildSemanticPlan -> WriteHuman.
 // human_all_actions.golden stays the synthetic generic renderer contract.
 func TestWriteHuman_SemanticPlan(t *testing.T) {
 	t.Parallel()
@@ -256,9 +259,9 @@ func scheduleTask(schedule string, command ...string) spec.Task {
 
 func semanticUpgradePlan(t *testing.T, previous, current *spec.Spec) semantic.Plan {
 	t.Helper()
-	client := productHelmClient(t)
+	cache := helm.NewChartCache(time.Hour)
 	prevResolved := resolveProductSpec(t, previous)
-	prevResult := renderOffline(t, client, prevResolved)
+	prevResult := renderDesired(t, cache, prevResolved)
 	prevRelease := previousReleaseFromRender(t, prevResult)
 
 	cluster := newFakeCluster()
@@ -270,9 +273,9 @@ func semanticUpgradePlan(t *testing.T, previous, current *spec.Spec) semantic.Pl
 	storePredictedLive(cluster, installPlan.Changes)
 
 	currResolved := resolveProductSpec(t, current)
-	currResult := renderOffline(t, client, currResolved)
+	currResult := renderDesired(t, cache, currResolved)
 	return buildSemanticPlan(t, &fakeBuildClient{
-		result: offlineUpgradeResult(currResult, 2),
+		result: upgradeResultFrom(currResult, 2),
 		prep: helm.ReleasePrep{
 			Operation:    helm.OperationUpgrade,
 			Current:      prevRelease,
@@ -280,13 +283,6 @@ func semanticUpgradePlan(t *testing.T, previous, current *spec.Spec) semantic.Pl
 			NextRevision: 2,
 		},
 	}, cluster, currResolved)
-}
-
-func productHelmClient(t *testing.T) *helm.Client {
-	t.Helper()
-	client, err := helm.NewClient(helm.WithNamespace(productNamespace))
-	require.NoError(t, err)
-	return client
 }
 
 func resolveProductSpec(t *testing.T, manifest *spec.Spec) *spec.ResolvedSpec {
@@ -300,24 +296,56 @@ func resolveProductSpec(t *testing.T, manifest *spec.Spec) *spec.ResolvedSpec {
 	return resolved
 }
 
-// offlineUpgradeResult copies an offline install render and sets the
+// upgradeResultFrom copies a fresh-install fixture render and sets the
 // upgrade flags [plan.BuildSemanticPlan] checks. Manifest and Hooks stay
-// the [helm.Client.RenderOffline] output; that API cannot emit an upgrade
-// dry-run.
-func offlineUpgradeResult(result *render.RenderResult, revision int) *render.RenderResult {
+// the fresh-install fixture render.
+func upgradeResultFrom(result *render.RenderResult, revision int) *render.RenderResult {
 	out := *result
 	out.IsUpgrade = true
 	out.Revision = revision
 	return &out
 }
 
-func renderOffline(t *testing.T, client *helm.Client, resolved *spec.ResolvedSpec) *render.RenderResult {
+// renderDesired renders resolved as a fresh install in productNamespace
+// without Kubernetes access. cache is shared by the previous and current
+// renders in one test. The chart comes from [helm.PrepareChart]; Helm
+// renders it with a client-only install dry run. This stays in the view
+// tests because internal/testing and this package both register -update.
+func renderDesired(t *testing.T, cache *helm.ChartCache, resolved *spec.ResolvedSpec) *render.RenderResult {
 	t.Helper()
-	result, cleanup, err := client.RenderOffline(t.Context(), resolved, nil, nil)
+
+	chartPath, err := helm.PrepareChart(t.Context(), resolved, cache, nil)
 	require.NoError(t, err)
-	require.NotNil(t, cleanup)
-	t.Cleanup(cleanup)
-	return result
+	t.Cleanup(func() {
+		if removeErr := os.RemoveAll(chartPath); removeErr != nil {
+			t.Errorf("remove chart dir %s: %v", chartPath, removeErr)
+		}
+	})
+
+	ch, err := loader.Load(chartPath)
+	require.NoError(t, err)
+
+	releaseName := helm.GenerateReleaseName(resolved.Spec.Project, resolved.Env.Original)
+	install := action.NewInstall(action.NewConfiguration())
+	install.ReleaseName = releaseName
+	install.Namespace = productNamespace
+	install.DryRunStrategy = action.DryRunClient
+	install.DisableOpenAPIValidation = true
+
+	rel, err := install.RunWithContext(t.Context(), ch, map[string]any{})
+	require.NoError(t, err)
+	v1rel, ok := rel.(*v1.Release)
+	require.True(t, ok, "unexpected helm release type %T", rel)
+
+	return &render.RenderResult{
+		ReleaseName: releaseName,
+		Namespace:   install.Namespace,
+		Manifest:    v1rel.Manifest,
+		Hooks:       v1rel.Hooks,
+		IsUpgrade:   false,
+		Revision:    1,
+		ChartPath:   chartPath,
+	}
 }
 
 func previousReleaseFromRender(t *testing.T, result *render.RenderResult) *v1.Release {

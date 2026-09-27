@@ -102,8 +102,9 @@ func reusableCert(secret *corev1.Secret, fqdn string) (ok bool, certPEM, keyPEM 
 }
 
 // GenerateSelfSignedCert generates a fresh self-signed PEM cert/key pair for
-// fqdn without any cluster access. Used for the plan --offline render, where
-// there is no cluster to fetch a reusable secret from.
+// fqdn without any cluster access. [EnsureSelfSignedCert] uses it when no
+// reusable Secret exists, and [MaterializeSelfSignedTLS] uses it when given
+// a nil client.
 func GenerateSelfSignedCert(fqdn string) (certPEM, keyPEM []byte, err error) {
 	certPEM, keyPEM, err = certutil.GenerateSelfSignedCertKeyWithOptions(certutil.SelfSignedCertKeyOptions{
 		Host:         fqdn,
@@ -133,11 +134,10 @@ func HasSelfSignedComponents(resolved *spec.ResolvedSpec) bool {
 }
 
 // MaterializeSelfSignedTLS fills TLSCertPEM/TLSKeyPEM on every resolved
-// component whose TLSMode is selfSigned. Call it once per CLI invocation,
-// before any chart render, so the plan render, apply-time verification
-// render, and real apply all see identical certificate bytes. Pass a nil
-// client to force offline generation (no cluster access), as plan --offline
-// does.
+// component whose TLSMode is selfSigned. Call it once per CLI invocation
+// before chart rendering so every render and any subsequent Helm operation
+// in that invocation sees the same certificate bytes. Pass a nil client to
+// generate fresh certificates without cluster access.
 func MaterializeSelfSignedTLS(ctx context.Context, client kubernetes.Interface, namespace string, resolved *spec.ResolvedSpec) error {
 	if resolved == nil {
 		return nil

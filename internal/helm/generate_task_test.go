@@ -549,14 +549,7 @@ func resolveChart(t *testing.T, manifest *spec.Spec, env string) *spec.ResolvedS
 func renderHookJob(t *testing.T, manifest *spec.Spec, env, taskName string) *batchv1.Job {
 	t.Helper()
 	resolved := resolveChart(t, manifest, env)
-
-	client, err := NewClient(WithNamespace("default"))
-	require.NoError(t, err)
-	result, cleanup, err := client.RenderOffline(t.Context(), resolved, nil, nil)
-	require.NoError(t, err)
-	if cleanup != nil {
-		t.Cleanup(cleanup)
-	}
+	result := renderFreshInstall(t, resolved, nil)
 
 	suffix := "-" + taskName
 	for _, h := range result.Hooks {

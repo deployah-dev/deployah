@@ -70,43 +70,30 @@ func TestReleaseIdentity_WildcardUsesMapKey(t *testing.T) {
 func TestReleaseIdentity_RejectsNil(t *testing.T) {
 	t.Parallel()
 
-	_, _, err := releaseIdentity(nil)
-	require.Error(t, err)
-	assert.ErrorContains(t, err, "render requires resolved spec")
-
-	_, _, err = releaseIdentity(&spec.ResolvedSpec{})
-	require.Error(t, err)
-	assert.ErrorContains(t, err, "render requires resolved spec source")
-
-	_, _, err = releaseIdentity(&spec.ResolvedSpec{
-		Spec: &spec.Spec{Project: "shop"},
-	})
-	require.Error(t, err)
-	assert.ErrorContains(t, err, "spec.Resolve")
+	tests := []struct {
+		name     string
+		resolved *spec.ResolvedSpec
+		wantErr  string
+	}{
+		{name: "nil", wantErr: "render requires resolved spec"},
+		{name: "empty", resolved: &spec.ResolvedSpec{}, wantErr: "render requires resolved spec source"},
+		{
+			name:     "missing resolve",
+			resolved: &spec.ResolvedSpec{Spec: &spec.Spec{Project: "shop"}},
+			wantErr:  "spec.Resolve",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, _, err := releaseIdentity(tt.resolved)
+			require.Error(t, err)
+			assert.ErrorContains(t, err, tt.wantErr)
+		})
+	}
 }
 
-func TestRenderOffline_RejectsNilResolved(t *testing.T) {
-	t.Parallel()
-
-	client, err := NewClient(WithNamespace("default"))
-	require.NoError(t, err)
-
-	_, _, err = client.RenderOffline(t.Context(), nil, nil, nil)
-	require.Error(t, err)
-	assert.ErrorContains(t, err, "render requires resolved spec")
-
-	_, _, err = client.RenderOffline(t.Context(), &spec.ResolvedSpec{}, nil, nil)
-	require.Error(t, err)
-	assert.ErrorContains(t, err, "render requires resolved spec source")
-
-	_, _, err = client.RenderOffline(t.Context(), &spec.ResolvedSpec{
-		Spec: &spec.Spec{Project: "shop"},
-	}, nil, nil)
-	require.Error(t, err)
-	assert.ErrorContains(t, err, "spec.Resolve")
-}
-
-func TestRenderOffline_ChartAndReleaseAgree(t *testing.T) {
+func TestRender_ChartAndReleaseAgree(t *testing.T) {
 	t.Parallel()
 
 	m := envServiceSpec(t.TempDir(), spec.StringMap{"LOG_LEVEL": "debug"})
@@ -117,13 +104,7 @@ func TestRenderOffline_ChartAndReleaseAgree(t *testing.T) {
 	wantName, wantLabels, err := releaseIdentity(resolved)
 	require.NoError(t, err)
 
-	client, err := NewClient(WithNamespace("default"))
-	require.NoError(t, err)
-	result, cleanup, err := client.RenderOffline(t.Context(), resolved, nil, nil)
-	require.NoError(t, err)
-	if cleanup != nil {
-		t.Cleanup(cleanup)
-	}
+	result := renderFreshInstall(t, resolved, nil)
 
 	assert.Equal(t, wantName, result.ReleaseName)
 	assert.Equal(t, GenerateReleaseName(resolved.Spec.Project, resolved.Env.Original), result.ReleaseName)
@@ -161,7 +142,7 @@ func TestPrepareChart_UsesResolvedEnvironment(t *testing.T) {
 	assert.Equal(t, "staging", labels[spec.LabelEnvironment])
 }
 
-func TestRenderOffline_WildcardEnvironmentLabels(t *testing.T) {
+func TestRender_WildcardEnvironmentLabels(t *testing.T) {
 	t.Parallel()
 
 	m := envServiceSpec(t.TempDir(), spec.StringMap{"LOG_LEVEL": "debug"})
@@ -176,13 +157,7 @@ func TestRenderOffline_WildcardEnvironmentLabels(t *testing.T) {
 	assert.Equal(t, "review", labels["deployah.dev/environment"])
 	require.Empty(t, validation.IsValidLabelValue(labels["deployah.dev/environment"]))
 
-	client, err := NewClient(WithNamespace("default"))
-	require.NoError(t, err)
-	result, cleanup, err := client.RenderOffline(t.Context(), resolved, nil, nil)
-	require.NoError(t, err)
-	if cleanup != nil {
-		t.Cleanup(cleanup)
-	}
+	result := renderFreshInstall(t, resolved, nil)
 
 	assert.Equal(t, name, result.ReleaseName)
 	dep := findRenderedDeployment(t, result.Manifest, "-api")
@@ -193,7 +168,7 @@ func TestRenderOffline_WildcardEnvironmentLabels(t *testing.T) {
 	assert.Equal(t, name, dep.Labels[spec.LabelInstance])
 }
 
-func TestRenderOffline_WildcardHookJobLabels(t *testing.T) {
+func TestRender_WildcardHookJobLabels(t *testing.T) {
 	t.Parallel()
 
 	m := taskSpec()
@@ -206,7 +181,7 @@ func TestRenderOffline_WildcardHookJobLabels(t *testing.T) {
 	assert.Equal(t, GenerateReleaseName("shop", "review/pr-123"), job.Labels[spec.LabelInstance])
 }
 
-func TestRenderOffline_WildcardCronJobLabels(t *testing.T) {
+func TestRender_WildcardCronJobLabels(t *testing.T) {
 	t.Parallel()
 
 	m := scheduledRenderSpec(spec.Task{
@@ -233,20 +208,27 @@ func assertLogicalEnvironmentLabel(t *testing.T, labels map[string]string) {
 func TestInstallApp_RejectsNilResolved(t *testing.T) {
 	t.Parallel()
 
-	client, err := NewClient(WithNamespace("default"))
-	require.NoError(t, err)
-
-	err = client.InstallApp(t.Context(), false, nil, nil, nil, false)
-	require.Error(t, err)
-	assert.ErrorContains(t, err, "render requires resolved spec")
-
-	err = client.InstallApp(t.Context(), false, &spec.ResolvedSpec{}, nil, nil, false)
-	require.Error(t, err)
-	assert.ErrorContains(t, err, "render requires resolved spec source")
-
-	err = client.InstallApp(t.Context(), false, &spec.ResolvedSpec{
-		Spec: &spec.Spec{Project: "shop"},
-	}, nil, nil, false)
-	require.Error(t, err)
-	assert.ErrorContains(t, err, "spec.Resolve")
+	tests := []struct {
+		name     string
+		resolved *spec.ResolvedSpec
+		wantErr  string
+	}{
+		{name: "nil", wantErr: "render requires resolved spec"},
+		{name: "empty", resolved: &spec.ResolvedSpec{}, wantErr: "render requires resolved spec source"},
+		{
+			name:     "missing resolve",
+			resolved: &spec.ResolvedSpec{Spec: &spec.Spec{Project: "shop"}},
+			wantErr:  "spec.Resolve",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			client, err := NewClient(WithNamespace("default"))
+			require.NoError(t, err)
+			err = client.InstallApp(t.Context(), false, tt.resolved, nil, nil, false)
+			require.Error(t, err)
+			assert.ErrorContains(t, err, tt.wantErr)
+		})
+	}
 }

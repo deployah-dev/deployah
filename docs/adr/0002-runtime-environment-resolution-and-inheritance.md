@@ -70,4 +70,4 @@ layer, not how streams merge.
   done" inside the resolver.
 - Tasks cannot inherit from other tasks. Share a component, or repeat
   `envFile` / `env:`.
-- Invalid keys fail every env-selecting command, including offline plan.
+- Invalid keys fail every env-selecting command.
