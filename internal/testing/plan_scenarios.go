@@ -31,7 +31,6 @@ import (
 	"deployah.dev/deployah/internal/k8s"
 	"deployah.dev/deployah/internal/plan"
 	"deployah.dev/deployah/internal/spec"
-	"deployah.dev/deployah/internal/testing/helmfixture"
 
 	v1 "helm.sh/helm/v4/pkg/release/v1"
 )
@@ -245,7 +244,7 @@ func renderManifestFile(t *testing.T, dir, filename string) manifestSide {
 	bundle, loadErr := extras.LoadFromSpec(specPath, manifest, platform, envName, fixtureNamespace, nil)
 	require.NoError(t, loadErr)
 
-	result, err := helmfixture.Render(t, fixtureNamespace, resolved, bundle.PostRendererFor(), bundle.CRDs)
+	result, err := renderFixtureChart(t, resolved, bundle.PostRendererFor(), bundle.CRDs)
 	require.NoError(t, err)
 
 	return manifestSide{

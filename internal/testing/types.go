@@ -32,7 +32,6 @@ import (
 	"deployah.dev/deployah/internal/extras"
 	"deployah.dev/deployah/internal/k8s"
 	"deployah.dev/deployah/internal/spec"
-	"deployah.dev/deployah/internal/testing/helmfixture"
 
 	yamlutil "k8s.io/apimachinery/pkg/util/yaml"
 )
@@ -237,10 +236,9 @@ func (suite *IntegrationTestSuite) loadAndResolve(t *testing.T, scenario TestSce
 	return manifest, envName, resolved, platform, nil
 }
 
-// renderChart renders fixture manifests without Kubernetes access via
-// [helmfixture.Render], returning the resulting Kubernetes objects. Extra
-// manifests from .deployah/ under testDir are appended via the Helm
-// post-renderer.
+// renderChart renders fixture manifests without Kubernetes access,
+// returning the resulting Kubernetes objects. Extra manifests from
+// .deployah/ under testDir are appended via the Helm post-renderer.
 func (suite *IntegrationTestSuite) renderChart(t *testing.T, testDir string, manifest *spec.Spec, environment string, resolved *spec.ResolvedSpec, platform *spec.PlatformConfig) ([]unstructured.Unstructured, error) {
 	t.Helper()
 
@@ -250,7 +248,7 @@ func (suite *IntegrationTestSuite) renderChart(t *testing.T, testDir string, man
 		return nil, fmt.Errorf("load extras: %w", loadErr)
 	}
 
-	result, err := helmfixture.Render(t, fixtureNamespace, resolved, bundle.PostRendererFor(), bundle.CRDs)
+	result, err := renderFixtureChart(t, resolved, bundle.PostRendererFor(), bundle.CRDs)
 	if err != nil {
 		return nil, fmt.Errorf("render chart: %w", err)
 	}

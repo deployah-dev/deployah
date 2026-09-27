@@ -134,10 +134,10 @@ func HasSelfSignedComponents(resolved *spec.ResolvedSpec) bool {
 }
 
 // MaterializeSelfSignedTLS fills TLSCertPEM/TLSKeyPEM on every resolved
-// component whose TLSMode is selfSigned. Call it once per CLI invocation,
-// before any chart render, so the plan render, apply-time verification
-// render, and real apply all see identical certificate bytes. Pass a nil
-// client to generate fresh certificates without cluster access.
+// component whose TLSMode is selfSigned. Call it once per CLI invocation
+// before chart rendering so every render and any subsequent Helm operation
+// in that invocation sees the same certificate bytes. Pass a nil client to
+// generate fresh certificates without cluster access.
 func MaterializeSelfSignedTLS(ctx context.Context, client kubernetes.Interface, namespace string, resolved *spec.ResolvedSpec) error {
 	if resolved == nil {
 		return nil

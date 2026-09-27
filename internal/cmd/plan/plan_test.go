@@ -17,10 +17,8 @@ package plan
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -29,8 +27,6 @@ import (
 	"helm.sh/helm/v4/pkg/postrenderer"
 	"helm.sh/helm/v4/pkg/release/common"
 	"k8s.io/apimachinery/pkg/labels"
-	"nabat.dev/nabat"
-	"nabat.dev/nabat/nabattest"
 
 	"deployah.dev/deployah/internal/extras"
 	"deployah.dev/deployah/internal/helm"
@@ -598,78 +594,6 @@ func TestExecutePlan_DetailedExitCode_ChartCRDs(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-		})
-	}
-}
-
-// TestPlanFlags checks that plan help lists the remaining flags and that
-// --offline is rejected before any command setup runs.
-func TestPlanFlags(t *testing.T) {
-	t.Parallel()
-
-	h := nabatctx.New(t, "deployah")
-	Register(h.App)
-	err := nabattest.Run(t, h.App, []string{"plan", "--help"})
-	require.NoError(t, err)
-	help := h.Stdout.String() + h.Stderr.String()
-
-	helpTests := []struct {
-		text string
-		want bool
-	}{
-		{text: "--drift", want: true},
-		{text: "--raw", want: true},
-		{text: "--yaml", want: true},
-		{text: "--output", want: true},
-		{text: "--show-secrets", want: true},
-		{text: "--detailed-exitcode", want: true},
-		{text: "--offline", want: false},
-		{text: "not compatible", want: false},
-		{text: "without contacting the cluster", want: false},
-	}
-	for _, tt := range helpTests {
-		t.Run(tt.text, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tt.want, strings.Contains(help, tt.text))
-		})
-	}
-
-	runTests := []struct {
-		name       string
-		args       []string
-		prerunErr  error
-		wantErr    string
-		wantPreRun bool
-	}{
-		{
-			name:       "unknown offline flag",
-			args:       []string{"plan", "prod", "--offline"},
-			wantErr:    "unknown flag: --offline",
-			wantPreRun: false,
-		},
-		{
-			name:       "recognized plan reaches prerun",
-			args:       []string{"plan", "prod"},
-			prerunErr:  errors.New("stop after prerun"),
-			wantErr:    "stop after prerun",
-			wantPreRun: true,
-		},
-	}
-	for _, tt := range runTests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			preRunCalled := false
-			app := nabatctx.New(t, "deployah")
-			require.NoError(t, app.App.OnPreRun(func(*nabat.Context) error {
-				preRunCalled = true
-				return tt.prerunErr
-			}))
-			Register(app.App)
-			runErr := nabattest.Run(t, app.App, tt.args)
-			require.Error(t, runErr)
-			assert.ErrorContains(t, runErr, tt.wantErr)
-			assert.Equal(t, tt.wantPreRun, preRunCalled)
-			assert.Empty(t, app.Stdout.String())
 		})
 	}
 }

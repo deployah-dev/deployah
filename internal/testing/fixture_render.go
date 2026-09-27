@@ -1,4 +1,4 @@
-// Copyright 2025 The Deployah Authors
+// Copyright 2026 The Deployah Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,9 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package helmfixture is test infrastructure for rendering charts without
-// Kubernetes access.
-package helmfixture
+package testing
 
 import (
 	"fmt"
@@ -34,18 +32,19 @@ import (
 	v1 "helm.sh/helm/v4/pkg/release/v1"
 )
 
-// chartCacheTTL is how long a prepared chart may be reused during one test.
-const chartCacheTTL = time.Hour
+// fixtureChartCache reuses prepared charts for the test process.
+// [helm.PrepareChart] returns a per-render copy; callers delete only that
+// copy. The cache keeps its backing directories.
+var fixtureChartCache = helm.NewChartCache(time.Hour)
 
-// Render renders resolved as a fresh Helm install without Kubernetes access,
-// for test fixtures. The chart comes from [helm.PrepareChart]; Helm renders
-// it with a client-only install dry run in namespace. Cleanup removes the
-// per-render chart copy when tb finishes. The cache backing directory stays
-// in the temp dir.
-func Render(tb testing.TB, namespace string, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer, crds []extras.RawFile) (*render.RenderResult, error) {
+// renderFixtureChart renders resolved as a fresh Helm install in
+// [fixtureNamespace] without Kubernetes access. The chart comes from
+// [helm.PrepareChart]. Helm renders it with a client-only install dry run.
+// Cleanup removes the per-render chart copy when tb finishes.
+func renderFixtureChart(tb testing.TB, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer, crds []extras.RawFile) (*render.RenderResult, error) {
 	tb.Helper()
 
-	chartPath, err := helm.PrepareChart(tb.Context(), resolved, helm.NewChartCache(chartCacheTTL), crds)
+	chartPath, err := helm.PrepareChart(tb.Context(), resolved, fixtureChartCache, crds)
 	if err != nil {
 		return nil, fmt.Errorf("prepare chart: %w", err)
 	}
@@ -63,7 +62,7 @@ func Render(tb testing.TB, namespace string, resolved *spec.ResolvedSpec, postRe
 	releaseName := helm.GenerateReleaseName(resolved.Spec.Project, resolved.Env.Original)
 	install := action.NewInstall(action.NewConfiguration())
 	install.ReleaseName = releaseName
-	install.Namespace = namespace
+	install.Namespace = fixtureNamespace
 	install.DryRunStrategy = action.DryRunClient
 	install.DisableOpenAPIValidation = true
 	install.PostRenderer = postRenderer
