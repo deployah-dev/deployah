@@ -101,26 +101,6 @@ func (m *MockHelmClient) RenderManifests(ctx context.Context, resolved *spec.Res
 	return result, cleanup, nil
 }
 
-// RenderOffline implements [HelmClient].
-func (m *MockHelmClient) RenderOffline(ctx context.Context, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer, crds []extras.RawFile) (*render.RenderResult, func(), error) {
-	args := m.Called(ctx, resolved, postRenderer, crds)
-	if err := args.Error(2); err != nil {
-		return nil, func() {}, err
-	}
-	if args.Get(0) == nil {
-		return nil, func() {}, errors.New("mock: render result not set")
-	}
-	result, ok := args.Get(0).(*render.RenderResult)
-	if !ok {
-		return nil, func() {}, fmt.Errorf("unexpected mock return type %T", args.Get(0))
-	}
-	cleanup, cleanupOK := args.Get(1).(func())
-	if !cleanupOK || cleanup == nil {
-		cleanup = func() {}
-	}
-	return result, cleanup, nil
-}
-
 // DeleteRelease implements [HelmClient].
 func (m *MockHelmClient) DeleteRelease(ctx context.Context, project, environment string, wait bool) error {
 	args := m.Called(ctx, project, environment, wait)

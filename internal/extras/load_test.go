@@ -596,8 +596,8 @@ metadata:
 	assert.Contains(t, err.Error(), "install that API on the cluster first")
 }
 
-// TestLoad_OfflineAllowsUnknownType lets plan --offline load custom
-// resources without discovery (scope defaults to namespaced).
+// TestLoad_OfflineAllowsUnknownType loads custom resources without
+// discovery when Offline is set (scope defaults to namespaced).
 func TestLoad_OfflineAllowsUnknownType(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

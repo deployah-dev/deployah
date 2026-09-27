@@ -17,8 +17,10 @@ package plan
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,6 +29,8 @@ import (
 	"helm.sh/helm/v4/pkg/postrenderer"
 	"helm.sh/helm/v4/pkg/release/common"
 	"k8s.io/apimachinery/pkg/labels"
+	"nabat.dev/nabat"
+	"nabat.dev/nabat/nabattest"
 
 	"deployah.dev/deployah/internal/extras"
 	"deployah.dev/deployah/internal/helm"
@@ -41,17 +45,14 @@ import (
 )
 
 // stubHelmClient implements [session.HelmClient] for plan command tests.
-// Only the methods runOnline and runOffline actually call are wired; every
-// other method panics if invoked unexpectedly, matching the pattern in
+// Only the methods executePlan actually calls are wired; every other method
+// panics if invoked unexpectedly, matching the pattern in
 // internal/cmd/deploy/deploy_test.go.
 type stubHelmClient struct {
 	reachableErr error
 
 	renderResult *render.RenderResult
 	renderErr    error
-
-	offlineResult *render.RenderResult
-	offlineErr    error
 
 	history    []*v1.Release
 	historyErr error
@@ -64,13 +65,6 @@ func (s *stubHelmClient) RenderManifests(context.Context, *spec.ResolvedSpec, po
 		return nil, nil, s.renderErr
 	}
 	return s.renderResult, func() {}, nil
-}
-
-func (s *stubHelmClient) RenderOffline(context.Context, *spec.ResolvedSpec, postrenderer.PostRenderer, []extras.RawFile) (*render.RenderResult, func(), error) {
-	if s.offlineErr != nil {
-		return nil, nil, s.offlineErr
-	}
-	return s.offlineResult, func() {}, nil
 }
 
 func (s *stubHelmClient) GetReleaseHistory(context.Context, string, string) ([]*v1.Release, error) {
@@ -202,11 +196,11 @@ func renderResult(manifest string) *render.RenderResult {
 	}
 }
 
-// TestRunOnline covers the common online plan paths: fresh install, image
+// TestExecutePlan covers the common plan paths: fresh install, image
 // bump, add/remove, no-op, detailed-exitcode, secret masking, and failed-
-// latest-revision warnings. Drift stream discipline and --offline keep
-// their own tests because they need different IO / session wiring.
-func TestRunOnline(t *testing.T) {
+// latest-revision warnings. Drift stream discipline keeps its own test
+// because it needs different IO wiring.
+func TestExecutePlan(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -303,7 +297,7 @@ func TestRunOnline(t *testing.T) {
 			opts := testOptions()
 			opts.DetailedExitCode = tt.detailed
 
-			err := runOnline(h.Context, sess, nil, testManifest(), opts, testResolved(nil))
+			err := executePlan(h.Context, sess, nil, testManifest(), opts, testResolved(nil))
 			if tt.wantErrIs != nil {
 				require.Error(t, err)
 				assert.ErrorIs(t, err, tt.wantErrIs)
@@ -321,10 +315,10 @@ func TestRunOnline(t *testing.T) {
 	}
 }
 
-// TestRunOnline_DriftOnFreshInstall_NoStdoutFootprint verifies --drift on a
+// TestExecutePlan_DriftOnFreshInstall_NoStdoutFootprint verifies --drift on a
 // fresh install prints its explanation to stderr (via checkDrift's
 // c.Info), not stdout, and never touches the cluster's REST config.
-func TestRunOnline_DriftOnFreshInstall_NoStdoutFootprint(t *testing.T) {
+func TestExecutePlan_DriftOnFreshInstall_NoStdoutFootprint(t *testing.T) {
 	t.Parallel()
 	stub := &stubHelmClient{
 		historyErr:   helm.ErrReleaseNotFound,
@@ -336,7 +330,7 @@ func TestRunOnline_DriftOnFreshInstall_NoStdoutFootprint(t *testing.T) {
 
 	opts := testOptions()
 	opts.Drift = true
-	err := runOnline(h.Context, sess, nil, testManifest(), opts, testResolved(nil))
+	err := executePlan(h.Context, sess, nil, testManifest(), opts, testResolved(nil))
 	require.NoError(t, err, "checkDrift must short-circuit cleanly without a working cluster config")
 
 	assert.NotContains(t, h.Stdout.String(), "Drift (cluster changed outside deployah):",
@@ -345,26 +339,6 @@ func TestRunOnline_DriftOnFreshInstall_NoStdoutFootprint(t *testing.T) {
 		"the explanation must not appear in the captured diff body")
 	assert.Contains(t, h.Stderr.String(), "no-op on a fresh install",
 		"the explanation belongs on stderr, via c.Info")
-}
-
-// TestRunOffline_RendersResourceCount verifies --offline reports a resource
-// count instead of a diff and never contacts release history.
-func TestRunOffline_RendersResourceCount(t *testing.T) {
-	t.Parallel()
-	stub := &stubHelmClient{
-		offlineResult: renderResult(deploymentV1 + "---\n" + configMap),
-	}
-	sess := sessionWithStub(stub)
-	h := nabatctx.New(t, "test")
-	h.Context.SetContext(session.WithContext(h.Context.Context(), sess))
-
-	opts := testOptions()
-	opts.Offline = true
-	err := runOffline(h.Context, sess, nil, testManifest(), opts, nil)
-
-	require.NoError(t, err)
-	assert.Contains(t, h.Stdout.String(), "Rendered 2 resources for environment 'production' (no cluster comparison).")
-	assert.Contains(t, h.Stdout.String(), "validation: OK")
 }
 
 func writePlanExtras(t *testing.T, dir, relative, content string) {
@@ -379,13 +353,13 @@ func writePlanCRDFile(t *testing.T, dir, name, body string) {
 	writePlanExtras(t, dir, filepath.Join(".deployah", "crds", name), body)
 }
 
-func TestRunOffline_LoadExtrasError(t *testing.T) {
+func TestExecutePlan_LoadExtrasError(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	specPath := filepath.Join(dir, "deployah.yaml")
 	writePlanExtras(t, dir, "deployah.yaml", "apiVersion: deployah.dev/v1-alpha.4\nproject: web\n")
 	writePlanExtras(t, dir, ".deployah/manifests/bad.yaml", "not: [valid")
-	stub := &stubHelmClient{offlineResult: renderResult(deploymentV1)}
+	stub := &stubHelmClient{renderResult: renderResult(deploymentV1)}
 	sess := session.New(
 		session.WithSpecPath(specPath),
 		session.WithHelmFactory(func(*target.Target, session.HelmConfig) (session.HelmClient, error) {
@@ -393,39 +367,15 @@ func TestRunOffline_LoadExtrasError(t *testing.T) {
 		}),
 	)
 	h := nabatctx.New(t, "test")
-	opts := testOptions()
-	opts.Offline = true
 
-	err := runOffline(h.Context, sess, nil, testManifest(), opts, nil)
+	err := executePlan(h.Context, sess, nil, testManifest(), testOptions(), testResolved(nil))
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "load extras")
+	assert.ErrorContains(t, err, "load extras")
 }
 
 const planCRDBody = "kind: CustomResourceDefinition\nmetadata:\n  name: widgets.example.com\n"
 
-func TestRunOffline_PrintsCRDs(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	specPath := filepath.Join(dir, "deployah.yaml")
-	writePlanExtras(t, dir, "deployah.yaml", "apiVersion: deployah.dev/v1-alpha.4\nproject: web\n")
-	writePlanCRDFile(t, dir, "widget.yaml", planCRDBody)
-	stub := &stubHelmClient{offlineResult: renderResult(deploymentV1)}
-	sess := session.New(
-		session.WithSpecPath(specPath),
-		session.WithHelmFactory(func(*target.Target, session.HelmConfig) (session.HelmClient, error) {
-			return stub, nil
-		}),
-	)
-	h := nabatctx.New(t, "test")
-	opts := testOptions()
-	opts.Offline = true
-
-	err := runOffline(h.Context, sess, nil, testManifest(), opts, nil)
-	require.NoError(t, err)
-	assert.Contains(t, h.Stdout.String(), "CustomResourceDefinition/widgets.example.com")
-}
-
-func TestRunOnline_PrintsCRDs(t *testing.T) {
+func TestExecutePlan_PrintsCRDs(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	specPath := filepath.Join(dir, "deployah.yaml")
@@ -444,7 +394,7 @@ func TestRunOnline_PrintsCRDs(t *testing.T) {
 	h := nabatctx.New(t, "test")
 	h.Context.SetContext(session.WithContext(h.Context.Context(), sess))
 
-	err := runOnline(h.Context, sess, nil, testManifest(), testOptions(), testResolved(nil))
+	err := executePlan(h.Context, sess, nil, testManifest(), testOptions(), testResolved(nil))
 	require.NoError(t, err)
 	got := h.Stdout.String()
 	assert.Contains(t, got, "+ CustomResourceDefinition/widgets.example.com")
@@ -453,7 +403,7 @@ func TestRunOnline_PrintsCRDs(t *testing.T) {
 	assert.NotContains(t, got, "CRD files to process")
 }
 
-func TestRunOnline_PrintsCRDsOnUpgrade(t *testing.T) {
+func TestExecutePlan_PrintsCRDsOnUpgrade(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name    string
@@ -498,7 +448,7 @@ func TestRunOnline_PrintsCRDsOnUpgrade(t *testing.T) {
 			h := nabatctx.New(t, "test")
 			h.Context.SetContext(session.WithContext(h.Context.Context(), sess))
 
-			err := runOnline(h.Context, sess, nil, testManifest(), testOptions(), testResolved(nil))
+			err := executePlan(h.Context, sess, nil, testManifest(), testOptions(), testResolved(nil))
 			require.NoError(t, err)
 			got := h.Stdout.String()
 			assert.Contains(t, got, "CustomResourceDefinition/widgets.example.com")
@@ -509,7 +459,7 @@ func TestRunOnline_PrintsCRDsOnUpgrade(t *testing.T) {
 	}
 }
 
-func TestRunOnline_JSONStdoutUnmarshalsWithCRDs(t *testing.T) {
+func TestExecutePlan_JSONStdoutUnmarshalsWithCRDs(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name        string
@@ -546,7 +496,7 @@ func TestRunOnline_JSONStdoutUnmarshalsWithCRDs(t *testing.T) {
 			opts := testOptions()
 			opts.OutputFormat = outputFormatJSON
 
-			err := runOnline(h.Context, sess, nil, testManifest(), opts, testResolved(nil))
+			err := executePlan(h.Context, sess, nil, testManifest(), opts, testResolved(nil))
 			require.NoError(t, err)
 			stdout := h.Stdout.String()
 			var doc map[string]any
@@ -603,7 +553,7 @@ func TestOutputPlan_JSONSkipCRDsStdoutUnmarshals(t *testing.T) {
 	assert.NotContains(t, entry, "api_version")
 }
 
-func TestRunOnline_DetailedExitCode_ChartCRDs(t *testing.T) {
+func TestExecutePlan_DetailedExitCode_ChartCRDs(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name      string
@@ -642,12 +592,84 @@ func TestRunOnline_DetailedExitCode_ChartCRDs(t *testing.T) {
 			h.Context.SetContext(session.WithContext(h.Context.Context(), sess))
 			opts := testOptions()
 			opts.DetailedExitCode = true
-			err := runOnline(h.Context, sess, nil, testManifest(), opts, testResolved(nil))
+			err := executePlan(h.Context, sess, nil, testManifest(), opts, testResolved(nil))
 			if tc.wantErrIs != nil {
 				require.ErrorIs(t, err, tc.wantErrIs)
 				return
 			}
 			require.NoError(t, err)
+		})
+	}
+}
+
+// TestPlanFlags checks that plan help lists the remaining flags and that
+// --offline is rejected before any command setup runs.
+func TestPlanFlags(t *testing.T) {
+	t.Parallel()
+
+	h := nabatctx.New(t, "deployah")
+	Register(h.App)
+	err := nabattest.Run(t, h.App, []string{"plan", "--help"})
+	require.NoError(t, err)
+	help := h.Stdout.String() + h.Stderr.String()
+
+	helpTests := []struct {
+		text string
+		want bool
+	}{
+		{text: "--drift", want: true},
+		{text: "--raw", want: true},
+		{text: "--yaml", want: true},
+		{text: "--output", want: true},
+		{text: "--show-secrets", want: true},
+		{text: "--detailed-exitcode", want: true},
+		{text: "--offline", want: false},
+		{text: "not compatible", want: false},
+		{text: "without contacting the cluster", want: false},
+	}
+	for _, tt := range helpTests {
+		t.Run(tt.text, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, strings.Contains(help, tt.text))
+		})
+	}
+
+	runTests := []struct {
+		name       string
+		args       []string
+		prerunErr  error
+		wantErr    string
+		wantPreRun bool
+	}{
+		{
+			name:       "unknown offline flag",
+			args:       []string{"plan", "prod", "--offline"},
+			wantErr:    "unknown flag: --offline",
+			wantPreRun: false,
+		},
+		{
+			name:       "recognized plan reaches prerun",
+			args:       []string{"plan", "prod"},
+			prerunErr:  errors.New("stop after prerun"),
+			wantErr:    "stop after prerun",
+			wantPreRun: true,
+		},
+	}
+	for _, tt := range runTests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			preRunCalled := false
+			app := nabatctx.New(t, "deployah")
+			require.NoError(t, app.App.OnPreRun(func(*nabat.Context) error {
+				preRunCalled = true
+				return tt.prerunErr
+			}))
+			Register(app.App)
+			runErr := nabattest.Run(t, app.App, tt.args)
+			require.Error(t, runErr)
+			assert.ErrorContains(t, runErr, tt.wantErr)
+			assert.Equal(t, tt.wantPreRun, preRunCalled)
+			assert.Empty(t, app.Stdout.String())
 		})
 	}
 }

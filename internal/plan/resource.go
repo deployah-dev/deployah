@@ -93,18 +93,6 @@ func parseResources(manifest string) ([]resourceDoc, error) {
 	return out, nil
 }
 
-// CountResources reports how many Kubernetes resources a rendered manifest
-// contains, using the same parsing [ComputeDiff] uses. `deployah plan
-// --offline` has no prior release to diff against, so it reports this count
-// instead of a per-resource change list.
-func CountResources(manifest string) (int, error) {
-	docs, err := parseResources(manifest)
-	if err != nil {
-		return 0, err
-	}
-	return len(docs), nil
-}
-
 // ResourceYAML is one Kubernetes resource extracted from a rendered
 // manifest, re-encoded as a standalone single-document YAML string.
 type ResourceYAML struct {

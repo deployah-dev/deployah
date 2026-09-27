@@ -15,7 +15,6 @@
 package testing
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -31,15 +30,19 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"deployah.dev/deployah/internal/extras"
-	"deployah.dev/deployah/internal/helm"
 	"deployah.dev/deployah/internal/k8s"
 	"deployah.dev/deployah/internal/spec"
+	"deployah.dev/deployah/internal/testing/helmfixture"
 
 	yamlutil "k8s.io/apimachinery/pkg/util/yaml"
 )
 
 // TestScenariosDir is the directory containing integration test scenarios.
 var TestScenariosDir = getTestScenariosDir()
+
+// fixtureNamespace is the release namespace used when rendering scenario
+// charts, so goldens stay stable without a kubeconfig context.
+const fixtureNamespace = "default"
 
 // getTestScenariosDir finds the test scenarios directory
 func getTestScenariosDir() string {
@@ -223,10 +226,10 @@ func (suite *IntegrationTestSuite) loadAndResolve(t *testing.T, scenario TestSce
 		return nil, "", nil, platform, err
 	}
 
-	// Materialize self-signed TLS certs offline (no cluster access),
-	// matching `deployah plan --offline`. Without this, a selfSigned
-	// expose scenario fails render with "certificate not materialized
-	// before render".
+	// Materialize self-signed TLS certs without cluster access so selfSigned
+	// expose scenarios can render. Without this, a selfSigned expose
+	// scenario fails render with "certificate not materialized before
+	// render".
 	if tlsErr := k8s.MaterializeSelfSignedTLS(ctx, nil, "", resolved); tlsErr != nil {
 		return nil, "", nil, platform, tlsErr
 	}
@@ -234,31 +237,20 @@ func (suite *IntegrationTestSuite) loadAndResolve(t *testing.T, scenario TestSce
 	return manifest, envName, resolved, platform, nil
 }
 
-// renderChart renders manifest/environment through Helm's real template
-// engine via [helm.Client.RenderOffline] (no cluster access, matching
-// `deployah plan --offline`), returning the resulting Kubernetes objects.
-// Extra manifests from .deployah/ under testDir are appended via the Helm
+// renderChart renders fixture manifests without Kubernetes access via
+// [helmfixture.Render], returning the resulting Kubernetes objects. Extra
+// manifests from .deployah/ under testDir are appended via the Helm
 // post-renderer.
 func (suite *IntegrationTestSuite) renderChart(t *testing.T, testDir string, manifest *spec.Spec, environment string, resolved *spec.ResolvedSpec, platform *spec.PlatformConfig) ([]unstructured.Unstructured, error) {
 	t.Helper()
 
-	// Pin the release namespace so goldens stay stable regardless of
-	// HELM_NAMESPACE or the ambient kubeconfig context.
-	client, err := helm.NewClient(helm.WithNamespace("default"))
-	if err != nil {
-		return nil, fmt.Errorf("create helm client: %w", err)
-	}
-
 	specPath := filepath.Join(testDir, "deployah.yaml")
-	bundle, loadErr := extras.LoadFromSpec(specPath, manifest, platform, environment, client.Namespace(), nil)
+	bundle, loadErr := extras.LoadFromSpec(specPath, manifest, platform, environment, fixtureNamespace, nil)
 	if loadErr != nil {
 		return nil, fmt.Errorf("load extras: %w", loadErr)
 	}
 
-	result, cleanup, err := client.RenderOffline(context.Background(), resolved, bundle.PostRendererFor(), bundle.CRDs)
-	if cleanup != nil {
-		t.Cleanup(cleanup)
-	}
+	result, err := helmfixture.Render(t, fixtureNamespace, resolved, bundle.PostRendererFor(), bundle.CRDs)
 	if err != nil {
 		return nil, fmt.Errorf("render chart: %w", err)
 	}

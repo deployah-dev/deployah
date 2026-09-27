@@ -340,30 +340,13 @@ func scheduledTaskNamed(name string) *spec.Spec {
 
 func renderScheduledCronJob(t *testing.T, manifest *spec.Spec, env, taskName string) *batchv1.CronJob {
 	t.Helper()
-	result, cleanup, err := renderOfflineScheduled(t, manifest, env)
-	require.NoError(t, err)
-	if cleanup != nil {
-		t.Cleanup(cleanup)
-	}
+	result := renderFreshInstall(t, resolveChart(t, manifest, env), nil)
 	for _, h := range result.Hooks {
 		if h != nil && strings.Contains(h.Manifest, "kind: CronJob") {
 			t.Fatalf("scheduled CronJob must not be a Helm hook")
 		}
 	}
 	return cronJobFromManifest(t, result.Manifest, taskName)
-}
-
-func renderOfflineScheduled(t *testing.T, manifest *spec.Spec, env string) (*render.RenderResult, func(), error) {
-	t.Helper()
-	if manifest.SpecDir == "" {
-		manifest.SpecDir = t.TempDir()
-	}
-	require.NoError(t, spec.FillSpecWithDefaults(manifest, spec.CurrentManifestVersion))
-	resolved, _, err := spec.Resolve(manifest, nil, spec.NormalizeEnv(env), spec.SubstitutionReport{})
-	require.NoError(t, err)
-	client, err := NewClient(WithNamespace("default"))
-	require.NoError(t, err)
-	return client.RenderOffline(t.Context(), resolved, nil, nil)
 }
 
 func mustRenderScheduled(t *testing.T, manifest *spec.Spec, env, releaseName, kubeVersion string) *render.RenderResult {

@@ -27,6 +27,8 @@ import (
 
 	"deployah.dev/deployah/internal/extras"
 	"deployah.dev/deployah/internal/spec"
+
+	chart "helm.sh/helm/v4/pkg/chart/v2"
 )
 
 func resolvedForChartCRDs(t *testing.T) *spec.ResolvedSpec {
@@ -408,7 +410,7 @@ func TestPrepareChart_MaterializeFailureRemovesCopyLeavesBacking(t *testing.T) {
 	assert.Zero(t, leftovers, "failed materialization must RemoveAll the chart copy")
 }
 
-func TestRenderOffline_ChartCRDObjectsMatchPassedFiles(t *testing.T) {
+func TestPrepareAndLoadChart_CRDObjectsMatchPassedFiles(t *testing.T) {
 	t.Parallel()
 	client, err := NewClient(WithNamespace("default"))
 	require.NoError(t, err)
@@ -417,15 +419,33 @@ func TestRenderOffline_ChartCRDObjectsMatchPassedFiles(t *testing.T) {
 		{Path: "widgets.yaml", Raw: []byte(widgetCRD("widgets.example.com", ""))},
 		{Path: "types.yaml", Raw: []byte(widgetCRD("gadgets.example.com", ""))},
 	}
-	result, cleanup, err := client.RenderOffline(t.Context(), resolved, nil, crds)
+	ch, chartPath, cleanup, err := client.prepareAndLoadChart(t.Context(), resolved, crds)
 	if cleanup != nil {
 		t.Cleanup(cleanup)
 	}
 	require.NoError(t, err)
-	require.NotEmpty(t, result.ChartPath)
+	require.NotEmpty(t, chartPath)
 
-	ch, err := loader.Load(result.ChartPath)
-	require.NoError(t, err)
+	loaded, loadErr := loader.Load(chartPath)
+	require.NoError(t, loadErr)
+
+	charts := []struct {
+		name string
+		ch   *chart.Chart
+	}{
+		{name: "prepared", ch: ch},
+		{name: "reloaded", ch: loaded},
+	}
+	for _, tt := range charts {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assertPassedCRDFiles(t, tt.ch)
+		})
+	}
+}
+
+func assertPassedCRDFiles(t *testing.T, ch *chart.Chart) {
+	t.Helper()
 	got := ch.CRDObjects()
 	require.Len(t, got, 2)
 	byName := make(map[string]string, len(got))

@@ -62,13 +62,7 @@ func TestRenderDeployment_EnvConfigMapAndOverlappingEnv(t *testing.T) {
 	assert.Equal(t, map[string]string{"LOG_LEVEL": "info", "REGION": "eu"}, resolved.Components["api"].Runtime.FileValues)
 	assert.Equal(t, map[string]string{"LOG_LEVEL": "debug", "NOTE": "{{ .Release.Name }}"}, resolved.Components["api"].Runtime.ExplicitValues)
 
-	client, err := NewClient(WithNamespace("default"))
-	require.NoError(t, err)
-	result, cleanup, err := client.RenderOffline(t.Context(), resolved, nil, nil)
-	require.NoError(t, err)
-	if cleanup != nil {
-		t.Cleanup(cleanup)
-	}
+	result := renderFreshInstall(t, resolved, nil)
 
 	cm := findRenderedConfigMap(t, result.Manifest, "-api-env")
 	assert.Equal(t, map[string]string{"LOG_LEVEL": "info", "REGION": "eu"}, cm.Data)
@@ -305,13 +299,7 @@ func TestHelmHook_EnvConfigMapWeightAndDeletePolicy(t *testing.T) {
 	assert.Equal(t, 0, resolved.Tasks["migrate"].HookWeight)
 	assert.Equal(t, 1, resolved.Tasks["seed"].HookWeight)
 
-	client, err := NewClient(WithNamespace("default"))
-	require.NoError(t, err)
-	result, cleanup, err := client.RenderOffline(t.Context(), resolved, nil, nil)
-	require.NoError(t, err)
-	if cleanup != nil {
-		t.Cleanup(cleanup)
-	}
+	result := renderFreshInstall(t, resolved, nil)
 
 	migrateCM := hookBySuffix(t, result, "ConfigMap", "-migrate-env")
 	seedCM := hookBySuffix(t, result, "ConfigMap", "-seed-env")
@@ -346,13 +334,7 @@ func TestHelmHook_EnvConfigMapWeightFollowsJob(t *testing.T) {
 	rt.HookWeight = 4
 	resolved.Tasks["migrate"] = rt
 
-	client, err := NewClient(WithNamespace("default"))
-	require.NoError(t, err)
-	result, cleanup, err := client.RenderOffline(t.Context(), resolved, nil, nil)
-	require.NoError(t, err)
-	if cleanup != nil {
-		t.Cleanup(cleanup)
-	}
+	result := renderFreshInstall(t, resolved, nil)
 
 	cm := hookBySuffix(t, result, "ConfigMap", "-migrate-env")
 	job := hookBySuffix(t, result, "Job", "-migrate")
@@ -426,13 +408,7 @@ func envServiceSpec(dir string, env spec.StringMap) *spec.Spec {
 func renderEnvManifest(t *testing.T, m *spec.Spec, env string) *render.RenderResult {
 	t.Helper()
 	resolved := resolveChart(t, m, env)
-	client, err := NewClient(WithNamespace("default"))
-	require.NoError(t, err)
-	result, cleanup, err := client.RenderOffline(t.Context(), resolved, nil, nil)
-	require.NoError(t, err)
-	if cleanup != nil {
-		t.Cleanup(cleanup)
-	}
+	result := renderFreshInstall(t, resolved, nil)
 	return result
 }
 

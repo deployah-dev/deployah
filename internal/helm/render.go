@@ -32,8 +32,7 @@ import (
 )
 
 // RenderManifests renders the chart from [spec.ResolvedSpec] client-side.
-// The cluster must be reachable. Use [Client.RenderOffline] when there is
-// no Kubernetes API access. Callers must run the returned cleanup func.
+// The cluster must be reachable. Callers must run the returned cleanup func.
 func (c *Client) RenderManifests(ctx context.Context, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer, crds []extras.RawFile) (*render.RenderResult, func(), error) {
 	result, _, cleanup, err := c.RenderManifestsWithPrep(ctx, resolved, postRenderer, crds)
 	return result, cleanup, err
@@ -75,31 +74,6 @@ func (c *Client) RenderManifestsWithPrep(ctx context.Context, resolved *spec.Res
 	}
 	result.ChartPath = chartPath
 	return result, prep, cleanup, nil
-}
-
-// RenderOffline renders the chart from [spec.ResolvedSpec] as a fresh
-// install without Kubernetes API access. A nil or unresolved spec is an
-// error. Callers must run the returned cleanup func.
-func (c *Client) RenderOffline(ctx context.Context, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer, crds []extras.RawFile) (result *render.RenderResult, cleanup func(), err error) {
-	releaseName, labels, err := releaseIdentity(resolved)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	ch, chartPath, cleanup, err := c.prepareAndLoadChart(ctx, resolved, crds)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	values := map[string]any{}
-
-	result, err = c.renderInstall(ctx, releaseName, ch, values, labels, postRenderer)
-	if err != nil {
-		cleanup()
-		return nil, nil, err
-	}
-	result.ChartPath = chartPath
-	return result, cleanup, nil
 }
 
 // prepareAndLoadChart generates or caches the Helm chart from resolved

@@ -275,14 +275,15 @@ The spec is a smaller surface than the Kubernetes API on purpose, so step 2 adds
 fields you did not write. You can read the result before anything is applied:
 
 ```sh
-deployah plan <environment> --offline --raw --yaml
+deployah plan <environment> --raw --yaml
 ```
 
-`--offline` renders without touching a cluster, `--raw` prints raw Kubernetes
-field paths instead of the compact Deployah vocabulary, and `--yaml` shows
-changed fields as YAML blocks. For the resolved hostname, TLS mode, context,
-and runtime environment, use `deployah resolve <environment>` (also offline,
-`--output json` for machine-readable output).
+`deployah plan` renders the chart and compares it with the release on your
+cluster, so it needs cluster access. `--raw` prints raw Kubernetes field paths
+instead of the compact Deployah vocabulary, and `--yaml` shows changed fields
+as YAML blocks. For the resolved hostname, TLS mode, context, and runtime
+environment without a cluster, use `deployah resolve <environment>`
+(`--output json` for machine-readable output).
 
 For how Deployah compares to similar tools (DevSpace, Werf, Score, Epinio,
 Kubero), see [docs/comparison.md](docs/comparison.md).
@@ -422,7 +423,7 @@ These work with every command:
 | `deployah validate <environment>` | Also load the platform file and check the resolved configuration for that environment. |
 | `deployah resolve <environment>` | Preview the fully resolved hostname, TLS mode, context, and runtime environment, offline. Prints FileValues and ExplicitValues; do not treat the output as secret-safe CI output. Use `--output json` for machine-readable output. |
 | `deployah resolve --environments` | List every environment from both files: where it is registered, its context (or the kubeconfig fallback), domains, and overrides. |
-| `deployah plan <environment>` | Inspect changes for an environment, without applying anything. Extra manifests from `.deployah/manifests/` appear in the diff; CRD files from `.deployah/crds/` are listed with Helm's install-only lifecycle, not applied. Use `--offline` to render with no cluster access, `--raw` for raw Kubernetes field paths instead of the compact Deployah vocabulary, `--yaml` to show changed fields as YAML blocks, `--drift` to also compare against live cluster state, `--detailed-exitcode` to exit 2 when changes are pending, or `--output json` for CI. |
+| `deployah plan <environment>` | Inspect changes for an environment, without applying anything. It needs cluster access. Extra manifests from `.deployah/manifests/` appear in the diff; CRD files from `.deployah/crds/` are listed with Helm's install-only lifecycle, not applied. Use `--raw` for raw Kubernetes field paths instead of the compact Deployah vocabulary, `--yaml` to show changed fields as YAML blocks, `--drift` to also compare against live cluster state, `--detailed-exitcode` to exit 2 when changes are pending, or `--output json` for CI. |
 | `deployah deploy <environment>` | Deploy your project. Deployah validates the spec, runs deploy guards, then always runs a Helm install for a new release or a Helm upgrade for an existing one. Use `--skip-crds` to skip installing [chart CRDs](docs/custom-manifests-and-crds.md#helm-crd-lifecycle) on a fresh Helm install (a CRD added after that first install is not installed by a later deploy), `--explain` to print the resolution report first, `--force-hostname-change` to bypass the hostname guard, or `--resize-volumes` to grow [persistence](docs/workloads.md#growing-volumes) sizes. |
 | `deployah run <task> <environment>` | Run a spec task as a one-off Job. Wait is the default; `--detach` returns after create. `--count` / `--parallelism` override fanout for that run. |
 | `deployah status <project>` | Show the status of a deployed project. Use `--detailed` for pod details, `-e` for an environment. |

@@ -59,9 +59,8 @@ type LoadConfig struct {
 	ReleaseNamespace string
 	// Scope resolves namespaced vs cluster-scoped. Required.
 	Scope ScopeResolver
-	// Offline is true when cluster discovery is unavailable (plan --offline
-	// or missing rest config). Unknown types are then allowed; scope
-	// defaults to namespaced.
+	// Offline is true when no REST config is available. Unknown types are
+	// then allowed and default to namespaced scope.
 	Offline bool
 }
 

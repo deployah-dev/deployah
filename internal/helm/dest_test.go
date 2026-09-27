@@ -22,7 +22,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"deployah.dev/deployah/internal/spec"
 	"deployah.dev/deployah/internal/target"
 
 	diskcached "k8s.io/client-go/discovery/cached/disk"
@@ -200,8 +199,6 @@ func TestNewClient_UnconfiguredGetterIgnoresAmbientKubeconfig(t *testing.T) {
 		{name: "no getter", opts: []Option{WithNamespace("default")}},
 		{name: "nil getter", opts: []Option{WithRESTClientGetter(nil), WithNamespace("default")}},
 	}
-	m := envServiceSpec(t.TempDir(), spec.StringMap{"LOG_LEVEL": "debug"})
-	resolved := resolveChart(t, m, "dev")
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -215,34 +212,8 @@ func TestNewClient_UnconfiguredGetterIgnoresAmbientKubeconfig(t *testing.T) {
 			err = client.IsReachable()
 			require.Error(t, err)
 			assert.ErrorIs(t, err, ErrDestinationNotConfigured)
-
-			result, cleanup, err := client.RenderOffline(t.Context(), resolved, nil, nil)
-			require.NoError(t, err)
-			if cleanup != nil {
-				t.Cleanup(cleanup)
-			}
-			require.NotNil(t, result)
-			assert.Equal(t, "default", result.Namespace)
 		})
 	}
-}
-
-func TestNewClient_OfflineRenderWithoutKubeconfig(t *testing.T) {
-	t.Setenv("KUBECONFIG", filepath.Join(t.TempDir(), "missing-kubeconfig"))
-	t.Setenv("HOME", t.TempDir())
-
-	client, err := NewClient(WithNamespace("default"))
-	require.NoError(t, err)
-
-	m := envServiceSpec(t.TempDir(), spec.StringMap{"LOG_LEVEL": "debug"})
-	resolved := resolveChart(t, m, "dev")
-	result, cleanup, err := client.RenderOffline(t.Context(), resolved, nil, nil)
-	require.NoError(t, err)
-	if cleanup != nil {
-		t.Cleanup(cleanup)
-	}
-	require.NotNil(t, result)
-	assert.Equal(t, "default", result.Namespace)
 }
 
 func writeDestKubeconfig(t *testing.T, content string) string {

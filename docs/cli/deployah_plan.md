@@ -14,8 +14,7 @@ deployah plan <environment> [flags]
 
 ```text
       --detailed-exitcode   Exit 2 when the plan has pending changes, 0 when it does not, 1 on error (for CI)
-      --drift               Detect drift between the rendered manifests and the live cluster state (requires cluster access; not compatible with --offline)
-      --offline             Render and validate the chart without contacting the cluster
+      --drift               Detect drift between the rendered manifests and the live cluster state
       --output string       Output format (default "text")
       --raw                 Show raw Kubernetes field paths instead of the compact Deployah vocabulary
       --show-secrets        Reveal masked secret values in text output (requires an interactive terminal; refused with --output json)

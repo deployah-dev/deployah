@@ -30,12 +30,10 @@ import (
 //   - ServiceMonitor, PodMonitor, PrometheusRule: Prometheus Operator CRDs.
 //   - ClusterWidget, IdempotentWidget, LifecycleWidget: fixture CRDs used
 //     by extras/e2e scenarios.
-//   - HorizontalPodAutoscaler: [helm.Client.RenderOffline] has no live
-//     cluster, so Capabilities.KubeVersion falls back to Helm's pre-1.23
-//     default, making the chart select the removed autoscaling/v2beta1 API
-//     instead of autoscaling/v2. This affects `deployah plan --offline` for
-//     any autoscaling component; the real fix belongs in the render
-//     pipeline (a modern default KubeVersion), not here.
+//   - HorizontalPodAutoscaler: fixture rendering runs a Helm client-only
+//     install with no live cluster, so Capabilities.KubeVersion uses Helm's
+//     default and the chart picks the removed autoscaling/v2beta1 API
+//     instead of autoscaling/v2.
 var unregisteredSchemeKinds = []string{
 	"ServiceMonitor",
 	"PodMonitor",

@@ -18,5 +18,6 @@
 // files, expected Kubernetes output, and optional e2e.yaml Kind fixtures.
 // [DiscoverScenarios] finds them; [IntegrationTestSuite] loads a spec,
 // generates a chart, renders templates, and compares results to golden
-// files. [LoadE2EFixture] decodes e2e.yaml.
+// files. [LoadE2EFixture] decodes e2e.yaml. Fixture charts are rendered by
+// the helmfixture subpackage.
 package testing

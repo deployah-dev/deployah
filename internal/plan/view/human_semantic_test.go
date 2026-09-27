@@ -37,6 +37,7 @@ import (
 	"deployah.dev/deployah/internal/predict"
 	"deployah.dev/deployah/internal/render"
 	"deployah.dev/deployah/internal/spec"
+	"deployah.dev/deployah/internal/testing/helmfixture"
 
 	v1 "helm.sh/helm/v4/pkg/release/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -49,7 +50,7 @@ const (
 )
 
 // TestWriteHuman_SemanticPlan is the canonical human output of
-// RenderOffline -> prediction -> BuildSemanticPlan -> WriteHuman.
+// fixture render -> prediction -> BuildSemanticPlan -> WriteHuman.
 // human_all_actions.golden stays the synthetic generic renderer contract.
 func TestWriteHuman_SemanticPlan(t *testing.T) {
 	t.Parallel()
@@ -256,9 +257,8 @@ func scheduleTask(schedule string, command ...string) spec.Task {
 
 func semanticUpgradePlan(t *testing.T, previous, current *spec.Spec) semantic.Plan {
 	t.Helper()
-	client := productHelmClient(t)
 	prevResolved := resolveProductSpec(t, previous)
-	prevResult := renderOffline(t, client, prevResolved)
+	prevResult := renderDesired(t, prevResolved)
 	prevRelease := previousReleaseFromRender(t, prevResult)
 
 	cluster := newFakeCluster()
@@ -270,9 +270,9 @@ func semanticUpgradePlan(t *testing.T, previous, current *spec.Spec) semantic.Pl
 	storePredictedLive(cluster, installPlan.Changes)
 
 	currResolved := resolveProductSpec(t, current)
-	currResult := renderOffline(t, client, currResolved)
+	currResult := renderDesired(t, currResolved)
 	return buildSemanticPlan(t, &fakeBuildClient{
-		result: offlineUpgradeResult(currResult, 2),
+		result: upgradeResultFrom(currResult, 2),
 		prep: helm.ReleasePrep{
 			Operation:    helm.OperationUpgrade,
 			Current:      prevRelease,
@@ -280,13 +280,6 @@ func semanticUpgradePlan(t *testing.T, previous, current *spec.Spec) semantic.Pl
 			NextRevision: 2,
 		},
 	}, cluster, currResolved)
-}
-
-func productHelmClient(t *testing.T) *helm.Client {
-	t.Helper()
-	client, err := helm.NewClient(helm.WithNamespace(productNamespace))
-	require.NoError(t, err)
-	return client
 }
 
 func resolveProductSpec(t *testing.T, manifest *spec.Spec) *spec.ResolvedSpec {
@@ -300,23 +293,20 @@ func resolveProductSpec(t *testing.T, manifest *spec.Spec) *spec.ResolvedSpec {
 	return resolved
 }
 
-// offlineUpgradeResult copies an offline install render and sets the
+// upgradeResultFrom copies a fresh-install fixture render and sets the
 // upgrade flags [plan.BuildSemanticPlan] checks. Manifest and Hooks stay
-// the [helm.Client.RenderOffline] output; that API cannot emit an upgrade
-// dry-run.
-func offlineUpgradeResult(result *render.RenderResult, revision int) *render.RenderResult {
+// the fresh-install fixture render.
+func upgradeResultFrom(result *render.RenderResult, revision int) *render.RenderResult {
 	out := *result
 	out.IsUpgrade = true
 	out.Revision = revision
 	return &out
 }
 
-func renderOffline(t *testing.T, client *helm.Client, resolved *spec.ResolvedSpec) *render.RenderResult {
+func renderDesired(t *testing.T, resolved *spec.ResolvedSpec) *render.RenderResult {
 	t.Helper()
-	result, cleanup, err := client.RenderOffline(t.Context(), resolved, nil, nil)
+	result, err := helmfixture.Render(t, productNamespace, resolved, nil, nil)
 	require.NoError(t, err)
-	require.NotNil(t, cleanup)
-	t.Cleanup(cleanup)
 	return result
 }
 

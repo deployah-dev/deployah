@@ -25,7 +25,7 @@ import (
 	"deployah.dev/deployah/internal/spec"
 )
 
-func TestRenderOffline_EnabledMetricsAlwaysRenderMonitors(t *testing.T) {
+func TestRender_EnabledMetricsAlwaysRenderMonitors(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -94,13 +94,7 @@ func TestRenderOffline_EnabledMetricsAlwaysRenderMonitors(t *testing.T) {
 			resolved, _, err := spec.Resolve(manifest, platform, spec.NormalizeEnv("dev"), spec.SubstitutionReport{})
 			require.NoError(t, err)
 
-			client, err := NewClient(WithNamespace("default"))
-			require.NoError(t, err)
-			result, cleanup, err := client.RenderOffline(t.Context(), resolved, nil, nil)
-			require.NoError(t, err)
-			if cleanup != nil {
-				t.Cleanup(cleanup)
-			}
+			result := renderFreshInstall(t, resolved, nil)
 
 			kinds := renderedResourceKinds(t, result.Manifest)
 			for _, kind := range tc.wantKinds {

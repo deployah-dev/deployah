@@ -25,7 +25,6 @@ import (
 	"deployah.dev/deployah/internal/cmd/cmdopts"
 	"deployah.dev/deployah/internal/drift"
 	"deployah.dev/deployah/internal/extras"
-	"deployah.dev/deployah/internal/k8s"
 	"deployah.dev/deployah/internal/session"
 	"deployah.dev/deployah/internal/spec"
 
@@ -44,7 +43,6 @@ var outputFormats = []string{outputFormatText, outputFormatJSON}
 type Options struct {
 	Environment      string `nabat:"environment"`
 	Drift            bool   `nabat:"drift"`
-	Offline          bool   `nabat:"offline"`
 	ShowSecrets      bool   `nabat:"show-secrets"`
 	Raw              bool   `nabat:"raw"`
 	YAML             bool   `nabat:"yaml"`
@@ -58,8 +56,7 @@ func Register(app *nabat.App) {
 		nabat.WithDescription("Inspect changes for an environment"),
 		nabat.WithLongDescription("Render the chart for an environment and compare it with the last successful Helm release. With --drift, also compare the rendered manifests with live cluster state. Plan is read-only and never applies anything."),
 		nabat.WithArg("environment", "", nabat.WithRequired(), nabat.WithUsage("Environment to plan for"), nabat.WithPrompt("Environment", "", nabat.WithHint("e.g. prod, staging"))),
-		nabat.WithFlag("drift", false, nabat.WithUsage("Detect drift between the rendered manifests and the live cluster state (requires cluster access; not compatible with --offline)")),
-		nabat.WithFlag("offline", false, nabat.WithUsage("Render and validate the chart without contacting the cluster")),
+		nabat.WithFlag("drift", false, nabat.WithUsage("Detect drift between the rendered manifests and the live cluster state")),
 		nabat.WithFlag("show-secrets", false, nabat.WithUsage("Reveal masked secret values in text output (requires an interactive terminal; refused with --output json)")),
 		nabat.WithFlag("raw", false, nabat.WithUsage("Show raw Kubernetes field paths instead of the compact Deployah vocabulary")),
 		nabat.WithFlag("yaml", false, nabat.WithUsage("Show changed fields as YAML blocks instead of a single line")),
@@ -69,9 +66,6 @@ func Register(app *nabat.App) {
 		nabat.WithExample(`
 # Inspect changes for production
 deployah plan production
-
-# Render and validate the chart without touching the cluster
-deployah plan production --offline
 
 # Machine-readable output for CI
 deployah plan production --output json
@@ -98,12 +92,6 @@ func validateOptions(c *nabat.Context) error {
 	}
 	if opts.ShowSecrets && !c.IsInteractive() {
 		return errors.New("--show-secrets requires an interactive terminal")
-	}
-	if opts.Offline && opts.OutputFormat == outputFormatJSON {
-		return errors.New("--offline has no diff to report as JSON; drop --output json")
-	}
-	if opts.Drift && opts.Offline {
-		return errors.New("--drift requires cluster access; it cannot be used with --offline")
 	}
 	return nil
 }
@@ -143,65 +131,12 @@ func runPlan(c *nabat.Context) error {
 		return fmt.Errorf("resolution failed: %w", err)
 	}
 
-	if opts.Offline {
-		return runOffline(c, sess, platform, manifest, opts, resolvedSpec)
-	}
-	return runOnline(c, sess, platform, manifest, opts, resolvedSpec)
+	return executePlan(c, sess, platform, manifest, opts, resolvedSpec)
 }
 
-// runOffline renders the chart without contacting the cluster and prints a
-// resource count instead of a diff: there is no reachable release history to
-// compare against.
-func runOffline(c *nabat.Context, sess *session.Session, platform *spec.PlatformConfig, manifest *spec.Spec, opts *Options, resolvedSpec *spec.ResolvedSpec) error {
-	cluster, err := sess.Target(c, opts.Environment)
-	if err != nil {
-		return fmt.Errorf("target cluster: %w", err)
-	}
-	helmClient, err := cluster.Helm()
-	if err != nil {
-		return fmt.Errorf("helm client: %w", err)
-	}
-
-	// Offline mode never contacts the cluster, so any self-signed TLS cert
-	// is generated fresh (nil client) rather than fetched/reused -- a
-	// deliberate offline generation, not cmdopts.MaterializeSelfSignedTLS's
-	// fail-closed path for an online command that couldn't build a client.
-	if resolvedSpec != nil {
-		if tlsErr := k8s.MaterializeSelfSignedTLS(c, nil, "", resolvedSpec); tlsErr != nil {
-			return fmt.Errorf("materialize self-signed TLS: %w", tlsErr)
-		}
-	}
-
-	bundle, err := extras.LoadFromSpec(sess.Workspace().SpecPath(), manifest, platform, opts.Environment, cluster.Namespace(), nil)
-	if err != nil {
-		return fmt.Errorf("load extras: %w", err)
-	}
-	postRenderer := bundle.PostRendererFor()
-
-	result, cleanup, err := helmClient.RenderOffline(c, resolvedSpec, postRenderer, bundle.CRDs)
-	if cleanup != nil {
-		defer cleanup()
-	}
-	if err != nil {
-		return fmt.Errorf("render manifests: %w", err)
-	}
-
-	count, err := planengine.CountResources(result.Manifest)
-	if err != nil {
-		return fmt.Errorf("count rendered resources: %w", err)
-	}
-
-	c.Println(fmt.Sprintf("Rendered %d resources for environment '%s' (no cluster comparison).", count, opts.Environment))
-	for _, d := range bundle.CRDDocs {
-		c.Println(fmt.Sprintf("  %s/%s", d.Kind, d.Name))
-	}
-	c.Println("validation: OK")
-	return nil
-}
-
-// runOnline renders the chart, diffs it against the last successful
+// executePlan renders the chart, diffs it against the last successful
 // release, and displays the resulting plan.
-func runOnline(c *nabat.Context, sess *session.Session, platform *spec.PlatformConfig, manifest *spec.Spec, opts *Options, resolvedSpec *spec.ResolvedSpec) error {
+func executePlan(c *nabat.Context, sess *session.Session, platform *spec.PlatformConfig, manifest *spec.Spec, opts *Options, resolvedSpec *spec.ResolvedSpec) error {
 	cluster, err := sess.Target(c, opts.Environment)
 	if err != nil {
 		return fmt.Errorf("target cluster: %w", err)

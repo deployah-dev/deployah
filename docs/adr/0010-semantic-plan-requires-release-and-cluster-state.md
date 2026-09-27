@@ -14,15 +14,14 @@ resource consequences.
 ## Decision
 
 A semantic plan requires enough release state to construct Previous
-and enough cluster state to construct Live. There is no offline
-semantic plan in the target architecture.
+and enough cluster state to construct Live. Deployah does not support
+offline semantic planning.
 
 When that information is unavailable, the planner must not fabricate
 Previous, Live, Drift, HelmAction, or resource consequences.
 
-A Desired-only render or validation capability may exist separately.
-Rendering is not semantic planning. This ADR does not freeze a command
-name for that capability.
+Cluster-independent validation and configuration resolution are
+separate capabilities. They are not semantic planning.
 
 ## Consequences
 
@@ -33,5 +32,5 @@ name for that capability.
 
 ### Negative
 
-- Operators without release and cluster access cannot get a semantic
-  plan. They need the separate render capability.
+- Operators without release and cluster access cannot obtain a
+  semantic plan.
