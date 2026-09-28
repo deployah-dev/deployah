@@ -51,7 +51,7 @@ func (c *semanticPlanClient) RenderManifestsWithPrep(
 	return c.result, c.prep, func() {}, nil
 }
 
-func (s *E2ESuite) TestSemanticPlanDoesNotMutateOrReadLive() {
+func (s *E2ESuite) TestSemanticPlanDoesNotMutateLive() {
 	t := s.T()
 	resolved := &spec.ResolvedSpec{
 		Spec: &spec.Spec{Project: "shop"},
@@ -70,7 +70,7 @@ func (s *E2ESuite) TestSemanticPlanDoesNotMutateOrReadLive() {
 			},
 			prep: helm.ReleasePrep{Operation: helm.OperationInstall, NextRevision: 1},
 		}
-		p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, s.mapper, plan.SemanticBuildInput{
+		p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, s.mapper, nil, plan.SemanticBuildInput{
 			ClusterContext: kindContext,
 			Resolved:       resolved,
 		})
@@ -91,20 +91,20 @@ func (s *E2ESuite) TestSemanticPlanDoesNotMutateOrReadLive() {
 		require.True(t, apierrors.IsNotFound(err), "namespace %s should still be absent: %v", ns, err)
 		_, err = cs.CoreV1().ConfigMaps(ns).Get(t.Context(), "app", metav1.GetOptions{})
 		require.True(t, apierrors.IsNotFound(err), "configmap app should still be absent: %v", err)
+		assert.Empty(t, p.Drift)
 	})
 
-	t.Run("upgrade ignores live drift", func(t *testing.T) {
+	t.Run("upgrade reads live and does not mutate", func(t *testing.T) {
 		ns := fixtureNamespace("semantic-plan-upgrade")
 		manifest := configMapManifest(ns, "app", "same") + "---\n" + configMapManifest(ns, "other", "same")
-		cs, _ := s.kubeClients(t)
+		cs, dyn := s.kubeClients(t)
 		_, err := cs.CoreV1().Namespaces().Create(t.Context(), &corev1.Namespace{Name: ns}, metav1.CreateOptions{})
 		require.NoError(t, err)
 		t.Cleanup(func() { s.deleteNamespace(t, ns) })
 		for _, name := range []string{"app", "other"} {
 			_, err = cs.CoreV1().ConfigMaps(ns).Create(t.Context(), &corev1.ConfigMap{
-				Name:      name,
-				Namespace: ns,
-				Data:      map[string]string{"key": "same"},
+				Name: name, Namespace: ns,
+				Data: map[string]string{"key": "same"},
 			}, metav1.CreateOptions{})
 			require.NoError(t, err)
 		}
@@ -114,6 +114,47 @@ func (s *E2ESuite) TestSemanticPlanDoesNotMutateOrReadLive() {
 		_, err = cs.CoreV1().ConfigMaps(ns).Update(t.Context(), live, metav1.UpdateOptions{})
 		require.NoError(t, err)
 		require.NoError(t, cs.CoreV1().ConfigMaps(ns).Delete(t.Context(), "other", metav1.DeleteOptions{}))
+		for _, cm := range []*corev1.ConfigMap{
+			{
+				Name:      "extra",
+				Namespace: ns,
+				Labels:    map[string]string{spec.LabelInstance: "web"},
+				Annotations: map[string]string{
+					spec.AnnotationSource:            spec.SourceSpec,
+					"meta.helm.sh/release-name":      "web",
+					"meta.helm.sh/release-namespace": ns,
+				},
+				Data: map[string]string{"key": "extra"},
+			},
+			{
+				Name:      "label-only",
+				Namespace: ns,
+				Labels:    map[string]string{spec.LabelInstance: "web"},
+				Data:      map[string]string{"key": "extra"},
+			},
+			{
+				Name:      "no-helm",
+				Namespace: ns,
+				Labels:    map[string]string{spec.LabelInstance: "web"},
+				Annotations: map[string]string{
+					spec.AnnotationSource: spec.SourceSpec,
+				},
+				Data: map[string]string{"key": "extra"},
+			},
+		} {
+			_, err = cs.CoreV1().ConfigMaps(ns).Create(t.Context(), cm, metav1.CreateOptions{})
+			require.NoError(t, err)
+		}
+
+		versions := map[string]string{}
+		nsObj, err := cs.CoreV1().Namespaces().Get(t.Context(), ns, metav1.GetOptions{})
+		require.NoError(t, err)
+		versions["namespace"] = nsObj.ResourceVersion
+		for _, name := range []string{"app", "extra", "label-only", "no-helm"} {
+			got, getErr := cs.CoreV1().ConfigMaps(ns).Get(t.Context(), name, metav1.GetOptions{})
+			require.NoError(t, getErr)
+			versions[name] = got.ResourceVersion
+		}
 
 		release := &v1.Release{
 			Name:      "web",
@@ -136,7 +177,7 @@ func (s *E2ESuite) TestSemanticPlanDoesNotMutateOrReadLive() {
 				NextRevision: 2,
 			},
 		}
-		p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, s.mapper, plan.SemanticBuildInput{
+		p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, s.mapper, plan.NewDynamicLiveReader(dyn), plan.SemanticBuildInput{
 			ClusterContext: kindContext,
 			Resolved:       resolved,
 		})
@@ -145,10 +186,36 @@ func (s *E2ESuite) TestSemanticPlanDoesNotMutateOrReadLive() {
 		require.NoError(t, err)
 		assert.Equal(t, semantic.HelmNone, p.HelmAction)
 		assert.Empty(t, p.Changes)
+		require.Len(t, p.Drift, 3)
+		byName := map[string]semantic.DriftChange{}
+		for _, d := range p.Drift {
+			byName[d.Resource.Name] = d
+		}
+		modified := byName["app"]
+		assert.Equal(t, semantic.DriftModified, modified.Action)
+		require.Len(t, modified.Fields, 1)
+		assert.Equal(t, "/data/key", modified.Fields[0].Path)
+		assert.Equal(t, semantic.DriftMissing, byName["other"].Action)
+		assert.Equal(t, semantic.DriftUnexpected, byName["extra"].Action)
+		_, hasLabelOnly := byName["label-only"]
+		assert.False(t, hasLabelOnly)
+		_, hasNoHelm := byName["no-helm"]
+		assert.False(t, hasNoHelm)
 
-		got, err := cs.CoreV1().ConfigMaps(ns).Get(t.Context(), "app", metav1.GetOptions{})
-		require.NoError(t, err)
-		assert.Equal(t, "drifted", got.Data["key"])
+		for name, rv := range versions {
+			if name == "namespace" {
+				got, getErr := cs.CoreV1().Namespaces().Get(t.Context(), ns, metav1.GetOptions{})
+				require.NoError(t, getErr)
+				assert.Equal(t, rv, got.ResourceVersion)
+				continue
+			}
+			got, getErr := cs.CoreV1().ConfigMaps(ns).Get(t.Context(), name, metav1.GetOptions{})
+			require.NoError(t, getErr)
+			assert.Equal(t, rv, got.ResourceVersion)
+			if name == "app" {
+				assert.Equal(t, "drifted", got.Data["key"])
+			}
+		}
 		_, err = cs.CoreV1().ConfigMaps(ns).Get(t.Context(), "other", metav1.GetOptions{})
 		require.True(t, apierrors.IsNotFound(err), "deleted configmap should stay absent: %v", err)
 	})

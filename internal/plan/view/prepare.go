@@ -50,6 +50,18 @@ func validateRenderable(p semantic.Plan) error {
 			}
 		}
 	}
+	for i, d := range p.Drift {
+		if err := requireEnum(fmt.Sprintf("drift %d action", i), d.Action.String(),
+			semantic.DriftModified.String(), semantic.DriftMissing.String(), semantic.DriftUnexpected.String()); err != nil {
+			return err
+		}
+		for j, f := range d.Fields {
+			if err := requireEnum(fmt.Sprintf("drift %d field %d op", i, j), f.Op.String(),
+				semantic.FieldAdd.String(), semantic.FieldRemove.String(), semantic.FieldReplace.String()); err != nil {
+				return err
+			}
+		}
+	}
 	owned := make(map[string]string)
 	changeKeys := make(map[string]int, len(p.Changes))
 	for i, c := range p.Changes {

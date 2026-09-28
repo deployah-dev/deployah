@@ -54,6 +54,7 @@ func TestWriteJSON_SchemaAndTasks(t *testing.T) {
 		},
 		"helmAction": "none",
 		"changes": [],
+		"drift": [],
 		"tasks": [],
 		"chartCRDs": [],
 		"summary": {
@@ -118,6 +119,7 @@ func TestWriteJSON_TasksContract(t *testing.T) {
 		},
 		"helmAction": "upgrade",
 		"changes": [],
+		"drift": [],
 		"tasks": [{
 			"name": "migrate",
 			"phase": "preDeploy",
@@ -536,6 +538,126 @@ func assertNoJSONChangeKeys(t *testing.T, change map[string]any) {
 	assertNoJSONKeys(t, change)
 	assertNoJSONResourceKeys(t, change["resource"])
 	assertNoJSONFieldKeys(t, change["fields"])
+}
+
+func TestWriteJSON_DriftShapes(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	require.NoError(t, view.WriteJSON(&buf, sampleDriftPlan(t), view.Options{}))
+	raw := buf.Bytes()
+	validatePlanSchema(t, raw)
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal(raw, &doc))
+	_, hasChecked := doc["driftChecked"]
+	assert.False(t, hasChecked)
+	entries := jsonObjects(t, doc["drift"])
+	require.Len(t, entries, 3)
+
+	modified := entries[0]
+	assert.Equal(t, "modified", modified["action"])
+	assert.NotNil(t, modified["previous"])
+	assert.NotNil(t, modified["live"])
+	assert.NotEmpty(t, modified["fields"])
+
+	unexpected := entries[1]
+	assert.Equal(t, "unexpected", unexpected["action"])
+	assert.Nil(t, unexpected["previous"])
+	assert.NotNil(t, unexpected["live"])
+	assert.Empty(t, unexpected["fields"])
+
+	missing := entries[2]
+	assert.Equal(t, "missing", missing["action"])
+	assert.NotNil(t, missing["previous"])
+	assert.Nil(t, missing["live"])
+	assert.Empty(t, missing["fields"])
+	assertNoJSONKeysFromBytes(t, raw)
+}
+
+func TestWriteJSON_DriftSecretRedaction(t *testing.T) {
+	t.Parallel()
+	p := secretDriftPlan(t)
+	tests := []struct {
+		name   string
+		opts   view.Options
+		has    []string
+		omit   []string
+		data   string
+		before string
+	}{
+		{
+			name:   "redacted",
+			has:    []string{"(redacted)"},
+			omit:   []string{"b2xk", "bmV3", "c2VjcmV0", "kubectl.kubernetes.io/last-applied-configuration"},
+			data:   `{"password":"(redacted)"}`,
+			before: `"(redacted)"`,
+		},
+		{
+			name:   "shown",
+			opts:   view.Options{ShowSecrets: true},
+			has:    []string{"b2xk", "bmV3", "c2VjcmV0"},
+			omit:   []string{"kubectl.kubernetes.io/last-applied-configuration"},
+			data:   `{"password":"bmV3"}`,
+			before: `"b2xk"`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var buf bytes.Buffer
+			require.NoError(t, view.WriteJSON(&buf, p, tt.opts))
+			text := buf.String()
+			for _, want := range tt.has {
+				assert.Contains(t, text, want)
+			}
+			for _, omit := range tt.omit {
+				assert.NotContains(t, text, omit)
+			}
+			assertJSONAt(t, buf.Bytes(), tt.data, "drift", 0, "live", "data")
+			assertJSONAt(t, buf.Bytes(), tt.before, "drift", 0, "fields", 0, "before")
+			validatePlanSchema(t, buf.Bytes())
+			require.Equal(t, "b2xk", p.Drift[0].Fields[0].Before)
+		})
+	}
+}
+
+func secretDriftPlan(t *testing.T) semantic.Plan {
+	t.Helper()
+	p, err := semantic.AttachDrift(mustPlan(t, semantic.HelmNone, nil), []semantic.DriftChange{
+		{
+			Resource: ref("Secret", "db"),
+			Action:   semantic.DriftModified,
+			Previous: snap(map[string]any{
+				"apiVersion": "v1",
+				"kind":       "Secret",
+				"metadata":   map[string]any{"name": "db", "namespace": "prod"},
+				"stringData": map[string]any{"password": "old"},
+			}),
+			Live: snap(map[string]any{
+				"apiVersion": "v1",
+				"kind":       "Secret",
+				"metadata":   map[string]any{"name": "db", "namespace": "prod"},
+				"data":       map[string]any{"password": "bmV3"},
+			}),
+			Fields: []semantic.FieldChange{{
+				Path:   "/data/password",
+				Op:     semantic.FieldReplace,
+				Before: "b2xk",
+				After:  "bmV3",
+			}},
+		},
+		{
+			Resource: ref("Secret", "leaked"),
+			Action:   semantic.DriftUnexpected,
+			Live: snap(map[string]any{
+				"apiVersion": "v1",
+				"kind":       "Secret",
+				"metadata":   map[string]any{"name": "leaked", "namespace": "prod"},
+				"data":       map[string]any{"password": "c2VjcmV0"},
+			}),
+		},
+	})
+	require.NoError(t, err)
+	return p
 }
 
 func assertNoJSONTaskKeys(t *testing.T, task map[string]any) {

@@ -1,0 +1,35 @@
+Plan for project "web" on environment "prod"
+
+Context:   production-eu
+Namespace: prod
+Release:   web
+Revision:  12
+
+Drift
+
+  ~ modified v1/ConfigMap "app"
+    data:
+  -   key: old
+  +   key: new
+
+  + unexpected v1/ConfigMap "extra"
+  + apiVersion: v1
+  + kind: ConfigMap
+  + metadata:
+  +   name: extra
+  +   namespace: prod
+  + data:
+  +   key: live
+
+  - missing v1/ConfigMap "other"
+  - apiVersion: v1
+  - kind: ConfigMap
+  - metadata:
+  -   name: other
+  -   namespace: prod
+  - data:
+  -   key: gone
+
+Summary
+  Resources: 0 create, 0 update, 0 delete
+  Drift: 1 modified, 1 missing, 1 unexpected

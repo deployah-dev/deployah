@@ -10,6 +10,7 @@
     "header",
     "helmAction",
     "changes",
+    "drift",
     "tasks",
     "chartCRDs",
     "summary"
@@ -30,6 +31,12 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/ResourceChange"
+      }
+    },
+    "drift": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Drift"
       }
     },
     "tasks": {
@@ -114,6 +121,28 @@
             }
           },
           "changes": {
+            "maxItems": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "header": {
+            "properties": {
+              "freshInstall": {
+                "const": true
+              }
+            },
+            "required": ["freshInstall"]
+          }
+        },
+        "required": ["header"]
+      },
+      "then": {
+        "properties": {
+          "drift": {
             "maxItems": 0
           }
         }
@@ -389,6 +418,118 @@
         },
         {
           "type": "object"
+        }
+      ]
+    },
+    "Drift": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["resource", "action", "previous", "live", "fields"],
+      "properties": {
+        "resource": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Resource"
+            },
+            {
+              "properties": {
+                "name": {
+                  "minLength": 1
+                }
+              },
+              "required": ["name"],
+              "not": {
+                "required": ["generateName"]
+              }
+            }
+          ]
+        },
+        "action": {
+          "type": "string",
+          "enum": ["modified", "missing", "unexpected"]
+        },
+        "previous": {
+          "$ref": "#/$defs/Snapshot"
+        },
+        "live": {
+          "$ref": "#/$defs/Snapshot"
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FieldChange"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "modified"
+              }
+            },
+            "required": ["action"]
+          },
+          "then": {
+            "properties": {
+              "previous": {
+                "type": "object"
+              },
+              "live": {
+                "type": "object"
+              },
+              "fields": {
+                "minItems": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "missing"
+              }
+            },
+            "required": ["action"]
+          },
+          "then": {
+            "properties": {
+              "previous": {
+                "type": "object"
+              },
+              "live": {
+                "type": "null"
+              },
+              "fields": {
+                "maxItems": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "unexpected"
+              }
+            },
+            "required": ["action"]
+          },
+          "then": {
+            "properties": {
+              "previous": {
+                "type": "null"
+              },
+              "live": {
+                "type": "object"
+              },
+              "fields": {
+                "maxItems": 0
+              }
+            }
+          }
         }
       ]
     },

@@ -27,6 +27,7 @@ type document struct {
 	Header     headerDTO     `json:"header"`
 	HelmAction string        `json:"helmAction"`
 	Changes    []changeDTO   `json:"changes"`
+	Drift      []driftDTO    `json:"drift"`
 	Tasks      []taskDTO     `json:"tasks"`
 	ChartCRDs  []chartCRDDTO `json:"chartCRDs"`
 	Summary    summaryDTO    `json:"summary"`
@@ -47,6 +48,14 @@ type changeDTO struct {
 	Action   string      `json:"action"`
 	Before   any         `json:"before"`
 	After    any         `json:"after"`
+	Fields   []fieldDTO  `json:"fields"`
+}
+
+type driftDTO struct {
+	Resource resourceDTO `json:"resource"`
+	Action   string      `json:"action"`
+	Previous any         `json:"previous"`
+	Live     any         `json:"live"`
 	Fields   []fieldDTO  `json:"fields"`
 }
 
@@ -123,6 +132,10 @@ func newDocument(p semantic.Plan, opts Options) (document, error) {
 	for _, c := range prepared.Changes {
 		changes = append(changes, toChangeDTO(c))
 	}
+	drift := make([]driftDTO, 0, len(prepared.Drift))
+	for _, d := range prepared.Drift {
+		drift = append(drift, toDriftDTO(d))
+	}
 	tasks := make([]taskDTO, 0, len(prepared.Tasks))
 	for _, t := range prepared.Tasks {
 		tasks = append(tasks, toTaskDTO(t))
@@ -136,6 +149,7 @@ func newDocument(p semantic.Plan, opts Options) (document, error) {
 		Header:     toHeaderDTO(prepared.Header),
 		HelmAction: prepared.HelmAction.String(),
 		Changes:    changes,
+		Drift:      drift,
 		Tasks:      tasks,
 		ChartCRDs:  crds,
 		Summary:    toSummaryDTO(prepared.Summary),
@@ -164,6 +178,20 @@ func toChangeDTO(c semantic.ResourceChange) changeDTO {
 		Action:   c.Action.String(),
 		Before:   snapshotJSON(c.Before),
 		After:    snapshotJSON(c.After),
+		Fields:   fields,
+	}
+}
+
+func toDriftDTO(d semantic.DriftChange) driftDTO {
+	fields := make([]fieldDTO, 0, len(d.Fields))
+	for _, f := range d.Fields {
+		fields = append(fields, toFieldDTO(f))
+	}
+	return driftDTO{
+		Resource: toResourceDTO(d.Resource),
+		Action:   d.Action.String(),
+		Previous: snapshotJSON(d.Previous),
+		Live:     snapshotJSON(d.Live),
 		Fields:   fields,
 	}
 }

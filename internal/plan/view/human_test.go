@@ -967,6 +967,115 @@ func allActionsInputs() (semantic.Header, []semantic.ResourceChange, []semantic.
 	return humanHeader(), changes, tasks
 }
 
+func TestWriteHuman_DriftSection(t *testing.T) {
+	t.Parallel()
+	p, err := semantic.AttachDrift(mustPlanWithHeader(t, humanHeader(), semantic.HelmNone, nil, nil), []semantic.DriftChange{
+		{
+			Resource: ref("ConfigMap", "app"),
+			Action:   semantic.DriftModified,
+			Previous: snap(cm("app", "old")),
+			Live:     snap(cm("app", "new")),
+			Fields: []semantic.FieldChange{{
+				Path:   "/data/key",
+				Op:     semantic.FieldReplace,
+				Before: "old",
+				After:  "new",
+			}},
+		},
+		{
+			Resource: ref("ConfigMap", "other"),
+			Action:   semantic.DriftMissing,
+			Previous: snap(cm("other", "gone")),
+		},
+		{
+			Resource: ref("ConfigMap", "extra"),
+			Action:   semantic.DriftUnexpected,
+			Live:     snap(cm("extra", "live")),
+		},
+	})
+	require.NoError(t, err)
+	var buf bytes.Buffer
+	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
+	text := buf.String()
+	assertGolden(t, "human_drift", text)
+	assert.Contains(t, text, "\nDrift\n")
+	assert.Contains(t, text, "~ modified v1/ConfigMap \"app\"")
+	assert.Contains(t, text, "- missing v1/ConfigMap \"other\"")
+	assert.Contains(t, text, "+ unexpected v1/ConfigMap \"extra\"")
+	assert.Contains(t, text, "  Resources: 0 create, 0 update, 0 delete")
+	assert.Contains(t, text, "  Drift: 1 modified, 1 missing, 1 unexpected")
+	assert.Less(t, strings.Index(text, "\nDrift\n"), strings.Index(text, "\nSummary\n"))
+	assert.NotContains(t, text, "Resources\n")
+}
+
+func TestWriteHuman_EmptyDriftHasNoSection(t *testing.T) {
+	t.Parallel()
+	p := mustPlanWithHeader(t, humanHeader(), semantic.HelmNone, nil, nil)
+	var buf bytes.Buffer
+	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
+	assert.NotContains(t, buf.String(), "Drift")
+}
+
+func TestWriteHuman_DriftSecretNormalizedPath(t *testing.T) {
+	t.Parallel()
+	p, err := semantic.AttachDrift(mustPlan(t, semantic.HelmNone, nil), []semantic.DriftChange{{
+		Resource: ref("Secret", "db"),
+		Action:   semantic.DriftModified,
+		Previous: snap(map[string]any{
+			"apiVersion": "v1",
+			"kind":       "Secret",
+			"metadata":   map[string]any{"name": "db", "namespace": "prod"},
+			"stringData": map[string]any{"password": "old"},
+		}),
+		Live: snap(map[string]any{
+			"apiVersion": "v1",
+			"kind":       "Secret",
+			"metadata":   map[string]any{"name": "db", "namespace": "prod"},
+			"data":       map[string]any{"password": "bmV3"},
+		}),
+		Fields: []semantic.FieldChange{{
+			Path:   "/data/password",
+			Op:     semantic.FieldReplace,
+			Before: "b2xk",
+			After:  "bmV3",
+		}},
+	}})
+	require.NoError(t, err)
+
+	tests := []struct {
+		name string
+		opts view.Options
+		has  []string
+		omit []string
+	}{
+		{
+			name: "redacted",
+			has:  []string{"data:", "- ", "+ ", "password: (redacted)"},
+			omit: []string{"old", "b2xk", "bmV3"},
+		},
+		{
+			name: "shown",
+			opts: view.Options{ShowSecrets: true},
+			has:  []string{"password: b2xk", "password: bmV3"},
+			omit: []string{"old", "(redacted)"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var buf bytes.Buffer
+			require.NoError(t, view.WriteHuman(&buf, p, tt.opts))
+			text := buf.String()
+			for _, want := range tt.has {
+				assert.Contains(t, text, want)
+			}
+			for _, omit := range tt.omit {
+				assert.NotContains(t, text, omit)
+			}
+		})
+	}
+}
+
 func assertHumanLayout(t *testing.T, text string) {
 	t.Helper()
 	assert.NotContains(t, text, "\n\n\n")

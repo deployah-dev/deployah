@@ -60,7 +60,7 @@ It does not inspect CRD spec semantics, infer scope, or treat those
 files as Kubernetes objects it owns. Raw bytes are preserved for Helm.
 Kubernetes acceptance belongs to Helm and Kubernetes.
 
-If the planner needs discovery, REST mapping, or a Live GET to
+If the planner needs discovery, REST mapping, or a Live GET or LIST to
 determine current state and the read fails, planning fails. That is
 missing information, not prediction. Do not use managedFields as the
 semantic source of truth for Deployah ownership.
