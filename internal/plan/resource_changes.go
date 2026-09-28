@@ -60,11 +60,13 @@ func (k declarationKey) String() string {
 	return k.Group + "/" + k.Kind + " " + k.Namespace + "/generateName=" + k.GenerateName
 }
 
-// declaration is one flattened Previous or Desired object. Pairing uses
-// effectiveNamespace and does not write it back. Named resources set
-// identity. generateName resources set pairKey.
+// declaration is one flattened Previous or Desired object. Pairing
+// uses effectiveNamespace and does not write it back. A name sets
+// identity. generateName sets pairKey. mapping is this object's REST
+// mapping, so Drift GETs Previous on its own.
 type declaration struct {
 	obj                *unstructured.Unstructured
+	mapping            *meta.RESTMapping
 	effectiveNamespace string
 	namespaced         bool
 	identity           *logicalIdentity
@@ -173,6 +175,7 @@ func declareOne(mapper RESTMapper, obj *unstructured.Unstructured, releaseNamesp
 	}
 	d := declaration{
 		obj:                obj,
+		mapping:            mapping,
 		effectiveNamespace: effective,
 		namespaced:         namespaced,
 	}

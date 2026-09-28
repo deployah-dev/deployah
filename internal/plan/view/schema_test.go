@@ -303,6 +303,92 @@ func TestSchemaV1_ChartCRDs(t *testing.T) {
 	}
 }
 
+func TestSchemaV1_AcceptsHelmNoneWithDrift(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	require.NoError(t, view.WriteJSON(&buf, sampleDriftPlan(t), view.Options{}))
+	validatePlanSchema(t, buf.Bytes())
+}
+
+func TestSchemaV1_RejectsMalformedDrift(t *testing.T) {
+	t.Parallel()
+	base := mustPlanDoc(t, sampleDriftPlan(t))
+	install := mustPlanDoc(t, mustPlanWithHeader(t, semantic.Header{
+		Project:      "web",
+		Environment:  "prod",
+		Release:      "web",
+		Namespace:    "prod",
+		FreshInstall: true,
+	}, semantic.HelmInstall, nil, nil))
+	tests := []struct {
+		name string
+		raw  []byte
+	}{
+		{name: "missing with live", raw: patched(t, base, func(d map[string]any) {
+			items, ok := d["drift"].([]any)
+			require.True(t, ok)
+			asObject(t, items[2])["live"] = map[string]any{"kind": "ConfigMap"}
+		})},
+		{name: "unexpected with previous", raw: patched(t, base, func(d map[string]any) {
+			items, ok := d["drift"].([]any)
+			require.True(t, ok)
+			asObject(t, items[1])["previous"] = map[string]any{"kind": "ConfigMap"}
+		})},
+		{name: "modified without fields", raw: patched(t, base, func(d map[string]any) {
+			items, ok := d["drift"].([]any)
+			require.True(t, ok)
+			asObject(t, items[0])["fields"] = []any{}
+		})},
+		{name: "unknown action", raw: patched(t, base, func(d map[string]any) {
+			items, ok := d["drift"].([]any)
+			require.True(t, ok)
+			asObject(t, items[0])["action"] = "update"
+		})},
+		{name: "missing drift key", raw: patched(t, base, func(d map[string]any) {
+			delete(d, "drift")
+		})},
+		{name: "fresh install with drift", raw: patched(t, install, func(d map[string]any) {
+			d["drift"] = base["drift"]
+		})},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assertSchemaRejects(t, tt.raw)
+		})
+	}
+}
+
+func sampleDriftPlan(t *testing.T) semantic.Plan {
+	t.Helper()
+	p, err := semantic.AttachDrift(mustPlan(t, semantic.HelmNone, nil), []semantic.DriftChange{
+		{
+			Resource: ref("ConfigMap", "app"),
+			Action:   semantic.DriftModified,
+			Previous: snap(cm("app", "old")),
+			Live:     snap(cm("app", "new")),
+			Fields: []semantic.FieldChange{{
+				Path:   "/data/key",
+				Op:     semantic.FieldReplace,
+				Before: "old",
+				After:  "new",
+			}},
+		},
+		{
+			Resource: ref("ConfigMap", "other"),
+			Action:   semantic.DriftMissing,
+			Previous: snap(cm("other", "gone")),
+		},
+		{
+			Resource: ref("ConfigMap", "extra"),
+			Action:   semantic.DriftUnexpected,
+			Live:     snap(cm("extra", "live")),
+		},
+	})
+	require.NoError(t, err)
+	return p
+}
+
 func firstChartCRD(t *testing.T, doc map[string]any) map[string]any {
 	t.Helper()
 	crds, ok := doc["chartCRDs"].([]any)

@@ -432,3 +432,40 @@ func TestSecretRedaction_OmitsPlaintext(t *testing.T) {
 		})
 	}
 }
+
+func TestSecretRedaction_DriftDefaultAndShowSecrets(t *testing.T) {
+	t.Parallel()
+	p := secretDriftPlan(t)
+	tests := []struct {
+		name string
+		opts view.Options
+		has  []string
+		omit []string
+	}{
+		{
+			name: "redacted",
+			has:  []string{"password: (redacted)"},
+			omit: []string{"b2xk", "bmV3", "c2VjcmV0", "old", "kubectl.kubernetes.io/last-applied-configuration"},
+		},
+		{
+			name: "shown",
+			opts: view.Options{ShowSecrets: true},
+			has:  []string{"b2xk", "bmV3", "c2VjcmV0"},
+			omit: []string{"kubectl.kubernetes.io/last-applied-configuration"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var buf bytes.Buffer
+			require.NoError(t, view.WriteHuman(&buf, p, tt.opts))
+			text := buf.String()
+			for _, want := range tt.has {
+				assert.Contains(t, text, want)
+			}
+			for _, omit := range tt.omit {
+				assert.NotContains(t, text, omit)
+			}
+		})
+	}
+}

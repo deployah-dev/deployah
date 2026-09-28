@@ -29,6 +29,11 @@ scope. It does not GET Live objects, and it does not call Create,
 Update, Patch, or Delete, including server-side or mutating dry-run
 forms of those writes.
 
+Drift performs only GET and LIST against Live Kubernetes resources.
+It performs no server-side or mutating dry-run and no write
+operation. The existing Helm client-side dry-run rendering used to
+construct Desired remains unchanged.
+
 These concerns are outside the semantic plan:
 
 - server-side apply and server dry-run prediction

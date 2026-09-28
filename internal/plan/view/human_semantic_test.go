@@ -15,6 +15,7 @@
 package view_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -29,7 +30,11 @@ import (
 	"helm.sh/helm/v4/pkg/chart/v2/loader"
 	"helm.sh/helm/v4/pkg/postrenderer"
 	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/cli-runtime/pkg/resource"
 	"sigs.k8s.io/yaml"
 
 	"deployah.dev/deployah/internal/extras"
@@ -40,6 +45,7 @@ import (
 	"deployah.dev/deployah/internal/spec"
 
 	v1 "helm.sh/helm/v4/pkg/release/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
 const (
@@ -266,7 +272,7 @@ func semanticUpgradePlan(t *testing.T, previous, current *spec.Spec) semantic.Pl
 			Newest:       prevRelease,
 			NextRevision: 2,
 		},
-	}, currResolved)
+	}, currResolved, liveMatchingManifest(t, prevRelease.Manifest, prevRelease.Namespace))
 }
 
 func resolveProductSpec(t *testing.T, manifest *spec.Spec) *spec.ResolvedSpec {
@@ -366,9 +372,9 @@ func nestedMap(root map[string]any, keys ...string) (map[string]any, bool) {
 	return cur, true
 }
 
-func buildSemanticPlan(t *testing.T, client plan.SemanticBuildClient, resolved *spec.ResolvedSpec) semantic.Plan {
+func buildSemanticPlan(t *testing.T, client plan.SemanticBuildClient, resolved *spec.ResolvedSpec, live plan.LiveReader) semantic.Plan {
 	t.Helper()
-	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, productMapper{}, plan.SemanticBuildInput{
+	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, productMapper{}, live, plan.SemanticBuildInput{
 		ClusterContext: productClusterContext,
 		Resolved:       resolved,
 	})
@@ -417,4 +423,63 @@ func clusterScopedKind(gk schema.GroupKind) bool {
 	default:
 		return false
 	}
+}
+
+// manifestLive returns Previous objects on Get and nothing on List, so an
+// unchanged upgrade does not report drift.
+type manifestLive struct {
+	namespace string
+	items     []*unstructured.Unstructured
+}
+
+func liveMatchingManifest(t *testing.T, manifest, namespace string) plan.LiveReader {
+	t.Helper()
+	if strings.TrimSpace(manifest) == "" {
+		return &manifestLive{namespace: namespace}
+	}
+	infos, err := resource.NewLocalBuilder().
+		ContinueOnError().
+		Flatten().
+		Unstructured().
+		Stream(bytes.NewBufferString(manifest), "manifest").
+		Do().Infos()
+	require.NoError(t, err)
+	items := make([]*unstructured.Unstructured, 0, len(infos))
+	for _, info := range infos {
+		obj, ok := info.Object.(*unstructured.Unstructured)
+		if !ok {
+			m, convErr := runtime.DefaultUnstructuredConverter.ToUnstructured(info.Object)
+			require.NoError(t, convErr)
+			obj = &unstructured.Unstructured{Object: m}
+		}
+		items = append(items, obj.DeepCopy())
+	}
+	return &manifestLive{namespace: namespace, items: items}
+}
+
+func (m *manifestLive) Get(_ context.Context, mapping *meta.RESTMapping, namespace, name string) (*unstructured.Unstructured, error) {
+	for _, obj := range m.items {
+		if obj.GetName() != name || obj.GetKind() != mapping.GroupVersionKind.Kind {
+			continue
+		}
+		if obj.GroupVersionKind().Group != mapping.GroupVersionKind.Group || obj.GroupVersionKind().Version != mapping.GroupVersionKind.Version {
+			continue
+		}
+		ns := ""
+		if mapping.Scope.Name() == meta.RESTScopeNameNamespace {
+			ns = obj.GetNamespace()
+			if ns == "" {
+				ns = m.namespace
+			}
+		}
+		if ns != namespace {
+			continue
+		}
+		return obj.DeepCopy(), nil
+	}
+	return nil, apierrors.NewNotFound(mapping.Resource.GroupResource(), name)
+}
+
+func (m *manifestLive) List(context.Context, *meta.RESTMapping, string, labels.Selector) ([]unstructured.Unstructured, error) {
+	return nil, nil
 }

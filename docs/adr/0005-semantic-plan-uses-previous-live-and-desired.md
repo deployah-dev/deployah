@@ -44,6 +44,49 @@ are drift regardless of who changed them. A field intentionally
 absent from Desired that existed in Previous is a declarative
 removal: a Resource Change, not Drift by itself.
 
+Drift actions are Modified, Missing, and Unexpected. They are not
+create, update, or delete.
+
+- Modified: Previous and Live both exist and the declared surface
+  differs. Both snapshots are present and Fields is non-empty.
+- Missing: Previous exists and Live does not. Previous is present,
+  Live is absent, and Fields is empty.
+- Unexpected: a release-owned Live object has no Previous logical
+  identity. Previous is absent, Live is present, and Fields is empty.
+
+Modified and Missing name the Previous declaration: its apiVersion,
+kind, effective namespace, and name. Unexpected names the observed
+Live object. An apiVersion transition alone is not Drift, and it is
+not Missing plus Unexpected. A modified or missing entry keeps the
+Previous apiVersion even when Live was read through another version.
+
+A fresh install has no Previous. It reads no Live, and its Drift is
+empty. A Live object that already uses a Desired name is not Drift
+on a fresh install.
+
+On an existing release, each named Previous declaration is read with
+GET through that declaration's own REST mapping, effective namespace,
+and name. Identity is not resolved through Desired.
+
+Unexpected objects are listed only in buckets taken from Previous:
+group, kind, and effective namespace. Each unambiguous bucket is
+listed once, through the highest Previous version in that bucket,
+with the label selector `deployah.dev/instance` equal to the release
+name. An object is Unexpected only when all of these hold: the
+instance label matches the release, `deployah.dev/source` is `spec`
+or `manifests`, there is no `helm.sh/hook` annotation,
+`meta.helm.sh/release-name` and `meta.helm.sh/release-namespace`
+match the release, the logical identity is not in Previous, and the
+object is not the target Namespace. Chart CRDs and Helm hook runtime
+resources are not Previous declarations, so they are outside this
+scope. A bucket that contains a generateName-only Previous
+declaration is not listed. Named resources in that bucket are still
+read with GET.
+
+Drift does not change HelmAction, Resource Changes, tasks, chart
+CRDs, Summary, or HasEffects. A plan can be a no-op and still list
+Drift.
+
 Do not report API-server bookkeeping as Resource Changes or drift:
 status, uid, resourceVersion, generation, managedFields, creation
 timestamps, and similar server-maintained metadata. This is not a

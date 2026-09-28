@@ -35,8 +35,8 @@ const headerLabelWidth = 10
 
 // WriteHuman writes a deterministic YAML-oriented rendering of p. It
 // does not mutate p. Resource headings use +, ~, and - markers.
-// The footer is a Summary of resource counts and, when tasks exist,
-// task counts.
+// Drift, when present, is a separate section. The footer is a Summary
+// of resource counts and, when tasks or drift exist, those counts.
 func WriteHuman(w io.Writer, p semantic.Plan, opts Options) error {
 	prepared, err := prepareRender(p, opts)
 	if err != nil {
@@ -61,6 +61,17 @@ func WriteHuman(w io.Writer, p semantic.Plan, opts Options) error {
 		}
 		if terr := writeHumanTasks(w, prepared, indexed, opts); terr != nil {
 			return terr
+		}
+		wroteBody = true
+	}
+	if len(prepared.Drift) > 0 {
+		if wroteBody {
+			if berr := writeBlank(w); berr != nil {
+				return berr
+			}
+		}
+		if derr := writeHumanDrift(w, prepared.Drift, prepared.Header.Namespace, opts); derr != nil {
+			return derr
 		}
 		wroteBody = true
 	}
@@ -257,6 +268,48 @@ func writeHumanChange(w io.Writer, c semantic.ResourceChange, planNS, indent str
 	return writeActionBody(w, c.Action, c.Before, c.After, c.Fields, c.Resource, indent, opts)
 }
 
+func writeHumanDrift(w io.Writer, drift []semantic.DriftChange, planNS string, opts Options) error {
+	if len(drift) == 0 {
+		return nil
+	}
+	if err := writeln(w, opts, theme.TextTitle, "Drift"); err != nil {
+		return err
+	}
+	if err := writeBlank(w); err != nil {
+		return err
+	}
+	for i := range drift {
+		if i > 0 {
+			if err := writeBlank(w); err != nil {
+				return err
+			}
+		}
+		if err := writeHumanDriftChange(w, drift[i], planNS, "  ", opts); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func writeHumanDriftChange(w io.Writer, d semantic.DriftChange, planNS, indent string, opts Options) error {
+	line := driftHeading(d.Action, d.Resource, planNS)
+	if err := writeln(w, opts, driftHeadingToken(d.Action), indent+line); err != nil {
+		return err
+	}
+	beforeObj, afterObj, renderFields := humanSides(d.Previous, d.Live, d.Fields, d.Resource, opts)
+	switch d.Action {
+	case semantic.DriftModified:
+		beforeProj, afterProj := projectFields(beforeObj, afterObj, renderFields)
+		return writeProjectedDiff(w, beforeProj, afterProj, indent, opts)
+	case semantic.DriftMissing:
+		return writeObjectYAML(w, beforeObj, indent+"- ", theme.StatusError, opts)
+	case semantic.DriftUnexpected:
+		return writeObjectYAML(w, afterObj, indent+"+ ", theme.StatusSuccess, opts)
+	default:
+		return nil
+	}
+}
+
 func writeActionBody(
 	w io.Writer,
 	action semantic.Action,
@@ -266,6 +319,26 @@ func writeActionBody(
 	indent string,
 	opts Options,
 ) error {
+	beforeObj, afterObj, renderFields := humanSides(before, after, fields, ref, opts)
+	switch action {
+	case semantic.Create:
+		return writeObjectYAML(w, afterObj, indent+"+ ", theme.StatusSuccess, opts)
+	case semantic.Delete:
+		return writeObjectYAML(w, beforeObj, indent+"- ", theme.StatusError, opts)
+	case semantic.Update:
+		beforeProj, afterProj := projectFields(beforeObj, afterObj, renderFields)
+		return writeProjectedDiff(w, beforeProj, afterProj, indent, opts)
+	default:
+		return nil
+	}
+}
+
+func humanSides(
+	before, after *semantic.ResourceSnapshot,
+	fields []semantic.FieldChange,
+	ref semantic.ResourceRef,
+	opts Options,
+) (map[string]any, map[string]any, []semantic.FieldChange) {
 	beforeObj := humanObject(before)
 	afterObj := humanObject(after)
 	renderFields := fields
@@ -273,25 +346,15 @@ func writeActionBody(
 		markSecretDiffs(beforeObj, afterObj, fields)
 		renderFields = secretSentinelFields(fields)
 	}
-	switch action {
-	case semantic.Create:
-		text, err := marshalOrderedYAML(afterObj)
-		if err != nil {
-			return err
-		}
-		return writePrefixedYAML(w, text, indent+"+ ", theme.StatusSuccess, opts)
-	case semantic.Delete:
-		text, err := marshalOrderedYAML(beforeObj)
-		if err != nil {
-			return err
-		}
-		return writePrefixedYAML(w, text, indent+"- ", theme.StatusError, opts)
-	case semantic.Update:
-		beforeProj, afterProj := projectFields(beforeObj, afterObj, renderFields)
-		return writeProjectedDiff(w, beforeProj, afterProj, indent, opts)
-	default:
-		return nil
+	return beforeObj, afterObj, renderFields
+}
+
+func writeObjectYAML(w io.Writer, obj map[string]any, prefix string, token theme.Token, opts Options) error {
+	text, err := marshalOrderedYAML(obj)
+	if err != nil {
+		return err
 	}
+	return writePrefixedYAML(w, text, prefix, token, opts)
 }
 
 func writeProjectedDiff(w io.Writer, before, after map[string]any, indent string, opts Options) error {
@@ -357,6 +420,23 @@ func writeHumanFooter(w io.Writer, p semantic.Plan, opts Options) error {
 	if err := writeln(w, opts, theme.TextPrimary, resourceLine); err != nil {
 		return err
 	}
+	if p.HasDrift() {
+		modified, missing, unexpected := 0, 0, 0
+		for _, d := range p.Drift {
+			switch d.Action {
+			case semantic.DriftModified:
+				modified++
+			case semantic.DriftMissing:
+				missing++
+			case semantic.DriftUnexpected:
+				unexpected++
+			}
+		}
+		driftLine := fmt.Sprintf("  Drift: %d modified, %d missing, %d unexpected", modified, missing, unexpected)
+		if err := writeln(w, opts, theme.TextPrimary, driftLine); err != nil {
+			return err
+		}
+	}
 	if len(p.Tasks) == 0 {
 		return nil
 	}
@@ -410,6 +490,38 @@ func formatGVK(ref semantic.ResourceRef) string {
 		return gv.Version + "/" + ref.Kind
 	}
 	return gv.Group + "/" + gv.Version + "/" + ref.Kind
+}
+
+func driftHeading(action semantic.DriftAction, ref semantic.ResourceRef, planNS string) string {
+	line := driftMarker(action) + " " + action.String() + " " + formatGVK(ref) + " " + quotedName(ref)
+	if ref.Namespace != "" && ref.Namespace != planNS {
+		line += fmt.Sprintf(" in namespace %q", ref.Namespace)
+	}
+	return line
+}
+
+func driftMarker(action semantic.DriftAction) string {
+	switch action {
+	case semantic.DriftUnexpected:
+		return "+"
+	case semantic.DriftModified:
+		return "~"
+	case semantic.DriftMissing:
+		return "-"
+	default:
+		return ""
+	}
+}
+
+func driftHeadingToken(action semantic.DriftAction) theme.Token {
+	switch action {
+	case semantic.DriftUnexpected:
+		return theme.StatusSuccess
+	case semantic.DriftMissing:
+		return theme.StatusError
+	default:
+		return theme.StatusWarning
+	}
 }
 
 func actionMarker(action semantic.Action) string {

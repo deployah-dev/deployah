@@ -21,7 +21,8 @@
 // upgrade, or none from the Helm operation and from comparing the
 // previous release with the render and its hooks. Resource changes
 // compare the previous manifest with the rendered Desired manifest.
-// Discovery supplies scope only. Chart CRDs pass through to Helm.
+// Discovery supplies scope only. An existing release also reads Live
+// with GET and LIST to compute Drift. Chart CRDs pass through to Helm.
 // The result is a [deployah.dev/deployah/internal/plan/semantic.Plan].
 // Those types live in plan/semantic. Their rendering lives in plan/view.
 //

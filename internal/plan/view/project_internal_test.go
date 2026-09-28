@@ -169,3 +169,52 @@ func TestProjectFields_WholeNamedListElement(t *testing.T) {
 		})
 	}
 }
+
+func TestProjectFields_PathAbsentFromBeforeSnapshot(t *testing.T) {
+	t.Parallel()
+	before := map[string]any{
+		"stringData": map[string]any{"password": "old"},
+	}
+	after := map[string]any{
+		"data": map[string]any{"password": "bmV3"},
+	}
+	gotBefore, gotAfter := projectFields(before, after, []semantic.FieldChange{{
+		Path:   "/data/password",
+		Op:     semantic.FieldReplace,
+		Before: "b2xk",
+		After:  "bmV3",
+	}})
+	want := func(password string) map[string]any {
+		return map[string]any{"data": map[string]any{"password": password}}
+	}
+	assert.Equal(t, want("b2xk"), gotBefore)
+	assert.Equal(t, want("bmV3"), gotAfter)
+}
+
+func TestProjectFields_ListShapeFromOtherSide(t *testing.T) {
+	t.Parallel()
+	after := map[string]any{
+		"spec": map[string]any{
+			"containers": []any{
+				map[string]any{"name": "api", "image": "new"},
+			},
+		},
+	}
+	gotBefore, gotAfter := projectFields(map[string]any{}, after, []semantic.FieldChange{{
+		Path:   "/spec/containers/0/image",
+		Op:     semantic.FieldReplace,
+		Before: "old",
+		After:  "new",
+	}})
+	want := func(image string) map[string]any {
+		return map[string]any{
+			"spec": map[string]any{
+				"containers": []any{
+					map[string]any{"name": "api", "image": image},
+				},
+			},
+		}
+	}
+	assert.Equal(t, want("old"), gotBefore)
+	assert.Equal(t, want("new"), gotAfter)
+}

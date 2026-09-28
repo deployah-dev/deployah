@@ -56,6 +56,19 @@ func copyPlan(p semantic.Plan) semantic.Plan {
 			}
 		}
 	}
+	out.Drift = slices.Clone(p.Drift)
+	if out.Drift == nil {
+		out.Drift = []semantic.DriftChange{}
+	}
+	for i := range out.Drift {
+		d := &out.Drift[i]
+		d.Previous = copySnapshot(d.Previous)
+		d.Live = copySnapshot(d.Live)
+		d.Fields = copyFields(d.Fields)
+		if d.Fields == nil {
+			d.Fields = []semantic.FieldChange{}
+		}
+	}
 	out.ChartCRDs = slices.Clone(p.ChartCRDs)
 	if out.ChartCRDs == nil {
 		out.ChartCRDs = []semantic.ChartCRD{}
@@ -136,6 +149,21 @@ func redactPlan(p *semantic.Plan) {
 			}
 			c.Fields[j].Before = redactSecretValue(c.Fields[j].Before)
 			c.Fields[j].After = redactSecretValue(c.Fields[j].After)
+		}
+	}
+	for i := range p.Drift {
+		d := &p.Drift[i]
+		if !isCoreSecret(d.Resource) {
+			continue
+		}
+		redactSnapshot(d.Previous)
+		redactSnapshot(d.Live)
+		for j := range d.Fields {
+			if !isSecretDataPath(d.Fields[j].Path) {
+				continue
+			}
+			d.Fields[j].Before = redactSecretValue(d.Fields[j].Before)
+			d.Fields[j].After = redactSecretValue(d.Fields[j].After)
 		}
 	}
 	for i := range p.Tasks {

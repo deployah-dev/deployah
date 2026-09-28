@@ -38,7 +38,7 @@ func TestBuildSemanticPlan_CRDFilesDoNotProduceResourceChanges(t *testing.T) {
 		Kind: "CustomResourceDefinition",
 		Name: "widgets.example.com",
 	}}
-	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, newMapper(), in)
+	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, newMapper(), liveFor(client), in)
 	t.Cleanup(cleanup)
 	require.NoError(t, err)
 	assert.Equal(t, rawCopy, in.CRDs[0].Raw)
@@ -89,7 +89,7 @@ func TestBuildSemanticPlan_ChartCRDLifecycle(t *testing.T) {
 			in := buildInput("ctx", resolvedSpec(), nil)
 			in.CRDDocs = docs
 			in.SkipCRDs = tc.skip
-			p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, newMapper(), in)
+			p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, newMapper(), liveFor(client), in)
 			t.Cleanup(cleanup)
 			require.NoError(t, err)
 			assert.Equal(t, tc.wantAction, p.HelmAction)

@@ -19,23 +19,26 @@ import (
 	"slices"
 )
 
-// Plan is one run's Helm release intent and its Previous-to-Desired
-// resource changes. Build it with [New]. Add chart CRDs with
-// [AttachChartCRDs]. Snapshots still contain secrets, and this type
-// is not the plan JSON document.
+// Plan is one run's Helm release intent, its Previous-to-Desired
+// resource changes, and its Previous-to-Live drift. Build it with
+// [New]. Add chart CRDs with [AttachChartCRDs] and drift with
+// [AttachDrift]. Snapshots still contain secrets, and this type is
+// not the plan JSON document.
 type Plan struct {
 	Header     Header
 	HelmAction HelmAction
 	Changes    []ResourceChange
+	Drift      []DriftChange
 	Tasks      []TaskPlan
 	ChartCRDs  []ChartCRD
 	Summary    Summary
 }
 
 // New checks and sorts its inputs, fills [Summary], and returns
-// non-nil slices. Chart CRDs stay empty. It returns an error if a
-// task reference is missing, ambiguous, or shared. helmAction and
-// field changes are stored as given.
+// non-nil slices. Chart CRDs and drift stay empty. It returns an
+// error if a task reference is missing, ambiguous, or shared.
+// helmAction and field changes are stored as given. Drift is
+// observed cluster state and is not an input here.
 func New(header Header, helmAction HelmAction, changes []ResourceChange, tasks []TaskPlan) (Plan, error) {
 	if !helmAction.valid() {
 		return Plan{}, fmt.Errorf("invalid helm action %s", helmAction)
@@ -82,6 +85,7 @@ func New(header Header, helmAction HelmAction, changes []ResourceChange, tasks [
 		HelmAction: helmAction,
 		Changes:    copiedChanges,
 		Tasks:      copiedTasks,
+		Drift:      []DriftChange{},
 		ChartCRDs:  []ChartCRD{},
 		Summary:    Summarize(copiedChanges),
 	}, nil
@@ -122,7 +126,8 @@ func validateChartCRD(c ChartCRD) error {
 }
 
 // HasEffects reports whether the plan lists a resource change or a task
-// that would change or run. [HelmAction] is not an effect.
+// that would change or run. [HelmAction] is not an effect. [Plan.Drift]
+// is observed cluster state and is not an effect.
 func (p Plan) HasEffects() bool {
 	if len(p.Changes) > 0 {
 		return true
@@ -136,7 +141,8 @@ func (p Plan) HasEffects() bool {
 }
 
 // IsNoOp reports whether the plan is a non-install [HelmNone] with no
-// known effects.
+// known release effects. Drift does not count, so a plan can be a
+// no-op while [Plan.HasDrift] is true.
 func (p Plan) IsNoOp() bool {
 	return !p.Header.FreshInstall &&
 		p.HelmAction == HelmNone &&

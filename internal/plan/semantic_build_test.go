@@ -188,9 +188,16 @@ func buildInput(clusterContext string, resolved *spec.ResolvedSpec, post postren
 	}
 }
 
+func liveFor(client *fakeBuildClient) plan.LiveReader {
+	if client != nil && client.prep.Operation == helm.OperationUpgrade {
+		return &fakeLive{}
+	}
+	return nil
+}
+
 func mustBuild(t *testing.T, client *fakeBuildClient, mapper plan.RESTMapper) semantic.Plan {
 	t.Helper()
-	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, mapper, buildInput("ctx", resolvedSpec(), nil))
+	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, mapper, liveFor(client), buildInput("ctx", resolvedSpec(), nil))
 	t.Cleanup(cleanup)
 	require.NoError(t, err)
 	return p
@@ -209,7 +216,7 @@ func changeByName(t *testing.T, changes []semantic.ResourceChange, name string) 
 
 func TestBuildSemanticPlan_RequiresClient(t *testing.T) {
 	t.Parallel()
-	p, result, cleanup, err := plan.BuildSemanticPlan(t.Context(), nil, newMapper(), buildInput("ctx", resolvedSpec(), nil))
+	p, result, cleanup, err := plan.BuildSemanticPlan(t.Context(), nil, newMapper(), nil, buildInput("ctx", resolvedSpec(), nil))
 	t.Cleanup(cleanup)
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "semantic plan requires a helm client")
@@ -247,7 +254,7 @@ func TestBuildSemanticPlan_RequiresInput(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			client := &fakeBuildClient{}
-			p, result, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, tt.mapper, tt.in)
+			p, result, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, tt.mapper, nil, tt.in)
 			t.Cleanup(cleanup)
 			require.Error(t, err)
 			assert.ErrorContains(t, err, tt.wantErr)
@@ -267,7 +274,7 @@ func TestBuildSemanticPlan_FreshInstallCreatesDesired(t *testing.T) {
 	client.cleanup = func() { cleanups++ }
 	ctx := context.WithValue(t.Context(), ctxKey{}, "pipeline")
 
-	p, got, cleanup, err := plan.BuildSemanticPlan(ctx, client, newMapper(), buildInput("kind-dev", resolvedSpec(), post))
+	p, got, cleanup, err := plan.BuildSemanticPlan(ctx, client, newMapper(), liveFor(client), buildInput("kind-dev", resolvedSpec(), post))
 	require.NotNil(t, cleanup)
 	t.Cleanup(func() {
 		if cleanups == 0 {
@@ -567,7 +574,7 @@ func TestBuildSemanticPlan_Tasks(t *testing.T) {
 			"cleanup": {Task: spec.Task{On: spec.TaskOnSchedule}},
 			"manual":  {Task: spec.Task{On: spec.TaskOnManual}},
 		}
-		p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, newMapper(), buildInput("ctx", resolved, nil))
+		p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, newMapper(), liveFor(client), buildInput("ctx", resolved, nil))
 		t.Cleanup(cleanup)
 		require.NoError(t, err)
 		assert.Equal(t, semantic.HelmNone, p.HelmAction)
@@ -600,7 +607,7 @@ func TestBuildSemanticPlan_Tasks(t *testing.T) {
 				},
 			},
 		}
-		p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, newMapper(), buildInput("ctx", resolved, nil))
+		p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, newMapper(), liveFor(client), buildInput("ctx", resolved, nil))
 		t.Cleanup(cleanup)
 		require.NoError(t, err)
 		require.Len(t, p.Changes, 1)
@@ -688,7 +695,7 @@ func TestBuildSemanticPlan_TargetNamespaceOwnership(t *testing.T) {
 			} else {
 				client = upgradeClient(tt.previous, tt.desired, 4)
 			}
-			_, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, newMapper(), buildInput("ctx", resolvedSpec(), nil))
+			_, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, newMapper(), liveFor(client), buildInput("ctx", resolvedSpec(), nil))
 			t.Cleanup(cleanup)
 			require.Error(t, err)
 			assert.ErrorContains(t, err, tt.wantErr)
@@ -759,7 +766,7 @@ data:
 			} else {
 				client = upgradeClient(tt.previous, tt.desired, 4)
 			}
-			_, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, newMapper(), buildInput("ctx", resolvedSpec(), nil))
+			_, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, newMapper(), liveFor(client), buildInput("ctx", resolvedSpec(), nil))
 			t.Cleanup(cleanup)
 			require.Error(t, err)
 			assert.ErrorContains(t, err, tt.wantErr)
@@ -817,7 +824,7 @@ spec:
 	gk := schema.GroupKind{Group: "example.com", Kind: "Widget"}
 	mapper.err[gk] = &meta.NoKindMatchError{GroupKind: gk}
 	client := upgradeClient(widget, configMapYAML("app", "prod", "v1"), 4)
-	_, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, mapper, buildInput("ctx", resolvedSpec(), nil))
+	_, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, mapper, liveFor(client), buildInput("ctx", resolvedSpec(), nil))
 	t.Cleanup(cleanup)
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "previous release revision 3: resolve resource mapping")
@@ -840,7 +847,7 @@ spec:
 	client := installClient(widget)
 	in := buildInput("ctx", resolvedSpec(), nil)
 	in.CRDs = []extras.RawFile{{Path: "widgets.yaml", Raw: []byte("apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\n")}}
-	_, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, mapper, in)
+	_, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, mapper, liveFor(client), in)
 	t.Cleanup(cleanup)
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "rendered manifest: resolve resource mapping")
@@ -922,7 +929,7 @@ func TestBuildSemanticPlan_PrepRenderMismatch(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			client := &fakeBuildClient{result: tt.result, prep: tt.prep, cleanup: func() {}}
-			p, result, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, newMapper(), buildInput("ctx", resolvedSpec(), nil))
+			p, result, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, newMapper(), liveFor(client), buildInput("ctx", resolvedSpec(), nil))
 			t.Cleanup(cleanup)
 			require.Error(t, err)
 			assert.ErrorContains(t, err, "render preparation:")
@@ -943,7 +950,7 @@ func TestBuildSemanticPlan_InvalidPrep(t *testing.T) {
 		},
 		cleanup: func() {},
 	}
-	p, result, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, newMapper(), buildInput("ctx", resolvedSpec(), nil))
+	p, result, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, newMapper(), liveFor(client), buildInput("ctx", resolvedSpec(), nil))
 	t.Cleanup(cleanup)
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "determine helm release intent:")
@@ -959,7 +966,7 @@ func TestBuildSemanticPlan_MappingFailureLeavesCleanup(t *testing.T) {
 	client.cleanup = func() { cleanups++ }
 	mapper := newMapper()
 	mapper.err[schema.GroupKind{Kind: "ConfigMap"}] = errors.New("discovery failed")
-	p, result, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, mapper, buildInput("ctx", resolvedSpec(), nil))
+	p, result, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, mapper, liveFor(client), buildInput("ctx", resolvedSpec(), nil))
 	require.NotNil(t, cleanup)
 	t.Cleanup(func() {
 		if cleanups == 0 {
@@ -979,7 +986,7 @@ func TestBuildSemanticPlan_NilCleanup(t *testing.T) {
 	t.Parallel()
 	client := installClient(configMapYAML("app", "prod", "v1"))
 	client.cleanup = nil
-	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, newMapper(), buildInput("ctx", resolvedSpec(), nil))
+	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, newMapper(), liveFor(client), buildInput("ctx", resolvedSpec(), nil))
 	require.NotNil(t, cleanup)
 	t.Cleanup(cleanup)
 	require.NoError(t, err)
@@ -989,7 +996,7 @@ func TestBuildSemanticPlan_NilCleanup(t *testing.T) {
 func TestBuildSemanticPlan_RenderError(t *testing.T) {
 	t.Parallel()
 	client := &fakeBuildClient{err: errors.New("chart missing")}
-	p, result, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, newMapper(), buildInput("ctx", resolvedSpec(), nil))
+	p, result, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, newMapper(), liveFor(client), buildInput("ctx", resolvedSpec(), nil))
 	t.Cleanup(cleanup)
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "render manifests:")
@@ -1073,7 +1080,7 @@ func TestBuildSemanticPlan_Hooks(t *testing.T) {
 			t.Parallel()
 			resolved := resolvedSpec()
 			resolved.Tasks = tt.tasks
-			p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), tt.client, newMapper(), buildInput("ctx", resolved, nil))
+			p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), tt.client, newMapper(), liveFor(tt.client), buildInput("ctx", resolved, nil))
 			t.Cleanup(cleanup)
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantHelm, p.HelmAction)

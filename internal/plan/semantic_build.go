@@ -32,18 +32,17 @@ import (
 // RESTMapper maps a GroupKind and version to a REST mapping.
 // [BuildSemanticPlan] uses it only to learn scope and whether a
 // resource can be built. It does not read live objects or send writes.
-// [meta.RESTMapper] satisfies it.
+// Live reads for Drift go through [LiveReader]. [meta.RESTMapper]
+// satisfies it.
 type RESTMapper interface {
 	RESTMapping(gk schema.GroupKind, versions ...string) (*meta.RESTMapping, error)
 }
 
 var _ RESTMapper = meta.RESTMapper(nil)
 
-// SemanticBuildClient is the one render [BuildSemanticPlan] calls.
-// It returns the render and its prep. A real Helm client looks up
-// release history in that call and returns Previous through the prep.
-// The interface stays small so this package does not import
-// [deployah.dev/deployah/internal/session], and tests can pass a fake.
+// SemanticBuildClient is the render [BuildSemanticPlan] calls. It
+// returns the render and its prep. A Helm client reads release history
+// there and returns Previous on the prep.
 type SemanticBuildClient interface {
 	RenderManifestsWithPrep(
 		ctx context.Context,
@@ -75,27 +74,29 @@ type SemanticBuildInput struct {
 	SkipCRDs bool
 }
 
-// BuildSemanticPlan renders the spec and returns the Helm release
-// intent and the resource changes from Previous to Desired.
+// BuildSemanticPlan renders the spec and returns Helm release intent,
+// changes from Previous to Desired, and Drift from Previous to Live.
 //
-// It calls [SemanticBuildClient.RenderManifestsWithPrep] unchanged. A
-// real Helm client reads release history, renders Desired with a
-// client-side dry-run, and may use Helm discovery. After that, mapper
-// is used only to learn scope and whether each resource can be built.
-// That step does not read live objects or send create, update, patch,
-// or delete requests.
+// Rendering calls [SemanticBuildClient.RenderManifestsWithPrep] as
+// given. A Helm client may read release history and dry-run Desired
+// on the client. mapper then only checks scope and whether a resource
+// can be built. It does not read Live or write.
 //
-// Previous is the current release manifest, empty on install. Desired
-// is the render. Only Desired is [semantic.Create]. Only Previous is
-// [semantic.Delete]: it leaves Desired release state. A resource in
-// both that differs is [semantic.Update]. Equal ones are omitted.
+// Drift is always set. A fresh install leaves it empty, and live may
+// be nil. An existing release requires live. Drift only gets and
+// lists. A failed read fails the plan, except when the object is
+// missing. Drift leaves the Helm action, changes, tasks, chart CRDs,
+// and summary as they are.
 //
-// The plan fails if the render declares the target namespace, or if
-// the previous release does on upgrade. Other namespaces stay ordinary
+// Previous is the stored release, empty on install. Desired is the
+// render. Only Desired is [semantic.Create], only Previous is
+// [semantic.Delete], and a difference is [semantic.Update]. Equal
+// objects are left out. The target namespace in the render, or in
+// Previous on upgrade, fails the plan. Other namespaces stay ordinary
 // changes.
 //
-// Chart CRD files go to Helm and are recorded as lifecycle, not as
-// resource changes. Identity comes from [SemanticBuildInput.CRDDocs].
+// Chart CRD files go to Helm. Their lifecycle comes from
+// [SemanticBuildInput.CRDDocs], not from changes or drift.
 //
 // Call the returned cleanup once. It is never nil. On error the plan
 // is empty and the render result is nil.
@@ -103,6 +104,7 @@ func BuildSemanticPlan(
 	ctx context.Context,
 	client SemanticBuildClient,
 	mapper RESTMapper,
+	live LiveReader,
 	input SemanticBuildInput,
 ) (semantic.Plan, *render.RenderResult, func(), error) {
 	cleanup := func() {}
@@ -127,13 +129,16 @@ func BuildSemanticPlan(
 	if err != nil {
 		return semantic.Plan{}, nil, cleanup, fmt.Errorf("render preparation: %w", err)
 	}
+	if prep.Operation == helm.OperationUpgrade && live == nil {
+		return semantic.Plan{}, nil, cleanup, fmt.Errorf("semantic plan for an existing release requires a live reader")
+	}
 
 	helmAction, err := deriveHelmAction(prep, result.Manifest, result.Hooks)
 	if err != nil {
 		return semantic.Plan{}, nil, cleanup, fmt.Errorf("determine helm release intent: %w", err)
 	}
 
-	changes, err := declaredChanges(mapper, prep, result)
+	changes, previous, err := declaredChanges(mapper, prep, result)
 	if err != nil {
 		return semantic.Plan{}, nil, cleanup, err
 	}
@@ -160,49 +165,57 @@ func BuildSemanticPlan(
 	if err != nil {
 		return semantic.Plan{}, nil, cleanup, fmt.Errorf("assemble semantic plan: %w", err)
 	}
+	drift, err := observeDrift(ctx, live, previous, header)
+	if err != nil {
+		return semantic.Plan{}, nil, cleanup, fmt.Errorf("observe drift: %w", err)
+	}
+	p, err = semantic.AttachDrift(p, drift)
+	if err != nil {
+		return semantic.Plan{}, nil, cleanup, fmt.Errorf("assemble semantic plan: %w", err)
+	}
 	return p, result, cleanup, nil
 }
 
-func declaredChanges(mapper RESTMapper, prep helm.ReleasePrep, result *render.RenderResult) ([]semantic.ResourceChange, error) {
+func declaredChanges(mapper RESTMapper, prep helm.ReleasePrep, result *render.RenderResult) ([]semantic.ResourceChange, []declaration, error) {
 	desiredObjs, err := flattenManifest(result.Manifest)
 	if err != nil {
-		return nil, fmt.Errorf("rendered manifest: %w", err)
+		return nil, nil, fmt.Errorf("rendered manifest: %w", err)
 	}
 	if ownErr := checkTargetNamespaceOwnership("rendered manifest", desiredObjs, result.Namespace); ownErr != nil {
-		return nil, ownErr
+		return nil, nil, ownErr
 	}
 	desired, err := declareAll(mapper, desiredObjs, result.Namespace, "rendered manifest")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	var previous []declaration
 	if prep.Operation == helm.OperationUpgrade {
 		if prep.Current == nil {
-			return nil, fmt.Errorf("upgrade requires the previous release")
+			return nil, nil, fmt.Errorf("upgrade requires the previous release")
 		}
 		side := fmt.Sprintf("previous release revision %d", prep.Current.Version)
 		previousObjs, flatErr := flattenManifest(prep.Current.Manifest)
 		if flatErr != nil {
-			return nil, fmt.Errorf("%s: %w", side, flatErr)
+			return nil, nil, fmt.Errorf("%s: %w", side, flatErr)
 		}
 		if ownErr := checkTargetNamespaceOwnership(side, previousObjs, result.Namespace); ownErr != nil {
-			return nil, ownErr
+			return nil, nil, ownErr
 		}
 		previous, err = declareAll(mapper, previousObjs, result.Namespace, side)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
 	changes, err := diffDeclared(previous, desired)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err = stampHelmOrder(changes); err != nil {
-		return nil, fmt.Errorf("assemble semantic plan: %w", err)
+		return nil, nil, fmt.Errorf("assemble semantic plan: %w", err)
 	}
-	return changes, nil
+	return changes, previous, nil
 }
 
 func chartCRDsFromDocs(docs []extras.CRDDoc, op helm.Operation, skipCRDs bool) []semantic.ChartCRD {

@@ -32,9 +32,9 @@ hooks still run (ADR-0014).
 CRD lifecycle is ADR-0008.
 
 The target namespace is an execution prerequisite created by Helm
-install, outside the release. It is never a Resource Change. Planning
-does not read Live to decide whether that namespace exists. A missing
-namespace is not a planning failure.
+install, outside the release. It is never a Resource Change and never
+a Drift entry. Planning does not read Live to decide whether that
+namespace exists. A missing namespace is not a planning failure.
 
 Neither the Desired render nor the Previous release baseline may
 declare that target namespace. If either does, planning fails with a
