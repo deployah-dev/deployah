@@ -53,16 +53,11 @@ func TestSchemaV1ID_MatchesEmbeddedAndRendered(t *testing.T) {
 	require.True(t, ok)
 	_, hasReplace := summaryProps["replace"]
 	assert.False(t, hasReplace)
-	origin, ok := defs["Origin"].(map[string]any)
+	change, ok := defs["ResourceChange"].(map[string]any)
 	require.True(t, ok)
-	originProps, ok := origin["properties"].(map[string]any)
-	require.True(t, ok)
-	kind, ok := originProps["kind"].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, []any{"helm", "namespace"}, kind["enum"])
-	assert.NotContains(t, kind["enum"], "crd")
+	assert.Equal(t, []any{"resource", "action", "before", "after", "fields"}, change["required"])
 
-	doc := mustPlanDoc(t, mustPlan(t, semantic.HelmNone, nil, nil))
+	doc := mustPlanDoc(t, mustPlan(t, semantic.HelmNone, nil))
 	assert.Equal(t, view.SchemaV1ID, doc["schema"])
 }
 
@@ -71,40 +66,21 @@ func TestSchemaV1_RejectsMalformedDocuments(t *testing.T) {
 	res := ref("ConfigMap", "app")
 	update := mustPlanDoc(t, mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 		Resource: res,
-		Origin:   helmOrigin(),
 		Action:   semantic.Update,
 		Before:   snap(cm("app", "v1")),
 		After:    snap(cm("app", "v2")),
-		Apply:    writeApply(),
-	}}, nil))
+	}}))
 	create := mustPlanDoc(t, mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 		Resource: res,
-		Origin:   helmOrigin(),
 		Action:   semantic.Create,
 		After:    snap(cm("app", "v1")),
-		Apply:    writeApply(),
-	}}, nil))
+	}}))
 	deleteDoc := mustPlanDoc(t, mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 		Resource: res,
-		Origin:   helmOrigin(),
 		Action:   semantic.Delete,
 		Before:   snap(cm("app", "v1")),
-		Apply:    deleteApply(),
-	}}, nil))
-	createWrite := mustPlanDoc(t, mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
-		Resource: res,
-		Origin:   helmOrigin(),
-		Action:   semantic.Create,
-		After:    snap(cm("app", "v1")),
-		Apply:    writeCreate(),
-	}}, nil))
-	noneDoc := mustPlanDoc(t, mustPlan(t, semantic.HelmNone, nil, nil))
-	ssaWrite := map[string]any{
-		"method":         "server_side_apply",
-		"fieldManager":   "deployah",
-		"forceConflicts": false,
-	}
-	bgDelete := map[string]any{"propagation": "background"}
+	}}))
+	noneDoc := mustPlanDoc(t, mustPlan(t, semantic.HelmNone, nil))
 	addField := map[string]any{"path": "/data/extra", "op": "add", "after": "x"}
 
 	tests := []struct {
@@ -141,12 +117,6 @@ func TestSchemaV1_RejectsMalformedDocuments(t *testing.T) {
 		{name: "field replace missing after", raw: patched(t, update, func(d map[string]any) {
 			delete(firstField(t, d), "after")
 		})},
-		{name: "origin helm missing helm", raw: patched(t, update, func(d map[string]any) {
-			delete(asObject(t, firstChange(t, d)["origin"]), "helm")
-		})},
-		{name: "empty fieldManager", raw: patched(t, update, func(d map[string]any) {
-			asObject(t, applyOf(t, d)["write"])["fieldManager"] = ""
-		})},
 		{name: "create with before object", raw: patched(t, create, func(d map[string]any) {
 			firstChange(t, d)["before"] = map[string]any{"kind": "ConfigMap"}
 		})},
@@ -156,32 +126,20 @@ func TestSchemaV1_RejectsMalformedDocuments(t *testing.T) {
 		{name: "create with fields", raw: patched(t, create, func(d map[string]any) {
 			firstChange(t, d)["fields"] = []any{addField}
 		})},
-		{name: "create missing write", raw: patched(t, create, func(d map[string]any) {
-			delete(applyOf(t, d), "write")
-		})},
-		{name: "create with delete", raw: patched(t, create, func(d map[string]any) {
-			applyOf(t, d)["delete"] = bgDelete
-		})},
 		{name: "update with before null", raw: patched(t, update, func(d map[string]any) {
 			firstChange(t, d)["before"] = nil
 		})},
-		{name: "update missing write", raw: patched(t, update, func(d map[string]any) {
-			delete(applyOf(t, d), "write")
+		{name: "update missing after", raw: patched(t, update, func(d map[string]any) {
+			firstChange(t, d)["after"] = nil
 		})},
-		{name: "update with delete", raw: patched(t, update, func(d map[string]any) {
-			applyOf(t, d)["delete"] = bgDelete
+		{name: "update with empty fields", raw: patched(t, update, func(d map[string]any) {
+			firstChange(t, d)["fields"] = []any{}
 		})},
 		{name: "delete with after object", raw: patched(t, deleteDoc, func(d map[string]any) {
 			firstChange(t, d)["after"] = map[string]any{"kind": "ConfigMap"}
 		})},
 		{name: "delete with fields", raw: patched(t, deleteDoc, func(d map[string]any) {
 			firstChange(t, d)["fields"] = []any{addField}
-		})},
-		{name: "delete with write", raw: patched(t, deleteDoc, func(d map[string]any) {
-			applyOf(t, d)["write"] = ssaWrite
-		})},
-		{name: "delete missing delete", raw: patched(t, deleteDoc, func(d map[string]any) {
-			delete(applyOf(t, d), "delete")
 		})},
 		{name: "top-level completeness", raw: patched(t, update, func(d map[string]any) {
 			d["completeness"] = "complete"
@@ -195,40 +153,6 @@ func TestSchemaV1_RejectsMalformedDocuments(t *testing.T) {
 		{name: "unknown top-level field", raw: patched(t, update, func(d map[string]any) {
 			d["unknown"] = true
 		})},
-		{name: "hook definition apply", raw: patched(t, mustPlanDoc(t, mustPlanWithTasks(t, semantic.HelmUpgrade, nil, []semantic.TaskPlan{{
-			Name:    "migrate",
-			Phase:   semantic.TaskPreDeploy,
-			Action:  semantic.TaskCreate,
-			WillRun: true,
-			Definitions: []semantic.HookDefinition{{
-				Resource: ref("Job", "migrate"),
-				Action:   semantic.Create,
-				After:    snap(cm("migrate", "v1")),
-			}},
-		}}, nil)), func(d map[string]any) {
-			tasks, ok := d["tasks"].([]any)
-			require.True(t, ok)
-			require.NotEmpty(t, tasks)
-			defs, ok := asObject(t, tasks[0])["definitions"].([]any)
-			require.True(t, ok)
-			require.NotEmpty(t, defs)
-			asObject(t, defs[0])["apply"] = map[string]any{"write": ssaWrite}
-		})},
-		{name: "namespace origin with helm", raw: patched(t, update, func(d map[string]any) {
-			origin := asObject(t, firstChange(t, d)["origin"])
-			origin["kind"] = "namespace"
-		})},
-		{name: "create write with fieldManager", raw: patched(t, createWrite, func(d map[string]any) {
-			asObject(t, applyOf(t, d)["write"])["fieldManager"] = "deployah"
-		})},
-		{name: "create write with forceConflicts", raw: patched(t, createWrite, func(d map[string]any) {
-			asObject(t, applyOf(t, d)["write"])["forceConflicts"] = true
-		})},
-		{name: "update write method create", raw: patched(t, update, func(d map[string]any) {
-			write := asObject(t, applyOf(t, d)["write"])
-			write["method"] = "create"
-			delete(write, "fieldManager")
-		})},
 		{name: "install without freshInstall", raw: patched(t, noneDoc, func(d map[string]any) {
 			d["helmAction"] = "install"
 		})},
@@ -238,11 +162,8 @@ func TestSchemaV1_RejectsMalformedDocuments(t *testing.T) {
 		{name: "freshInstall with upgrade", raw: patched(t, update, func(d map[string]any) {
 			asObject(t, d["header"])["freshInstall"] = true
 		})},
-		{name: "none with origin helm", raw: patched(t, update, func(d map[string]any) {
+		{name: "none with changes", raw: patched(t, update, func(d map[string]any) {
 			d["helmAction"] = "none"
-		})},
-		{name: "origin kind crd", raw: patched(t, update, func(d map[string]any) {
-			asObject(t, firstChange(t, d)["origin"])["kind"] = "crd"
 		})},
 	}
 	for _, tt := range tests {
@@ -253,13 +174,13 @@ func TestSchemaV1_RejectsMalformedDocuments(t *testing.T) {
 	}
 }
 
-func TestSchemaV1_AcceptsHelmActionOrigins(t *testing.T) {
+func TestSchemaV1_AcceptsNamespaceCreate(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name string
 		plan semantic.Plan
 	}{
-		{name: "install with origin namespace", plan: mustPlanWithHeader(t, semantic.Header{
+		{name: "install namespace", plan: mustPlanWithHeader(t, semantic.Header{
 			Project:      "web",
 			Environment:  "prod",
 			Release:      "web",
@@ -267,15 +188,13 @@ func TestSchemaV1_AcceptsHelmActionOrigins(t *testing.T) {
 			FreshInstall: true,
 		}, semantic.HelmInstall, []semantic.ResourceChange{{
 			Resource: semantic.ResourceRef{APIVersion: "v1", Kind: "Namespace", Name: "prod"},
-			Origin:   semantic.ResourceOrigin{Kind: semantic.OriginNamespace},
 			Action:   semantic.Create,
 			After: snap(map[string]any{
 				"apiVersion": "v1",
 				"kind":       "Namespace",
 				"metadata":   map[string]any{"name": "prod"},
 			}),
-			Apply: writeApply(),
-		}}, nil, nil)},
+		}}, nil)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -303,7 +222,7 @@ func TestSchemaV1_ChartCRDs(t *testing.T) {
 	for _, tc := range valid {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			p := mustPlanWithHeader(t, tc.header, tc.action, nil, nil, nil)
+			p := mustPlanWithHeader(t, tc.header, tc.action, nil, nil)
 			var attachErr error
 			p, attachErr = semantic.AttachChartCRDs(p, []semantic.ChartCRD{{
 				Source:      ".deployah/crds/widgets.yaml",
@@ -319,7 +238,7 @@ func TestSchemaV1_ChartCRDs(t *testing.T) {
 		})
 	}
 
-	p := mustPlan(t, semantic.HelmUpgrade, nil, nil)
+	p := mustPlan(t, semantic.HelmUpgrade, nil)
 	var err error
 	p, err = semantic.AttachChartCRDs(p, []semantic.ChartCRD{{
 		Source:    ".deployah/crds/widgets.yaml",
@@ -335,7 +254,6 @@ func TestSchemaV1_ChartCRDs(t *testing.T) {
 		fn   func(map[string]any)
 	}{
 		{name: "unknown property", fn: func(d map[string]any) { firstChartCRD(t, d)["action"] = "create" }},
-		{name: "origin field", fn: func(d map[string]any) { firstChartCRD(t, d)["origin"] = "helm" }},
 		{name: "lifecycle create", fn: func(d map[string]any) { firstChartCRD(t, d)["lifecycle"] = "create" }},
 		{name: "upgrade willProcess true", fn: func(d map[string]any) { firstChartCRD(t, d)["willProcess"] = true }},
 		{name: "process willProcess false", fn: func(d map[string]any) {
@@ -399,11 +317,6 @@ func asObject(t *testing.T, v any) map[string]any {
 	m, ok := v.(map[string]any)
 	require.True(t, ok)
 	return m
-}
-
-func applyOf(t *testing.T, doc map[string]any) map[string]any {
-	t.Helper()
-	return asObject(t, firstChange(t, doc)["apply"])
 }
 
 func firstChange(t *testing.T, doc map[string]any) map[string]any {

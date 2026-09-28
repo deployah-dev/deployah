@@ -15,96 +15,29 @@
 package plan
 
 import (
-	"context"
 	"fmt"
 
-	"helm.sh/helm/v4/pkg/kube"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-
-	"deployah.dev/deployah/internal/helm"
-	"deployah.dev/deployah/internal/plan/semantic"
-	"deployah.dev/deployah/internal/predict"
-
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
-func predictNamespace(ctx context.Context, cluster predict.Cluster, op helm.Operation, name string) (*semantic.ResourceChange, bool, error) {
-	id := predict.Identity{Version: "v1", Kind: "Namespace", Name: name}
-	if op == helm.OperationUpgrade {
-		_, err := cluster.Get(ctx, id)
-		if apierrors.IsNotFound(err) {
-			return nil, false, fmt.Errorf("upgrade requires namespace %q to exist", name)
-		}
-		if err != nil {
-			return nil, false, fmt.Errorf("get namespace %s: %w", name, err)
-		}
-		return nil, false, nil
-	}
-	if op != helm.OperationInstall {
-		return nil, false, nil
-	}
-
-	live, err := cluster.Get(ctx, id)
-	missing := apierrors.IsNotFound(err)
-	if missing {
-		live = nil
-		err = nil
-	}
-	if err != nil {
-		return nil, false, fmt.Errorf("get namespace %s: %w", name, err)
-	}
-
-	desired := &unstructured.Unstructured{Object: map[string]any{
-		"apiVersion": "v1",
-		"kind":       "Namespace",
-		"metadata": map[string]any{
-			"name":   name,
-			"labels": map[string]any{"name": name},
-		},
-	}}
-	predicted, err := cluster.Apply(ctx, desired, predict.ApplyOptions{
-		FieldManager:   kube.ManagedFieldsManager,
-		ForceConflicts: false,
-	})
-	if err != nil {
-		return nil, missing, fmt.Errorf("predict namespace %s: %w", name, err)
-	}
-
-	ref := semantic.ResourceRef{APIVersion: "v1", Kind: "Namespace", Name: name}
-	origin := semantic.ResourceOrigin{Kind: semantic.OriginNamespace}
-	if live == nil {
-		return &semantic.ResourceChange{
-			Resource:   ref,
-			Origin:     origin,
-			Action:     semantic.Create,
-			After:      snapshotOf(predicted),
-			Apply:      writeApply(),
-			ApplyOrder: 1,
-		}, true, nil
-	}
-	if predict.EqualPredictedState(live, predicted) {
-		return nil, false, nil
-	}
-	return &semantic.ResourceChange{
-		Resource:   ref,
-		Origin:     origin,
-		Action:     semantic.Update,
-		Before:     snapshotOf(live),
-		After:      snapshotOf(predicted),
-		Apply:      writeApply(),
-		ApplyOrder: 1,
-	}, false, nil
-}
-
-func checkInstallNamespaceOverlap(manifest, namespace string) error {
-	objs, err := predict.FlattenManifest(manifest)
-	if err != nil {
-		return err
-	}
+// checkTargetNamespaceOwnership returns an error if objs include the
+// release Namespace. side names the manifest. Helm install creates that
+// namespace outside the release, so the release must not claim it.
+// Other Namespace names stay. Nothing is read live or rewritten.
+func checkTargetNamespaceOwnership(side string, objs []*unstructured.Unstructured, targetNamespace string) error {
 	for _, obj := range objs {
-		if obj.GetAPIVersion() == "v1" && obj.GetKind() == "Namespace" && obj.GetName() == namespace {
-			return fmt.Errorf("install cannot plan target namespace %q: helm CreateNamespace and the rendered manifest both write it, and those sequential server-side applies cannot be composed", namespace)
+		if !declaresTargetNamespace(obj, targetNamespace) {
+			continue
 		}
+		return fmt.Errorf("%s declares target namespace %q: the target namespace is an execution prerequisite created by helm install outside the release, and the release must not claim it", side, targetNamespace)
 	}
 	return nil
+}
+
+func declaresTargetNamespace(obj *unstructured.Unstructured, targetNamespace string) bool {
+	if obj == nil {
+		return false
+	}
+	gvk := obj.GroupVersionKind()
+	return gvk.Group == "" && gvk.Kind == "Namespace" && obj.GetName() == targetNamespace
 }

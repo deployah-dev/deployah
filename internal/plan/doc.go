@@ -12,38 +12,28 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package plan computes and renders read-only deployment plans. Planning
-// inspects release changes and their consequences. It does not decide
-// whether `deployah deploy` runs Helm.
-//
-// [BuildPlan] diffs the rendered manifest against the last successful
-// Helm release. [BuildSemanticPlan] renders Desired state, derives the
-// plan's Helm release-intent transition by comparing the previous release
-// with that render, and records write consequences only when the plan has
-// a Helm transition.
-//
-// [ComputeDiff] is the older diff: it parses two rendered Kubernetes
-// manifests, matches resources by (apiVersion, kind, namespace, name), and
-// runs [github.com/homeport/dyff] field by field on resources present on
-// both sides. [Plan] is that model. [RenderText] prints it, and
-// [NewJSONDocument] encodes it as JSON. [DeploymentIntent] records resize
-// and hostname flags. It does not decide whether deploy runs Helm.
-// [BuildPlan] and [ComputeDiff] stay while callers move to the semantic
-// plan.
+// Package plan computes and renders read-only deployment plans.
+// Planning looks at release changes. It does not decide whether
+// `deployah deploy` runs Helm.
 //
 // [BuildSemanticPlan] renders with
-// [SemanticBuildClient.RenderManifestsWithPrep], then picks install,
-// upgrade, or none from the Helm operation and a comparison of the
-// previous release (prep.Current) with the rendered manifest and hooks.
-// Live state and predictor output do not make that choice. If the plan
-// has no Helm transition, Namespace and Helm write prediction are
-// skipped, so the plan has no Helm writes. If the plan's transition is
-// install or upgrade, Namespace prediction and
-// [deployah.dev/deployah/internal/predict.Predict] still produce those
-// writes. Chart CRDs are passed through to Helm. The result
-// is a [deployah.dev/deployah/internal/plan/semantic.Plan]. Semantic types
-// live in plan/semantic. New rendering lives in plan/view.
+// [SemanticBuildClient.RenderManifestsWithPrep]. It picks install,
+// upgrade, or none from the Helm operation and from comparing the
+// previous release with the render and its hooks. Resource changes
+// compare the previous manifest with the rendered Desired manifest.
+// Discovery supplies scope only. Chart CRDs pass through to Helm.
+// The result is a [deployah.dev/deployah/internal/plan/semantic.Plan].
+// Those types live in plan/semantic. Their rendering lives in plan/view.
+//
+// [BuildPlan] diffs the rendered manifest against the last successful
+// Helm release. [ComputeDiff] is the older diff. It parses two rendered
+// manifests, matches by apiVersion, kind, namespace, and name, and runs
+// [github.com/homeport/dyff] on resources present on both sides. [Plan]
+// is that model. [RenderText] prints it, and [NewJSONDocument] encodes
+// it as JSON. [DeploymentIntent] records resize and hostname flags. It
+// does not decide whether deploy runs Helm. [BuildPlan] and [ComputeDiff]
+// remain while callers move to the semantic plan.
 //
 // Chart rendering is on [deployah.dev/deployah/internal/helm.Client].
-// `deployah plan` and `deployah deploy` share that engine.
+// `deployah plan` and `deployah deploy` share it.
 package plan

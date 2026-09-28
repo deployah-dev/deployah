@@ -17,6 +17,7 @@ package view_test
 import (
 	"bytes"
 	"encoding/json"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -30,7 +31,7 @@ import (
 
 func TestWriteJSON_HeaderContextAndRevision(t *testing.T) {
 	t.Parallel()
-	p := mustPlanWithHeader(t, humanHeader(), semantic.HelmNone, nil, nil, nil)
+	p := mustPlanWithHeader(t, humanHeader(), semantic.HelmNone, nil, nil)
 	var buf bytes.Buffer
 	require.NoError(t, view.WriteJSON(&buf, p, view.Options{}))
 	assertJSONAt(t, buf.Bytes(), `"production-eu"`, "header", "context")
@@ -40,7 +41,7 @@ func TestWriteJSON_HeaderContextAndRevision(t *testing.T) {
 
 func TestWriteJSON_SchemaAndTasks(t *testing.T) {
 	t.Parallel()
-	p := mustPlan(t, semantic.HelmNone, nil, nil)
+	p := mustPlan(t, semantic.HelmNone, nil)
 	var buf bytes.Buffer
 	require.NoError(t, view.WriteJSON(&buf, p, view.Options{}))
 	assert.JSONEq(t, `{
@@ -55,7 +56,6 @@ func TestWriteJSON_SchemaAndTasks(t *testing.T) {
 		"changes": [],
 		"tasks": [],
 		"chartCRDs": [],
-		"diagnostics": [],
 		"summary": {
 			"create": 0,
 			"update": 0,
@@ -75,25 +75,21 @@ func TestWriteJSON_SchemaAndTasks(t *testing.T) {
 	validatePlanSchema(t, buf.Bytes())
 }
 
-func TestWriteJSON_WriteCreateOmitsFieldManager(t *testing.T) {
+func TestWriteJSON_CreateChangeShape(t *testing.T) {
 	t.Parallel()
 	p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 		Resource: ref("ConfigMap", "app"),
-		Origin:   helmOrigin(),
 		Action:   semantic.Create,
 		After:    snap(cm("app", "v1")),
-		Apply:    writeCreate(),
-	}}, nil)
+	}})
 	var buf bytes.Buffer
 	require.NoError(t, view.WriteJSON(&buf, p, view.Options{}))
-	var doc map[string]any
-	require.NoError(t, json.Unmarshal(buf.Bytes(), &doc))
-	write := jsonObject(jsonObject(jsonObjects(t, doc["changes"])[0]["apply"])["write"])
-	require.NotNil(t, write)
-	assert.Equal(t, "create", write["method"])
-	_, hasManager := write["fieldManager"]
-	assert.False(t, hasManager)
-	assert.Equal(t, false, write["forceConflicts"])
+	change := jsonObjects(t, jsonObject(mustJSON(t, buf.Bytes()))["changes"])[0]
+	assert.Equal(t, []string{"action", "after", "before", "fields", "resource"}, sortedKeys(change))
+	assert.Equal(t, "create", change["action"])
+	assert.Nil(t, change["before"])
+	assert.NotNil(t, change["after"])
+	assert.Empty(t, change["fields"])
 	validatePlanSchema(t, buf.Bytes())
 }
 
@@ -109,7 +105,7 @@ func TestWriteJSON_TasksContract(t *testing.T) {
 			Action:   semantic.Create,
 			After:    snap(cm("migrate", "v1")),
 		}},
-	}}, nil)
+	}})
 	var buf bytes.Buffer
 	require.NoError(t, view.WriteJSON(&buf, p, view.Options{}))
 	assert.JSONEq(t, `{
@@ -142,7 +138,6 @@ func TestWriteJSON_TasksContract(t *testing.T) {
 			"resources": []
 		}],
 		"chartCRDs": [],
-		"diagnostics": [],
 		"summary": {"create": 0, "update": 0, "delete": 0, "total": 0}
 	}`, buf.String())
 	validatePlanSchema(t, buf.Bytes())
@@ -165,7 +160,7 @@ func TestWriteJSON_ChartCRDs(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			p := mustPlanWithHeader(t, tc.header, tc.action, nil, nil, nil)
+			p := mustPlanWithHeader(t, tc.header, tc.action, nil, nil)
 			var err error
 			p, err = semantic.AttachChartCRDs(p, []semantic.ChartCRD{{
 				Source:      ".deployah/crds/widgets.yaml",
@@ -203,12 +198,10 @@ func TestWriteJSON_Deterministic(t *testing.T) {
 	t.Parallel()
 	p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 		Resource: ref("ConfigMap", "app"),
-		Origin:   helmOrigin(),
 		Action:   semantic.Update,
 		Before:   snap(map[string]any{"z": "1", "a": "1"}),
 		After:    snap(map[string]any{"a": "2", "z": "2"}),
-		Apply:    writeApply(),
-	}}, nil)
+	}})
 	var b1, b2 bytes.Buffer
 	require.NoError(t, view.WriteJSON(&b1, p, view.Options{}))
 	require.NoError(t, view.WriteJSON(&b2, p, view.Options{}))
@@ -234,11 +227,9 @@ func TestWriteJSON_CamelCasePropertyNames(t *testing.T) {
 			Namespace:    "prod",
 			GenerateName: "app-",
 		},
-		Origin: helmOrigin(),
 		Action: semantic.Create,
 		After:  snap(cm("app", "v1")),
-		Apply:  writeApply(),
-	}}, nil, nil)
+	}}, nil)
 	var buf bytes.Buffer
 	require.NoError(t, view.WriteJSON(&buf, p, view.Options{}))
 	raw := buf.Bytes()
@@ -256,11 +247,9 @@ func TestWriteJSON_CamelCasePropertyNames(t *testing.T) {
 		"name": "",
 		"generateName": "app-"
 	}`, "changes", 0, "resource")
-	assertJSONAt(t, raw, `{
-		"method": "server_side_apply",
-		"fieldManager": "deployah",
-		"forceConflicts": false
-	}`, "changes", 0, "apply", "write")
+	change := jsonObjects(t, jsonObject(mustJSON(t, raw))["changes"])[0]
+	assert.Equal(t, "create", change["action"])
+	assert.Empty(t, change["fields"])
 	assertNoJSONKeysFromBytes(t, raw)
 	validatePlanSchema(t, raw)
 }
@@ -276,12 +265,10 @@ func TestWriteJSON_ShowSecrets(t *testing.T) {
 	t.Parallel()
 	p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 		Resource: ref("Secret", "s"),
-		Origin:   helmOrigin(),
 		Action:   semantic.Update,
 		Before:   snap(secretObj("s", "old-pass", "old-tok")),
 		After:    snap(secretObj("s", "new-pass", "new-tok")),
-		Apply:    writeApply(),
-	}}, nil)
+	}})
 	tests := []struct {
 		name       string
 		opts       view.Options
@@ -333,12 +320,10 @@ func TestWriteJSON_DoesNotMutatePlan(t *testing.T) {
 	t.Parallel()
 	p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 		Resource: ref("Secret", "s"),
-		Origin:   helmOrigin(),
 		Action:   semantic.Update,
 		Before:   snap(secretObj("s", "old-pass", "old-tok")),
 		After:    snap(secretObj("s", "new-pass", "new-tok")),
-		Apply:    writeApply(),
-	}}, nil)
+	}})
 	require.NoError(t, view.WriteJSON(&bytes.Buffer{}, p, view.Options{}))
 	assert.Equal(t, "old-pass", objectString(t, p.Changes[0].Before.Object, "stringData", "password"))
 }
@@ -347,7 +332,6 @@ func TestWriteJSON_ExplicitNullFields(t *testing.T) {
 	t.Parallel()
 	p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 		Resource: ref("ConfigMap", "app"),
-		Origin:   helmOrigin(),
 		Action:   semantic.Update,
 		Before: snap(map[string]any{
 			"keep":  "x",
@@ -361,8 +345,7 @@ func TestWriteJSON_ExplicitNullFields(t *testing.T) {
 			"swap":  true,
 			"stays": nil,
 		}),
-		Apply: writeApply(),
-	}}, nil)
+	}})
 	var buf bytes.Buffer
 	require.NoError(t, view.WriteJSON(&buf, p, view.Options{}))
 	assertJSONAt(t, buf.Bytes(), `[
@@ -381,36 +364,24 @@ func TestWriteJSON_MatchesSchemaForRepresentativePlans(t *testing.T) {
 		name string
 		plan semantic.Plan
 	}{
-		{name: "empty", plan: mustPlan(t, semantic.HelmNone, nil, nil)},
+		{name: "empty", plan: mustPlan(t, semantic.HelmNone, nil)},
 		{name: "create", plan: mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 			Resource: res,
-			Origin:   helmOrigin(),
 			Action:   semantic.Create,
 			After:    snap(cm("app", "v1")),
-			Apply:    writeApply(),
-		}}, nil)},
+		}})},
 		{name: "delete", plan: mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 			Resource: res,
-			Origin:   helmOrigin(),
 			Action:   semantic.Delete,
 			Before:   snap(cm("app", "v1")),
-			Apply:    deleteApply(),
-		}}, nil)},
-		{name: "update without after", plan: mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
+		}})},
+		{name: "update", plan: mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 			Resource: res,
-			Origin:   helmOrigin(),
 			Action:   semantic.Update,
 			Before:   snap(cm("app", "v1")),
-			Apply:    writeApply(),
-		}}, []semantic.Diagnostic{limitationFor(res)})},
-		{name: "create write create", plan: mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
-			Resource: res,
-			Origin:   helmOrigin(),
-			Action:   semantic.Create,
-			After:    snap(cm("app", "v1")),
-			Apply:    writeCreate(),
-		}}, nil)},
-		{name: "origin namespace", plan: mustPlanWithHeader(t, semantic.Header{
+			After:    snap(cm("app", "v2")),
+		}})},
+		{name: "namespace create", plan: mustPlanWithHeader(t, semantic.Header{
 			Project:      "web",
 			Environment:  "prod",
 			Release:      "web",
@@ -418,15 +389,13 @@ func TestWriteJSON_MatchesSchemaForRepresentativePlans(t *testing.T) {
 			FreshInstall: true,
 		}, semantic.HelmInstall, []semantic.ResourceChange{{
 			Resource: semantic.ResourceRef{APIVersion: "v1", Kind: "Namespace", Name: "prod"},
-			Origin:   semantic.ResourceOrigin{Kind: semantic.OriginNamespace},
 			Action:   semantic.Create,
 			After: snap(map[string]any{
 				"apiVersion": "v1",
 				"kind":       "Namespace",
 				"metadata":   map[string]any{"name": "prod"},
 			}),
-			Apply: writeApply(),
-		}}, nil, nil)},
+		}}, nil)},
 		{name: "task create", plan: mustPlanWithTasks(t, semantic.HelmUpgrade, nil, []semantic.TaskPlan{{
 			Name:    "migrate",
 			Phase:   semantic.TaskPreDeploy,
@@ -437,7 +406,7 @@ func TestWriteJSON_MatchesSchemaForRepresentativePlans(t *testing.T) {
 				Action:   semantic.Create,
 				After:    snap(cm("migrate", "v1")),
 			}},
-		}}, nil)},
+		}})},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -460,11 +429,9 @@ func TestWriteJSON_SnapshotMayUseProtocolKeyNames(t *testing.T) {
 	}
 	p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 		Resource: ref("ConfigMap", "app"),
-		Origin:   helmOrigin(),
 		Action:   semantic.Create,
 		After:    snap(obj),
-		Apply:    writeApply(),
-	}}, nil)
+	}})
 	var buf bytes.Buffer
 	require.NoError(t, view.WriteJSON(&buf, p, view.Options{}))
 	assertJSONAt(t, buf.Bytes(), `{
@@ -474,15 +441,6 @@ func TestWriteJSON_SnapshotMayUseProtocolKeyNames(t *testing.T) {
 	}`, "changes", 0, "after", "data")
 	assertNoJSONKeysFromBytes(t, buf.Bytes())
 	validatePlanSchema(t, buf.Bytes())
-}
-
-func limitationFor(res semantic.ResourceRef) semantic.Diagnostic {
-	return semantic.Diagnostic{
-		Severity: semantic.DiagnosticWarning,
-		Category: semantic.CategoryPredictionLimitation,
-		Message:  "prediction is not exact: managed-fields-migration",
-		Resource: &res,
-	}
 }
 
 func compilePlanSchema(t *testing.T) *jsonschema.Schema {
@@ -531,9 +489,22 @@ func assertNoJSONKeysFromBytes(t *testing.T, raw []byte) {
 	for _, item := range jsonObjects(t, doc["chartCRDs"]) {
 		assertNoJSONKeys(t, item)
 	}
-	for _, item := range jsonObjects(t, doc["diagnostics"]) {
-		assertNoJSONDiagKeys(t, item)
+}
+
+func mustJSON(t *testing.T, raw []byte) map[string]any {
+	t.Helper()
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal(raw, &doc))
+	return doc
+}
+
+func sortedKeys(obj map[string]any) []string {
+	keys := make([]string, 0, len(obj))
+	for key := range obj {
+		keys = append(keys, key)
 	}
+	slices.Sort(keys)
+	return keys
 }
 
 func jsonObject(v any) map[string]any {
@@ -564,21 +535,6 @@ func assertNoJSONChangeKeys(t *testing.T, change map[string]any) {
 	t.Helper()
 	assertNoJSONKeys(t, change)
 	assertNoJSONResourceKeys(t, change["resource"])
-	if origin := jsonObject(change["origin"]); origin != nil {
-		assertNoJSONKeys(t, origin)
-		if helm := jsonObject(origin["helm"]); helm != nil {
-			assertNoJSONKeys(t, helm)
-		}
-	}
-	if apply := jsonObject(change["apply"]); apply != nil {
-		assertNoJSONKeys(t, apply)
-		if write := jsonObject(apply["write"]); write != nil {
-			assertNoJSONKeys(t, write)
-		}
-		if del := jsonObject(apply["delete"]); del != nil {
-			assertNoJSONKeys(t, del)
-		}
-	}
 	assertNoJSONFieldKeys(t, change["fields"])
 }
 
@@ -592,14 +548,6 @@ func assertNoJSONTaskKeys(t *testing.T, task map[string]any) {
 		assertNoJSONKeys(t, def)
 		assertNoJSONResourceKeys(t, def["resource"])
 		assertNoJSONFieldKeys(t, def["fields"])
-	}
-}
-
-func assertNoJSONDiagKeys(t *testing.T, diag map[string]any) {
-	t.Helper()
-	assertNoJSONKeys(t, diag)
-	if res := diag["resource"]; res != nil {
-		assertNoJSONResourceKeys(t, res)
 	}
 }
 

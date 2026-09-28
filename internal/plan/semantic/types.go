@@ -21,12 +21,13 @@ import "fmt"
 type Action int
 
 const (
-	// Create is a resource that would exist after apply and does not exist
-	// live.
+	// Create is a resource present in Desired and absent from Previous.
 	Create Action = iota + 1
-	// Update is an in-place write to a live resource.
+	// Update is a resource present in both Previous and Desired whose
+	// declared content differs.
 	Update
-	// Delete is a prune of a live resource.
+	// Delete means the resource leaves Desired release state. It does not
+	// claim that Helm or Kubernetes will delete the live object.
 	Delete
 )
 
@@ -71,17 +72,17 @@ func actionRank(a Action) int {
 type HelmAction int
 
 const (
-	// HelmNone means the semantic plan contains no Helm release-intent
-	// transition. It does not control whether `deployah deploy` invokes
-	// Helm. OriginHelm changes and changed or WillRun preDeploy/postDeploy
-	// tasks are invalid.
+	// HelmNone means the release intent did not change. The plan must not
+	// include resource changes. preDeploy and postDeploy tasks must be
+	// unchanged, and WillRun must be false. HelmNone does not stop
+	// `deployah deploy` from running Helm.
 	HelmNone HelmAction = iota + 1
-	// HelmInstall means the plan's transition is a fresh Helm install. It
-	// requires [Header.FreshInstall].
+	// HelmInstall means the release is new. [Header.FreshInstall] must be
+	// true.
 	HelmInstall
-	// HelmUpgrade means the plan's transition is a Helm upgrade. Zero
-	// resource consequences remain valid when release intent changed and
-	// Live already matches Desired.
+	// HelmUpgrade means an existing release changes. The plan can have no
+	// resource changes when only hooks changed, or when the manifests
+	// differ only in encoding.
 	HelmUpgrade
 )
 
@@ -121,9 +122,15 @@ type Header struct {
 	FreshInstall bool
 }
 
-// ResourceRef is Kubernetes identity for one change. APIVersion is a
-// GroupVersion string (core is "v1"). GenerateName is set only when Name
-// is empty.
+// ResourceRef names one resource in a change. APIVersion comes from
+// the object this change uses. Core resources use "v1". Namespace is the
+// effective namespace used to pair Previous and Desired. It is not
+// always the namespace written in the snapshot. GenerateName is set
+// only when Name is empty.
+//
+// Sorting and task links compare every field, including APIVersion and
+// GenerateName. That comparison is not logical identity. Logical
+// identity ignores APIVersion and does not use GenerateName.
 type ResourceRef struct {
 	APIVersion   string
 	Kind         string
@@ -132,7 +139,9 @@ type ResourceRef struct {
 	GenerateName string
 }
 
-func (r ResourceRef) identityKey() string {
+// refKey is an exact equality key for this reference. It includes
+// APIVersion and GenerateName, so it is not logical resource identity.
+func (r ResourceRef) refKey() string {
 	return r.APIVersion + "\x00" + r.Kind + "\x00" + r.Namespace + "\x00" + r.Name + "\x00" + r.GenerateName
 }
 
@@ -143,128 +152,9 @@ func (r ResourceRef) String() string {
 	return r.Kind + "/" + r.Namespace + "/" + r.Name
 }
 
-// OriginKind classifies how a resource entered the plan. The zero value
-// is invalid.
-type OriginKind int
-
-const (
-	// OriginHelm is a resource rendered by the Helm release.
-	OriginHelm OriginKind = iota + 1
-	// OriginNamespace is the target Namespace created as part of a
-	// Helm install. It is invalid with [HelmNone] or [HelmUpgrade].
-	OriginNamespace
-)
-
-func (k OriginKind) String() string {
-	switch k {
-	case OriginHelm:
-		return "helm"
-	case OriginNamespace:
-		return "namespace"
-	default:
-		return fmt.Sprintf("OriginKind(%d)", int(k))
-	}
-}
-
-func (k OriginKind) valid() bool {
-	switch k {
-	case OriginHelm, OriginNamespace:
-		return true
-	default:
-		return false
-	}
-}
-
-// ResourceOrigin names the producer of a [ResourceChange]. Helm details
-// are required for [OriginHelm] and forbidden for [OriginNamespace].
-type ResourceOrigin struct {
-	Kind OriginKind
-	Helm *HelmOrigin
-}
-
-// HelmOrigin is the Helm release that produced a resource change.
-type HelmOrigin struct {
-	Release   string
-	Namespace string
-}
-
-// WriteMethod is the write method on [WriteSemantics]. The zero value is
-// invalid.
-type WriteMethod int
-
-const (
-	// WriteCreate is Kubernetes create. FieldManager must be empty and
-	// ForceConflicts must be false.
-	WriteCreate WriteMethod = iota + 1
-	// WriteServerSide is Kubernetes server-side apply. FieldManager
-	// must be non-empty. ForceConflicts may be true or false.
-	WriteServerSide
-)
-
-func (m WriteMethod) String() string {
-	switch m {
-	case WriteCreate:
-		return "create"
-	case WriteServerSide:
-		return "server_side_apply"
-	default:
-		return fmt.Sprintf("WriteMethod(%d)", int(m))
-	}
-}
-
-func (m WriteMethod) valid() bool {
-	switch m {
-	case WriteCreate, WriteServerSide:
-		return true
-	default:
-		return false
-	}
-}
-
-// DeletePropagation is Kubernetes deletion propagation. The zero value
-// is invalid.
-type DeletePropagation int
-
-const (
-	// PropagationBackground is background deletion.
-	PropagationBackground DeletePropagation = iota + 1
-)
-
-func (p DeletePropagation) String() string {
-	switch p {
-	case PropagationBackground:
-		return "background"
-	default:
-		return fmt.Sprintf("DeletePropagation(%d)", int(p))
-	}
-}
-
-func (p DeletePropagation) valid() bool {
-	return p == PropagationBackground
-}
-
-// WriteSemantics is the write half of [ApplySemantics].
-type WriteSemantics struct {
-	Method         WriteMethod
-	FieldManager   string
-	ForceConflicts bool
-}
-
-// DeleteSemantics is the delete half of [ApplySemantics].
-type DeleteSemantics struct {
-	Propagation DeletePropagation
-}
-
-// ApplySemantics is the mutation semantics of a resource consequence.
-// Create and Update set Write only. Delete sets Delete only.
-type ApplySemantics struct {
-	Write  *WriteSemantics
-	Delete *DeleteSemantics
-}
-
-// ResourceSnapshot is one full unredacted Kubernetes object. Object is
-// unstructured content, not a client type. It is not a JSON rendering
-// contract.
+// ResourceSnapshot is one Kubernetes object, with secret values still
+// present. Object is a plain map, not a typed client object. It is not
+// the JSON document the plan view writes.
 type ResourceSnapshot struct {
 	Object map[string]any
 }
@@ -359,15 +249,19 @@ func (a TaskAction) valid() bool {
 	}
 }
 
-// TaskPlan is one Deployah task in a [Plan]. preDeploy and postDeploy
-// carry [HookDefinition] diffs. schedule references [ResourceChange]
-// values in Plan.Changes. A current-only manual task is omitted. A
-// current manual task whose previous release was preDeploy, postDeploy,
-// or schedule is represented as a deletion of that previous footprint.
-// Changing on between schedule and preDeploy or postDeploy is a
-// [TaskUpdate] of the current phase. The previous CronJob stays in
-// Plan.Changes; previous hook documents are not emitted as Kubernetes
-// deletes.
+// TaskPlan is one Deployah task in a [Plan].
+//
+// A preDeploy or postDeploy task carries [HookDefinition] diffs. A
+// schedule task points at [ResourceChange] entries in [Plan.Changes].
+//
+// A manual task that exists only in the current spec is left out. If
+// the task is manual now, but was preDeploy, postDeploy, or schedule
+// in the previous release, the plan shows that old hook or schedule
+// as removed.
+//
+// Moving between schedule and preDeploy or postDeploy is a
+// [TaskUpdate] of the phase the task has now. The old CronJob stays
+// in [Plan.Changes]. Old hook documents are not listed as deletes.
 type TaskPlan struct {
 	Name   string
 	Phase  TaskPhase
@@ -384,8 +278,8 @@ type TaskPlan struct {
 }
 
 // HookDefinition is a rendered Helm hook document difference for a
-// preDeploy or postDeploy task. It is not a live Kubernetes apply or
-// prune. It has no [ApplySemantics] and no [ResourceOrigin].
+// preDeploy or postDeploy task. It compares Previous and Desired hook
+// declarations. It is not a live Kubernetes apply or prune.
 type HookDefinition struct {
 	Resource ResourceRef
 	Action   Action

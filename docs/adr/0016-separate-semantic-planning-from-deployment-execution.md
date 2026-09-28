@@ -7,16 +7,16 @@ Accepted
 ## Context
 
 Deployah both inspects a deployment and carries one out. Inspection
-describes release changes and their consequences. Execution carries
-out a deployment the operator asked for. Those are different jobs.
-Inspection must not decide whether that deployment runs.
+describes release changes and their Resource Changes. Execution
+carries out a deployment the operator asked for. Those are different
+jobs. Inspection must not decide whether that deployment runs.
 
 ## Decision
 
 Planning and inspection are read-only. They describe release changes
-and the resource and task consequences of those changes. Cluster
-state informs drift and those consequences. It is not itself a
-release change.
+and the Resource Changes and task changes that follow. Cluster state
+informs Drift only and never changes Resource Changes. It is not
+itself a release change.
 
 A requested deployment runs after validation and guards succeed,
 including any volume preparation that must happen before Helm. It

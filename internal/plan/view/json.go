@@ -23,14 +23,13 @@ import (
 )
 
 type document struct {
-	Schema      string        `json:"schema"`
-	Header      headerDTO     `json:"header"`
-	HelmAction  string        `json:"helmAction"`
-	Changes     []changeDTO   `json:"changes"`
-	Tasks       []taskDTO     `json:"tasks"`
-	ChartCRDs   []chartCRDDTO `json:"chartCRDs"`
-	Diagnostics []diagDTO     `json:"diagnostics"`
-	Summary     summaryDTO    `json:"summary"`
+	Schema     string        `json:"schema"`
+	Header     headerDTO     `json:"header"`
+	HelmAction string        `json:"helmAction"`
+	Changes    []changeDTO   `json:"changes"`
+	Tasks      []taskDTO     `json:"tasks"`
+	ChartCRDs  []chartCRDDTO `json:"chartCRDs"`
+	Summary    summaryDTO    `json:"summary"`
 }
 
 type headerDTO struct {
@@ -45,12 +44,10 @@ type headerDTO struct {
 
 type changeDTO struct {
 	Resource resourceDTO `json:"resource"`
-	Origin   originDTO   `json:"origin"`
 	Action   string      `json:"action"`
 	Before   any         `json:"before"`
 	After    any         `json:"after"`
 	Fields   []fieldDTO  `json:"fields"`
-	Apply    applyDTO    `json:"apply"`
 }
 
 type resourceDTO struct {
@@ -61,43 +58,11 @@ type resourceDTO struct {
 	GenerateName string `json:"generateName,omitempty"`
 }
 
-type originDTO struct {
-	Kind string   `json:"kind"`
-	Helm *helmDTO `json:"helm,omitempty"`
-}
-
-type helmDTO struct {
-	Release   string `json:"release"`
-	Namespace string `json:"namespace"`
-}
-
-type applyDTO struct {
-	Write  *writeDTO  `json:"write,omitempty"`
-	Delete *deleteDTO `json:"delete,omitempty"`
-}
-
-type writeDTO struct {
-	Method         string `json:"method"`
-	FieldManager   string `json:"fieldManager,omitempty"`
-	ForceConflicts bool   `json:"forceConflicts"`
-}
-
-type deleteDTO struct {
-	Propagation string `json:"propagation"`
-}
-
 type fieldDTO struct {
 	Path   string `json:"path"`
 	Op     string `json:"op"`
 	Before *any   `json:"before,omitempty"`
 	After  *any   `json:"after,omitempty"`
-}
-
-type diagDTO struct {
-	Severity string       `json:"severity"`
-	Category string       `json:"category"`
-	Message  string       `json:"message"`
-	Resource *resourceDTO `json:"resource,omitempty"`
 }
 
 type summaryDTO struct {
@@ -158,10 +123,6 @@ func newDocument(p semantic.Plan, opts Options) (document, error) {
 	for _, c := range prepared.Changes {
 		changes = append(changes, toChangeDTO(c))
 	}
-	diags := make([]diagDTO, 0, len(prepared.Diagnostics))
-	for _, d := range prepared.Diagnostics {
-		diags = append(diags, toDiagDTO(d))
-	}
 	tasks := make([]taskDTO, 0, len(prepared.Tasks))
 	for _, t := range prepared.Tasks {
 		tasks = append(tasks, toTaskDTO(t))
@@ -171,14 +132,13 @@ func newDocument(p semantic.Plan, opts Options) (document, error) {
 		crds = append(crds, toChartCRDDTO(c))
 	}
 	return document{
-		Schema:      SchemaV1ID,
-		Header:      toHeaderDTO(prepared.Header),
-		HelmAction:  prepared.HelmAction.String(),
-		Changes:     changes,
-		Tasks:       tasks,
-		ChartCRDs:   crds,
-		Diagnostics: diags,
-		Summary:     toSummaryDTO(prepared.Summary),
+		Schema:     SchemaV1ID,
+		Header:     toHeaderDTO(prepared.Header),
+		HelmAction: prepared.HelmAction.String(),
+		Changes:    changes,
+		Tasks:      tasks,
+		ChartCRDs:  crds,
+		Summary:    toSummaryDTO(prepared.Summary),
 	}, nil
 }
 
@@ -199,32 +159,12 @@ func toChangeDTO(c semantic.ResourceChange) changeDTO {
 	for _, f := range c.Fields {
 		fields = append(fields, toFieldDTO(f))
 	}
-	origin := originDTO{Kind: c.Origin.Kind.String()}
-	if c.Origin.Helm != nil {
-		origin.Helm = &helmDTO{
-			Release:   c.Origin.Helm.Release,
-			Namespace: c.Origin.Helm.Namespace,
-		}
-	}
-	apply := applyDTO{}
-	if c.Apply.Write != nil {
-		apply.Write = &writeDTO{
-			Method:         c.Apply.Write.Method.String(),
-			FieldManager:   c.Apply.Write.FieldManager,
-			ForceConflicts: c.Apply.Write.ForceConflicts,
-		}
-	}
-	if c.Apply.Delete != nil {
-		apply.Delete = &deleteDTO{Propagation: c.Apply.Delete.Propagation.String()}
-	}
 	return changeDTO{
 		Resource: toResourceDTO(c.Resource),
-		Origin:   origin,
 		Action:   c.Action.String(),
 		Before:   snapshotJSON(c.Before),
 		After:    snapshotJSON(c.After),
 		Fields:   fields,
-		Apply:    apply,
 	}
 }
 
@@ -250,19 +190,6 @@ func toResourceDTO(r semantic.ResourceRef) resourceDTO {
 		Name:         r.Name,
 		GenerateName: r.GenerateName,
 	}
-}
-
-func toDiagDTO(d semantic.Diagnostic) diagDTO {
-	dto := diagDTO{
-		Severity: d.Severity.String(),
-		Category: d.Category.String(),
-		Message:  d.Message,
-	}
-	if d.Resource != nil {
-		r := toResourceDTO(*d.Resource)
-		dto.Resource = &r
-	}
-	return dto
 }
 
 func toSummaryDTO(s semantic.Summary) summaryDTO {

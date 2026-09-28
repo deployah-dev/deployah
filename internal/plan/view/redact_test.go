@@ -30,12 +30,10 @@ func TestSecretRedaction_DefaultAndShowSecrets(t *testing.T) {
 	t.Parallel()
 	p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 		Resource: ref("Secret", "s"),
-		Origin:   helmOrigin(),
 		Action:   semantic.Update,
 		Before:   snap(secretObj("s", "old-pass", "old-tok")),
 		After:    snap(secretObj("s", "new-pass", "new-tok")),
-		Apply:    writeApply(),
-	}}, nil)
+	}})
 
 	var hidden bytes.Buffer
 	require.NoError(t, view.WriteHuman(&hidden, p, view.Options{}))
@@ -60,12 +58,10 @@ func TestSecretRedaction_ConfigMapNotRedacted(t *testing.T) {
 	t.Parallel()
 	p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 		Resource: ref("ConfigMap", "app"),
-		Origin:   helmOrigin(),
 		Action:   semantic.Update,
 		Before:   snap(cm("app", "old")),
 		After:    snap(cm("app", "new")),
-		Apply:    writeApply(),
-	}}, nil)
+	}})
 	var buf bytes.Buffer
 	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
 	assert.Contains(t, buf.String(), "old")
@@ -77,12 +73,10 @@ func TestSecretRedaction_FieldChangeComputedBeforeRedaction(t *testing.T) {
 	t.Parallel()
 	p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 		Resource: ref("Secret", "s"),
-		Origin:   helmOrigin(),
 		Action:   semantic.Update,
 		Before:   snap(secretObj("s", "old-pass", "same")),
 		After:    snap(secretObj("s", "new-pass", "same")),
-		Apply:    writeApply(),
-	}}, nil)
+	}})
 	require.NotEmpty(t, p.Changes[0].Fields)
 	idx := slices.IndexFunc(p.Changes[0].Fields, func(f semantic.FieldChange) bool {
 		return f.Path == "/stringData/password"
@@ -119,11 +113,9 @@ func TestSecretRedaction_CoreAPIVersions(t *testing.T) {
 			res.APIVersion = tt.apiVersion
 			p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 				Resource: res,
-				Origin:   helmOrigin(),
 				Action:   semantic.Create,
 				After:    snap(obj),
-				Apply:    writeApply(),
-			}}, nil)
+			}})
 			var buf bytes.Buffer
 			require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
 			text := buf.String()
@@ -141,7 +133,6 @@ func TestSecretRedaction_MissingSectionsStayAbsent(t *testing.T) {
 	t.Parallel()
 	p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 		Resource: ref("Secret", "s"),
-		Origin:   helmOrigin(),
 		Action:   semantic.Create,
 		After: snap(map[string]any{
 			"apiVersion": "v1",
@@ -149,8 +140,7 @@ func TestSecretRedaction_MissingSectionsStayAbsent(t *testing.T) {
 			"metadata":   map[string]any{"name": "s", "namespace": "prod"},
 			"type":       "Opaque",
 		}),
-		Apply: writeApply(),
-	}}, nil)
+	}})
 	var buf bytes.Buffer
 	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
 	text := buf.String()
@@ -181,7 +171,6 @@ func TestSecretRedaction_JSONValueShapes(t *testing.T) {
 			name: "nested values",
 			change: semantic.ResourceChange{
 				Resource: ref("Secret", "s"),
-				Origin:   helmOrigin(),
 				Action:   semantic.Create,
 				After: snap(map[string]any{
 					"apiVersion": "v1",
@@ -194,7 +183,6 @@ func TestSecretRedaction_JSONValueShapes(t *testing.T) {
 					},
 					"stringData": map[string]string{"plain": "secret"},
 				}),
-				Apply: writeApply(),
 			},
 			omit: []string{`"secret"`},
 			at: []jsonPathWant{{
@@ -216,7 +204,6 @@ func TestSecretRedaction_JSONValueShapes(t *testing.T) {
 			name: "null leaf stays null",
 			change: semantic.ResourceChange{
 				Resource: ref("Secret", "s"),
-				Origin:   helmOrigin(),
 				Action:   semantic.Create,
 				After: snap(map[string]any{
 					"apiVersion": "v1",
@@ -224,7 +211,6 @@ func TestSecretRedaction_JSONValueShapes(t *testing.T) {
 					"metadata":   map[string]any{"name": "s", "namespace": "prod"},
 					"data":       map[string]any{"token": nil},
 				}),
-				Apply: writeApply(),
 			},
 			humanContains: []string{"token: null"},
 			at: []jsonPathWant{{
@@ -236,7 +222,6 @@ func TestSecretRedaction_JSONValueShapes(t *testing.T) {
 			name: "whole map add keeps keys",
 			change: semantic.ResourceChange{
 				Resource: ref("Secret", "s"),
-				Origin:   helmOrigin(),
 				Action:   semantic.Update,
 				Before: snap(map[string]any{
 					"apiVersion": "v1",
@@ -245,7 +230,6 @@ func TestSecretRedaction_JSONValueShapes(t *testing.T) {
 					"type":       "Opaque",
 				}),
 				After: snap(secretObj("s", "new-pass", "new-tok")),
-				Apply: writeApply(),
 			},
 			omit:          []string{"new-pass", "new-tok"},
 			humanContains: []string{"token: (redacted)", "password: (redacted)"},
@@ -264,7 +248,7 @@ func TestSecretRedaction_JSONValueShapes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{tt.change}, nil)
+			p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{tt.change})
 			var human, jsonBuf bytes.Buffer
 			require.NoError(t, view.WriteHuman(&human, p, view.Options{}))
 			require.NoError(t, view.WriteJSON(&jsonBuf, p, view.Options{}))
@@ -282,44 +266,20 @@ func TestSecretRedaction_JSONValueShapes(t *testing.T) {
 
 func TestWriteRenderers_CopyIsolation(t *testing.T) {
 	t.Parallel()
-	helm := &semantic.HelmOrigin{Release: "web", Namespace: "prod"}
-	write := &semantic.WriteSemantics{Method: semantic.WriteServerSide, FieldManager: "deployah"}
 	res := ref("Secret", "s")
-	diag := semantic.Diagnostic{
-		Severity: semantic.DiagnosticWarning,
-		Category: semantic.CategoryPredictionLimitation,
-		Message:  "prediction is not exact: managed-fields-migration",
-		Resource: &res,
-	}
-	labels := map[string]string{"app": "web"}
-	args := []string{"serve"}
-	beforeObj := secretObj("s", "old", "tok")
-	meta, ok := beforeObj["metadata"].(map[string]any)
-	require.True(t, ok)
-	meta["labels"] = labels
-	beforeObj["args"] = args
-	p, err := semantic.New(semantic.Header{Release: "web", Namespace: "prod"}, semantic.HelmUpgrade, []semantic.ResourceChange{{
+	p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 		Resource: res,
-		Origin:   semantic.ResourceOrigin{Kind: semantic.OriginHelm, Helm: helm},
 		Action:   semantic.Update,
-		Before:   snap(beforeObj),
+		Before:   snap(secretObj("s", "old", "tok")),
 		After:    snap(secretObj("s", "new", "tok2")),
-		Apply:    semantic.ApplySemantics{Write: write},
-	}}, nil, []semantic.Diagnostic{diag})
-	require.NoError(t, err)
+	}})
 	require.NotEmpty(t, p.Changes[0].Fields)
 	fieldBefore := p.Changes[0].Fields[0].Before
 	fieldAfter := p.Changes[0].Fields[0].After
-	helmRelease := p.Changes[0].Origin.Helm.Release
-	fieldManager := p.Changes[0].Apply.Write.FieldManager
-	diagName := p.Diagnostics[0].Resource.Name
 
 	require.NoError(t, view.WriteHuman(&bytes.Buffer{}, p, view.Options{}))
 	require.NoError(t, view.WriteJSON(&bytes.Buffer{}, p, view.Options{}))
 
-	assert.Equal(t, helmRelease, p.Changes[0].Origin.Helm.Release)
-	assert.Equal(t, fieldManager, p.Changes[0].Apply.Write.FieldManager)
-	assert.Equal(t, diagName, p.Diagnostics[0].Resource.Name)
 	assert.Equal(t, "old", objectString(t, p.Changes[0].Before.Object, "stringData", "password"))
 	assert.Equal(t, "new", objectString(t, p.Changes[0].After.Object, "stringData", "password"))
 	assert.Equal(t, fieldBefore, p.Changes[0].Fields[0].Before)
@@ -336,7 +296,6 @@ func TestWriteRenderers_ManualSnapshotShapes(t *testing.T) {
 		Changes: []semantic.ResourceChange{
 			{
 				Resource: ref("ConfigMap", "app"),
-				Origin:   helmOrigin(),
 				Action:   semantic.Create,
 				After: &semantic.ResourceSnapshot{Object: map[string]any{
 					"labels": map[string]string{"app": "web"},
@@ -344,14 +303,11 @@ func TestWriteRenderers_ManualSnapshotShapes(t *testing.T) {
 					"nested": []any{"x"},
 					"empty":  map[string]any(nil),
 				}},
-				Apply: writeApply(),
 			},
 			{
 				Resource: ref("ConfigMap", "blank"),
-				Origin:   helmOrigin(),
 				Action:   semantic.Create,
 				After:    &semantic.ResourceSnapshot{},
-				Apply:    writeApply(),
 			},
 		},
 	}
@@ -401,19 +357,15 @@ func TestSecretRedaction_OmitsPlaintext(t *testing.T) {
 			plan: mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{
 				{
 					Resource: ref("Secret", "created"),
-					Origin:   helmOrigin(),
 					Action:   semantic.Create,
 					After:    snap(secretObj("created", "c-pass", "c-tok")),
-					Apply:    writeApply(),
 				},
 				{
 					Resource: ref("Secret", "removed"),
-					Origin:   helmOrigin(),
 					Action:   semantic.Delete,
 					Before:   snap(secretObj("removed", "d-pass", "d-tok")),
-					Apply:    deleteApply(),
 				},
-			}, nil),
+			}),
 			omit: []string{"c-pass", "d-pass", "c-tok", "d-tok"},
 			at: []jsonPathWant{
 				{want: redactedData, path: []any{"changes", 0, "after", "data"}},
@@ -449,7 +401,7 @@ func TestSecretRedaction_OmitsPlaintext(t *testing.T) {
 						Before:   snap(secretObj("removed", "d-pass", "d-tok")),
 					},
 				},
-			}}, nil),
+			}}),
 			omit: []string{"old-pass", "new-pass", "c-pass", "d-pass", "old-tok", "new-tok", "c-tok", "d-tok"},
 			at: []jsonPathWant{
 				{want: redactedData, path: []any{"tasks", 0, "definitions", 0, "after", "data"}},

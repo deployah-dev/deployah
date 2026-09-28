@@ -11,7 +11,7 @@ one-time operation outside the release. Treating leftover hook Jobs as
 declarative Drift, or listing a current manual task as a deploy
 resource, invents a lifecycle Helm does not run. The lifecycle the
 plan describes is ADR-0006. Whether a requested deployment runs is
-ADR-0016. Resource consequences are ADR-0011.
+ADR-0016. Resource Changes are ADR-0011.
 
 ## Decision
 
@@ -38,10 +38,11 @@ install or upgrade it runs (ADR-0016).
 
 Changing phase between Helm-managed phases is a Task Update.
 
-- schedule to preDeploy: previous CronJob is Resource Delete, new hook
-  definition is Create, task is Update.
-- preDeploy to schedule: previous hook definition leaves the release,
-  new CronJob is Resource Create, task is Update.
+- schedule to preDeploy: the previous CronJob is a Delete Resource
+  Change, the new hook definition is Create, and the task is Update.
+- preDeploy to schedule: the previous hook definition leaves the
+  release, the new CronJob is a Create Resource Change, and the task
+  is Update.
 
 Do not treat removal of an old hook definition as a Kubernetes Delete
 of leftover runtime hook Jobs.

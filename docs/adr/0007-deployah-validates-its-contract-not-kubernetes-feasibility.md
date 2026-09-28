@@ -28,8 +28,9 @@ behavior ambiguous:
 - duplicate logical resource identities (ADR-0005)
 - a raw resource that collides with a resource Deployah generates or
   manages
-- raw Namespace resources; Namespace lifecycle belongs to Deployah's
-  Helm configuration (ADR-0006)
+- a Namespace that names the release target, in the Desired render
+  or the Previous baseline, because that namespace is Helm install's
+  execution prerequisite (ADR-0006)
 - mutually incompatible Deployah configuration, including combinations
   the spec itself defines as exclusive (for example `replicas` with
   `autoscaling.enabled`)

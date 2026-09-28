@@ -15,13 +15,6 @@
         "namespace": "prod",
         "name": "app"
       },
-      "origin": {
-        "kind": "helm",
-        "helm": {
-          "release": "web",
-          "namespace": "prod"
-        }
-      },
       "action": "update",
       "before": {
         "a": "1",
@@ -44,19 +37,11 @@
           "before": "1",
           "after": "2"
         }
-      ],
-      "apply": {
-        "write": {
-          "method": "server_side_apply",
-          "fieldManager": "deployah",
-          "forceConflicts": false
-        }
-      }
+      ]
     }
   ],
   "tasks": [],
   "chartCRDs": [],
-  "diagnostics": [],
   "summary": {
     "create": 0,
     "update": 1,

@@ -15,7 +15,6 @@
 package semantic_test
 
 import (
-	"math"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -34,8 +33,6 @@ func TestNew_SnapshotInvariants(t *testing.T) {
 		before    bool
 		after     bool
 		fields    bool
-		write     bool
-		delete    bool
 		fieldPath string
 		fieldOp   semantic.FieldOp
 	}{
@@ -44,7 +41,6 @@ func TestNew_SnapshotInvariants(t *testing.T) {
 			change: createChange("app", "v1"),
 			action: semantic.Create,
 			after:  true,
-			write:  true,
 		},
 		{
 			name:      "update",
@@ -53,7 +49,6 @@ func TestNew_SnapshotInvariants(t *testing.T) {
 			before:    true,
 			after:     true,
 			fields:    true,
-			write:     true,
 			fieldPath: "/data/key",
 			fieldOp:   semantic.FieldReplace,
 		},
@@ -62,13 +57,12 @@ func TestNew_SnapshotInvariants(t *testing.T) {
 			change: deleteChange("app", "v1"),
 			action: semantic.Delete,
 			before: true,
-			delete: true,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			p, err := semantic.New(header, semantic.HelmUpgrade, []semantic.ResourceChange{tt.change}, nil, nil)
+			p, err := semantic.New(header, semantic.HelmUpgrade, []semantic.ResourceChange{tt.change}, nil)
 			require.NoError(t, err)
 			require.Len(t, p.Changes, 1)
 			c := p.Changes[0]
@@ -82,46 +76,45 @@ func TestNew_SnapshotInvariants(t *testing.T) {
 			assert.Equal(t, tt.before, c.Before != nil)
 			assert.Equal(t, tt.after, c.After != nil)
 			assert.Equal(t, tt.fields, len(c.Fields) > 0)
-			assert.Equal(t, tt.write, c.Apply.Write != nil)
-			assert.Equal(t, tt.delete, c.Apply.Delete != nil)
 			assert.Equal(t, tt.fieldPath, path)
 			assert.Equal(t, tt.fieldOp, op)
 		})
 	}
 }
 
-func TestNew_UpdateWithoutAfterRequiresLimitation(t *testing.T) {
+func TestNew_UpdateRequiresAfterAndFields(t *testing.T) {
 	t.Parallel()
 	header := semantic.Header{Release: "web", Namespace: "prod"}
 	res := ref("ConfigMap", "app")
-	change := semantic.ResourceChange{
+	missingAfter := semantic.ResourceChange{
 		Resource: res,
-		Origin:   helmOrigin(),
 		Action:   semantic.Update,
 		Before:   &semantic.ResourceSnapshot{Object: cm("app", "v1")},
-		Apply:    writeApply(),
+		Fields:   []semantic.FieldChange{{Path: "/data/key", Op: semantic.FieldReplace, Before: "v1", After: "v2"}},
 	}
-
-	_, err := semantic.New(header, semantic.HelmUpgrade, []semantic.ResourceChange{change}, nil, nil)
+	_, err := semantic.New(header, semantic.HelmUpgrade, []semantic.ResourceChange{missingAfter}, nil)
 	require.Error(t, err)
-	assert.ErrorContains(t, err, "update without after")
+	assert.ErrorContains(t, err, "update requires an after snapshot")
 
-	p, err := semantic.New(header, semantic.HelmUpgrade, []semantic.ResourceChange{change}, nil, []semantic.Diagnostic{limitation(res)})
-	require.NoError(t, err)
-	assert.Nil(t, p.Changes[0].After)
-	assert.Empty(t, p.Changes[0].Fields)
+	missingFields := semantic.ResourceChange{
+		Resource: res,
+		Action:   semantic.Update,
+		Before:   &semantic.ResourceSnapshot{Object: cm("app", "v1")},
+		After:    &semantic.ResourceSnapshot{Object: cm("app", "v2")},
+	}
+	_, err = semantic.New(header, semantic.HelmUpgrade, []semantic.ResourceChange{missingFields}, nil)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "update requires a field change")
 }
 
 func TestNew_TasksAlwaysNonNil(t *testing.T) {
 	t.Parallel()
-	p, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, nil, nil, nil)
+	p, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, p.Tasks)
 	assert.Empty(t, p.Tasks)
 	require.NotNil(t, p.Changes)
 	assert.Empty(t, p.Changes)
-	require.NotNil(t, p.Diagnostics)
-	assert.Empty(t, p.Diagnostics)
 	require.NotNil(t, p.ChartCRDs)
 	assert.Empty(t, p.ChartCRDs)
 	assert.Equal(t, semantic.HelmUpgrade, p.HelmAction)
@@ -134,7 +127,7 @@ func TestNew_SummaryDerived(t *testing.T) {
 		createChange("a", "1"),
 		updateChange("b", "1", "2"),
 		deleteChange("c", "1"),
-	}, nil, nil)
+	}, nil)
 	require.NoError(t, err)
 	assert.Equal(t, semantic.Summary{Create: 1, Update: 1, Delete: 1}, p.Summary)
 	assert.Equal(t, 3, p.Summary.Total())
@@ -146,7 +139,7 @@ func TestNew_DeterministicOrder(t *testing.T) {
 		deleteChange("z", "1"),
 		createChange("a", "1"),
 		updateChange("m", "1", "2"),
-	}, nil, nil)
+	}, nil)
 	require.NoError(t, err)
 	require.Len(t, p.Changes, 3)
 	assert.Equal(t, "a", p.Changes[0].Resource.Name)
@@ -165,11 +158,9 @@ func TestNew_GoIntInSnapshot(t *testing.T) {
 	}
 	p, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, []semantic.ResourceChange{{
 		Resource: ref("Deployment", "web"),
-		Origin:   helmOrigin(),
 		Action:   semantic.Create,
 		After:    &semantic.ResourceSnapshot{Object: obj},
-		Apply:    writeApply(),
-	}}, nil, nil)
+	}}, nil)
 	require.NoError(t, err)
 	require.NotNil(t, p.Changes[0].After)
 	spec, ok := p.Changes[0].After.Object["spec"].(map[string]any)
@@ -189,51 +180,38 @@ func TestNew_DoesNotMutateCallerSnapshots(t *testing.T) {
 	obj := cm("app", "v1")
 	change := semantic.ResourceChange{
 		Resource: ref("ConfigMap", "app"),
-		Origin:   helmOrigin(),
 		Action:   semantic.Create,
 		After:    &semantic.ResourceSnapshot{Object: obj},
-		Apply:    writeApply(),
 	}
-	p, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, []semantic.ResourceChange{change}, nil, nil)
+	p, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, []semantic.ResourceChange{change}, nil)
 	require.NoError(t, err)
 	setObjectString(t, obj, "mutated", "data", "key")
 	assert.Equal(t, "v1", objectString(t, p.Changes[0].After.Object, "data", "key"))
 }
 
-func TestNew_DoesNotAliasCallerInputs(t *testing.T) {
+func TestNew_KeepsCallerFields(t *testing.T) {
 	t.Parallel()
-	helm := &semantic.HelmOrigin{Release: "web", Namespace: "prod"}
-	write := &semantic.WriteSemantics{Method: semantic.WriteServerSide, FieldManager: "deployah"}
-	del := &semantic.DeleteSemantics{Propagation: semantic.PropagationBackground}
-	res := ref("ConfigMap", "app")
-	diag := limitation(res)
+	before := cm("app", "v1")
+	after := cm("app", "v2")
+	fields := []semantic.FieldChange{
+		{Path: "/z", Op: semantic.FieldReplace, Before: "1", After: "9"},
+		{Path: "/a", Op: semantic.FieldReplace, Before: "1", After: "2"},
+	}
 	p, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, []semantic.ResourceChange{{
-		Resource: res,
-		Origin:   semantic.ResourceOrigin{Kind: semantic.OriginHelm, Helm: helm},
+		Resource: ref("ConfigMap", "app"),
 		Action:   semantic.Update,
-		Before:   &semantic.ResourceSnapshot{Object: cm("app", "v1")},
-		After:    &semantic.ResourceSnapshot{Object: cm("app", "v2")},
-		Apply:    semantic.ApplySemantics{Write: write},
-	}, {
-		Resource: ref("ConfigMap", "gone"),
-		Origin:   helmOrigin(),
-		Action:   semantic.Delete,
-		Before:   &semantic.ResourceSnapshot{Object: cm("gone", "v1")},
-		Apply:    semantic.ApplySemantics{Delete: del},
-	}}, nil, []semantic.Diagnostic{diag})
+		Before:   &semantic.ResourceSnapshot{Object: before},
+		After:    &semantic.ResourceSnapshot{Object: after},
+		Fields:   fields,
+	}}, nil)
 	require.NoError(t, err)
+	require.Len(t, p.Changes[0].Fields, 2)
+	assert.Equal(t, "/a", p.Changes[0].Fields[0].Path)
+	assert.Equal(t, "/z", p.Changes[0].Fields[1].Path)
+	assert.Equal(t, "9", p.Changes[0].Fields[1].After)
 
-	helm.Release = "mutated"
-	write.FieldManager = "mutated"
-	del.Propagation = 0
-	diag.Resource.Name = "mutated"
-
-	require.Len(t, p.Changes, 2)
-	assert.Equal(t, "web", p.Changes[0].Origin.Helm.Release)
-	assert.Equal(t, "deployah", p.Changes[0].Apply.Write.FieldManager)
-	assert.Equal(t, semantic.PropagationBackground, p.Changes[1].Apply.Delete.Propagation)
-	require.Len(t, p.Diagnostics, 1)
-	assert.Equal(t, "app", p.Diagnostics[0].Resource.Name)
+	fields[0].After = "mutated"
+	assert.Equal(t, "2", p.Changes[0].Fields[0].After)
 }
 
 func TestSummarize(t *testing.T) {
@@ -252,41 +230,19 @@ func TestSummarize(t *testing.T) {
 func TestNew_RejectsInvalid(t *testing.T) {
 	t.Parallel()
 	res := ref("ConfigMap", "app")
+	fields := []semantic.FieldChange{{Path: "/data/key", Op: semantic.FieldReplace, Before: "v1", After: "v2"}}
 	tests := []struct {
 		name    string
 		change  semantic.ResourceChange
 		wantErr string
 	}{
 		{
-			name: "unknown origin",
-			change: semantic.ResourceChange{
-				Resource: res,
-				Action:   semantic.Create,
-				After:    &semantic.ResourceSnapshot{Object: cm("app", "v1")},
-				Apply:    writeApply(),
-			},
-			wantErr: "invalid origin",
-		},
-		{
-			name: "helm origin without details",
-			change: semantic.ResourceChange{
-				Resource: res,
-				Origin:   semantic.ResourceOrigin{Kind: semantic.OriginHelm},
-				Action:   semantic.Create,
-				After:    &semantic.ResourceSnapshot{Object: cm("app", "v1")},
-				Apply:    writeApply(),
-			},
-			wantErr: "helm origin requires helm details",
-		},
-		{
 			name: "create with before",
 			change: semantic.ResourceChange{
 				Resource: res,
-				Origin:   helmOrigin(),
 				Action:   semantic.Create,
 				Before:   &semantic.ResourceSnapshot{Object: cm("app", "v0")},
 				After:    &semantic.ResourceSnapshot{Object: cm("app", "v1")},
-				Apply:    writeApply(),
 			},
 			wantErr: "create must not have a before snapshot",
 		},
@@ -294,41 +250,55 @@ func TestNew_RejectsInvalid(t *testing.T) {
 			name: "create missing after",
 			change: semantic.ResourceChange{
 				Resource: res,
-				Origin:   helmOrigin(),
 				Action:   semantic.Create,
-				Apply:    writeApply(),
 			},
 			wantErr: "create requires an after snapshot",
 		},
 		{
-			name: "update missing write",
+			name: "create with fields",
 			change: semantic.ResourceChange{
 				Resource: res,
-				Origin:   helmOrigin(),
-				Action:   semantic.Update,
-				Before:   &semantic.ResourceSnapshot{Object: cm("app", "v1")},
-				After:    &semantic.ResourceSnapshot{Object: cm("app", "v2")},
+				Action:   semantic.Create,
+				After:    &semantic.ResourceSnapshot{Object: cm("app", "v1")},
+				Fields:   fields,
 			},
-			wantErr: "requires write semantics",
+			wantErr: "create must not have field changes",
 		},
 		{
 			name: "update missing before",
 			change: semantic.ResourceChange{
 				Resource: res,
-				Origin:   helmOrigin(),
 				Action:   semantic.Update,
 				After:    &semantic.ResourceSnapshot{Object: cm("app", "v2")},
-				Apply:    writeApply(),
+				Fields:   fields,
 			},
 			wantErr: "update requires a before snapshot",
+		},
+		{
+			name: "update missing after",
+			change: semantic.ResourceChange{
+				Resource: res,
+				Action:   semantic.Update,
+				Before:   &semantic.ResourceSnapshot{Object: cm("app", "v1")},
+				Fields:   fields,
+			},
+			wantErr: "update requires an after snapshot",
+		},
+		{
+			name: "update missing fields",
+			change: semantic.ResourceChange{
+				Resource: res,
+				Action:   semantic.Update,
+				Before:   &semantic.ResourceSnapshot{Object: cm("app", "v1")},
+				After:    &semantic.ResourceSnapshot{Object: cm("app", "v2")},
+			},
+			wantErr: "update requires a field change",
 		},
 		{
 			name: "delete missing before",
 			change: semantic.ResourceChange{
 				Resource: res,
-				Origin:   helmOrigin(),
 				Action:   semantic.Delete,
-				Apply:    deleteApply(),
 			},
 			wantErr: "delete requires a before snapshot",
 		},
@@ -336,205 +306,38 @@ func TestNew_RejectsInvalid(t *testing.T) {
 			name: "delete with after",
 			change: semantic.ResourceChange{
 				Resource: res,
-				Origin:   helmOrigin(),
 				Action:   semantic.Delete,
 				Before:   &semantic.ResourceSnapshot{Object: cm("app", "v1")},
 				After:    &semantic.ResourceSnapshot{Object: cm("app", "v2")},
-				Apply:    deleteApply(),
 			},
 			wantErr: "delete must not have an after snapshot",
 		},
 		{
-			name: "create rejects delete",
+			name: "delete with fields",
 			change: semantic.ResourceChange{
 				Resource: res,
-				Origin:   helmOrigin(),
-				Action:   semantic.Create,
-				After:    &semantic.ResourceSnapshot{Object: cm("app", "v1")},
-				Apply:    bothApply(),
-			},
-			wantErr: "must not have delete semantics",
-		},
-		{
-			name: "create rejects missing write",
-			change: semantic.ResourceChange{
-				Resource: res,
-				Origin:   helmOrigin(),
-				Action:   semantic.Create,
-				After:    &semantic.ResourceSnapshot{Object: cm("app", "v1")},
-			},
-			wantErr: "requires write semantics",
-		},
-		{
-			name: "update rejects delete",
-			change: semantic.ResourceChange{
-				Resource: res,
-				Origin:   helmOrigin(),
-				Action:   semantic.Update,
-				Before:   &semantic.ResourceSnapshot{Object: cm("app", "v1")},
-				After:    &semantic.ResourceSnapshot{Object: cm("app", "v2")},
-				Apply:    bothApply(),
-			},
-			wantErr: "must not have delete semantics",
-		},
-		{
-			name: "delete rejects write",
-			change: semantic.ResourceChange{
-				Resource: res,
-				Origin:   helmOrigin(),
 				Action:   semantic.Delete,
 				Before:   &semantic.ResourceSnapshot{Object: cm("app", "v1")},
-				Apply:    bothApply(),
+				Fields:   fields,
 			},
-			wantErr: "must not have write semantics",
-		},
-		{
-			name: "delete rejects missing delete",
-			change: semantic.ResourceChange{
-				Resource: res,
-				Origin:   helmOrigin(),
-				Action:   semantic.Delete,
-				Before:   &semantic.ResourceSnapshot{Object: cm("app", "v1")},
-			},
-			wantErr: "requires delete semantics",
-		},
-		{
-			name: "invalid write method",
-			change: semantic.ResourceChange{
-				Resource: res,
-				Origin:   helmOrigin(),
-				Action:   semantic.Create,
-				After:    &semantic.ResourceSnapshot{Object: cm("app", "v1")},
-				Apply:    semantic.ApplySemantics{Write: &semantic.WriteSemantics{}},
-			},
-			wantErr: "invalid write method",
-		},
-		{
-			name: "invalid delete propagation",
-			change: semantic.ResourceChange{
-				Resource: res,
-				Origin:   helmOrigin(),
-				Action:   semantic.Delete,
-				Before:   &semantic.ResourceSnapshot{Object: cm("app", "v1")},
-				Apply:    semantic.ApplySemantics{Delete: &semantic.DeleteSemantics{}},
-			},
-			wantErr: "invalid delete propagation",
+			wantErr: "delete must not have field changes",
 		},
 		{
 			name: "zero action",
 			change: semantic.ResourceChange{
 				Resource: res,
-				Origin:   helmOrigin(),
 				After:    &semantic.ResourceSnapshot{Object: cm("app", "v1")},
-				Apply:    writeApply(),
 			},
 			wantErr: "invalid action",
 		},
-		{
-			name: "server-side apply missing field manager",
-			change: func() semantic.ResourceChange {
-				c := createChange("app", "v1")
-				c.Apply.Write.FieldManager = ""
-				return c
-			}(),
-			wantErr: "field manager",
-		},
-		{
-			name: "unencodable after snapshot",
-			change: semantic.ResourceChange{
-				Resource: res,
-				Origin:   helmOrigin(),
-				Action:   semantic.Update,
-				Before:   &semantic.ResourceSnapshot{Object: cm("app", "v1")},
-				After:    &semantic.ResourceSnapshot{Object: map[string]any{"n": math.NaN()}},
-				Apply:    writeApply(),
-			},
-			wantErr: "encode after snapshot",
-		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, []semantic.ResourceChange{tt.change}, nil, nil)
+			_, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, []semantic.ResourceChange{tt.change}, nil)
 			require.Error(t, err)
 			assert.ErrorContains(t, err, tt.wantErr)
 			assert.ErrorContains(t, err, res.String())
-		})
-	}
-}
-
-func TestNew_DiagnosticValidation(t *testing.T) {
-	t.Parallel()
-	res := ref("ConfigMap", "app")
-	tests := []struct {
-		name    string
-		diag    semantic.Diagnostic
-		wantErr string
-	}{
-		{
-			name: "invalid severity",
-			diag: semantic.Diagnostic{
-				Category: semantic.CategoryPredictionLimitation,
-				Message:  "prediction is not exact",
-				Resource: &res,
-			},
-			wantErr: "invalid diagnostic severity",
-		},
-		{
-			name: "invalid category",
-			diag: semantic.Diagnostic{
-				Severity: semantic.DiagnosticWarning,
-				Message:  "prediction is not exact",
-				Resource: &res,
-			},
-			wantErr: "invalid diagnostic category",
-		},
-		{
-			name: "empty message",
-			diag: semantic.Diagnostic{
-				Severity: semantic.DiagnosticWarning,
-				Category: semantic.CategoryPredictionLimitation,
-				Resource: &res,
-			},
-			wantErr: "diagnostic message is required",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			_, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, nil, nil, []semantic.Diagnostic{tt.diag})
-			require.Error(t, err)
-			assert.ErrorContains(t, err, tt.wantErr)
-		})
-	}
-}
-
-func TestNew_LimitationMatching(t *testing.T) {
-	t.Parallel()
-	res := ref("ConfigMap", "app")
-	other := ref("ConfigMap", "other")
-	change := semantic.ResourceChange{
-		Resource: res,
-		Origin:   helmOrigin(),
-		Action:   semantic.Update,
-		Before:   &semantic.ResourceSnapshot{Object: cm("app", "v1")},
-		Apply:    writeApply(),
-	}
-	nilResource := limitation(res)
-	nilResource.Resource = nil
-	tests := []struct {
-		name  string
-		diags []semantic.Diagnostic
-	}{
-		{name: "other resource", diags: []semantic.Diagnostic{limitation(other)}},
-		{name: "nil resource", diags: []semantic.Diagnostic{nilResource}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			_, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, []semantic.ResourceChange{change}, nil, tt.diags)
-			require.Error(t, err)
-			assert.ErrorContains(t, err, "update without after")
 		})
 	}
 }
@@ -553,12 +356,9 @@ func TestNew_CopiesNestedSnapshotShapes(t *testing.T) {
 	}
 	p, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, []semantic.ResourceChange{{
 		Resource: ref("ConfigMap", "app"),
-		Origin:   helmOrigin(),
 		Action:   semantic.Create,
 		After:    &semantic.ResourceSnapshot{Object: obj},
-		Fields:   []semantic.FieldChange{{Path: "/unused", Op: semantic.FieldAdd, After: "x"}},
-		Apply:    writeApply(),
-	}}, nil, nil)
+	}}, nil)
 	require.NoError(t, err)
 	assert.Empty(t, p.Changes[0].Fields)
 
@@ -583,26 +383,23 @@ func TestNew_UpdateEmptyBeforeObject(t *testing.T) {
 	t.Parallel()
 	p, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, []semantic.ResourceChange{{
 		Resource: ref("ConfigMap", "app"),
-		Origin:   helmOrigin(),
 		Action:   semantic.Update,
 		Before:   &semantic.ResourceSnapshot{},
 		After:    &semantic.ResourceSnapshot{Object: cm("app", "v1")},
-		Apply:    writeApply(),
-	}}, nil, nil)
+		Fields:   []semantic.FieldChange{{Path: "/data/key", Op: semantic.FieldReplace, Before: "v1", After: "v2"}},
+	}}, nil)
 	require.NoError(t, err)
-	require.NotEmpty(t, p.Changes[0].Fields)
-	assert.Equal(t, semantic.FieldAdd, p.Changes[0].Fields[0].Op)
+	require.Len(t, p.Changes[0].Fields, 1)
+	assert.Equal(t, "/data/key", p.Changes[0].Fields[0].Path)
 }
 
 func TestNew_NilSnapshotObject(t *testing.T) {
 	t.Parallel()
 	p, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, []semantic.ResourceChange{{
 		Resource: ref("ConfigMap", "app"),
-		Origin:   helmOrigin(),
 		Action:   semantic.Create,
 		After:    &semantic.ResourceSnapshot{},
-		Apply:    writeApply(),
-	}}, nil, nil)
+	}}, nil)
 	require.NoError(t, err)
 	require.NotNil(t, p.Changes[0].After)
 	assert.Nil(t, p.Changes[0].After.Object)
@@ -645,7 +442,7 @@ func TestNew_HelmActionHeader(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			p, err := semantic.New(tt.header, tt.helmAction, nil, nil, nil)
+			p, err := semantic.New(tt.header, tt.helmAction, nil, nil)
 			if tt.wantErr != "" {
 				require.Error(t, err)
 				assert.ErrorContains(t, err, tt.wantErr)
@@ -667,14 +464,9 @@ func TestNew_HelmNoneContent(t *testing.T) {
 	}{
 		{name: "empty"},
 		{
-			name:    "origin helm",
+			name:    "resource change",
 			changes: []semantic.ResourceChange{createChange("app", "v1")},
-			wantErr: "helm none must not include helm resource changes",
-		},
-		{
-			name:    "origin namespace",
-			changes: []semantic.ResourceChange{nsCreate("prod")},
-			wantErr: "namespace origin requires helm install",
+			wantErr: "helm none must not include resource changes",
 		},
 		{
 			name: "changed preDeploy",
@@ -707,234 +499,7 @@ func TestNew_HelmNoneContent(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := semantic.New(semantic.Header{}, semantic.HelmNone, tt.changes, tt.tasks, nil)
-			if tt.wantErr != "" {
-				require.Error(t, err)
-				assert.ErrorContains(t, err, tt.wantErr)
-				return
-			}
-			require.NoError(t, err)
-		})
-	}
-}
-
-func TestNew_OriginNamespaceRequiresInstall(t *testing.T) {
-	t.Parallel()
-	change := nsCreate("prod")
-	tests := []struct {
-		name       string
-		header     semantic.Header
-		helmAction semantic.HelmAction
-		wantErr    string
-	}{
-		{name: "install", header: semantic.Header{FreshInstall: true}, helmAction: semantic.HelmInstall},
-		{name: "none", helmAction: semantic.HelmNone, wantErr: "namespace origin requires helm install"},
-		{name: "upgrade", helmAction: semantic.HelmUpgrade, wantErr: "namespace origin requires helm install"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			_, err := semantic.New(tt.header, tt.helmAction, []semantic.ResourceChange{change}, nil, nil)
-			if tt.wantErr != "" {
-				require.Error(t, err)
-				assert.ErrorContains(t, err, tt.wantErr)
-				return
-			}
-			require.NoError(t, err)
-		})
-	}
-}
-
-func TestNew_OriginPayload(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name       string
-		header     semantic.Header
-		helmAction semantic.HelmAction
-		change     semantic.ResourceChange
-		wantErr    string
-	}{
-		{
-			name:       "helm with details",
-			helmAction: semantic.HelmUpgrade,
-			change:     createChange("app", "v1"),
-		},
-		{
-			name:       "helm without details",
-			helmAction: semantic.HelmUpgrade,
-			change: semantic.ResourceChange{
-				Resource: ref("ConfigMap", "app"),
-				Origin:   semantic.ResourceOrigin{Kind: semantic.OriginHelm},
-				Action:   semantic.Create,
-				After:    &semantic.ResourceSnapshot{Object: cm("app", "v1")},
-				Apply:    writeApply(),
-			},
-			wantErr: "helm origin requires helm details",
-		},
-		{
-			name:       "namespace without helm",
-			header:     semantic.Header{FreshInstall: true},
-			helmAction: semantic.HelmInstall,
-			change:     nsCreate("prod"),
-		},
-		{
-			name:       "namespace with helm",
-			header:     semantic.Header{FreshInstall: true},
-			helmAction: semantic.HelmInstall,
-			change: semantic.ResourceChange{
-				Resource: semantic.ResourceRef{APIVersion: "v1", Kind: "Namespace", Name: "prod"},
-				Origin:   semantic.ResourceOrigin{Kind: semantic.OriginNamespace, Helm: helmOrigin().Helm},
-				Action:   semantic.Create,
-				After: &semantic.ResourceSnapshot{Object: map[string]any{
-					"apiVersion": "v1",
-					"kind":       "Namespace",
-					"metadata":   map[string]any{"name": "prod"},
-				}},
-				Apply: writeApply(),
-			},
-			wantErr: "namespace origin must not include helm details",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			_, err := semantic.New(tt.header, tt.helmAction, []semantic.ResourceChange{tt.change}, nil, nil)
-			if tt.wantErr != "" {
-				require.Error(t, err)
-				assert.ErrorContains(t, err, tt.wantErr)
-				return
-			}
-			require.NoError(t, err)
-		})
-	}
-}
-
-func TestNew_OriginContracts(t *testing.T) {
-	t.Parallel()
-	nsAfter := &semantic.ResourceSnapshot{Object: map[string]any{
-		"apiVersion": "v1",
-		"kind":       "Namespace",
-		"metadata":   map[string]any{"name": "prod"},
-	}}
-	tests := []struct {
-		name       string
-		header     semantic.Header
-		helmAction semantic.HelmAction
-		change     semantic.ResourceChange
-		wantErr    string
-	}{
-		{
-			name:       "namespace write create forbidden",
-			header:     semantic.Header{FreshInstall: true},
-			helmAction: semantic.HelmInstall,
-			change: semantic.ResourceChange{
-				Resource: semantic.ResourceRef{APIVersion: "v1", Kind: "Namespace", Name: "prod"},
-				Origin:   semantic.ResourceOrigin{Kind: semantic.OriginNamespace},
-				Action:   semantic.Create,
-				After:    nsAfter,
-				Apply:    writeCreate(),
-			},
-			wantErr: "namespace origin requires server_side_apply",
-		},
-		{
-			name:       "namespace force forbidden",
-			header:     semantic.Header{FreshInstall: true},
-			helmAction: semantic.HelmInstall,
-			change: semantic.ResourceChange{
-				Resource: semantic.ResourceRef{APIVersion: "v1", Kind: "Namespace", Name: "prod"},
-				Origin:   semantic.ResourceOrigin{Kind: semantic.OriginNamespace},
-				Action:   semantic.Create,
-				After:    nsAfter,
-				Apply:    writeForceApply(),
-			},
-			wantErr: "namespace origin must not force conflicts",
-		},
-		{
-			name:       "namespace wrong kind",
-			header:     semantic.Header{FreshInstall: true},
-			helmAction: semantic.HelmInstall,
-			change: semantic.ResourceChange{
-				Resource: ref("ConfigMap", "app"),
-				Origin:   semantic.ResourceOrigin{Kind: semantic.OriginNamespace},
-				Action:   semantic.Create,
-				After:    &semantic.ResourceSnapshot{Object: cm("app", "v1")},
-				Apply:    writeApply(),
-			},
-			wantErr: "namespace origin requires v1 Namespace",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			_, err := semantic.New(tt.header, tt.helmAction, []semantic.ResourceChange{tt.change}, nil, nil)
-			if tt.wantErr != "" {
-				require.Error(t, err)
-				assert.ErrorContains(t, err, tt.wantErr)
-				return
-			}
-			require.NoError(t, err)
-		})
-	}
-}
-
-func TestNew_WriteSemantics(t *testing.T) {
-	t.Parallel()
-	createSSA := createChange("app", "v1")
-	createK8s := createChange("app", "v1")
-	createK8s.Apply = writeCreate()
-	createWithManager := createChange("app", "v1")
-	createWithManager.Apply = writeCreate()
-	createWithManager.Apply.Write.FieldManager = "deployah"
-	createWithForce := createChange("app", "v1")
-	createWithForce.Apply = writeCreate()
-	createWithForce.Apply.Write.ForceConflicts = true
-	updateSSA := updateChange("app", "v1", "v2")
-	updateCreate := updateChange("app", "v1", "v2")
-	updateCreate.Apply = writeCreate()
-	ssaForce := createChange("app", "v1")
-	ssaForce.Apply.Write.ForceConflicts = true
-	ssaNoManager := createChange("app", "v1")
-	ssaNoManager.Apply.Write.FieldManager = ""
-	tests := []struct {
-		name       string
-		header     semantic.Header
-		helmAction semantic.HelmAction
-		change     semantic.ResourceChange
-		wantErr    string
-	}{
-		{name: "create with create write", helmAction: semantic.HelmUpgrade, change: createK8s},
-		{name: "create with server side apply", helmAction: semantic.HelmUpgrade, change: createSSA},
-		{name: "update with server side apply", helmAction: semantic.HelmUpgrade, change: updateSSA},
-		{
-			name:       "update with create write",
-			helmAction: semantic.HelmUpgrade,
-			change:     updateCreate,
-			wantErr:    "update requires server_side_apply",
-		},
-		{
-			name:       "create write with field manager",
-			helmAction: semantic.HelmUpgrade,
-			change:     createWithManager,
-			wantErr:    "create write must not set a field manager",
-		},
-		{
-			name:       "create write with force conflicts",
-			helmAction: semantic.HelmUpgrade,
-			change:     createWithForce,
-			wantErr:    "create write must not force conflicts",
-		},
-		{
-			name:       "server side apply without field manager",
-			helmAction: semantic.HelmUpgrade,
-			change:     ssaNoManager,
-			wantErr:    "server_side_apply requires a field manager",
-		},
-		{name: "server side apply force conflicts", helmAction: semantic.HelmUpgrade, change: ssaForce},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			_, err := semantic.New(tt.header, tt.helmAction, []semantic.ResourceChange{tt.change}, nil, nil)
+			_, err := semantic.New(semantic.Header{}, semantic.HelmNone, tt.changes, tt.tasks)
 			if tt.wantErr != "" {
 				require.Error(t, err)
 				assert.ErrorContains(t, err, tt.wantErr)
@@ -961,7 +526,7 @@ func TestPlan_HasEffects(t *testing.T) {
 			name:       "resource change",
 			header:     semantic.Header{FreshInstall: true},
 			helmAction: semantic.HelmInstall,
-			changes:    []semantic.ResourceChange{nsCreate("prod")},
+			changes:    []semantic.ResourceChange{createChange("app", "v1")},
 			want:       true,
 		},
 		{
@@ -998,7 +563,7 @@ func TestPlan_HasEffects(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			p, err := semantic.New(tt.header, tt.helmAction, tt.changes, tt.tasks, nil)
+			p, err := semantic.New(tt.header, tt.helmAction, tt.changes, tt.tasks)
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, p.HasEffects())
 		})
@@ -1013,7 +578,6 @@ func TestPlan_IsNoOp(t *testing.T) {
 		helmAction semantic.HelmAction
 		changes    []semantic.ResourceChange
 		tasks      []semantic.TaskPlan
-		diags      []semantic.Diagnostic
 		want       bool
 	}{
 		{name: "helm none", helmAction: semantic.HelmNone, want: true},
@@ -1024,26 +588,16 @@ func TestPlan_IsNoOp(t *testing.T) {
 			helmAction: semantic.HelmInstall,
 		},
 		{
-			name:       "helm none with limitation diagnostic",
-			helmAction: semantic.HelmNone,
-			want:       true,
-			diags: []semantic.Diagnostic{{
-				Severity: semantic.DiagnosticWarning,
-				Category: semantic.CategoryPredictionLimitation,
-				Message:  "prediction is not exact",
-			}},
-		},
-		{
-			name:       "install with origin namespace",
+			name:       "install with a resource change",
 			header:     semantic.Header{FreshInstall: true},
 			helmAction: semantic.HelmInstall,
-			changes:    []semantic.ResourceChange{nsCreate("prod")},
+			changes:    []semantic.ResourceChange{createChange("app", "v1")},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			p, err := semantic.New(tt.header, tt.helmAction, tt.changes, tt.tasks, tt.diags)
+			p, err := semantic.New(tt.header, tt.helmAction, tt.changes, tt.tasks)
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, p.IsNoOp())
 		})

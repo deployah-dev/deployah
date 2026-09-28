@@ -14,18 +14,24 @@
 
 package semantic
 
-// ResourceChange describes a visible Kubernetes resource consequence
-// of this invocation.
+// ResourceChange is one declarative difference between Previous and
+// Desired for a resource in the Helm release [Header] names.
 type ResourceChange struct {
 	Resource ResourceRef
-	Origin   ResourceOrigin
 	Action   Action
-	Before   *ResourceSnapshot
-	After    *ResourceSnapshot
-	Fields   []FieldChange
-	Apply    ApplySemantics
-	// ApplyOrder is origin-local apply and presentation rank. Lower is
-	// earlier. The assembler stamps it; [New] sorts by origin rank then
-	// ApplyOrder then identity. It is not a JSON field.
-	ApplyOrder int
+	// Before is the Previous declaration. It is unset for [Create].
+	Before *ResourceSnapshot
+	// After is the Desired declaration. It is unset for [Delete].
+	After *ResourceSnapshot
+	// Fields are the semantic differences the caller computed. [New]
+	// keeps them; it does not recompute them from the snapshots.
+	Fields []FieldChange
+	// HelmOrder is where this change sits in Helm's deploy or upgrade
+	// order. A lower number comes first. Create and Update follow
+	// Helm's install kind order, and equal kinds keep manifest order.
+	// Deletes come after those, in Previous release order. The planner
+	// sets it. [New] sorts by HelmOrder, then by the resource
+	// reference. It is not written to JSON. It does not say how Helm
+	// writes or deletes.
+	HelmOrder int
 }

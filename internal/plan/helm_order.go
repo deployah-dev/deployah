@@ -23,70 +23,62 @@ import (
 	"deployah.dev/deployah/internal/plan/semantic"
 )
 
-// stampHelmApplyOrder sets [semantic.ResourceChange.ApplyOrder] from Helm's
-// exported kind ordering on OriginHelm changes only. Create, update, and
-// replace use InstallOrder. Deletes use UninstallOrder and sort after
-// applies. Identity remains the [semantic.New] tie-break.
-func stampHelmApplyOrder(changes []semantic.ResourceChange) error {
+// stampHelmOrder sets HelmOrder from Helm's deploy and upgrade sequence.
+// Create and Update follow install kind order, and the same kind keeps
+// input order. helm.sh/hook objects are not in that order. They take
+// the next ranks, in slice order. Deletes come after, in Previous
+// order, matching originals.Difference(targets), not uninstall order.
+// The number does not say how Helm writes or deletes.
+func stampHelmOrder(changes []semantic.ResourceChange) error {
 	if len(changes) == 0 {
 		return nil
 	}
 	applyFiles := make(map[string]string, len(changes))
-	deleteFiles := make(map[string]string, len(changes))
 	applyIdx := make(map[string]int, len(changes))
-	deleteIdx := make(map[string]int, len(changes))
+	deleteIdx := make([]int, 0)
 	for i, c := range changes {
-		if c.Origin.Kind != semantic.OriginHelm {
+		if c.Action == semantic.Delete {
+			deleteIdx = append(deleteIdx, i)
 			continue
 		}
-		obj := snapshotMap(c.After)
-		if c.Action == semantic.Delete {
-			obj = snapshotMap(c.Before)
-		}
-		raw, err := yaml.Marshal(obj)
+		raw, err := yaml.Marshal(snapshotMap(c.After))
 		if err != nil {
 			return fmt.Errorf("encode %s for helm order: %w", c.Resource, err)
 		}
 		name := fmt.Sprintf("%010d.yaml", i)
-		if c.Action == semantic.Delete {
-			deleteFiles[name] = string(raw)
-			deleteIdx[name] = i
-			continue
-		}
 		applyFiles[name] = string(raw)
 		applyIdx[name] = i
 	}
 
 	order := 1
 	stamped := make(map[int]struct{}, len(changes))
-	n, err := stampSorted(applyFiles, applyIdx, util.InstallOrder, changes, stamped, order)
-	if err != nil {
-		return err
-	}
-	order = n
-	n, err = stampSorted(deleteFiles, deleteIdx, util.UninstallOrder, changes, stamped, order)
+	n, err := stampSorted(applyFiles, applyIdx, changes, stamped, order)
 	if err != nil {
 		return err
 	}
 	order = n
 	for i := range changes {
+		if changes[i].Action == semantic.Delete {
+			continue
+		}
 		if _, ok := stamped[i]; ok {
 			continue
 		}
-		if changes[i].Origin.Kind != semantic.OriginHelm {
-			continue
-		}
-		changes[i].ApplyOrder = order
+		changes[i].HelmOrder = order
+		order++
+	}
+	for _, i := range deleteIdx {
+		changes[i].HelmOrder = order
 		order++
 	}
 	return nil
 }
 
-func stampSorted(files map[string]string, idx map[string]int, ordering util.KindSortOrder, changes []semantic.ResourceChange, stamped map[int]struct{}, start int) (int, error) {
+func stampSorted(files map[string]string, idx map[string]int, changes []semantic.ResourceChange, stamped map[int]struct{}, start int) (int, error) {
 	if len(files) == 0 {
 		return start, nil
 	}
-	_, manifests, err := util.SortManifests(files, nil, ordering)
+	_, manifests, err := util.SortManifests(files, nil, util.InstallOrder)
 	if err != nil {
 		return start, fmt.Errorf("sort helm manifests: %w", err)
 	}
@@ -96,7 +88,7 @@ func stampSorted(files map[string]string, idx map[string]int, ordering util.Kind
 		if !ok {
 			continue
 		}
-		changes[i].ApplyOrder = order
+		changes[i].HelmOrder = order
 		stamped[i] = struct{}{}
 		order++
 	}

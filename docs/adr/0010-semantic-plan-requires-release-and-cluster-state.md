@@ -6,19 +6,22 @@ Accepted
 
 ## Context
 
-A semantic plan is built from Previous and Live (ADR-0005). Rendering
-Desired YAML without those states can still validate a spec. Treating
-that render as a semantic plan fabricates Drift, HelmAction, and
-resource consequences.
+A semantic plan is built from Previous and Desired (ADR-0005).
+Rendering Desired YAML without the release baseline can still
+validate a spec. Treating that render as a semantic plan fabricates
+HelmAction and Resource Changes.
 
 ## Decision
 
-A semantic plan requires enough release state to construct Previous
-and enough cluster state to construct Live. Deployah does not support
-offline semantic planning.
+Resource Changes require enough release state to construct Previous,
+and discovery to resolve scope (ADR-0013). Drift requires Live as
+well. Deployah does not support offline semantic planning.
 
 When that information is unavailable, the planner must not fabricate
-Previous, Live, Drift, HelmAction, or resource consequences.
+Previous, Drift, HelmAction, or Resource Changes.
+
+A fresh install has an empty Previous. That is known release state,
+not a missing baseline.
 
 Cluster-independent validation and configuration resolution are
 separate capabilities. They are not semantic planning.
@@ -27,10 +30,12 @@ separate capabilities. They are not semantic planning.
 
 ### Positive
 
-- Plan output cannot invent a HelmAction or resource consequence from
+- Plan output cannot invent a HelmAction or Resource Change from
   Desired YAML alone.
 
 ### Negative
 
-- Operators without release and cluster access cannot obtain a
+- Operators without release access and discovery cannot obtain a
   semantic plan.
+- Drift also needs Live, so it cannot be reported from the release
+  baseline alone.

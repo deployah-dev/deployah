@@ -19,50 +19,83 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
-func TestCheckInstallNamespaceOverlap_Errors(t *testing.T) {
+func TestCheckTargetNamespaceOwnership(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		name      string
-		manifest  string
-		namespace string
-		wantErr   string
+	ns := func(apiVersion, name string) *unstructured.Unstructured {
+		return &unstructured.Unstructured{Object: map[string]any{
+			"apiVersion": apiVersion,
+			"kind":       "Namespace",
+			"metadata":   map[string]any{"name": name},
+		}}
+	}
+	rejected := []struct {
+		name    string
+		side    string
+		objs    []*unstructured.Unstructured
+		target  string
+		wantErr string
 	}{
 		{
-			name:      "bare target namespace",
-			manifest:  "apiVersion: v1\nkind: Namespace\nmetadata:\n  name: prod\n",
-			namespace: "prod",
-			wantErr:   "cannot plan target namespace",
+			name:    "core v1 target",
+			side:    "rendered manifest",
+			objs:    []*unstructured.Unstructured{ns("v1", "prod")},
+			target:  "prod",
+			wantErr: `rendered manifest declares target namespace "prod"`,
 		},
 		{
-			name:      "list item target namespace",
-			manifest:  "apiVersion: v1\nkind: List\nitems:\n- apiVersion: v1\n  kind: Namespace\n  metadata:\n    name: prod\n",
-			namespace: "prod",
-			wantErr:   "cannot plan target namespace",
-		},
-		{
-			name:      "invalid yaml",
-			manifest:  "not: [valid",
-			namespace: "prod",
-			wantErr:   "parse manifest",
+			name:    "other core version",
+			side:    "previous release revision 3",
+			objs:    []*unstructured.Unstructured{ns("v1beta1", "prod")},
+			target:  "prod",
+			wantErr: `previous release revision 3 declares target namespace "prod"`,
 		},
 	}
-	for _, tt := range tests {
+	for _, tt := range rejected {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			err := checkInstallNamespaceOverlap(tt.manifest, tt.namespace)
+			err := checkTargetNamespaceOwnership(tt.side, tt.objs, tt.target)
 			require.Error(t, err)
 			assert.ErrorContains(t, err, tt.wantErr)
+			assert.ErrorContains(t, err, "must not claim it")
 		})
 	}
-}
 
-func TestCheckInstallNamespaceOverlap_OtherNamespace(t *testing.T) {
-	t.Parallel()
-	err := checkInstallNamespaceOverlap(
-		"apiVersion: v1\nkind: Namespace\nmetadata:\n  name: extra\n",
-		"prod",
-	)
-	require.NoError(t, err)
+	allowed := []struct {
+		name   string
+		side   string
+		objs   []*unstructured.Unstructured
+		target string
+	}{
+		{
+			name:   "other name",
+			side:   "rendered manifest",
+			objs:   []*unstructured.Unstructured{ns("v1", "extra")},
+			target: "prod",
+		},
+		{
+			name:   "grouped namespace is not the target",
+			side:   "rendered manifest",
+			objs:   []*unstructured.Unstructured{ns("example.com/v1", "prod")},
+			target: "prod",
+		},
+	}
+	for _, tt := range allowed {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := checkTargetNamespaceOwnership(tt.side, tt.objs, tt.target)
+			require.NoError(t, err)
+		})
+	}
+
+	t.Run("list is flattened by the caller", func(t *testing.T) {
+		t.Parallel()
+		flat, err := flattenManifest("apiVersion: v1\nkind: List\nitems:\n- apiVersion: v1\n  kind: Namespace\n  metadata:\n    name: prod\n")
+		require.NoError(t, err)
+		err = checkTargetNamespaceOwnership("rendered manifest", flat, "prod")
+		require.Error(t, err)
+		assert.ErrorContains(t, err, "target namespace")
+	})
 }

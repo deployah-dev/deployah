@@ -26,11 +26,23 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
+
+func (s *E2ESuite) kubeClients(t *testing.T) (*kubernetes.Clientset, dynamic.Interface) {
+	t.Helper()
+	cs, err := kubernetes.NewForConfig(s.client.RESTConfig())
+	require.NoError(t, err)
+	dyn, err := dynamic.NewForConfig(s.client.RESTConfig())
+	require.NoError(t, err)
+	return cs, dyn
+}
 
 func TestIsRetryableAPIError(t *testing.T) {
 	t.Parallel()

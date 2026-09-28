@@ -43,22 +43,6 @@ func validateRenderable(p semantic.Plan) error {
 			semantic.Delete.String()); err != nil {
 			return err
 		}
-		if err := requireEnum(fmt.Sprintf("change %d origin", i), c.Origin.Kind.String(),
-			semantic.OriginHelm.String(), semantic.OriginNamespace.String()); err != nil {
-			return err
-		}
-		if c.Apply.Write != nil {
-			if err := requireEnum(fmt.Sprintf("change %d write method", i), c.Apply.Write.Method.String(),
-				semantic.WriteCreate.String(), semantic.WriteServerSide.String()); err != nil {
-				return err
-			}
-		}
-		if c.Apply.Delete != nil {
-			if err := requireEnum(fmt.Sprintf("change %d delete propagation", i), c.Apply.Delete.Propagation.String(),
-				semantic.PropagationBackground.String()); err != nil {
-				return err
-			}
-		}
 		for j, f := range c.Fields {
 			if err := requireEnum(fmt.Sprintf("change %d field %d op", i, j), f.Op.String(),
 				semantic.FieldAdd.String(), semantic.FieldRemove.String(), semantic.FieldReplace.String()); err != nil {
@@ -130,16 +114,6 @@ func validateRenderable(p semantic.Plan) error {
 	for i, c := range p.ChartCRDs {
 		if err := requireEnum(fmt.Sprintf("chart crd %d lifecycle", i), c.Lifecycle.String(),
 			semantic.ChartCRDProcess.String(), semantic.ChartCRDSkip.String(), semantic.ChartCRDUpgrade.String()); err != nil {
-			return err
-		}
-	}
-	for i, d := range p.Diagnostics {
-		if err := requireEnum(fmt.Sprintf("diagnostic %d severity", i), d.Severity.String(),
-			semantic.DiagnosticWarning.String()); err != nil {
-			return err
-		}
-		if err := requireEnum(fmt.Sprintf("diagnostic %d category", i), d.Category.String(),
-			semantic.CategoryPredictionLimitation.String()); err != nil {
 			return err
 		}
 	}

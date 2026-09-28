@@ -649,7 +649,7 @@ func TestAssembleTasks_HookScheduleTransition(t *testing.T) {
 			tasks, err := assembleTasks(resolved, prep, tt.desired, tt.changes)
 			require.NoError(t, err)
 			stampTaskWillRun(tasks, semantic.HelmUpgrade)
-			p, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, tt.changes, tasks, nil)
+			p, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, tt.changes, tasks)
 			require.NoError(t, err)
 			byName := taskByName(t, p.Tasks)
 			require.Contains(t, byName, "work")
@@ -744,33 +744,29 @@ func TestAssembleTasks_ScheduleProvenance(t *testing.T) {
 	}
 }
 
-func TestStampHelmApplyOrder_ConfigMapBeforeDeployment(t *testing.T) {
+func TestStampHelmOrder_ConfigMapBeforeDeployment(t *testing.T) {
 	t.Parallel()
 	changes := []semantic.ResourceChange{
 		{
 			Resource: semantic.ResourceRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "prod", Name: "api"},
-			Origin:   semantic.ResourceOrigin{Kind: semantic.OriginHelm, Helm: &semantic.HelmOrigin{Release: "web", Namespace: "prod"}},
 			Action:   semantic.Create,
 			After:    snapObj(map[string]any{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": map[string]any{"name": "api"}}),
-			Apply:    writeApply(),
 		},
 		{
 			Resource: semantic.ResourceRef{APIVersion: "v1", Kind: "ConfigMap", Namespace: "prod", Name: "api"},
-			Origin:   semantic.ResourceOrigin{Kind: semantic.OriginHelm, Helm: &semantic.HelmOrigin{Release: "web", Namespace: "prod"}},
 			Action:   semantic.Create,
 			After:    snapObj(map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "api"}}),
-			Apply:    writeApply(),
 		},
 	}
-	require.NoError(t, stampHelmApplyOrder(changes))
-	p, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, changes, nil, nil)
+	require.NoError(t, stampHelmOrder(changes))
+	p, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, changes, nil)
 	require.NoError(t, err)
 	require.Len(t, p.Changes, 2)
 	assert.Equal(t, "ConfigMap", p.Changes[0].Resource.Kind)
 	assert.Equal(t, "Deployment", p.Changes[1].Resource.Kind)
 }
 
-func TestStampHelmApplyOrder_SameKindPreservesInputOrder(t *testing.T) {
+func TestStampHelmOrder_SameKindPreservesInputOrder(t *testing.T) {
 	t.Parallel()
 	const n = 12
 	changes := make([]semantic.ResourceChange, 0, n)
@@ -778,17 +774,15 @@ func TestStampHelmApplyOrder_SameKindPreservesInputOrder(t *testing.T) {
 		name := fmt.Sprintf("n%d", n-1-i)
 		changes = append(changes, semantic.ResourceChange{
 			Resource: semantic.ResourceRef{APIVersion: "v1", Kind: "ConfigMap", Namespace: "prod", Name: name},
-			Origin:   semantic.ResourceOrigin{Kind: semantic.OriginHelm, Helm: &semantic.HelmOrigin{Release: "web", Namespace: "prod"}},
 			Action:   semantic.Create,
 			After:    snapObj(map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": name}}),
-			Apply:    writeApply(),
 		})
 	}
-	require.NoError(t, stampHelmApplyOrder(changes))
+	require.NoError(t, stampHelmOrder(changes))
 	for i, c := range changes {
-		assert.Equal(t, i+1, c.ApplyOrder, "input index %d", i)
+		assert.Equal(t, i+1, c.HelmOrder, "input index %d", i)
 	}
-	p, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, changes, nil, nil)
+	p, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, changes, nil)
 	require.NoError(t, err)
 	require.Len(t, p.Changes, n)
 	for i, c := range p.Changes {
@@ -885,7 +879,6 @@ func eventlessHook() *v1.Hook {
 func labeledCreate(name, component string) semantic.ResourceChange {
 	return semantic.ResourceChange{
 		Resource: semantic.ResourceRef{APIVersion: "v1", Kind: "ConfigMap", Namespace: "prod", Name: name},
-		Origin:   semantic.ResourceOrigin{Kind: semantic.OriginHelm, Helm: &semantic.HelmOrigin{Release: "web", Namespace: "prod"}},
 		Action:   semantic.Create,
 		After: snapObj(map[string]any{
 			"apiVersion": "v1",
@@ -897,14 +890,12 @@ func labeledCreate(name, component string) semantic.ResourceChange {
 			},
 			"data": map[string]any{"key": "v1"},
 		}),
-		Apply: writeApply(),
 	}
 }
 
 func labeledTaskCreate(name string) semantic.ResourceChange {
 	return semantic.ResourceChange{
 		Resource: semantic.ResourceRef{APIVersion: "batch/v1", Kind: "CronJob", Namespace: "prod", Name: name},
-		Origin:   semantic.ResourceOrigin{Kind: semantic.OriginHelm, Helm: &semantic.HelmOrigin{Release: "web", Namespace: "prod"}},
 		Action:   semantic.Create,
 		After: snapObj(map[string]any{
 			"apiVersion": "batch/v1",
@@ -916,14 +907,12 @@ func labeledTaskCreate(name string) semantic.ResourceChange {
 			},
 			"spec": map[string]any{"schedule": "0 3 * * *"},
 		}),
-		Apply: writeApply(),
 	}
 }
 
 func labeledTaskDelete(name string) semantic.ResourceChange {
 	return semantic.ResourceChange{
 		Resource: semantic.ResourceRef{APIVersion: "batch/v1", Kind: "CronJob", Namespace: "prod", Name: name},
-		Origin:   semantic.ResourceOrigin{Kind: semantic.OriginHelm, Helm: &semantic.HelmOrigin{Release: "web", Namespace: "prod"}},
 		Action:   semantic.Delete,
 		Before: snapObj(map[string]any{
 			"apiVersion": "batch/v1",
@@ -935,7 +924,6 @@ func labeledTaskDelete(name string) semantic.ResourceChange {
 			},
 			"spec": map[string]any{"schedule": "0 3 * * *"},
 		}),
-		Apply: deleteApply(),
 	}
 }
 
@@ -952,23 +940,27 @@ func labeledUpdate(name, component string) semantic.ResourceChange {
 			"spec": map[string]any{"schedule": sched},
 		}
 	}
+	before := obj("0 2 * * *", map[string]any{spec.LabelComponent: component})
+	after := obj("0 3 * * *", map[string]any{
+		spec.LabelComponent: component,
+		spec.LabelTask:      name,
+	})
+	fields, err := semantic.DiffFields(before, after)
+	if err != nil {
+		panic(err)
+	}
 	return semantic.ResourceChange{
 		Resource: semantic.ResourceRef{APIVersion: "batch/v1", Kind: "CronJob", Namespace: "prod", Name: name},
-		Origin:   semantic.ResourceOrigin{Kind: semantic.OriginHelm, Helm: &semantic.HelmOrigin{Release: "web", Namespace: "prod"}},
 		Action:   semantic.Update,
-		Before:   snapObj(obj("0 2 * * *", map[string]any{spec.LabelComponent: component})),
-		After: snapObj(obj("0 3 * * *", map[string]any{
-			spec.LabelComponent: component,
-			spec.LabelTask:      name,
-		})),
-		Apply: writeApply(),
+		Before:   snapObj(before),
+		After:    snapObj(after),
+		Fields:   fields,
 	}
 }
 
 func labeledLegacyDelete(name, component string) semantic.ResourceChange {
 	return semantic.ResourceChange{
 		Resource: semantic.ResourceRef{APIVersion: "batch/v1", Kind: "CronJob", Namespace: "prod", Name: name},
-		Origin:   semantic.ResourceOrigin{Kind: semantic.OriginHelm, Helm: &semantic.HelmOrigin{Release: "web", Namespace: "prod"}},
 		Action:   semantic.Delete,
 		Before: snapObj(map[string]any{
 			"apiVersion": "batch/v1",
@@ -980,7 +972,6 @@ func labeledLegacyDelete(name, component string) semantic.ResourceChange {
 			},
 			"spec": map[string]any{"schedule": "0 3 * * *"},
 		}),
-		Apply: deleteApply(),
 	}
 }
 

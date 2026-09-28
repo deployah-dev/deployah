@@ -89,7 +89,7 @@ func TestNew_OrderTieBreakers(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			p, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, tt.changes, nil, nil)
+			p, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, tt.changes, nil)
 			require.NoError(t, err)
 			require.Len(t, p.Changes, len(tt.want))
 			got := make([]semantic.ResourceRef, 0, len(p.Changes))
@@ -107,27 +107,22 @@ func TestNew_ActionRank(t *testing.T) {
 	p, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, []semantic.ResourceChange{
 		{
 			Resource: res,
-			Origin:   helmOrigin(),
 			Action:   semantic.Delete,
 			Before:   &semantic.ResourceSnapshot{Object: cm("app", "v1")},
-			Apply:    deleteApply(),
 		},
 		{
 			Resource: res,
-			Origin:   helmOrigin(),
 			Action:   semantic.Update,
 			Before:   &semantic.ResourceSnapshot{Object: cm("app", "v1")},
 			After:    &semantic.ResourceSnapshot{Object: cm("app", "v2")},
-			Apply:    writeApply(),
+			Fields:   mustFields(cm("app", "v1"), cm("app", "v2")),
 		},
 		{
 			Resource: res,
-			Origin:   helmOrigin(),
 			Action:   semantic.Create,
 			After:    &semantic.ResourceSnapshot{Object: cm("app", "v1")},
-			Apply:    writeApply(),
 		},
-	}, nil, nil)
+	}, nil)
 	require.NoError(t, err)
 	require.Len(t, p.Changes, 3)
 	assert.Equal(t, []semantic.Action{
@@ -141,12 +136,15 @@ func TestNew_FieldChangeOrder(t *testing.T) {
 	t.Parallel()
 	p, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, []semantic.ResourceChange{{
 		Resource: ref("ConfigMap", "app"),
-		Origin:   helmOrigin(),
 		Action:   semantic.Update,
 		Before:   &semantic.ResourceSnapshot{Object: map[string]any{"z": "1", "a": "1", "m": "1"}},
 		After:    &semantic.ResourceSnapshot{Object: map[string]any{"z": "2", "a": "2", "m": "2"}},
-		Apply:    writeApply(),
-	}}, nil, nil)
+		Fields: []semantic.FieldChange{
+			{Path: "/z", Op: semantic.FieldReplace, Before: "1", After: "2"},
+			{Path: "/a", Op: semantic.FieldReplace, Before: "1", After: "2"},
+			{Path: "/m", Op: semantic.FieldReplace, Before: "1", After: "2"},
+		},
+	}}, nil)
 	require.NoError(t, err)
 	require.Len(t, p.Changes[0].Fields, 3)
 	assert.Equal(t, []string{"/a", "/m", "/z"}, []string{
@@ -156,57 +154,20 @@ func TestNew_FieldChangeOrder(t *testing.T) {
 	})
 }
 
-func TestNew_DiagnosticOrder(t *testing.T) {
+func TestNew_HelmOrderThenRef(t *testing.T) {
 	t.Parallel()
-	app := ref("ConfigMap", "app")
-	web := ref("ConfigMap", "web")
-	p, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, nil, nil, []semantic.Diagnostic{
-		{
-			Severity: semantic.DiagnosticWarning,
-			Category: semantic.CategoryPredictionLimitation,
-			Message:  "z last",
-			Resource: &web,
-		},
-		{
-			Severity: semantic.DiagnosticWarning,
-			Category: semantic.CategoryPredictionLimitation,
-			Message:  "nil resource",
-		},
-		{
-			Severity: semantic.DiagnosticWarning,
-			Category: semantic.CategoryPredictionLimitation,
-			Message:  "b second",
-			Resource: &app,
-		},
-		{
-			Severity: semantic.DiagnosticWarning,
-			Category: semantic.CategoryPredictionLimitation,
-			Message:  "a first",
-			Resource: &app,
-		},
-	})
+	later := createChange("z", "v1")
+	later.HelmOrder = 2
+	tiedHigh := createChange("m", "v1")
+	tiedHigh.HelmOrder = 1
+	tiedLow := createChange("a", "v1")
+	tiedLow.HelmOrder = 1
+	p, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, []semantic.ResourceChange{later, tiedHigh, tiedLow}, nil)
 	require.NoError(t, err)
-	require.Len(t, p.Diagnostics, 4)
-	assert.Nil(t, p.Diagnostics[0].Resource)
-	assert.Equal(t, "nil resource", p.Diagnostics[0].Message)
-	assert.Equal(t, "app", p.Diagnostics[1].Resource.Name)
-	assert.Equal(t, "a first", p.Diagnostics[1].Message)
-	assert.Equal(t, "app", p.Diagnostics[2].Resource.Name)
-	assert.Equal(t, "b second", p.Diagnostics[2].Message)
-	assert.Equal(t, "web", p.Diagnostics[3].Resource.Name)
-}
-
-func TestNew_OriginRankBeforeApplyOrder(t *testing.T) {
-	t.Parallel()
-	helm := createChange("app", "v1")
-	helm.ApplyOrder = 1
-	ns := nsCreate("prod")
-	ns.ApplyOrder = 9
-	p, err := semantic.New(semantic.Header{FreshInstall: true}, semantic.HelmInstall, []semantic.ResourceChange{helm, ns}, nil, nil)
-	require.NoError(t, err)
-	require.Len(t, p.Changes, 2)
-	assert.Equal(t, semantic.OriginNamespace, p.Changes[0].Origin.Kind)
-	assert.Equal(t, semantic.OriginHelm, p.Changes[1].Origin.Kind)
+	require.Len(t, p.Changes, 3)
+	assert.Equal(t, "a", p.Changes[0].Resource.Name)
+	assert.Equal(t, "m", p.Changes[1].Resource.Name)
+	assert.Equal(t, "z", p.Changes[2].Resource.Name)
 }
 
 func namedCreate(res semantic.ResourceRef) semantic.ResourceChange {
@@ -216,9 +177,7 @@ func namedCreate(res semantic.ResourceRef) semantic.ResourceChange {
 	}
 	return semantic.ResourceChange{
 		Resource: res,
-		Origin:   helmOrigin(),
 		Action:   semantic.Create,
 		After:    &semantic.ResourceSnapshot{Object: cm(name, "v1")},
-		Apply:    writeApply(),
 	}
 }

@@ -97,125 +97,20 @@ func TestWriteHuman_CreateUpdateDelete(t *testing.T) {
 	assert.NotContains(t, text, "@@")
 }
 
-func TestWriteHuman_NoOpLimitationDiagnosticsOnly(t *testing.T) {
-	t.Parallel()
-	widget := semantic.ResourceRef{APIVersion: "example.com/v1", Kind: "Widget", Namespace: "prod", Name: "app"}
-	p := mustPlanWithHeader(t, humanHeader(), semantic.HelmUpgrade, nil, nil, []semantic.Diagnostic{{
-		Severity: semantic.DiagnosticWarning,
-		Category: semantic.CategoryPredictionLimitation,
-		Message:  "prediction is not exact: prediction used the currently installed CRD, but that CRD's spec changes before Helm executes",
-		Resource: &widget,
-	}})
-	assert.False(t, p.IsNoOp())
-	text := writeHuman(t, p)
-	assertGolden(t, "human_noop_limitation", text)
-	assert.NotContains(t, text, "Warning: prediction is incomplete")
-	assert.Contains(t, text, "Diagnostics")
-	assert.Contains(t, text, `example.com/v1/Widget "app"`)
-	assert.NotContains(t, text, "\nResources\n")
-}
-
-func TestWriteHuman_Prerequisites(t *testing.T) {
-	t.Parallel()
-	widgetRef := semantic.ResourceRef{APIVersion: "example.com/v1", Kind: "Widget", Namespace: "prod", Name: "app"}
-	p := mustPlanWithHeader(t, semantic.Header{
-		Project:      "web",
-		Environment:  "prod",
-		Release:      "web",
-		Namespace:    "prod",
-		Context:      "kind-dev",
-		Revision:     1,
-		FreshInstall: true,
-	}, semantic.HelmInstall, []semantic.ResourceChange{
-		{
-			Resource: semantic.ResourceRef{APIVersion: "v1", Kind: "Namespace", Name: "prod"},
-			Origin:   semantic.ResourceOrigin{Kind: semantic.OriginNamespace},
-			Action:   semantic.Create,
-			After: snap(map[string]any{
-				"apiVersion": "v1",
-				"kind":       "Namespace",
-				"metadata": map[string]any{
-					"name":   "prod",
-					"labels": map[string]any{"name": "prod"},
-				},
-			}),
-			Apply:      writeApply(),
-			ApplyOrder: 1,
-		},
-		{
-			Resource:   widgetRef,
-			Origin:     helmOrigin(),
-			Action:     semantic.Create,
-			After:      snap(widget("app", "blue")),
-			Apply:      writeApply(),
-			ApplyOrder: 1,
-		},
-	}, nil, []semantic.Diagnostic{{
-		Severity: semantic.DiagnosticWarning,
-		Category: semantic.CategoryPredictionLimitation,
-		Message:  "target namespace is created earlier in this deployment",
-		Resource: &widgetRef,
-	}})
-	text := writeHuman(t, p)
-	assertGolden(t, "human_prerequisites", text)
-	assert.Contains(t, text, `+ create v1/Namespace "prod"`)
-	assert.Contains(t, text, `+ create example.com/v1/Widget "app"`)
-	assert.Contains(t, text, "Diagnostics")
-}
-
-func TestWriteHuman_UpdateWithLimitationDiagnostic(t *testing.T) {
-	t.Parallel()
-	res := ref("ConfigMap", "web")
-	p := mustPlanWithHeader(t, humanHeader(), semantic.HelmUpgrade, []semantic.ResourceChange{
-		knownConfigMapUpdate(res),
-	}, nil, []semantic.Diagnostic{predictionLimitation(res)})
-	text := writeHuman(t, p)
-	assertGolden(t, "human_limitation", text) // full-output contract; Contains below are invariants only
-	assert.NotContains(t, text, "Warning: prediction is incomplete")
-	assert.Contains(t, text, `~ update v1/ConfigMap "web"`)
-	assert.Contains(t, text, "-   key: v1")
-	assert.Contains(t, text, "+   key: v2")
-	assert.Contains(t, text, "prediction_limitation")
-	assert.NotContains(t, text, "completeness:")
-	assert.NotContains(t, text, "Actions:")
-}
-
-func TestWriteHuman_LimitationDiagnosticPreservesKnownDetails(t *testing.T) {
-	t.Parallel()
-	header, changes, tasks := allActionsInputs()
-	plain := mustPlanWithHeader(t, header, semantic.HelmUpgrade, changes, tasks, nil)
-	withDiag := mustPlanWithHeader(t, header, semantic.HelmUpgrade, changes, tasks, []semantic.Diagnostic{
-		predictionLimitation(ref("ConfigMap", "web")),
-	})
-	assert.Equal(t, plain.Summary, withDiag.Summary)
-
-	plainText := writeHuman(t, plain)
-	withDiagText := writeHuman(t, withDiag)
-	assert.Contains(t, withDiagText, "Diagnostics")
-	assert.NotContains(t, plainText, "Warning: prediction is incomplete")
-	assert.NotContains(t, withDiagText, "Warning: prediction is incomplete")
-	assert.NotContains(t, plainText, "Diagnostics")
-	require.Equal(t, plainText, stripDiagnostics(t, withDiagText))
-}
-
 func TestWriteHuman_DeterministicMapOrder(t *testing.T) {
 	t.Parallel()
 	first := map[string]any{"z": "1", "a": "1", "m": "1"}
 	second := map[string]any{"a": "1", "m": "1", "z": "1"}
 	p1 := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 		Resource: ref("ConfigMap", "app"),
-		Origin:   helmOrigin(),
 		Action:   semantic.Create,
 		After:    snap(first),
-		Apply:    writeApply(),
-	}}, nil)
+	}})
 	p2 := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 		Resource: ref("ConfigMap", "app"),
-		Origin:   helmOrigin(),
 		Action:   semantic.Create,
 		After:    snap(second),
-		Apply:    writeApply(),
-	}}, nil)
+	}})
 	var b1, b2 bytes.Buffer
 	require.NoError(t, view.WriteHuman(&b1, p1, view.Options{}))
 	require.NoError(t, view.WriteHuman(&b2, p2, view.Options{}))
@@ -226,12 +121,10 @@ func TestWriteHuman_DoesNotHTMLEscape(t *testing.T) {
 	t.Parallel()
 	p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 		Resource: ref("ConfigMap", "app"),
-		Origin:   helmOrigin(),
 		Action:   semantic.Update,
 		Before:   snap(map[string]any{"note": "plain"}),
 		After:    snap(map[string]any{"note": map[string]any{"html": "a < b & c"}}),
-		Apply:    writeApply(),
-	}}, nil)
+	}})
 	var buf bytes.Buffer
 	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
 	text := buf.String()
@@ -252,12 +145,10 @@ func TestWriteHuman_DoesNotMutatePlan(t *testing.T) {
 	obj := secretObj("s", "old", "tok")
 	p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 		Resource: ref("Secret", "s"),
-		Origin:   helmOrigin(),
 		Action:   semantic.Update,
 		Before:   snap(obj),
 		After:    snap(secretObj("s", "new", "tok2")),
-		Apply:    writeApply(),
-	}}, nil)
+	}})
 	before := objectString(t, p.Changes[0].Before.Object, "stringData", "password")
 	require.NoError(t, view.WriteHuman(&bytes.Buffer{}, p, view.Options{}))
 	assert.Equal(t, before, objectString(t, p.Changes[0].Before.Object, "stringData", "password"))
@@ -278,11 +169,9 @@ func TestWriteHuman_KubernetesKeyOrder(t *testing.T) {
 	}
 	p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 		Resource: ref("Deployment", "web"),
-		Origin:   helmOrigin(),
 		Action:   semantic.Create,
 		After:    snap(obj),
-		Apply:    writeApply(),
-	}}, nil)
+	}})
 	var buf bytes.Buffer
 	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
 	text := buf.String()
@@ -325,11 +214,9 @@ func TestWriteHuman_GenerateNameBeforeNamespace(t *testing.T) {
 	}
 	p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 		Resource: semantic.ResourceRef{APIVersion: "v1", Kind: "ConfigMap", Namespace: "prod", GenerateName: "app-"},
-		Origin:   helmOrigin(),
 		Action:   semantic.Create,
 		After:    snap(obj),
-		Apply:    writeApply(),
-	}}, nil)
+	}})
 	var buf bytes.Buffer
 	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
 	text := buf.String()
@@ -350,11 +237,9 @@ func TestWriteHuman_ArrayOrderPreserved(t *testing.T) {
 	}
 	p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 		Resource: ref("ConfigMap", "app"),
-		Origin:   helmOrigin(),
 		Action:   semantic.Create,
 		After:    snap(obj),
-		Apply:    writeApply(),
-	}}, nil)
+	}})
 	var buf bytes.Buffer
 	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
 	text := buf.String()
@@ -402,7 +287,7 @@ func TestWriteHuman_HeaderMetadata(t *testing.T) {
 			if tt.header.FreshInstall {
 				helmAction = semantic.HelmInstall
 			}
-			p := mustPlanWithHeader(t, tt.header, helmAction, nil, nil, nil)
+			p := mustPlanWithHeader(t, tt.header, helmAction, nil, nil)
 			var buf bytes.Buffer
 			require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
 			text := buf.String()
@@ -418,45 +303,9 @@ func TestWriteHuman_HeaderMetadata(t *testing.T) {
 	}
 }
 
-func TestWriteHuman_DiagnosticWithoutResource(t *testing.T) {
-	t.Parallel()
-	p, err := semantic.New(semantic.Header{Release: "web"}, semantic.HelmNone, nil, nil, []semantic.Diagnostic{{
-		Severity: semantic.DiagnosticWarning,
-		Category: semantic.CategoryPredictionLimitation,
-		Message:  "prediction is not exact: cluster-scoped",
-	}})
-	require.NoError(t, err)
-	var buf bytes.Buffer
-	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
-	text := buf.String()
-	assert.Contains(t, text, "warning prediction_limitation: prediction is not exact: cluster-scoped")
-	assert.NotContains(t, text, "ConfigMap/")
-}
-
-func TestWriteHuman_BookkeepingOnlyUpdateKeepsResource(t *testing.T) {
-	t.Parallel()
-	before := noisyCM("web", "same", "11", "u-live")
-	after := noisyCM("web", "same", "22", "u-pred")
-	p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
-		Resource: ref("ConfigMap", "web"),
-		Origin:   helmOrigin(),
-		Action:   semantic.Update,
-		Before:   snap(before),
-		After:    snap(after),
-		Apply:    writeApply(),
-	}}, nil)
-	var buf bytes.Buffer
-	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
-	text := buf.String()
-	assert.Contains(t, text, `~ update v1/ConfigMap "web"`)
-	assert.NotContains(t, text, "-   key:")
-	assert.NotContains(t, text, "+   key:")
-	assertNoBookkeeping(t, text)
-}
-
 func TestWriteHuman_EmptyPlan(t *testing.T) {
 	t.Parallel()
-	p := mustPlan(t, semantic.HelmNone, nil, nil)
+	p := mustPlan(t, semantic.HelmNone, nil)
 	var buf bytes.Buffer
 	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
 	text := buf.String()
@@ -472,7 +321,7 @@ func TestWriteHuman_EmptyPlan(t *testing.T) {
 
 func TestWriteHuman_WriterError(t *testing.T) {
 	t.Parallel()
-	p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{createChangeForHuman()}, nil)
+	p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{createChangeForHuman()})
 	err := view.WriteHuman(errWriter{}, p, view.Options{})
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "write failed")
@@ -486,7 +335,7 @@ func (errWriter) Write([]byte) (int, error) {
 
 func TestWriteHuman_ZeroThemeIsPlainText(t *testing.T) {
 	t.Parallel()
-	p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{createChangeForHuman()}, nil)
+	p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{createChangeForHuman()})
 	var buf bytes.Buffer
 	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
 	assert.NotContains(t, buf.String(), "\x1b[")
@@ -506,10 +355,8 @@ func TestWriteHuman_UnknownGVKActions(t *testing.T) {
 			name: "create dumps full object",
 			change: semantic.ResourceChange{
 				Resource: semantic.ResourceRef{APIVersion: "example.com/v1", Kind: "Widget", Namespace: "prod", Name: "w"},
-				Origin:   helmOrigin(),
 				Action:   semantic.Create,
 				After:    snap(widget("w", "blue")),
-				Apply:    writeApply(),
 			},
 			contains: []string{`+ create example.com/v1/Widget "w"`, "+ apiVersion: example.com/v1", "size: large"},
 		},
@@ -517,11 +364,9 @@ func TestWriteHuman_UnknownGVKActions(t *testing.T) {
 			name: "update projects changed leaves",
 			change: semantic.ResourceChange{
 				Resource: semantic.ResourceRef{APIVersion: "example.com/v1", Kind: "Widget", Namespace: "prod", Name: "u"},
-				Origin:   helmOrigin(),
 				Action:   semantic.Update,
 				Before:   snap(widget("u", "blue")),
 				After:    snap(widget("u", "red")),
-				Apply:    writeApply(),
 			},
 			contains: []string{`~ update example.com/v1/Widget "u"`, "color:"},
 			omits:    []string{"size"},
@@ -530,10 +375,8 @@ func TestWriteHuman_UnknownGVKActions(t *testing.T) {
 			name: "delete dumps full object",
 			change: semantic.ResourceChange{
 				Resource: semantic.ResourceRef{APIVersion: "example.com/v1", Kind: "Widget", Namespace: "prod", Name: "d"},
-				Origin:   helmOrigin(),
 				Action:   semantic.Delete,
 				Before:   snap(widget("d", "blue")),
-				Apply:    deleteApply(),
 			},
 			contains: []string{`- delete example.com/v1/Widget "d"`, "- apiVersion: example.com/v1", "size: large"},
 		},
@@ -541,7 +384,7 @@ func TestWriteHuman_UnknownGVKActions(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{tt.change}, nil)
+			p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{tt.change})
 			var buf bytes.Buffer
 			require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
 			text := buf.String()
@@ -598,11 +441,9 @@ func TestWriteHuman_GVKAndNamespaceHeadings(t *testing.T) {
 			t.Parallel()
 			p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 				Resource: tt.ref,
-				Origin:   helmOrigin(),
 				Action:   semantic.Create,
 				After:    snap(k8sObj(tt.ref.APIVersion, tt.ref.Kind, tt.ref.Namespace, tt.ref.Name)),
-				Apply:    writeApply(),
-			}}, nil)
+			}})
 			var buf bytes.Buffer
 			require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
 			text := buf.String()
@@ -700,12 +541,10 @@ func TestWriteHuman_UpdateProjection(t *testing.T) {
 			t.Parallel()
 			p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 				Resource: tt.ref,
-				Origin:   helmOrigin(),
 				Action:   semantic.Update,
 				Before:   snap(tt.before),
 				After:    snap(tt.after),
-				Apply:    writeApply(),
-			}}, nil)
+			}})
 			var buf bytes.Buffer
 			require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
 			text := buf.String()
@@ -726,14 +565,11 @@ func TestWriteHuman_ScheduledTaskNotDuplicated(t *testing.T) {
 	p := mustPlanWithTasks(t, semantic.HelmUpgrade, []semantic.ResourceChange{
 		{
 			Resource: api,
-			Origin:   helmOrigin(),
 			Action:   semantic.Create,
 			After:    snap(cm("api", "v1")),
-			Apply:    writeApply(),
 		},
 		{
 			Resource: cron,
-			Origin:   helmOrigin(),
 			Action:   semantic.Update,
 			Before: snap(map[string]any{
 				"apiVersion": "batch/v1",
@@ -747,14 +583,13 @@ func TestWriteHuman_ScheduledTaskNotDuplicated(t *testing.T) {
 				"metadata":   map[string]any{"name": "cleanup", "namespace": "prod"},
 				"spec":       map[string]any{"schedule": "0 3 * * *"},
 			}),
-			Apply: writeApply(),
 		},
 	}, []semantic.TaskPlan{{
 		Name:      "cleanup",
 		Phase:     semantic.TaskSchedule,
 		Action:    semantic.TaskUpdate,
 		Resources: []semantic.ResourceRef{cron},
-	}}, nil)
+	}})
 	var buf bytes.Buffer
 	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
 	text := buf.String()
@@ -796,10 +631,8 @@ func TestWriteHuman_ScheduleCreateDeleteRendersFullObject(t *testing.T) {
 			name: "create",
 			change: semantic.ResourceChange{
 				Resource: cron,
-				Origin:   helmOrigin(),
 				Action:   semantic.Create,
 				After:    snap(cronJob("web-cleanup", "cleanup", "0 3 * * *")),
-				Apply:    writeApply(),
 			},
 			task: semantic.TaskPlan{
 				Name:      "cleanup",
@@ -818,10 +651,8 @@ func TestWriteHuman_ScheduleCreateDeleteRendersFullObject(t *testing.T) {
 			name: "delete",
 			change: semantic.ResourceChange{
 				Resource: cron,
-				Origin:   helmOrigin(),
 				Action:   semantic.Delete,
 				Before:   snap(cronJob("web-cleanup", "cleanup", "0 3 * * *")),
-				Apply:    deleteApply(),
 			},
 			task: semantic.TaskPlan{
 				Name:      "cleanup",
@@ -840,7 +671,7 @@ func TestWriteHuman_ScheduleCreateDeleteRendersFullObject(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			p := mustPlanWithTasks(t, semantic.HelmUpgrade, []semantic.ResourceChange{tt.change}, []semantic.TaskPlan{tt.task}, nil)
+			p := mustPlanWithTasks(t, semantic.HelmUpgrade, []semantic.ResourceChange{tt.change}, []semantic.TaskPlan{tt.task})
 			var buf bytes.Buffer
 			require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
 			text := buf.String()
@@ -865,7 +696,7 @@ func TestWriteHuman_UnchangedTaskWillRun(t *testing.T) {
 		Phase:   semantic.TaskPreDeploy,
 		Action:  semantic.TaskUnchanged,
 		WillRun: true,
-	}}, nil)
+	}})
 	var buf bytes.Buffer
 	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
 	text := buf.String()
@@ -918,7 +749,7 @@ func TestWriteHuman_TaskFooter(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			p := mustPlanWithTasks(t, semantic.HelmUpgrade, nil, tt.tasks, nil)
+			p := mustPlanWithTasks(t, semantic.HelmUpgrade, nil, tt.tasks)
 			var buf bytes.Buffer
 			require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
 			text := buf.String()
@@ -947,19 +778,15 @@ func TestWriteHuman_BlockSpacing(t *testing.T) {
 			plan: mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{
 				{
 					Resource: ref("ConfigMap", "app"),
-					Origin:   helmOrigin(),
 					Action:   semantic.Create,
 					After:    snap(cm("app", "v1")),
-					Apply:    writeApply(),
 				},
 				{
 					Resource: ref("ConfigMap", "old"),
-					Origin:   helmOrigin(),
 					Action:   semantic.Create,
 					After:    snap(cm("old", "v1")),
-					Apply:    writeApply(),
 				},
-			}, nil),
+			}),
 			contains: []string{
 				"+   key: v1\n\n  + create v1/ConfigMap \"old\"",
 				"  Resources: 2 create, 0 update, 0 delete",
@@ -980,7 +807,7 @@ func TestWriteHuman_BlockSpacing(t *testing.T) {
 					Action:  semantic.TaskUnchanged,
 					WillRun: true,
 				},
-			}, nil),
+			}),
 			contains:        []string{"~ migrate  changed, will run\n\n    seed  will run"},
 			wantTasksFooter: true,
 		},
@@ -1003,7 +830,7 @@ func TestWriteHuman_BlockSpacing(t *testing.T) {
 						After:    snap(cm("z-env", "v1")),
 					},
 				},
-			}}, nil),
+			}}),
 			contains:        []string{"+   key: v1\n\n      + create v1/ConfigMap \"z-env\""},
 			wantTasksFooter: true,
 		},
@@ -1022,7 +849,7 @@ func TestWriteHuman_BlockSpacing(t *testing.T) {
 					Action:  semantic.TaskCreate,
 					WillRun: true,
 				},
-			}, nil),
+			}),
 			contains:        []string{"    seed  will run\n\n  postDeploy\n"},
 			wantTasksFooter: true,
 		},
@@ -1044,7 +871,7 @@ func TestWriteHuman_BlockSpacing(t *testing.T) {
 
 func TestWriteHuman_SummaryOmitsTasksWhenAbsent(t *testing.T) {
 	t.Parallel()
-	p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{createChangeForHuman()}, nil)
+	p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{createChangeForHuman()})
 	var buf bytes.Buffer
 	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
 	text := buf.String()
@@ -1059,7 +886,7 @@ func TestWriteHuman_SummaryOmitsTasksWhenAbsent(t *testing.T) {
 func allActionsPlan(tb testing.TB) semantic.Plan {
 	tb.Helper()
 	header, changes, tasks := allActionsInputs()
-	return mustPlanWithHeader(tb, header, semantic.HelmUpgrade, changes, tasks, nil)
+	return mustPlanWithHeader(tb, header, semantic.HelmUpgrade, changes, tasks)
 }
 
 func allActionsInputs() (semantic.Header, []semantic.ResourceChange, []semantic.TaskPlan) {
@@ -1067,33 +894,25 @@ func allActionsInputs() (semantic.Header, []semantic.ResourceChange, []semantic.
 	changes := []semantic.ResourceChange{
 		{
 			Resource: ref("ConfigMap", "app"),
-			Origin:   helmOrigin(),
 			Action:   semantic.Create,
 			After:    snap(cmWithMeta("app", "v1")),
-			Apply:    writeApply(),
 		},
 		{
 			Resource: ref("ConfigMap", "web"),
-			Origin:   helmOrigin(),
 			Action:   semantic.Update,
 			Before:   snap(cm("web", "v1")),
 			After:    snap(cm("web", "v2")),
-			Apply:    writeApply(),
 		},
 		{
 			Resource: ref("ConfigMap", "old"),
-			Origin:   helmOrigin(),
 			Action:   semantic.Delete,
 			Before:   snap(cmWithMeta("old", "v1")),
-			Apply:    deleteApply(),
 		},
 		{
 			Resource: cron,
-			Origin:   helmOrigin(),
 			Action:   semantic.Update,
 			Before:   snap(cronJob("web-cleanup", "cleanup", "0 2 * * *")),
 			After:    snap(cronJob("web-cleanup", "cleanup", "0 3 * * *")),
-			Apply:    writeApply(),
 		},
 	}
 	tasks := []semantic.TaskPlan{
@@ -1156,35 +975,6 @@ func assertHumanLayout(t *testing.T, text string) {
 	assert.Contains(t, text, "\n\nSummary\n")
 	assert.NotContains(t, text, "Plan:")
 	assert.Contains(t, text, "\n  Resources:")
-}
-
-func knownConfigMapUpdate(res semantic.ResourceRef) semantic.ResourceChange {
-	return semantic.ResourceChange{
-		Resource: res,
-		Origin:   helmOrigin(),
-		Action:   semantic.Update,
-		Before:   snap(cm(res.Name, "v1")),
-		After:    snap(cm(res.Name, "v2")),
-		Apply:    writeApply(),
-	}
-}
-
-func predictionLimitation(res semantic.ResourceRef) semantic.Diagnostic {
-	return semantic.Diagnostic{
-		Severity: semantic.DiagnosticWarning,
-		Category: semantic.CategoryPredictionLimitation,
-		Message:  "prediction is not exact: managed-fields-migration",
-		Resource: new(res),
-	}
-}
-
-func stripDiagnostics(t *testing.T, text string) string {
-	t.Helper()
-	diagStart := strings.Index(text, "\nDiagnostics\n")
-	summaryStart := strings.Index(text, "\nSummary\n")
-	require.Greater(t, diagStart, -1)
-	require.Greater(t, summaryStart, diagStart)
-	return text[:diagStart] + text[summaryStart:]
 }
 
 func assertHumanHeaderMetadata(t *testing.T, text, kubeContext string, revision int) {

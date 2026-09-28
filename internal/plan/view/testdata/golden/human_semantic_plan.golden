@@ -25,8 +25,6 @@ Resources
   +     deployah.dev/environment-instance: prod
   +     deployah.dev/project: web
   +     deployah.dev/source: spec
-  +     meta.helm.sh/release-name: web-prod
-  +     meta.helm.sh/release-namespace: prod
   +   labels:
   +     app.kubernetes.io/instance: web-prod
   +     app.kubernetes.io/managed-by: Helm
@@ -93,8 +91,6 @@ Resources
   -     deployah.dev/environment-instance: prod
   -     deployah.dev/project: web
   -     deployah.dev/source: spec
-  -     meta.helm.sh/release-name: web-prod
-  -     meta.helm.sh/release-namespace: prod
   -   labels:
   -     app.kubernetes.io/instance: web-prod
   -     app.kubernetes.io/managed-by: Helm
