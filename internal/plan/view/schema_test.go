@@ -174,6 +174,32 @@ func TestSchemaV1_RejectsMalformedDocuments(t *testing.T) {
 	}
 }
 
+func TestSchemaV1_RejectsHookUpdateWithoutFields(t *testing.T) {
+	t.Parallel()
+	doc := mustPlanDoc(t, mustPlanWithTasks(t, semantic.HelmUpgrade, nil, []semantic.TaskPlan{{
+		Name:    "migrate",
+		Phase:   semantic.TaskPreDeploy,
+		Action:  semantic.TaskUpdate,
+		WillRun: true,
+		Definitions: []semantic.HookDefinition{{
+			Resource: ref("ConfigMap", "app"),
+			Action:   semantic.Update,
+			Before:   snap(cm("app", "v1")),
+			After:    snap(cm("app", "v2")),
+		}},
+	}}))
+	tasks, ok := doc["tasks"].([]any)
+	require.True(t, ok)
+	require.NotEmpty(t, tasks)
+	defs, ok := asObject(t, tasks[0])["definitions"].([]any)
+	require.True(t, ok)
+	require.NotEmpty(t, defs)
+	asObject(t, defs[0])["fields"] = []any{}
+	raw, err := json.Marshal(doc)
+	require.NoError(t, err)
+	assertSchemaRejects(t, raw)
+}
+
 func TestSchemaV1_AcceptsNamespaceCreate(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

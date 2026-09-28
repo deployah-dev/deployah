@@ -179,6 +179,68 @@ func TestNew_TaskValidation(t *testing.T) {
 	}
 }
 
+func TestNew_HookDefinitionFields(t *testing.T) {
+	t.Parallel()
+	app := ref("ConfigMap", "app")
+	before := &semantic.ResourceSnapshot{Object: cm("app", "v1")}
+	after := &semantic.ResourceSnapshot{Object: cm("app", "v2")}
+	fields := []semantic.FieldChange{{Path: "/data/key", Op: semantic.FieldReplace, Before: "v1", After: "v2"}}
+	task := func(def semantic.HookDefinition) []semantic.TaskPlan {
+		return []semantic.TaskPlan{{
+			Name:        "migrate",
+			Phase:       semantic.TaskPreDeploy,
+			Action:      semantic.TaskUpdate,
+			WillRun:     true,
+			Definitions: []semantic.HookDefinition{def},
+		}}
+	}
+	tests := []struct {
+		name    string
+		def     semantic.HookDefinition
+		wantErr string
+	}{
+		{
+			name:    "create with fields",
+			def:     semantic.HookDefinition{Resource: app, Action: semantic.Create, After: after, Fields: fields},
+			wantErr: "create must not have field changes",
+		},
+		{
+			name:    "update without fields",
+			def:     semantic.HookDefinition{Resource: app, Action: semantic.Update, Before: before, After: after},
+			wantErr: "update requires a field change",
+		},
+		{
+			name:    "delete with fields",
+			def:     semantic.HookDefinition{Resource: app, Action: semantic.Delete, Before: before, Fields: fields},
+			wantErr: "delete must not have field changes",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, nil, task(tt.def))
+			require.Error(t, err)
+			assert.ErrorContains(t, err, tt.wantErr)
+		})
+	}
+
+	t.Run("update keeps caller fields", func(t *testing.T) {
+		t.Parallel()
+		p, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, nil, task(semantic.HookDefinition{
+			Resource: app,
+			Action:   semantic.Update,
+			Before:   before,
+			After:    after,
+			Fields:   fields,
+		}))
+		require.NoError(t, err)
+		require.Len(t, p.Tasks[0].Definitions[0].Fields, 1)
+		assert.Equal(t, "/data/key", p.Tasks[0].Definitions[0].Fields[0].Path)
+		assert.Equal(t, "v1", p.Tasks[0].Definitions[0].Fields[0].Before)
+		assert.Equal(t, "v2", p.Tasks[0].Definitions[0].Fields[0].After)
+	})
+}
+
 func TestNew_ValidScheduleReference(t *testing.T) {
 	t.Parallel()
 	app := ref("ConfigMap", "app")

@@ -560,6 +560,9 @@
               },
               "after": {
                 "type": "object"
+              },
+              "fields": {
+                "minItems": 1
               }
             }
           }

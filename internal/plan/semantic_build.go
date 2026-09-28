@@ -39,9 +39,10 @@ type RESTMapper interface {
 
 var _ RESTMapper = meta.RESTMapper(nil)
 
-// SemanticBuildClient is the render [BuildSemanticPlan] calls, prep
-// included. It does not look up release history. It stays small so
-// this package does not import
+// SemanticBuildClient is the one render [BuildSemanticPlan] calls.
+// It returns the render and its prep. A real Helm client looks up
+// release history in that call and returns Previous through the prep.
+// The interface stays small so this package does not import
 // [deployah.dev/deployah/internal/session], and tests can pass a fake.
 type SemanticBuildClient interface {
 	RenderManifestsWithPrep(

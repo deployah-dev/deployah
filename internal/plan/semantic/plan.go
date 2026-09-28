@@ -265,6 +265,9 @@ func validateDefinition(d HookDefinition) error {
 		if d.After == nil {
 			return fmt.Errorf("create requires an after snapshot")
 		}
+		if len(d.Fields) != 0 {
+			return fmt.Errorf("create must not have field changes")
+		}
 	case Update:
 		if d.Before == nil {
 			return fmt.Errorf("update requires a before snapshot")
@@ -272,12 +275,18 @@ func validateDefinition(d HookDefinition) error {
 		if d.After == nil {
 			return fmt.Errorf("update requires an after snapshot")
 		}
+		if len(d.Fields) == 0 {
+			return fmt.Errorf("update requires a field change")
+		}
 	case Delete:
 		if d.Before == nil {
 			return fmt.Errorf("delete requires a before snapshot")
 		}
 		if d.After != nil {
 			return fmt.Errorf("delete must not have an after snapshot")
+		}
+		if len(d.Fields) != 0 {
+			return fmt.Errorf("delete must not have field changes")
 		}
 	}
 	return nil
