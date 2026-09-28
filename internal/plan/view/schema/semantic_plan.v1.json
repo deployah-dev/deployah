@@ -12,7 +12,6 @@
     "changes",
     "tasks",
     "chartCRDs",
-    "diagnostics",
     "summary"
   ],
   "properties": {
@@ -43,12 +42,6 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/ChartCRD"
-      }
-    },
-    "diagnostics": {
-      "type": "array",
-      "items": {
-        "$ref": "#/$defs/Diagnostic"
       }
     },
     "summary": {
@@ -121,21 +114,7 @@
             }
           },
           "changes": {
-            "items": {
-              "not": {
-                "properties": {
-                  "origin": {
-                    "properties": {
-                      "kind": {
-                        "const": "helm"
-                      }
-                    },
-                    "required": ["kind"]
-                  }
-                },
-                "required": ["origin"]
-              }
-            }
+            "maxItems": 0
           }
         }
       }
@@ -197,19 +176,14 @@
       "additionalProperties": false,
       "required": [
         "resource",
-        "origin",
         "action",
         "before",
         "after",
-        "fields",
-        "apply"
+        "fields"
       ],
       "properties": {
         "resource": {
           "$ref": "#/$defs/Resource"
-        },
-        "origin": {
-          "$ref": "#/$defs/Origin"
         },
         "action": {
           "type": "string",
@@ -226,9 +200,6 @@
           "items": {
             "$ref": "#/$defs/FieldChange"
           }
-        },
-        "apply": {
-          "$ref": "#/$defs/Apply"
         }
       },
       "allOf": [
@@ -251,12 +222,6 @@
               },
               "fields": {
                 "maxItems": 0
-              },
-              "apply": {
-                "required": ["write"],
-                "not": {
-                  "required": ["delete"]
-                }
               }
             }
           }
@@ -275,21 +240,11 @@
               "before": {
                 "type": "object"
               },
-              "apply": {
-                "required": ["write"],
-                "not": {
-                  "required": ["delete"]
-                },
-                "properties": {
-                  "write": {
-                    "properties": {
-                      "method": {
-                        "const": "server_side_apply"
-                      }
-                    },
-                    "required": ["method"]
-                  }
-                }
+              "after": {
+                "type": "object"
+              },
+              "fields": {
+                "minItems": 1
               }
             }
           }
@@ -313,12 +268,6 @@
               },
               "fields": {
                 "maxItems": 0
-              },
-              "apply": {
-                "required": ["delete"],
-                "not": {
-                  "required": ["write"]
-                }
               }
             }
           }
@@ -344,144 +293,6 @@
         },
         "generateName": {
           "type": "string"
-        }
-      }
-    },
-    "Origin": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["kind"],
-      "properties": {
-        "kind": {
-          "type": "string",
-          "enum": ["helm", "namespace"]
-        },
-        "helm": {
-          "$ref": "#/$defs/HelmOrigin"
-        }
-      },
-      "allOf": [
-        {
-          "if": {
-            "properties": {
-              "kind": {
-                "const": "helm"
-              }
-            },
-            "required": ["kind"]
-          },
-          "then": {
-            "required": ["helm"]
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "kind": {
-                "const": "namespace"
-              }
-            },
-            "required": ["kind"]
-          },
-          "then": {
-            "not": {
-              "required": ["helm"]
-            }
-          }
-        }
-      ]
-    },
-    "HelmOrigin": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["release", "namespace"],
-      "properties": {
-        "release": {
-          "type": "string"
-        },
-        "namespace": {
-          "type": "string"
-        }
-      }
-    },
-    "Apply": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "write": {
-          "$ref": "#/$defs/WriteSemantics"
-        },
-        "delete": {
-          "$ref": "#/$defs/DeleteSemantics"
-        }
-      }
-    },
-    "WriteSemantics": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["method", "forceConflicts"],
-      "properties": {
-        "method": {
-          "type": "string",
-          "enum": ["create", "server_side_apply"]
-        },
-        "fieldManager": {
-          "type": "string"
-        },
-        "forceConflicts": {
-          "type": "boolean"
-        }
-      },
-      "allOf": [
-        {
-          "if": {
-            "properties": {
-              "method": {
-                "const": "server_side_apply"
-              }
-            },
-            "required": ["method"]
-          },
-          "then": {
-            "required": ["fieldManager"],
-            "properties": {
-              "fieldManager": {
-                "type": "string",
-                "minLength": 1
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "method": {
-                "const": "create"
-              }
-            },
-            "required": ["method"]
-          },
-          "then": {
-            "properties": {
-              "forceConflicts": {
-                "const": false
-              }
-            },
-            "not": {
-              "required": ["fieldManager"]
-            }
-          }
-        }
-      ]
-    },
-    "DeleteSemantics": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["propagation"],
-      "properties": {
-        "propagation": {
-          "type": "string",
-          "enum": ["background"]
         }
       }
     },
@@ -547,27 +358,6 @@
           }
         }
       ]
-    },
-    "Diagnostic": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["severity", "category", "message"],
-      "properties": {
-        "severity": {
-          "type": "string",
-          "enum": ["warning"]
-        },
-        "category": {
-          "type": "string",
-          "enum": ["prediction_limitation"]
-        },
-        "message": {
-          "type": "string"
-        },
-        "resource": {
-          "$ref": "#/$defs/Resource"
-        }
-      }
     },
     "Summary": {
       "type": "object",
@@ -770,6 +560,9 @@
               },
               "after": {
                 "type": "object"
+              },
+              "fields": {
+                "minItems": 1
               }
             }
           }

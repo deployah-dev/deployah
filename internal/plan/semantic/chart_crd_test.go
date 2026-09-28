@@ -26,7 +26,7 @@ import (
 
 func TestAttachChartCRDs_Lifecycle(t *testing.T) {
 	t.Parallel()
-	base, err := semantic.New(semantic.Header{FreshInstall: true}, semantic.HelmInstall, nil, nil, nil)
+	base, err := semantic.New(semantic.Header{FreshInstall: true}, semantic.HelmInstall, nil, nil)
 	require.NoError(t, err)
 	changesBefore := len(base.Changes)
 	tests := []struct {
@@ -62,7 +62,7 @@ func TestAttachChartCRDs_Lifecycle(t *testing.T) {
 
 func TestAttachChartCRDs_PreservesOrder(t *testing.T) {
 	t.Parallel()
-	base, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, nil, nil, nil)
+	base, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, nil, nil)
 	require.NoError(t, err)
 	p, err := semantic.AttachChartCRDs(base, []semantic.ChartCRD{
 		{Kind: "CustomResourceDefinition", Name: "one.example.com", Lifecycle: semantic.ChartCRDUpgrade},
@@ -78,7 +78,7 @@ func TestAttachChartCRDs_PreservesOrder(t *testing.T) {
 
 func TestAttachChartCRDs_DoesNotChangeHasEffects(t *testing.T) {
 	t.Parallel()
-	base, err := semantic.New(semantic.Header{}, semantic.HelmNone, nil, nil, nil)
+	base, err := semantic.New(semantic.Header{}, semantic.HelmNone, nil, nil)
 	require.NoError(t, err)
 	require.True(t, base.IsNoOp())
 	p, err := semantic.AttachChartCRDs(base, []semantic.ChartCRD{{
@@ -94,7 +94,7 @@ func TestAttachChartCRDs_DoesNotChangeHasEffects(t *testing.T) {
 
 func TestAttachChartCRDs_Validation(t *testing.T) {
 	t.Parallel()
-	base, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, nil, nil, nil)
+	base, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, nil, nil)
 	require.NoError(t, err)
 	tests := []struct {
 		name    string
@@ -121,7 +121,7 @@ func TestAttachChartCRDs_Validation(t *testing.T) {
 func TestChartCRD_HasNoMutationFields(t *testing.T) {
 	t.Parallel()
 	rt := reflect.TypeFor[semantic.ChartCRD]()
-	for _, name := range []string{"APIVersion", "Action", "Origin", "Apply", "Before", "After", "Fields", "Namespace", "Scope", "Spec"} {
+	for _, name := range []string{"APIVersion", "Action", "Before", "After", "Fields", "Namespace", "Scope", "Spec"} {
 		_, has := rt.FieldByName(name)
 		assert.False(t, has, name)
 	}

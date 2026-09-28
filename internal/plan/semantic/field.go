@@ -288,37 +288,6 @@ func copyFields(fields []FieldChange) []FieldChange {
 	return out
 }
 
-func copyOrigin(o ResourceOrigin) ResourceOrigin {
-	if o.Helm != nil {
-		h := *o.Helm
-		o.Helm = &h
-	}
-	return o
-}
-
-func copyApply(a ApplySemantics) ApplySemantics {
-	if a.Write != nil {
-		w := *a.Write
-		a.Write = &w
-	}
-	if a.Delete != nil {
-		d := *a.Delete
-		a.Delete = &d
-	}
-	return a
-}
-
-func copyDiagnostics(in []Diagnostic) []Diagnostic {
-	out := slices.Clone(in)
-	for i := range out {
-		if out[i].Resource != nil {
-			r := *out[i].Resource
-			out[i].Resource = &r
-		}
-	}
-	return out
-}
-
 func copyTasks(in []TaskPlan) []TaskPlan {
 	if in == nil {
 		return []TaskPlan{}
@@ -348,13 +317,6 @@ func copyDefinitions(in []HookDefinition) []HookDefinition {
 		}
 	}
 	return out
-}
-
-func snapshotObject(s *ResourceSnapshot) map[string]any {
-	if s == nil {
-		return nil
-	}
-	return s.Object
 }
 
 func filterBookkeeping(in []FieldChange) []FieldChange {

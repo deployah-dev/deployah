@@ -7,66 +7,56 @@ Accepted
 ## Context
 
 Deployah ships a generated umbrella chart and extra manifests through
-Helm. A parallel Kubernetes lifecycle (forced CRD upgrades, install-time
-namespace creation on upgrade, planner-invented recreates) makes the
-plan describe operations Helm would not attempt.
+Helm. The plan should describe the release Helm records, not a
+parallel Kubernetes lifecycle.
 
-Deployah's Helm 4.3.0 install path sets `CreateNamespace` and
-server-side apply. Helm then creates that implicit Namespace through
-an apply PATCH. An existing target namespace can therefore change on
-install.
+Helm install creates the target namespace before the release, with
+CreateNamespace. That namespace is an execution prerequisite. It is
+not a release object.
 
 ## Decision
 
 Deployah follows the lifecycle Helm actually performs. The semantic
 plan uses Helm lifecycle semantics to describe release changes and
-their resource and task consequences. The plan does not decide
+their Resource Changes and task changes. The plan does not decide
 whether a requested deployment runs (ADR-0016).
 
 The plan reports a release change when the desired release differs
 from the release Helm last recorded, including hook definitions.
 Ordinary live drift, including a missing live object, is not by
 itself a release change. A plan with no release change does not
-invent resource consequences (ADR-0011). Drift stays independent
+invent Resource Changes (ADR-0011). Drift stays independent
 (ADR-0005). When Helm upgrades, unchanged preDeploy and postDeploy
 hooks still run (ADR-0014).
 
 CRD lifecycle is ADR-0008.
 
-Namespace lifecycle comes from Helm install `CreateNamespace`, not a
-chart Namespace manifest. Deployah enables that flag together with
-server-side apply. Helm applies an implicit Namespace (name, plus a
-`name` label) through the server-side apply Create path.
+The target namespace is an execution prerequisite created by Helm
+install, outside the release. It is never a Resource Change. Planning
+does not read Live to decide whether that namespace exists. A missing
+namespace is not a planning failure.
 
-On install: missing Namespace is Create; existing Namespace with
-differing declared implicit fields is Update; already matching is no
-visible change. Live-only fields Helm did not declare must not become
-removals (ADR-0005).
+Neither the Desired render nor the Previous release baseline may
+declare that target namespace. If either does, planning fails with a
+Deployah contract error (ADR-0007). Deployah does not filter, drop,
+or rewrite the stored release or the rendered manifest. Other
+Namespace names are ordinary Resource Changes.
 
-On a real upgrade Helm does not run CreateNamespace. Do not invent a
-Namespace Create or Update from it. A missing release Namespace on
-upgrade is not a planning failure. A later Helm or Kubernetes failure
-is outside semantic planning (ADR-0004).
-
-Raw or custom manifests must not define Namespace resources. That is a
-Deployah contract violation (ADR-0007). Do not merge a raw Namespace
-with the implicit Helm namespace operation.
-
-A Desired resource with `metadata.generateName` is a Create that uses
-that generateName. Do not fabricate the final runtime name. The
-unknown final name does not make the semantic plan partial.
+A resource with `metadata.generateName` and no `metadata.name` is
+paired by its declaration key (ADR-0005). Do not fabricate the final
+runtime name.
 
 ## Consequences
 
 ### Positive
 
-- Planned release changes and their consequences follow Helm's
-  install, upgrade, and uninstall lifecycle, including server-side
-  apply on an install Create.
+- Resource Changes follow the release Helm records.
+- The target namespace stays an execution prerequisite, not a release
+  object.
 
 ### Negative
 
-- Implicit Namespace fields can change on install through Helm
-  server-side apply. They do not change on upgrade.
-- Raw Namespace manifests are rejected even when Kubernetes would
-  accept them.
+- A chart or stored release that declares the target namespace fails
+  planning, even when Kubernetes would accept the object.
+- An existing release that already claims the target namespace fails
+  planning. Deployah does not rewrite the stored manifest.

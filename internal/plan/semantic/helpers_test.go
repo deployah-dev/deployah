@@ -48,63 +48,6 @@ func setObjectString(tb testing.TB, obj map[string]any, value string, keys ...st
 	cur[keys[len(keys)-1]] = value
 }
 
-func helmOrigin() semantic.ResourceOrigin {
-	return semantic.ResourceOrigin{
-		Kind: semantic.OriginHelm,
-		Helm: &semantic.HelmOrigin{Release: "web", Namespace: "prod"},
-	}
-}
-
-func nsCreate(name string) semantic.ResourceChange {
-	return semantic.ResourceChange{
-		Resource: semantic.ResourceRef{APIVersion: "v1", Kind: "Namespace", Name: name},
-		Origin:   semantic.ResourceOrigin{Kind: semantic.OriginNamespace},
-		Action:   semantic.Create,
-		After: &semantic.ResourceSnapshot{Object: map[string]any{
-			"apiVersion": "v1",
-			"kind":       "Namespace",
-			"metadata":   map[string]any{"name": name},
-		}},
-		Apply: writeApply(),
-	}
-}
-
-func writeCreate() semantic.ApplySemantics {
-	return semantic.ApplySemantics{
-		Write: &semantic.WriteSemantics{
-			Method: semantic.WriteCreate,
-		},
-	}
-}
-
-func writeApply() semantic.ApplySemantics {
-	return semantic.ApplySemantics{
-		Write: &semantic.WriteSemantics{
-			Method:       semantic.WriteServerSide,
-			FieldManager: "deployah",
-		},
-	}
-}
-
-func writeForceApply() semantic.ApplySemantics {
-	a := writeApply()
-	a.Write.ForceConflicts = true
-	return a
-}
-
-func deleteApply() semantic.ApplySemantics {
-	return semantic.ApplySemantics{
-		Delete: &semantic.DeleteSemantics{Propagation: semantic.PropagationBackground},
-	}
-}
-
-func bothApply() semantic.ApplySemantics {
-	return semantic.ApplySemantics{
-		Write:  writeApply().Write,
-		Delete: deleteApply().Delete,
-	}
-}
-
 func cm(name, value string) map[string]any {
 	return map[string]any{
 		"apiVersion": "v1",
@@ -126,42 +69,38 @@ func ref(kind, name string) semantic.ResourceRef {
 	}
 }
 
-func limitation(res semantic.ResourceRef) semantic.Diagnostic {
-	return semantic.Diagnostic{
-		Severity: semantic.DiagnosticWarning,
-		Category: semantic.CategoryPredictionLimitation,
-		Message:  "prediction is not exact: managed-fields-migration",
-		Resource: &res,
+func mustFields(before, after map[string]any) []semantic.FieldChange {
+	fields, err := semantic.DiffFields(before, after)
+	if err != nil {
+		panic(err)
 	}
+	return fields
 }
 
 func createChange(name, value string) semantic.ResourceChange {
 	return semantic.ResourceChange{
 		Resource: ref("ConfigMap", name),
-		Origin:   helmOrigin(),
 		Action:   semantic.Create,
 		After:    &semantic.ResourceSnapshot{Object: cm(name, value)},
-		Apply:    writeApply(),
 	}
 }
 
 func updateChange(name, before, after string) semantic.ResourceChange {
+	beforeObj := cm(name, before)
+	afterObj := cm(name, after)
 	return semantic.ResourceChange{
 		Resource: ref("ConfigMap", name),
-		Origin:   helmOrigin(),
 		Action:   semantic.Update,
-		Before:   &semantic.ResourceSnapshot{Object: cm(name, before)},
-		After:    &semantic.ResourceSnapshot{Object: cm(name, after)},
-		Apply:    writeApply(),
+		Before:   &semantic.ResourceSnapshot{Object: beforeObj},
+		After:    &semantic.ResourceSnapshot{Object: afterObj},
+		Fields:   mustFields(beforeObj, afterObj),
 	}
 }
 
 func deleteChange(name, value string) semantic.ResourceChange {
 	return semantic.ResourceChange{
 		Resource: ref("ConfigMap", name),
-		Origin:   helmOrigin(),
 		Action:   semantic.Delete,
 		Before:   &semantic.ResourceSnapshot{Object: cm(name, value)},
-		Apply:    deleteApply(),
 	}
 }

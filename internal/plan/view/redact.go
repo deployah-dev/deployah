@@ -31,25 +31,6 @@ func copyPlan(p semantic.Plan) semantic.Plan {
 		c.Before = copySnapshot(c.Before)
 		c.After = copySnapshot(c.After)
 		c.Fields = copyFields(c.Fields)
-		if c.Origin.Helm != nil {
-			h := *c.Origin.Helm
-			c.Origin.Helm = &h
-		}
-		if c.Apply.Write != nil {
-			w := *c.Apply.Write
-			c.Apply.Write = &w
-		}
-		if c.Apply.Delete != nil {
-			d := *c.Apply.Delete
-			c.Apply.Delete = &d
-		}
-	}
-	out.Diagnostics = slices.Clone(p.Diagnostics)
-	for i := range out.Diagnostics {
-		if out.Diagnostics[i].Resource != nil {
-			r := *out.Diagnostics[i].Resource
-			out.Diagnostics[i].Resource = &r
-		}
 	}
 	out.Tasks = slices.Clone(p.Tasks)
 	if out.Tasks == nil {

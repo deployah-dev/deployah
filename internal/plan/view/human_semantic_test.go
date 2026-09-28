@@ -29,7 +29,6 @@ import (
 	"helm.sh/helm/v4/pkg/chart/v2/loader"
 	"helm.sh/helm/v4/pkg/postrenderer"
 	"k8s.io/apimachinery/pkg/api/meta"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/yaml"
 
@@ -37,12 +36,10 @@ import (
 	"deployah.dev/deployah/internal/helm"
 	"deployah.dev/deployah/internal/plan"
 	"deployah.dev/deployah/internal/plan/semantic"
-	"deployah.dev/deployah/internal/predict"
 	"deployah.dev/deployah/internal/render"
 	"deployah.dev/deployah/internal/spec"
 
 	v1 "helm.sh/helm/v4/pkg/release/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
 const (
@@ -52,7 +49,7 @@ const (
 )
 
 // TestWriteHuman_SemanticPlan is the canonical human output of
-// fixture render -> prediction -> BuildSemanticPlan -> WriteHuman.
+// fixture render -> BuildSemanticPlan -> WriteHuman.
 // human_all_actions.golden stays the synthetic generic renderer contract.
 func TestWriteHuman_SemanticPlan(t *testing.T) {
 	t.Parallel()
@@ -72,8 +69,6 @@ func TestWriteHuman_SemanticPlan(t *testing.T) {
 	assert.Contains(t, text, "deployah.dev/instance: web-prod")
 	assert.Contains(t, text, "app.kubernetes.io/managed-by: Helm")
 	assert.Contains(t, text, "helm.sh/chart:")
-	assert.Contains(t, text, "meta.helm.sh/release-name: web-prod")
-	assert.Contains(t, text, "meta.helm.sh/release-namespace: prod")
 	assert.Contains(t, text, "helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded")
 	assert.Contains(t, text, "  preDeploy")
 	assert.Contains(t, text, "~ migrate  changed, will run")
@@ -140,7 +135,6 @@ func TestWriteHuman_SemanticScheduleDelete(t *testing.T) {
 	assert.Contains(t, text, `- delete batch/v1/CronJob "web-prod-cleanup"`)
 	assertCronJobOnlyUnderTasks(t, text, "web-prod-cleanup")
 	assertSemanticCronJobBody(t, text)
-	assert.Contains(t, text, "meta.helm.sh/release-name: web-prod")
 	assert.NotContains(t, text, `create v1/Namespace`)
 	assert.NotContains(t, text, "-/+")
 }
@@ -178,8 +172,6 @@ func assertSemanticCronJobBody(t *testing.T, text string) {
 	assert.Contains(t, text, "deployah.dev/project: web")
 	assert.Contains(t, text, "app.kubernetes.io/managed-by: Helm")
 	assert.Contains(t, text, "helm.sh/chart:")
-	assert.Contains(t, text, "meta.helm.sh/release-name: web-prod")
-	assert.Contains(t, text, "meta.helm.sh/release-namespace: prod")
 	assert.Contains(t, text, "jobTemplate:")
 	assert.Contains(t, text, "schedule: 0 3 * * *")
 }
@@ -264,14 +256,6 @@ func semanticUpgradePlan(t *testing.T, previous, current *spec.Spec) semantic.Pl
 	prevResult := renderDesired(t, cache, prevResolved)
 	prevRelease := previousReleaseFromRender(t, prevResult)
 
-	cluster := newFakeCluster()
-	seedTargetNamespace(cluster, prevResult.Namespace)
-	installPlan := buildSemanticPlan(t, &fakeBuildClient{
-		result: prevResult,
-		prep:   helm.ReleasePrep{Operation: helm.OperationInstall, NextRevision: 1},
-	}, cluster, prevResolved)
-	storePredictedLive(cluster, installPlan.Changes)
-
 	currResolved := resolveProductSpec(t, current)
 	currResult := renderDesired(t, cache, currResolved)
 	return buildSemanticPlan(t, &fakeBuildClient{
@@ -282,7 +266,7 @@ func semanticUpgradePlan(t *testing.T, previous, current *spec.Spec) semantic.Pl
 			Newest:       prevRelease,
 			NextRevision: 2,
 		},
-	}, cluster, currResolved)
+	}, currResolved)
 }
 
 func resolveProductSpec(t *testing.T, manifest *spec.Spec) *spec.ResolvedSpec {
@@ -382,29 +366,9 @@ func nestedMap(root map[string]any, keys ...string) (map[string]any, bool) {
 	return cur, true
 }
 
-func seedTargetNamespace(cluster *fakeCluster, namespace string) {
-	cluster.store(&unstructured.Unstructured{Object: map[string]any{
-		"apiVersion": "v1",
-		"kind":       "Namespace",
-		"metadata": map[string]any{
-			"name":   namespace,
-			"labels": map[string]any{"name": namespace},
-		},
-	}})
-}
-
-func storePredictedLive(cluster *fakeCluster, changes []semantic.ResourceChange) {
-	for _, c := range changes {
-		if c.After == nil || c.After.Object == nil {
-			continue
-		}
-		cluster.store(&unstructured.Unstructured{Object: c.After.Object})
-	}
-}
-
-func buildSemanticPlan(t *testing.T, client plan.SemanticBuildClient, cluster predict.Cluster, resolved *spec.ResolvedSpec) semantic.Plan {
+func buildSemanticPlan(t *testing.T, client plan.SemanticBuildClient, resolved *spec.ResolvedSpec) semantic.Plan {
 	t.Helper()
-	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, cluster, plan.SemanticBuildInput{
+	p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, productMapper{}, plan.SemanticBuildInput{
 		ClusterContext: productClusterContext,
 		Resolved:       resolved,
 	})
@@ -428,66 +392,29 @@ func (c *fakeBuildClient) RenderManifestsWithPrep(
 	return c.result, c.prep, func() {}, nil
 }
 
-type fakeCluster struct {
-	objects map[string]*unstructured.Unstructured
-}
+type productMapper struct{}
 
-func newFakeCluster() *fakeCluster {
-	return &fakeCluster{objects: make(map[string]*unstructured.Unstructured)}
-}
-
-func (f *fakeCluster) store(obj *unstructured.Unstructured) {
-	f.objects[clusterKey(identityOf(obj))] = obj.DeepCopy()
-}
-
-func (f *fakeCluster) Get(_ context.Context, id predict.Identity) (*unstructured.Unstructured, error) {
-	obj, ok := f.objects[clusterKey(id)]
-	if !ok {
-		return nil, apierrors.NewNotFound(schema.GroupResource{Resource: strings.ToLower(id.Kind) + "s"}, id.Name)
+func (productMapper) RESTMapping(gk schema.GroupKind, versions ...string) (*meta.RESTMapping, error) {
+	version := ""
+	if len(versions) > 0 {
+		version = versions[0]
 	}
-	return obj.DeepCopy(), nil
-}
-
-func (f *fakeCluster) Create(_ context.Context, obj *unstructured.Unstructured) (*unstructured.Unstructured, error) {
-	return obj.DeepCopy(), nil
-}
-
-func (f *fakeCluster) Apply(_ context.Context, obj *unstructured.Unstructured, _ predict.ApplyOptions) (*unstructured.Unstructured, error) {
-	return obj.DeepCopy(), nil
-}
-
-func (f *fakeCluster) JSONPatch(context.Context, predict.Identity, []byte) error {
-	return nil
-}
-
-func (f *fakeCluster) Delete(context.Context, predict.Identity) error {
-	return nil
-}
-
-func (f *fakeCluster) Mapping(gvk schema.GroupVersionKind) (*meta.RESTMapping, error) {
 	scope := meta.RESTScopeNamespace
-	if gvk.Group == "" && gvk.Kind == "Namespace" {
+	if clusterScopedKind(gk) {
 		scope = meta.RESTScopeRoot
 	}
 	return &meta.RESTMapping{
-		Resource:         schema.GroupVersionResource{Group: gvk.Group, Version: gvk.Version, Resource: strings.ToLower(gvk.Kind) + "s"},
-		GroupVersionKind: gvk,
+		Resource:         schema.GroupVersionResource{Group: gk.Group, Version: version, Resource: strings.ToLower(gk.Kind) + "s"},
+		GroupVersionKind: gk.WithVersion(version),
 		Scope:            scope,
 	}, nil
 }
 
-func clusterKey(id predict.Identity) string {
-	gv := schema.GroupVersion{Group: id.Group, Version: id.Version}
-	return fmt.Sprintf("%s/%s/%s/%s", gv.String(), id.Kind, id.Namespace, id.Name)
-}
-
-func identityOf(obj *unstructured.Unstructured) predict.Identity {
-	gvk := obj.GroupVersionKind()
-	return predict.Identity{
-		Group:     gvk.Group,
-		Version:   gvk.Version,
-		Kind:      gvk.Kind,
-		Namespace: obj.GetNamespace(),
-		Name:      obj.GetName(),
+func clusterScopedKind(gk schema.GroupKind) bool {
+	switch gk.Kind {
+	case "Namespace", "CustomResourceDefinition", "ClusterRole", "ClusterRoleBinding":
+		return true
+	default:
+		return false
 	}
 }

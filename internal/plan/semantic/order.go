@@ -30,8 +30,7 @@ func sortChanges(changes []ResourceChange) {
 
 func compareChange(a, b ResourceChange) int {
 	return cmp.Or(
-		cmp.Compare(originRank(a.Origin.Kind), originRank(b.Origin.Kind)),
-		cmp.Compare(a.ApplyOrder, b.ApplyOrder),
+		cmp.Compare(a.HelmOrder, b.HelmOrder),
 		cmp.Compare(a.Resource.APIVersion, b.Resource.APIVersion),
 		cmp.Compare(a.Resource.Kind, b.Resource.Kind),
 		cmp.Compare(a.Resource.Namespace, b.Resource.Namespace),
@@ -41,21 +40,10 @@ func compareChange(a, b ResourceChange) int {
 	)
 }
 
-func originRank(k OriginKind) int {
-	switch k {
-	case OriginNamespace:
-		return 1
-	case OriginHelm:
-		return 2
-	default:
-		return 3
-	}
-}
-
 func sortTasks(tasks []TaskPlan, changes []ResourceChange) {
-	applyOrder := make(map[string]int, len(changes))
+	helmOrder := make(map[string]int, len(changes))
 	for _, c := range changes {
-		applyOrder[c.Resource.identityKey()] = c.ApplyOrder
+		helmOrder[c.Resource.refKey()] = c.HelmOrder
 	}
 	slices.SortFunc(tasks, func(a, b TaskPlan) int {
 		return cmp.Or(
@@ -68,13 +56,13 @@ func sortTasks(tasks []TaskPlan, changes []ResourceChange) {
 		slices.SortFunc(tasks[i].Definitions, func(a, b HookDefinition) int {
 			return cmp.Or(
 				cmp.Compare(a.HookWeight, b.HookWeight),
-				cmp.Compare(a.Resource.identityKey(), b.Resource.identityKey()),
+				cmp.Compare(a.Resource.refKey(), b.Resource.refKey()),
 			)
 		})
 		slices.SortFunc(tasks[i].Resources, func(a, b ResourceRef) int {
 			return cmp.Or(
-				cmp.Compare(applyOrder[a.identityKey()], applyOrder[b.identityKey()]),
-				cmp.Compare(a.identityKey(), b.identityKey()),
+				cmp.Compare(helmOrder[a.refKey()], helmOrder[b.refKey()]),
+				cmp.Compare(a.refKey(), b.refKey()),
 			)
 		})
 		for j := range tasks[i].Definitions {
@@ -83,21 +71,4 @@ func sortTasks(tasks []TaskPlan, changes []ResourceChange) {
 			})
 		}
 	}
-}
-
-func sortDiagnostics(diags []Diagnostic) {
-	slices.SortFunc(diags, func(a, b Diagnostic) int {
-		return cmp.Or(
-			cmp.Compare(refKey(a.Resource), refKey(b.Resource)),
-			cmp.Compare(int(a.Category), int(b.Category)),
-			cmp.Compare(a.Message, b.Message),
-		)
-	})
-}
-
-func refKey(r *ResourceRef) string {
-	if r == nil {
-		return ""
-	}
-	return r.identityKey()
 }

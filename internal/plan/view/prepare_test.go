@@ -30,10 +30,8 @@ func TestPrepareRender_InvalidEnums(t *testing.T) {
 	validChange := func() semantic.ResourceChange {
 		return semantic.ResourceChange{
 			Resource: ref("ConfigMap", "app"),
-			Origin:   helmOrigin(),
 			Action:   semantic.Create,
 			After:    snap(cm("app", "v1")),
-			Apply:    writeApply(),
 		}
 	}
 	tests := []struct {
@@ -45,43 +43,9 @@ func TestPrepareRender_InvalidEnums(t *testing.T) {
 			name: "invalid action",
 			plan: semantic.Plan{
 				HelmAction: semantic.HelmUpgrade,
-				Changes:    []semantic.ResourceChange{{Origin: helmOrigin()}},
+				Changes:    []semantic.ResourceChange{{}},
 			},
 			wantErr: "invalid change 0 action",
-		},
-		{
-			name: "invalid origin",
-			plan: semantic.Plan{
-				HelmAction: semantic.HelmUpgrade,
-				Changes: []semantic.ResourceChange{{
-					Action: semantic.Create,
-				}},
-			},
-			wantErr: "invalid change 0 origin",
-		},
-		{
-			name: "invalid write method",
-			plan: semantic.Plan{
-				HelmAction: semantic.HelmUpgrade,
-				Changes: []semantic.ResourceChange{{
-					Action: semantic.Create,
-					Origin: helmOrigin(),
-					Apply:  semantic.ApplySemantics{Write: &semantic.WriteSemantics{}},
-				}},
-			},
-			wantErr: "invalid change 0 write method",
-		},
-		{
-			name: "invalid delete propagation",
-			plan: semantic.Plan{
-				HelmAction: semantic.HelmUpgrade,
-				Changes: []semantic.ResourceChange{{
-					Action: semantic.Delete,
-					Origin: helmOrigin(),
-					Apply:  semantic.ApplySemantics{Delete: &semantic.DeleteSemantics{}},
-				}},
-			},
-			wantErr: "invalid change 0 delete propagation",
 		},
 		{
 			name: "invalid field op",
@@ -91,28 +55,6 @@ func TestPrepareRender_InvalidEnums(t *testing.T) {
 				return semantic.Plan{HelmAction: semantic.HelmUpgrade, Changes: []semantic.ResourceChange{c}}
 			}(),
 			wantErr: "invalid change 0 field 0 op",
-		},
-		{
-			name: "invalid diagnostic severity",
-			plan: semantic.Plan{
-				HelmAction: semantic.HelmUpgrade,
-				Diagnostics: []semantic.Diagnostic{{
-					Category: semantic.CategoryPredictionLimitation,
-					Message:  "x",
-				}},
-			},
-			wantErr: "invalid diagnostic 0 severity",
-		},
-		{
-			name: "invalid diagnostic category",
-			plan: semantic.Plan{
-				HelmAction: semantic.HelmUpgrade,
-				Diagnostics: []semantic.Diagnostic{{
-					Severity: semantic.DiagnosticWarning,
-					Message:  "x",
-				}},
-			},
-			wantErr: "invalid diagnostic 0 category",
 		},
 	}
 	for _, tt := range tests {

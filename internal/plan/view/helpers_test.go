@@ -31,36 +31,6 @@ import (
 
 var update = flag.Bool("update", false, "update golden files")
 
-func helmOrigin() semantic.ResourceOrigin {
-	return semantic.ResourceOrigin{
-		Kind: semantic.OriginHelm,
-		Helm: &semantic.HelmOrigin{Release: "web", Namespace: "prod"},
-	}
-}
-
-func writeCreate() semantic.ApplySemantics {
-	return semantic.ApplySemantics{
-		Write: &semantic.WriteSemantics{
-			Method: semantic.WriteCreate,
-		},
-	}
-}
-
-func writeApply() semantic.ApplySemantics {
-	return semantic.ApplySemantics{
-		Write: &semantic.WriteSemantics{
-			Method:       semantic.WriteServerSide,
-			FieldManager: "deployah",
-		},
-	}
-}
-
-func deleteApply() semantic.ApplySemantics {
-	return semantic.ApplySemantics{
-		Delete: &semantic.DeleteSemantics{Propagation: semantic.PropagationBackground},
-	}
-}
-
 func snap(obj map[string]any) *semantic.ResourceSnapshot {
 	return &semantic.ResourceSnapshot{Object: obj}
 }
@@ -237,10 +207,8 @@ func objectString(tb testing.TB, obj map[string]any, keys ...string) string {
 func createChangeForHuman() semantic.ResourceChange {
 	return semantic.ResourceChange{
 		Resource: ref("ConfigMap", "app"),
-		Origin:   helmOrigin(),
 		Action:   semantic.Create,
 		After:    snap(cm("app", "v1")),
-		Apply:    writeApply(),
 	}
 }
 
@@ -255,26 +223,66 @@ func humanHeader() semantic.Header {
 	}
 }
 
-func mustPlan(tb testing.TB, helmAction semantic.HelmAction, changes []semantic.ResourceChange, diags []semantic.Diagnostic) semantic.Plan {
+func mustPlan(tb testing.TB, helmAction semantic.HelmAction, changes []semantic.ResourceChange) semantic.Plan {
 	tb.Helper()
-	return mustPlanWithTasks(tb, helmAction, changes, nil, diags)
+	return mustPlanWithTasks(tb, helmAction, changes, nil)
 }
 
-func mustPlanWithTasks(tb testing.TB, helmAction semantic.HelmAction, changes []semantic.ResourceChange, tasks []semantic.TaskPlan, diags []semantic.Diagnostic) semantic.Plan {
+func mustPlanWithTasks(tb testing.TB, helmAction semantic.HelmAction, changes []semantic.ResourceChange, tasks []semantic.TaskPlan) semantic.Plan {
 	tb.Helper()
 	return mustPlanWithHeader(tb, semantic.Header{
 		Project:     "web",
 		Environment: "prod",
 		Release:     "web",
 		Namespace:   "prod",
-	}, helmAction, changes, tasks, diags)
+	}, helmAction, changes, tasks)
 }
 
-func mustPlanWithHeader(tb testing.TB, header semantic.Header, helmAction semantic.HelmAction, changes []semantic.ResourceChange, tasks []semantic.TaskPlan, diags []semantic.Diagnostic) semantic.Plan {
+func mustPlanWithHeader(tb testing.TB, header semantic.Header, helmAction semantic.HelmAction, changes []semantic.ResourceChange, tasks []semantic.TaskPlan) semantic.Plan {
 	tb.Helper()
-	p, err := semantic.New(header, helmAction, changes, tasks, diags)
+	p, err := semantic.New(header, helmAction, fillUpdateFields(changes), fillTaskFields(tasks))
 	require.NoError(tb, err)
 	return p
+}
+
+func fillUpdateFields(changes []semantic.ResourceChange) []semantic.ResourceChange {
+	out := append([]semantic.ResourceChange(nil), changes...)
+	for i, c := range out {
+		if c.Action != semantic.Update || len(c.Fields) > 0 || c.Before == nil || c.After == nil {
+			continue
+		}
+		fields, err := semantic.DiffFields(c.Before.Object, c.After.Object)
+		if err != nil {
+			panic(err)
+		}
+		out[i].Fields = fields
+	}
+	return out
+}
+
+func fillTaskFields(tasks []semantic.TaskPlan) []semantic.TaskPlan {
+	if tasks == nil {
+		return nil
+	}
+	out := append([]semantic.TaskPlan(nil), tasks...)
+	for i, task := range out {
+		if len(task.Definitions) == 0 {
+			continue
+		}
+		defs := append([]semantic.HookDefinition(nil), task.Definitions...)
+		for j, def := range defs {
+			if def.Action != semantic.Update || len(def.Fields) > 0 || def.Before == nil || def.After == nil {
+				continue
+			}
+			fields, err := semantic.DiffFields(def.Before.Object, def.After.Object)
+			if err != nil {
+				panic(err)
+			}
+			defs[j].Fields = fields
+		}
+		out[i].Definitions = defs
+	}
+	return out
 }
 
 func writeHuman(t *testing.T, p semantic.Plan) string {

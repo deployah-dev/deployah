@@ -36,7 +36,7 @@ opaque. Live-only undeclared state must not become synthetic removals
 comparison. Do not invent extra semantic interpretation.
 
 Human-readable Drift uses the same YAML-oriented diff style as
-resource consequences. JSON Pointer paths are not the primary human
+Resource Changes. JSON Pointer paths are not the primary human
 UX. Machine-readable output may use structural paths. Exact diff
 library, list-alignment algorithm, and implementation mechanism are
 not this decision.

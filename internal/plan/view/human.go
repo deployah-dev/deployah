@@ -64,17 +64,6 @@ func WriteHuman(w io.Writer, p semantic.Plan, opts Options) error {
 		}
 		wroteBody = true
 	}
-	if len(prepared.Diagnostics) > 0 {
-		if wroteBody {
-			if berr := writeBlank(w); berr != nil {
-				return berr
-			}
-		}
-		if derr := writeHumanDiagnostics(w, prepared.Diagnostics, prepared.Header.Namespace, opts); derr != nil {
-			return derr
-		}
-		wroteBody = true
-	}
 	if wroteBody {
 		if berr := writeBlank(w); berr != nil {
 			return berr
@@ -298,9 +287,6 @@ func writeActionBody(
 		}
 		return writePrefixedYAML(w, text, indent+"- ", theme.StatusError, opts)
 	case semantic.Update:
-		if after == nil {
-			return nil
-		}
 		beforeProj, afterProj := projectFields(beforeObj, afterObj, renderFields)
 		return writeProjectedDiff(w, beforeProj, afterProj, indent, opts)
 	default:
@@ -357,32 +343,6 @@ func writeYAMLDiff(w io.Writer, beforeYAML, afterYAML, indent string, opts Optio
 			if werr := writeln(w, opts, token, prefix+content); werr != nil {
 				return werr
 			}
-		}
-	}
-	return nil
-}
-
-func writeHumanDiagnostics(w io.Writer, diags []semantic.Diagnostic, planNS string, opts Options) error {
-	if len(diags) == 0 {
-		return nil
-	}
-	if err := writeln(w, opts, theme.TextTitle, "Diagnostics"); err != nil {
-		return err
-	}
-	if err := writeBlank(w); err != nil {
-		return err
-	}
-	for _, d := range diags {
-		ref := ""
-		if d.Resource != nil {
-			ref = " " + formatGVK(*d.Resource) + " " + quotedName(*d.Resource)
-			if d.Resource.Namespace != "" && d.Resource.Namespace != planNS {
-				ref += fmt.Sprintf(" in namespace %q", d.Resource.Namespace)
-			}
-		}
-		line := fmt.Sprintf("  %s %s%s: %s", d.Severity.String(), d.Category.String(), ref, d.Message)
-		if err := writeln(w, opts, theme.StatusWarning, line); err != nil {
-			return err
 		}
 	}
 	return nil

@@ -19,28 +19,24 @@ import (
 	"slices"
 )
 
-// Plan is the semantic plan for one invocation: Deployah's intended
-// operations and their visible resource consequences. Construct it with
-// [New]. Chart CRDs are attached with [AttachChartCRDs]; [New] leaves
-// them empty. Snapshots and field values are unredacted. This type is
-// not a JSON rendering contract.
+// Plan is one run's Helm release intent and its Previous-to-Desired
+// resource changes. Build it with [New]. Add chart CRDs with
+// [AttachChartCRDs]. Snapshots still contain secrets, and this type
+// is not the plan JSON document.
 type Plan struct {
-	Header      Header
-	HelmAction  HelmAction
-	Changes     []ResourceChange
-	Tasks       []TaskPlan
-	ChartCRDs   []ChartCRD
-	Diagnostics []Diagnostic
-	Summary     Summary
+	Header     Header
+	HelmAction HelmAction
+	Changes    []ResourceChange
+	Tasks      []TaskPlan
+	ChartCRDs  []ChartCRD
+	Summary    Summary
 }
 
-// New validates helmAction, header, changes, tasks, and diagnostics,
-// sorts them, derives [Summary], and returns a plan whose slices are
-// non-nil. ChartCRDs is empty; call [AttachChartCRDs] to set them. Task
-// references to [ResourceChange] values must be consistent; it fails
-// closed on dangling or duplicate ownership. helmAction is stored as
-// provided; [New] does not derive or mutate it.
-func New(header Header, helmAction HelmAction, changes []ResourceChange, tasks []TaskPlan, diagnostics []Diagnostic) (Plan, error) {
+// New checks and sorts its inputs, fills [Summary], and returns
+// non-nil slices. Chart CRDs stay empty. It returns an error if a
+// task reference is missing, ambiguous, or shared. helmAction and
+// field changes are stored as given.
+func New(header Header, helmAction HelmAction, changes []ResourceChange, tasks []TaskPlan) (Plan, error) {
 	if !helmAction.valid() {
 		return Plan{}, fmt.Errorf("invalid helm action %s", helmAction)
 	}
@@ -53,18 +49,9 @@ func New(header Header, helmAction HelmAction, changes []ResourceChange, tasks [
 		copiedChanges = []ResourceChange{}
 	}
 	copiedTasks := copyTasks(tasks)
-	copiedDiags := copyDiagnostics(diagnostics)
-	if copiedDiags == nil {
-		copiedDiags = []Diagnostic{}
-	}
 
-	for i := range copiedDiags {
-		if err := validateDiagnostic(copiedDiags[i]); err != nil {
-			return Plan{}, err
-		}
-	}
 	for i := range copiedChanges {
-		if err := validateChange(copiedChanges[i], copiedDiags); err != nil {
+		if err := validateChange(copiedChanges[i]); err != nil {
 			return Plan{}, fmt.Errorf("resource %s: %w", copiedChanges[i].Resource, err)
 		}
 		normalized, nerr := normalizeChange(copiedChanges[i])
@@ -89,22 +76,20 @@ func New(header Header, helmAction HelmAction, changes []ResourceChange, tasks [
 
 	sortChanges(copiedChanges)
 	sortTasks(copiedTasks, copiedChanges)
-	sortDiagnostics(copiedDiags)
 
 	return Plan{
-		Header:      header,
-		HelmAction:  helmAction,
-		Changes:     copiedChanges,
-		Tasks:       copiedTasks,
-		ChartCRDs:   []ChartCRD{},
-		Diagnostics: copiedDiags,
-		Summary:     Summarize(copiedChanges),
+		Header:     header,
+		HelmAction: helmAction,
+		Changes:    copiedChanges,
+		Tasks:      copiedTasks,
+		ChartCRDs:  []ChartCRD{},
+		Summary:    Summarize(copiedChanges),
 	}, nil
 }
 
-// AttachChartCRDs returns a copy of p with validated chart CRD lifecycle
-// entries. Order is preserved. It does not change [Plan.Changes],
-// [Plan.HasEffects], or [Plan.IsNoOp].
+// AttachChartCRDs returns a copy of p with checked chart CRDs in the
+// given order. [Plan.Changes], [Plan.HasEffects], and [Plan.IsNoOp]
+// stay the same.
 func AttachChartCRDs(p Plan, crds []ChartCRD) (Plan, error) {
 	copied := slices.Clone(crds)
 	if copied == nil {
@@ -136,9 +121,8 @@ func validateChartCRD(c ChartCRD) error {
 	return nil
 }
 
-// HasEffects reports whether the plan lists a known resource mutation or
-// a task that would change or run. Diagnostics and [HelmAction] are not
-// effects.
+// HasEffects reports whether the plan lists a resource change or a task
+// that would change or run. [HelmAction] is not an effect.
 func (p Plan) HasEffects() bool {
 	if len(p.Changes) > 0 {
 		return true
@@ -162,19 +146,7 @@ func (p Plan) IsNoOp() bool {
 func normalizeChange(c ResourceChange) (ResourceChange, error) {
 	c.Before = copySnapshot(c.Before)
 	c.After = copySnapshot(c.After)
-	c.Origin = copyOrigin(c.Origin)
-	c.Apply = copyApply(c.Apply)
 	c.Fields = copyFields(c.Fields)
-	switch {
-	case c.Action == Update && c.After != nil:
-		fields, err := DiffFields(snapshotObject(c.Before), snapshotObject(c.After))
-		if err != nil {
-			return ResourceChange{}, err
-		}
-		c.Fields = fields
-	default:
-		c.Fields = []FieldChange{}
-	}
 	if c.Fields == nil {
 		c.Fields = []FieldChange{}
 	}
@@ -202,16 +174,6 @@ func normalizeDefinition(d HookDefinition) (HookDefinition, error) {
 	d.Before = copySnapshot(d.Before)
 	d.After = copySnapshot(d.After)
 	d.Fields = copyFields(d.Fields)
-	switch {
-	case d.Action == Update && d.After != nil:
-		fields, err := DiffFields(snapshotObject(d.Before), snapshotObject(d.After))
-		if err != nil {
-			return HookDefinition{}, err
-		}
-		d.Fields = fields
-	default:
-		d.Fields = []FieldChange{}
-	}
 	if d.Fields == nil {
 		d.Fields = []FieldChange{}
 	}
@@ -221,7 +183,7 @@ func normalizeDefinition(d HookDefinition) (HookDefinition, error) {
 func validateTasks(tasks []TaskPlan, changes []ResourceChange) error {
 	changeIndex := make(map[string]int, len(changes))
 	for i, c := range changes {
-		key := c.Resource.identityKey()
+		key := c.Resource.refKey()
 		if _, exists := changeIndex[key]; exists {
 			changeIndex[key] = -1
 			continue
@@ -265,7 +227,7 @@ func validateTask(t TaskPlan, changeIndex map[string]int, owned map[string]strin
 			return fmt.Errorf("schedule must not will run")
 		}
 		for _, ref := range t.Resources {
-			key := ref.identityKey()
+			key := ref.refKey()
 			idx, ok := changeIndex[key]
 			if !ok {
 				return fmt.Errorf("dangling resource %s", ref)
@@ -303,12 +265,18 @@ func validateDefinition(d HookDefinition) error {
 		if d.After == nil {
 			return fmt.Errorf("create requires an after snapshot")
 		}
+		if len(d.Fields) != 0 {
+			return fmt.Errorf("create must not have field changes")
+		}
 	case Update:
 		if d.Before == nil {
 			return fmt.Errorf("update requires a before snapshot")
 		}
 		if d.After == nil {
 			return fmt.Errorf("update requires an after snapshot")
+		}
+		if len(d.Fields) == 0 {
+			return fmt.Errorf("update requires a field change")
 		}
 	case Delete:
 		if d.Before == nil {
@@ -317,124 +285,18 @@ func validateDefinition(d HookDefinition) error {
 		if d.After != nil {
 			return fmt.Errorf("delete must not have an after snapshot")
 		}
+		if len(d.Fields) != 0 {
+			return fmt.Errorf("delete must not have field changes")
+		}
 	}
 	return nil
 }
 
-func validateChange(c ResourceChange, diags []Diagnostic) error {
+func validateChange(c ResourceChange) error {
 	if !c.Action.valid() {
 		return fmt.Errorf("invalid action %s", c.Action)
 	}
-	if err := validateOrigin(c.Origin); err != nil {
-		return err
-	}
-	if err := validateOriginResource(c); err != nil {
-		return err
-	}
-	if err := validateApply(c.Action, c.Apply); err != nil {
-		return err
-	}
-	if err := validateOriginApply(c); err != nil {
-		return err
-	}
-	return validateSnapshots(c, diags)
-}
-
-func validateOrigin(o ResourceOrigin) error {
-	if !o.Kind.valid() {
-		return fmt.Errorf("invalid origin %s", o.Kind)
-	}
-	switch o.Kind {
-	case OriginHelm:
-		if o.Helm == nil {
-			return fmt.Errorf("helm origin requires helm details")
-		}
-	case OriginNamespace:
-		if o.Helm != nil {
-			return fmt.Errorf("%s origin must not include helm details", o.Kind)
-		}
-	}
-	return nil
-}
-
-func validateOriginResource(c ResourceChange) error {
-	if c.Origin.Kind != OriginNamespace {
-		return nil
-	}
-	if c.Resource.APIVersion != "v1" || c.Resource.Kind != "Namespace" {
-		return fmt.Errorf("namespace origin requires v1 Namespace")
-	}
-	if c.Resource.Namespace != "" {
-		return fmt.Errorf("namespace origin must be cluster-scoped")
-	}
-	switch c.Action {
-	case Create, Update:
-	default:
-		return fmt.Errorf("namespace origin does not support %s", c.Action)
-	}
-	return nil
-}
-
-func validateOriginApply(c ResourceChange) error {
-	if c.Apply.Write == nil || c.Origin.Kind != OriginNamespace {
-		return nil
-	}
-	if c.Apply.Write.Method != WriteServerSide {
-		return fmt.Errorf("namespace origin requires server_side_apply")
-	}
-	if c.Apply.Write.ForceConflicts {
-		return fmt.Errorf("namespace origin must not force conflicts")
-	}
-	return nil
-}
-
-func validateApply(action Action, apply ApplySemantics) error {
-	switch action {
-	case Create, Update:
-		if apply.Write == nil {
-			return fmt.Errorf("%s requires write semantics", action)
-		}
-		if apply.Delete != nil {
-			return fmt.Errorf("%s must not have delete semantics", action)
-		}
-		if err := validateWrite(*apply.Write); err != nil {
-			return err
-		}
-		if action == Update && apply.Write.Method == WriteCreate {
-			return fmt.Errorf("update requires server_side_apply")
-		}
-		return nil
-	case Delete:
-		if apply.Write != nil {
-			return fmt.Errorf("delete must not have write semantics")
-		}
-		if apply.Delete == nil {
-			return fmt.Errorf("delete requires delete semantics")
-		}
-		return validateDelete(*apply.Delete)
-	default:
-		return fmt.Errorf("invalid action %s", action)
-	}
-}
-
-func validateWrite(w WriteSemantics) error {
-	if !w.Method.valid() {
-		return fmt.Errorf("invalid write method %s", w.Method)
-	}
-	switch w.Method {
-	case WriteServerSide:
-		if w.FieldManager == "" {
-			return fmt.Errorf("server_side_apply requires a field manager")
-		}
-	case WriteCreate:
-		if w.FieldManager != "" {
-			return fmt.Errorf("create write must not set a field manager")
-		}
-		if w.ForceConflicts {
-			return fmt.Errorf("create write must not force conflicts")
-		}
-	}
-	return nil
+	return validateSnapshots(c)
 }
 
 func validateHelmAction(header Header, helmAction HelmAction) error {
@@ -454,18 +316,11 @@ func validateHelmAction(header Header, helmAction HelmAction) error {
 }
 
 func validateHelmContent(helmAction HelmAction, changes []ResourceChange, tasks []TaskPlan) error {
-	for _, c := range changes {
-		if c.Origin.Kind == OriginNamespace && helmAction != HelmInstall {
-			return fmt.Errorf("namespace origin requires helm install")
-		}
+	if helmAction == HelmNone && len(changes) > 0 {
+		return fmt.Errorf("helm none must not include resource changes")
 	}
 	if helmAction != HelmNone {
 		return nil
-	}
-	for _, c := range changes {
-		if c.Origin.Kind == OriginHelm {
-			return fmt.Errorf("helm none must not include helm resource changes")
-		}
 	}
 	for _, t := range tasks {
 		if t.Phase != TaskPreDeploy && t.Phase != TaskPostDeploy {
@@ -481,14 +336,7 @@ func validateHelmContent(helmAction HelmAction, changes []ResourceChange, tasks 
 	return nil
 }
 
-func validateDelete(d DeleteSemantics) error {
-	if !d.Propagation.valid() {
-		return fmt.Errorf("invalid delete propagation %s", d.Propagation)
-	}
-	return nil
-}
-
-func validateSnapshots(c ResourceChange, diags []Diagnostic) error {
+func validateSnapshots(c ResourceChange) error {
 	switch c.Action {
 	case Create:
 		if c.Before != nil {
@@ -497,12 +345,18 @@ func validateSnapshots(c ResourceChange, diags []Diagnostic) error {
 		if c.After == nil {
 			return fmt.Errorf("create requires an after snapshot")
 		}
+		if len(c.Fields) != 0 {
+			return fmt.Errorf("create must not have field changes")
+		}
 	case Update:
 		if c.Before == nil {
 			return fmt.Errorf("update requires a before snapshot")
 		}
-		if c.After == nil && !hasLimitation(c.Resource, diags) {
-			return fmt.Errorf("update without after requires a prediction-limitation diagnostic")
+		if c.After == nil {
+			return fmt.Errorf("update requires an after snapshot")
+		}
+		if len(c.Fields) == 0 {
+			return fmt.Errorf("update requires a field change")
 		}
 	case Delete:
 		if c.Before == nil {
@@ -511,31 +365,9 @@ func validateSnapshots(c ResourceChange, diags []Diagnostic) error {
 		if c.After != nil {
 			return fmt.Errorf("delete must not have an after snapshot")
 		}
-	}
-	return nil
-}
-
-func hasLimitation(ref ResourceRef, diags []Diagnostic) bool {
-	for _, d := range diags {
-		if d.Category != CategoryPredictionLimitation || d.Resource == nil {
-			continue
+		if len(c.Fields) != 0 {
+			return fmt.Errorf("delete must not have field changes")
 		}
-		if *d.Resource == ref {
-			return true
-		}
-	}
-	return false
-}
-
-func validateDiagnostic(d Diagnostic) error {
-	if !d.Severity.valid() {
-		return fmt.Errorf("invalid diagnostic severity %s", d.Severity)
-	}
-	if !d.Category.valid() {
-		return fmt.Errorf("invalid diagnostic category %s", d.Category)
-	}
-	if d.Message == "" {
-		return fmt.Errorf("diagnostic message is required")
 	}
 	return nil
 }

@@ -6,44 +6,44 @@ Accepted
 
 ## Context
 
-Deployah's plan was treated as a preview of the Kubernetes state a
-deploy would produce. That mixed two questions: what Deployah intends
-to do, and whether the API server, admission, quotas, RBAC, and
-controllers would accept or mutate it.
-
-Answering the second question pulled planning onto write dry-runs,
-managedFields reconstruction, and partial results when prediction was
-uncertain. A correct statement of intent then looked incomplete
-whenever Kubernetes might later refuse the write.
+A semantic plan can answer what the release declares, or whether
+Kubernetes would accept the write. Those are different questions.
+Admission, quotas, RBAC, webhooks, and field ownership decide the
+second one. Pulling that into the plan turns a statement of intent
+into a guess about a later deploy.
 
 ## Decision
 
-The semantic plan describes Deployah's intended Kubernetes operations
-if this deployment runs. It is not an execution-feasibility engine and
-not a Kubernetes state prediction engine. A plan may be correct even
-when the later deploy fails.
+The semantic plan describes release intent. It is not an
+execution-feasibility engine and not a prediction of the API server's
+final state. A plan may be correct even when the later deploy fails.
 
-These concerns are outside semantic planning:
+Resource Changes compare Previous with Desired (ADR-0011). Drift
+compares Previous with Live (ADR-0005). Live does not change a
+Resource Change.
 
-- admission controllers and validating or mutating webhooks
-- quota availability and write RBAC
-- server-side apply ownership conflicts and immutable-field rejection
-- Kubernetes defaulting, controller reconciliation, and final generated
-  names
-- the exact final API-server state
+Rendering Desired uses Helm's client-side dry-run and release
+history. Helm discovery during that render is valid. After that
+render, classifying a Resource Change uses discovery only to resolve
+scope. It does not GET Live objects, and it does not call Create,
+Update, Patch, or Delete, including server-side or mutating dry-run
+forms of those writes.
 
-A later prediction, preflight, or feasibility capability may cover some
-of those. It is not part of this contract, including under a renamed
-prediction abstraction.
+These concerns are outside the semantic plan:
 
-Semantic planning is read-only toward the cluster. GET, discovery, and
-REST mapping are allowed. CREATE, UPDATE, PATCH, DELETE, and any
-dry-run form of those writes are not. Dry-run mutation is not part of
-Previous, Live, or Desired.
+- server-side apply and server dry-run prediction
+- managedFields migration
+- ownership and adoption feasibility
+- admission, quota, RBAC, and conflict prediction
+- pre-flight checks
+- how Helm writes or deletes objects
 
-Required release and cluster state is ADR-0010. Resource consequences
-are ADR-0011. API constructibility and migration are ADR-0013. Secret
-presentation is ADR-0009. Deployah contract validation is ADR-0007.
+A later pre-flight capability may cover some of those. It is not part
+of this contract.
+
+Required release state is ADR-0010. API constructibility is ADR-0013.
+Secret presentation is ADR-0009. Deployah contract validation is
+ADR-0007. Ownership is ADR-0012.
 
 ## Consequences
 
@@ -51,14 +51,13 @@ presentation is ADR-0009. Deployah contract validation is ADR-0007.
 
 - Plan output stays a statement of intent, not a guess at API-server
   success.
-- Planning cannot depend on write dry-runs or managedFields
-  reconstruction.
+- A Resource Change does not depend on Live or on a write dry-run.
 
 ### Negative
 
-- Live replicas `4` and Desired replicas `3` may correctly show
-  `4 -> 3` even if another field manager owns the field and runtime
-  server-side apply fails.
+- Previous replicas `3`, Desired replicas `5`, and Live replicas `4`
+  report a Resource Change of `3 -> 5`. Live `4` is Drift, not the
+  change.
 - Desired replicas `100` remains valid intent even if admission later
   rejects values above `20`.
 - Operators who want "will this deploy work?" need a different

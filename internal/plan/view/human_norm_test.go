@@ -138,12 +138,10 @@ func TestWriteHuman_SecretDiffs(t *testing.T) {
 			t.Parallel()
 			p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 				Resource: ref("Secret", "s"),
-				Origin:   helmOrigin(),
 				Action:   semantic.Update,
 				Before:   snap(tt.before),
 				After:    snap(tt.after),
-				Apply:    writeApply(),
-			}}, nil)
+			}})
 			var buf bytes.Buffer
 			require.NoError(t, view.WriteHuman(&buf, p, view.Options{ShowSecrets: tt.showSecrets}))
 			text := buf.String()
@@ -163,12 +161,10 @@ func TestWriteHuman_OmitsBookkeepingFields(t *testing.T) {
 	after := noisyCM("web", "v2", "22", "u-pred")
 	p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
 		Resource: ref("ConfigMap", "web"),
-		Origin:   helmOrigin(),
 		Action:   semantic.Update,
 		Before:   snap(before),
 		After:    snap(after),
-		Apply:    writeApply(),
-	}}, nil)
+	}})
 
 	var human, jsonBuf bytes.Buffer
 	require.NoError(t, view.WriteHuman(&human, p, view.Options{}))
@@ -195,10 +191,8 @@ func TestWriteHuman_OmitsBookkeepingOnCreateDelete(t *testing.T) {
 			name: "create",
 			changes: []semantic.ResourceChange{{
 				Resource: ref("ConfigMap", "web"),
-				Origin:   helmOrigin(),
 				Action:   semantic.Create,
 				After:    snap(noisyCM("web", "v1", "11", "u-new")),
-				Apply:    writeApply(),
 			}},
 			want: []string{"+   key: v1", "+   labels:", "+   annotations:"},
 		},
@@ -206,10 +200,8 @@ func TestWriteHuman_OmitsBookkeepingOnCreateDelete(t *testing.T) {
 			name: "delete",
 			changes: []semantic.ResourceChange{{
 				Resource: ref("ConfigMap", "web"),
-				Origin:   helmOrigin(),
 				Action:   semantic.Delete,
 				Before:   snap(noisyCM("web", "v1", "11", "u-old")),
-				Apply:    deleteApply(),
 			}},
 			want: []string{"-   key: v1", "-   labels:", "-   annotations:"},
 		},
@@ -217,7 +209,7 @@ func TestWriteHuman_OmitsBookkeepingOnCreateDelete(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			p := mustPlan(t, semantic.HelmUpgrade, tt.changes, nil)
+			p := mustPlan(t, semantic.HelmUpgrade, tt.changes)
 			var buf bytes.Buffer
 			require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
 			text := buf.String()

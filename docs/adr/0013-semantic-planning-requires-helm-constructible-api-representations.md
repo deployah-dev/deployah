@@ -7,35 +7,34 @@ Accepted
 ## Context
 
 Logical identity can cross apiVersions (ADR-0005). Helm still has to
-REST-map the actual GVKs it builds. Live lookup through another served
-version does not make an unmappable Previous or Desired GVK
-constructible. Chart CRD lifecycle is ADR-0008.
+REST-map the actual GVKs it builds. Chart CRD lifecycle is ADR-0008.
 
 ## Decision
 
-Logical identity, Live lookup, and Helm constructibility are separate.
+Logical identity and Helm constructibility are separate. Resource
+Change classification never depends on Live lookup.
 
-Live lookup for a custom resource may use another currently served
-version of the same group and kind. Do not classify the object as
-Create solely because the Desired apiVersion is not currently
-mappable.
+Every Previous and Desired GVK is resolved through current discovery.
+That mapping decides scope and whether Helm can construct the
+object. It is not admission, webhook, quota, or write-feasibility
+prediction (ADR-0004). If mapping fails, planning fails. The error
+names the GVK and the resource. Do not classify the object by
+guessing another served version.
 
-Helm must REST-map the GVK it actually builds. That is required to
-construct the operation. It is not admission, webhook, quota, or
-write-feasibility prediction (ADR-0004). Semantic planning does not
-parse `.deployah/crds/` to invent API availability.
+Semantic planning does not parse `.deployah/crds/` to invent API
+availability. A Desired custom resource whose CRD arrives only from
+`.deployah/crds/` in the same install fails planning, because
+discovery does not yet serve that GVK.
 
 On a real upgrade, chart CRDs are not applied (ADR-0008). They cannot
 invent new API availability. Helm must be able to build:
 
-1. the Previous/current release representation
-2. the Desired target representation at the point Helm builds it
+1. the Previous release representation
+2. the Desired target representation
 
-If a GVK in the current Helm release manifest is no longer served and
-Helm cannot build that current resource, planning fails, even if Live
-is readable through another apiVersion. If the Desired GVK cannot be
-mapped at the point Helm builds it, planning fails. Do not show a CRD
-Update on upgrade to paper over that.
+If a GVK in the current Helm release manifest is no longer served,
+planning fails. If the Desired GVK cannot be mapped, planning fails.
+Do not show a CRD Update on upgrade to paper over that.
 
 Do not rewrite Previous. Do not migrate stored Helm release manifests.
 Do not mutate the cluster. The planning error must identify enough
@@ -50,8 +49,10 @@ Recovery of unserved stored APIs is future work: GitHub issue
 ### Positive
 
 - Logical identity and Helm GVK mapping stay separate.
+- Classification does not depend on a Live read.
 
 ### Negative
 
-- On a real upgrade, an unconstructible Previous or Desired GVK fails
-  planning even if Live is readable through another served version.
+- An unconstructible Previous or Desired GVK fails planning.
+- A custom resource introduced in the same install as its chart CRD
+  fails planning, because that CRD is not served yet.
