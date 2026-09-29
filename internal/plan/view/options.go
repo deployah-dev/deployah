@@ -14,16 +14,13 @@
 
 package view
 
-import "nabat.dev/theme"
-
-// Options controls renderer behavior. ShowSecrets is renderer-only and
-// is not a CLI flag in Stage C.
+// Options controls renderer behavior. ShowSecrets applies to both
+// WriteHuman and WriteJSON. Styler applies only to WriteHuman.
 type Options struct {
 	// ShowSecrets reveals Secret data and stringData values. The default
 	// hides those values without hiding that a field changed.
 	ShowSecrets bool
-	// Theme colors human headings, diff markers, and section titles. The
-	// zero value renders every style call as the terminal default, so
-	// golden tests stay plain text.
-	Theme theme.ResolvedTheme
+	// Styler decorates Human output lines by semantic role. Nil renders
+	// plain text. WriteJSON ignores it.
+	Styler Styler
 }

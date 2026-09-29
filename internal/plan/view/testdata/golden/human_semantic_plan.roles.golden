@@ -1,0 +1,294 @@
+Title	Plan for project "web" on environment "prod"
+Primary	Context:   kind-prod
+Primary	Namespace: prod
+Primary	Release:   web-prod
+Primary	Revision:  2
+Title	Resources
+DiffModified	  ~ update apps/v1/Deployment "web-prod-api"
+DiffContext	      template:
+DiffContext	        spec:
+DiffContext	          containers:
+DiffRemoved	  -         - image: ghcr.io/example/web:1.0
+DiffAdded	  +         - image: ghcr.io/example/web:2.0
+DiffContext	              name: api
+DiffAdded	  + create apps/v1/Deployment "web-prod-worker"
+DiffAdded	  + apiVersion: apps/v1
+DiffAdded	  + kind: Deployment
+DiffAdded	  + metadata:
+DiffAdded	  +   name: web-prod-worker
+DiffAdded	  +   namespace: prod
+DiffAdded	  +   annotations:
+DiffAdded	  +     deployah.dev/environment-instance: prod
+DiffAdded	  +     deployah.dev/project: web
+DiffAdded	  +     deployah.dev/source: spec
+DiffAdded	  +   labels:
+DiffAdded	  +     app.kubernetes.io/instance: web-prod
+DiffAdded	  +     app.kubernetes.io/managed-by: Helm
+DiffAdded	  +     app.kubernetes.io/name: worker
+DiffAdded	  +     deployah.dev/component: worker
+DiffAdded	  +     deployah.dev/environment: prod
+DiffAdded	  +     deployah.dev/instance: web-prod
+DiffAdded	  +     deployah.dev/project: web
+DiffAdded	  +     helm.sh/chart: worker-0.1.0
+DiffAdded	  + spec:
+DiffAdded	  +   replicas: 1
+DiffAdded	  +   revisionHistoryLimit: 10
+DiffAdded	  +   selector:
+DiffAdded	  +     matchLabels:
+DiffAdded	  +       app.kubernetes.io/instance: web-prod
+DiffAdded	  +       app.kubernetes.io/name: worker
+DiffAdded	  +   strategy:
+DiffAdded	  +     type: RollingUpdate
+DiffAdded	  +   template:
+DiffAdded	  +     metadata:
+DiffAdded	  +       annotations:
+DiffAdded	  +         deployah.dev/environment-instance: prod
+DiffAdded	  +       labels:
+DiffAdded	  +         app.kubernetes.io/instance: web-prod
+DiffAdded	  +         app.kubernetes.io/managed-by: Helm
+DiffAdded	  +         app.kubernetes.io/name: worker
+DiffAdded	  +         deployah.dev/component: worker
+DiffAdded	  +         deployah.dev/environment: prod
+DiffAdded	  +         deployah.dev/instance: web-prod
+DiffAdded	  +         deployah.dev/project: web
+DiffAdded	  +         helm.sh/chart: worker-0.1.0
+DiffAdded	  +     spec:
+DiffAdded	  +       affinity:
+DiffAdded	  +         podAntiAffinity:
+DiffAdded	  +           preferredDuringSchedulingIgnoredDuringExecution:
+DiffAdded	  +             - podAffinityTerm:
+DiffAdded	  +                 labelSelector:
+DiffAdded	  +                   matchLabels:
+DiffAdded	  +                     app.kubernetes.io/instance: web-prod
+DiffAdded	  +                     app.kubernetes.io/name: worker
+DiffAdded	  +                 topologyKey: kubernetes.io/hostname
+DiffAdded	  +               weight: 1
+DiffAdded	  +       containers:
+DiffAdded	  +         - image: ghcr.io/example/worker:1.0
+DiffAdded	  +           imagePullPolicy: IfNotPresent
+DiffAdded	  +           name: worker
+DiffAdded	  +           resources:
+DiffAdded	  +             limits: {}
+DiffAdded	  +             requests:
+DiffAdded	  +               cpu: 500m
+DiffAdded	  +               ephemeral-storage: 50Mi
+DiffAdded	  +               memory: 512Mi
+DiffAdded	  +       restartPolicy: Always
+DiffAdded	  +       serviceAccountName: default
+DiffAdded	  +       terminationGracePeriodSeconds: 60
+DiffRemoved	  - delete apps/v1/Deployment "web-prod-legacy"
+DiffRemoved	  - apiVersion: apps/v1
+DiffRemoved	  - kind: Deployment
+DiffRemoved	  - metadata:
+DiffRemoved	  -   name: web-prod-legacy
+DiffRemoved	  -   namespace: prod
+DiffRemoved	  -   annotations:
+DiffRemoved	  -     deployah.dev/environment-instance: prod
+DiffRemoved	  -     deployah.dev/project: web
+DiffRemoved	  -     deployah.dev/source: spec
+DiffRemoved	  -   labels:
+DiffRemoved	  -     app.kubernetes.io/instance: web-prod
+DiffRemoved	  -     app.kubernetes.io/managed-by: Helm
+DiffRemoved	  -     app.kubernetes.io/name: legacy
+DiffRemoved	  -     deployah.dev/component: legacy
+DiffRemoved	  -     deployah.dev/environment: prod
+DiffRemoved	  -     deployah.dev/instance: web-prod
+DiffRemoved	  -     deployah.dev/project: web
+DiffRemoved	  -     helm.sh/chart: legacy-0.1.0
+DiffRemoved	  - spec:
+DiffRemoved	  -   replicas: 1
+DiffRemoved	  -   revisionHistoryLimit: 10
+DiffRemoved	  -   selector:
+DiffRemoved	  -     matchLabels:
+DiffRemoved	  -       app.kubernetes.io/instance: web-prod
+DiffRemoved	  -       app.kubernetes.io/name: legacy
+DiffRemoved	  -   strategy:
+DiffRemoved	  -     type: RollingUpdate
+DiffRemoved	  -   template:
+DiffRemoved	  -     metadata:
+DiffRemoved	  -       annotations:
+DiffRemoved	  -         deployah.dev/environment-instance: prod
+DiffRemoved	  -       labels:
+DiffRemoved	  -         app.kubernetes.io/instance: web-prod
+DiffRemoved	  -         app.kubernetes.io/managed-by: Helm
+DiffRemoved	  -         app.kubernetes.io/name: legacy
+DiffRemoved	  -         deployah.dev/component: legacy
+DiffRemoved	  -         deployah.dev/environment: prod
+DiffRemoved	  -         deployah.dev/instance: web-prod
+DiffRemoved	  -         deployah.dev/project: web
+DiffRemoved	  -         helm.sh/chart: legacy-0.1.0
+DiffRemoved	  -     spec:
+DiffRemoved	  -       affinity:
+DiffRemoved	  -         podAntiAffinity:
+DiffRemoved	  -           preferredDuringSchedulingIgnoredDuringExecution:
+DiffRemoved	  -             - podAffinityTerm:
+DiffRemoved	  -                 labelSelector:
+DiffRemoved	  -                   matchLabels:
+DiffRemoved	  -                     app.kubernetes.io/instance: web-prod
+DiffRemoved	  -                     app.kubernetes.io/name: legacy
+DiffRemoved	  -                 topologyKey: kubernetes.io/hostname
+DiffRemoved	  -               weight: 1
+DiffRemoved	  -       containers:
+DiffRemoved	  -         - image: ghcr.io/example/legacy:1.0
+DiffRemoved	  -           imagePullPolicy: IfNotPresent
+DiffRemoved	  -           name: legacy
+DiffRemoved	  -           resources:
+DiffRemoved	  -             limits: {}
+DiffRemoved	  -             requests:
+DiffRemoved	  -               cpu: 500m
+DiffRemoved	  -               ephemeral-storage: 50Mi
+DiffRemoved	  -               memory: 512Mi
+DiffRemoved	  -       restartPolicy: Always
+DiffRemoved	  -       serviceAccountName: default
+DiffRemoved	  -       terminationGracePeriodSeconds: 60
+Title	Tasks
+Title	  preDeploy
+DiffModified	    ~ migrate  changed, will run
+DiffModified	      ~ update batch/v1/Job "web-prod-migrate"
+DiffContext	          template:
+DiffContext	            spec:
+DiffContext	              containers:
+DiffRemoved	      -         - image: ghcr.io/example/web:1.0
+DiffAdded	      +         - command:
+DiffAdded	      +             - --check
+DiffAdded	      +           image: ghcr.io/example/web:2.0
+DiffContext	                  name: migrate
+Title	  postDeploy
+DiffRemoved	    - old-check  removed
+DiffRemoved	      - delete batch/v1/Job "web-prod-old-check"
+DiffRemoved	      - apiVersion: batch/v1
+DiffRemoved	      - kind: Job
+DiffRemoved	      - metadata:
+DiffRemoved	      -   name: web-prod-old-check
+DiffRemoved	      -   namespace: prod
+DiffRemoved	      -   annotations:
+DiffRemoved	      -     deployah.dev/environment-instance: prod
+DiffRemoved	      -     deployah.dev/project: web
+DiffRemoved	      -     deployah.dev/source: spec
+DiffRemoved	      -     helm.sh/hook: post-install,post-upgrade
+DiffRemoved	      -     helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+DiffRemoved	      -     helm.sh/hook-weight: "0"
+DiffRemoved	      -   labels:
+DiffRemoved	      -     app.kubernetes.io/instance: web-prod
+DiffRemoved	      -     app.kubernetes.io/managed-by: Helm
+DiffRemoved	      -     app.kubernetes.io/name: old-check
+DiffRemoved	      -     deployah.dev/component: old-check
+DiffRemoved	      -     deployah.dev/environment: prod
+DiffRemoved	      -     deployah.dev/instance: web-prod
+DiffRemoved	      -     deployah.dev/project: web
+DiffRemoved	      -     deployah.dev/task: old-check
+DiffRemoved	      -     helm.sh/chart: old-check-0.1.0
+DiffRemoved	      - spec:
+DiffRemoved	      -   activeDeadlineSeconds: 300
+DiffRemoved	      -   backoffLimit: 3
+DiffRemoved	      -   completionMode: Indexed
+DiffRemoved	      -   completions: 1
+DiffRemoved	      -   parallelism: 1
+DiffRemoved	      -   template:
+DiffRemoved	      -     metadata:
+DiffRemoved	      -       annotations:
+DiffRemoved	      -         deployah.dev/environment-instance: prod
+DiffRemoved	      -       labels:
+DiffRemoved	      -         app.kubernetes.io/instance: web-prod
+DiffRemoved	      -         app.kubernetes.io/managed-by: Helm
+DiffRemoved	      -         app.kubernetes.io/name: old-check
+DiffRemoved	      -         deployah.dev/component: old-check
+DiffRemoved	      -         deployah.dev/environment: prod
+DiffRemoved	      -         deployah.dev/instance: web-prod
+DiffRemoved	      -         deployah.dev/project: web
+DiffRemoved	      -         deployah.dev/task: old-check
+DiffRemoved	      -         helm.sh/chart: old-check-0.1.0
+DiffRemoved	      -     spec:
+DiffRemoved	      -       automountServiceAccountToken: false
+DiffRemoved	      -       containers:
+DiffRemoved	      -         - command:
+DiffRemoved	      -             - ./old-check
+DiffRemoved	      -           env:
+DiffRemoved	      -             - name: LOG
+DiffRemoved	      -               value: info
+DiffRemoved	      -           image: ghcr.io/example/web:1.0
+DiffRemoved	      -           imagePullPolicy: IfNotPresent
+DiffRemoved	      -           name: old-check
+DiffRemoved	      -           resources:
+DiffRemoved	      -             limits: {}
+DiffRemoved	      -             requests:
+DiffRemoved	      -               cpu: 500m
+DiffRemoved	      -               ephemeral-storage: 50Mi
+DiffRemoved	      -               memory: 512Mi
+DiffRemoved	      -       restartPolicy: OnFailure
+DiffAdded	    + smoke  new, will run
+DiffAdded	      + create batch/v1/Job "web-prod-smoke"
+DiffAdded	      + apiVersion: batch/v1
+DiffAdded	      + kind: Job
+DiffAdded	      + metadata:
+DiffAdded	      +   name: web-prod-smoke
+DiffAdded	      +   namespace: prod
+DiffAdded	      +   annotations:
+DiffAdded	      +     deployah.dev/environment-instance: prod
+DiffAdded	      +     deployah.dev/project: web
+DiffAdded	      +     deployah.dev/source: spec
+DiffAdded	      +     helm.sh/hook: post-install,post-upgrade
+DiffAdded	      +     helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+DiffAdded	      +     helm.sh/hook-weight: "0"
+DiffAdded	      +   labels:
+DiffAdded	      +     app.kubernetes.io/instance: web-prod
+DiffAdded	      +     app.kubernetes.io/managed-by: Helm
+DiffAdded	      +     app.kubernetes.io/name: smoke
+DiffAdded	      +     deployah.dev/component: smoke
+DiffAdded	      +     deployah.dev/environment: prod
+DiffAdded	      +     deployah.dev/instance: web-prod
+DiffAdded	      +     deployah.dev/project: web
+DiffAdded	      +     deployah.dev/task: smoke
+DiffAdded	      +     helm.sh/chart: smoke-0.1.0
+DiffAdded	      + spec:
+DiffAdded	      +   activeDeadlineSeconds: 300
+DiffAdded	      +   backoffLimit: 3
+DiffAdded	      +   completionMode: Indexed
+DiffAdded	      +   completions: 1
+DiffAdded	      +   parallelism: 1
+DiffAdded	      +   template:
+DiffAdded	      +     metadata:
+DiffAdded	      +       annotations:
+DiffAdded	      +         deployah.dev/environment-instance: prod
+DiffAdded	      +       labels:
+DiffAdded	      +         app.kubernetes.io/instance: web-prod
+DiffAdded	      +         app.kubernetes.io/managed-by: Helm
+DiffAdded	      +         app.kubernetes.io/name: smoke
+DiffAdded	      +         deployah.dev/component: smoke
+DiffAdded	      +         deployah.dev/environment: prod
+DiffAdded	      +         deployah.dev/instance: web-prod
+DiffAdded	      +         deployah.dev/project: web
+DiffAdded	      +         deployah.dev/task: smoke
+DiffAdded	      +         helm.sh/chart: smoke-0.1.0
+DiffAdded	      +     spec:
+DiffAdded	      +       automountServiceAccountToken: false
+DiffAdded	      +       containers:
+DiffAdded	      +         - command:
+DiffAdded	      +             - ./smoke
+DiffAdded	      +           env:
+DiffAdded	      +             - name: LOG
+DiffAdded	      +               value: info
+DiffAdded	      +           image: ghcr.io/example/web:2.0
+DiffAdded	      +           imagePullPolicy: IfNotPresent
+DiffAdded	      +           name: smoke
+DiffAdded	      +           resources:
+DiffAdded	      +             limits: {}
+DiffAdded	      +             requests:
+DiffAdded	      +               cpu: 500m
+DiffAdded	      +               ephemeral-storage: 50Mi
+DiffAdded	      +               memory: 512Mi
+DiffAdded	      +       restartPolicy: OnFailure
+Title	  schedule
+DiffModified	    ~ cleanup  changed
+DiffModified	      ~ update batch/v1/CronJob "web-prod-cleanup"
+DiffContext	              template:
+DiffContext	                spec:
+DiffContext	                  containers:
+DiffRemoved	      -             - image: ghcr.io/example/web:1.0
+DiffAdded	      +             - image: ghcr.io/example/web:2.0
+DiffContext	                      name: cleanup
+DiffRemoved	      -   schedule: 0 2 * * *
+DiffAdded	      +   schedule: 0 3 * * *
+Title	Summary
+Primary	  Resources: 1 create, 2 update, 1 delete
+Primary	  Tasks: 2 to run, 1 schedule changed

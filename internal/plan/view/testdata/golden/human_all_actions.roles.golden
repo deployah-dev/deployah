@@ -1,0 +1,96 @@
+Title	Plan for project "web" on environment "prod"
+Primary	Context:   production-eu
+Primary	Namespace: prod
+Primary	Release:   web
+Primary	Revision:  12
+Title	Resources
+DiffAdded	  + create v1/ConfigMap "app"
+DiffAdded	  + apiVersion: v1
+DiffAdded	  + kind: ConfigMap
+DiffAdded	  + metadata:
+DiffAdded	  +   name: app
+DiffAdded	  +   namespace: prod
+DiffAdded	  +   annotations:
+DiffAdded	  +     example.com/keep: yes
+DiffAdded	  +   labels:
+DiffAdded	  +     app: web
+DiffAdded	  + data:
+DiffAdded	  +   key: v1
+DiffRemoved	  - delete v1/ConfigMap "old"
+DiffRemoved	  - apiVersion: v1
+DiffRemoved	  - kind: ConfigMap
+DiffRemoved	  - metadata:
+DiffRemoved	  -   name: old
+DiffRemoved	  -   namespace: prod
+DiffRemoved	  -   annotations:
+DiffRemoved	  -     example.com/keep: yes
+DiffRemoved	  -   labels:
+DiffRemoved	  -     app: web
+DiffRemoved	  - data:
+DiffRemoved	  -   key: v1
+DiffModified	  ~ update v1/ConfigMap "web"
+DiffContext	    data:
+DiffRemoved	  -   key: v1
+DiffAdded	  +   key: v2
+Title	Tasks
+Title	  preDeploy
+DiffModified	    ~ migrate  changed, will run
+DiffModified	      ~ update v1/ConfigMap "web-migrate-env"
+DiffContext	        data:
+DiffRemoved	      -   key: v1
+DiffAdded	      +   key: v2
+Primary	    seed  will run
+Title	  postDeploy
+DiffAdded	    + smoke  new, will run
+DiffAdded	      + create batch/v1/Job "web-smoke"
+DiffAdded	      + apiVersion: batch/v1
+DiffAdded	      + kind: Job
+DiffAdded	      + metadata:
+DiffAdded	      +   name: web-smoke
+DiffAdded	      +   namespace: prod
+DiffAdded	      +   annotations:
+DiffAdded	      +     helm.sh/hook: post-install,post-upgrade
+DiffAdded	      +     helm.sh/hook-weight: "0"
+DiffAdded	      +   labels:
+DiffAdded	      +     deployah.dev/task: smoke
+DiffAdded	      + spec:
+DiffAdded	      +   backoffLimit: 1
+DiffAdded	      +   template:
+DiffAdded	      +     spec:
+DiffAdded	      +       containers:
+DiffAdded	      +         - command:
+DiffAdded	      +             - ./smoke
+DiffAdded	      +           image: ghcr.io/example/web:1.2.3
+DiffAdded	      +           name: smoke
+DiffAdded	      +       restartPolicy: OnFailure
+DiffRemoved	    - old-check  removed
+DiffRemoved	      - delete batch/v1/Job "web-old-check"
+DiffRemoved	      - apiVersion: batch/v1
+DiffRemoved	      - kind: Job
+DiffRemoved	      - metadata:
+DiffRemoved	      -   name: web-old-check
+DiffRemoved	      -   namespace: prod
+DiffRemoved	      -   annotations:
+DiffRemoved	      -     helm.sh/hook: post-install,post-upgrade
+DiffRemoved	      -     helm.sh/hook-weight: "1"
+DiffRemoved	      -   labels:
+DiffRemoved	      -     deployah.dev/task: old-check
+DiffRemoved	      - spec:
+DiffRemoved	      -   backoffLimit: 1
+DiffRemoved	      -   template:
+DiffRemoved	      -     spec:
+DiffRemoved	      -       containers:
+DiffRemoved	      -         - command:
+DiffRemoved	      -             - ./old-check
+DiffRemoved	      -           image: ghcr.io/example/web:1.2.3
+DiffRemoved	      -           name: old-check
+DiffRemoved	      -       restartPolicy: OnFailure
+Title	  schedule
+DiffModified	    ~ cleanup  changed
+DiffModified	      ~ update batch/v1/CronJob "web-cleanup"
+DiffContext	        spec:
+DiffRemoved	      -   schedule: 0 2 * * *
+DiffAdded	      +   schedule: 0 3 * * *
+Title	Summary
+Primary	  Resources: 1 create, 2 update, 1 delete
+Primary	  Tasks: 3 to run, 1 schedule changed

@@ -1,0 +1,16 @@
+Title	Plan for project "web" on environment "prod"
+Primary	Context:   production-eu
+Primary	Namespace: prod
+Primary	Release:   web
+Primary	Revision:  12
+Title	Resources
+DiffRemoved	  - delete v1/ConfigMap "old"
+DiffRemoved	  - apiVersion: v1
+DiffRemoved	  - kind: ConfigMap
+DiffRemoved	  - metadata:
+DiffRemoved	  -   name: old
+DiffRemoved	  -   namespace: prod
+DiffRemoved	  - data:
+DiffRemoved	  -   key: v1
+Title	Summary
+Primary	  Resources: 0 create, 0 update, 1 delete

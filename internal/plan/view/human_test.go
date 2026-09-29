@@ -333,7 +333,7 @@ func (errWriter) Write([]byte) (int, error) {
 	return 0, errors.New("write failed")
 }
 
-func TestWriteHuman_ZeroThemeIsPlainText(t *testing.T) {
+func TestWriteHuman_NilStylerIsPlainText(t *testing.T) {
 	t.Parallel()
 	p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{createChangeForHuman()})
 	var buf bytes.Buffer
@@ -967,8 +967,8 @@ func allActionsInputs() (semantic.Header, []semantic.ResourceChange, []semantic.
 	return humanHeader(), changes, tasks
 }
 
-func TestWriteHuman_DriftSection(t *testing.T) {
-	t.Parallel()
+func humanDriftPlan(t *testing.T) semantic.Plan {
+	t.Helper()
 	p, err := semantic.AttachDrift(mustPlanWithHeader(t, humanHeader(), semantic.HelmNone, nil, nil), []semantic.DriftChange{
 		{
 			Resource: ref("ConfigMap", "app"),
@@ -994,6 +994,12 @@ func TestWriteHuman_DriftSection(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
+	return p
+}
+
+func TestWriteHuman_DriftSection(t *testing.T) {
+	t.Parallel()
+	p := humanDriftPlan(t)
 	var buf bytes.Buffer
 	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
 	text := buf.String()

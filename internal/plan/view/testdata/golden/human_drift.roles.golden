@@ -1,0 +1,29 @@
+Title	Plan for project "web" on environment "prod"
+Primary	Context:   production-eu
+Primary	Namespace: prod
+Primary	Release:   web
+Primary	Revision:  12
+Title	Drift
+DiffModified	  ~ modified v1/ConfigMap "app"
+DiffContext	    data:
+DiffRemoved	  -   key: old
+DiffAdded	  +   key: new
+DiffAdded	  + unexpected v1/ConfigMap "extra"
+DiffAdded	  + apiVersion: v1
+DiffAdded	  + kind: ConfigMap
+DiffAdded	  + metadata:
+DiffAdded	  +   name: extra
+DiffAdded	  +   namespace: prod
+DiffAdded	  + data:
+DiffAdded	  +   key: live
+DiffRemoved	  - missing v1/ConfigMap "other"
+DiffRemoved	  - apiVersion: v1
+DiffRemoved	  - kind: ConfigMap
+DiffRemoved	  - metadata:
+DiffRemoved	  -   name: other
+DiffRemoved	  -   namespace: prod
+DiffRemoved	  - data:
+DiffRemoved	  -   key: gone
+Title	Summary
+Primary	  Resources: 0 create, 0 update, 0 delete
+Primary	  Drift: 1 modified, 1 missing, 1 unexpected
