@@ -1,0 +1,16 @@
+Title	Plan for project "web" on environment "prod"
+Primary	Context:   production-eu
+Primary	Namespace: prod
+Primary	Release:   web
+Primary	Revision:  12
+Title	Resources
+DiffAdded	  + create v1/ConfigMap "app"
+DiffAdded	  + apiVersion: v1
+DiffAdded	  + kind: ConfigMap
+DiffAdded	  + metadata:
+DiffAdded	  +   name: app
+DiffAdded	  +   namespace: prod
+DiffAdded	  + data:
+DiffAdded	  +   key: v1
+Title	Summary
+Primary	  Resources: 1 create, 0 update, 0 delete

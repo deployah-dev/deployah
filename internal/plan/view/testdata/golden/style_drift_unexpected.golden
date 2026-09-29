@@ -1,0 +1,17 @@
+Title	Plan for project "web" on environment "prod"
+Primary	Context:   production-eu
+Primary	Namespace: prod
+Primary	Release:   web
+Primary	Revision:  12
+Title	Drift
+DiffAdded	  + unexpected v1/ConfigMap "extra"
+DiffAdded	  + apiVersion: v1
+DiffAdded	  + kind: ConfigMap
+DiffAdded	  + metadata:
+DiffAdded	  +   name: extra
+DiffAdded	  +   namespace: prod
+DiffAdded	  + data:
+DiffAdded	  +   key: live
+Title	Summary
+Primary	  Resources: 0 create, 0 update, 0 delete
+Primary	  Drift: 0 modified, 0 missing, 1 unexpected

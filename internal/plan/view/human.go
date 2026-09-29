@@ -22,7 +22,6 @@ import (
 
 	"github.com/aymanbagabas/go-udiff"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"nabat.dev/theme"
 
 	"deployah.dev/deployah/internal/plan/semantic"
 )
@@ -30,6 +29,10 @@ import (
 // yamlDiffContextLines is small because Update diffs are
 // ancestor-projected, not whole-object dumps.
 const yamlDiffContextLines = 3
+
+// humanTabWidth is the number of spaces that replace one tab in Human
+// output. Expansion keeps column alignment.
+const humanTabWidth = 4
 
 const headerLabelWidth = 10
 
@@ -86,7 +89,7 @@ func WriteHuman(w io.Writer, p semantic.Plan, opts Options) error {
 func writeHumanHeader(w io.Writer, h semantic.Header, opts Options) error {
 	if h.Project != "" || h.Environment != "" {
 		line := fmt.Sprintf("Plan for project %q on environment %q", h.Project, h.Environment)
-		if err := writeln(w, opts, theme.TextTitle, line); err != nil {
+		if err := writeln(w, opts, RoleTitle, line); err != nil {
 			return err
 		}
 		if _, err := fmt.Fprintln(w); err != nil {
@@ -105,12 +108,12 @@ func writeHumanHeader(w io.Writer, h semantic.Header, opts Options) error {
 		if p.value == "" {
 			continue
 		}
-		if err := writeln(w, opts, theme.TextPrimary, padLabel(p.label)+" "+p.value); err != nil {
+		if err := writeln(w, opts, RolePrimary, padLabel(p.label)+" "+p.value); err != nil {
 			return err
 		}
 	}
 	if h.Revision > 0 {
-		if err := writeln(w, opts, theme.TextPrimary, padLabel("Revision:")+" "+strconv.Itoa(h.Revision)); err != nil {
+		if err := writeln(w, opts, RolePrimary, padLabel("Revision:")+" "+strconv.Itoa(h.Revision)); err != nil {
 			return err
 		}
 	}
@@ -136,7 +139,7 @@ func writeHumanResources(w io.Writer, changes []semantic.ResourceChange, owned m
 	if len(visible) == 0 {
 		return false, nil
 	}
-	if err := writeln(w, opts, theme.TextTitle, "Resources"); err != nil {
+	if err := writeln(w, opts, RoleTitle, "Resources"); err != nil {
 		return false, err
 	}
 	if err := writeBlank(w); err != nil {
@@ -159,7 +162,7 @@ func writeHumanTasks(w io.Writer, p semantic.Plan, indexed map[string]semantic.R
 	if len(p.Tasks) == 0 {
 		return nil
 	}
-	if err := writeln(w, opts, theme.TextTitle, "Tasks"); err != nil {
+	if err := writeln(w, opts, RoleTitle, "Tasks"); err != nil {
 		return err
 	}
 	if err := writeBlank(w); err != nil {
@@ -179,7 +182,7 @@ func writeHumanTasks(w io.Writer, p semantic.Plan, indexed map[string]semantic.R
 			firstPhase = false
 			firstInPhase = true
 			current = t.Phase
-			if err := writeln(w, opts, theme.TextTitle, "  "+t.Phase.String()); err != nil {
+			if err := writeln(w, opts, RoleTitle, "  "+t.Phase.String()); err != nil {
 				return err
 			}
 			if err := writeBlank(w); err != nil {
@@ -200,7 +203,7 @@ func writeHumanTasks(w io.Writer, p semantic.Plan, indexed map[string]semantic.R
 }
 
 func writeHumanTask(w io.Writer, t semantic.TaskPlan, indexed map[string]semantic.ResourceChange, planNS string, opts Options) error {
-	if err := writeln(w, opts, taskHeadingToken(t), "    "+taskTitle(t)); err != nil {
+	if err := writeln(w, opts, taskHeadingRole(t), "    "+taskTitle(t)); err != nil {
 		return err
 	}
 	for i := range t.Definitions {
@@ -254,7 +257,7 @@ func taskTitle(t semantic.TaskPlan) string {
 
 func writeHumanDefinition(w io.Writer, d semantic.HookDefinition, planNS string, opts Options) error {
 	line := resourceHeading(d.Action, d.Resource, planNS)
-	if err := writeln(w, opts, actionHeadingToken(d.Action), "      "+line); err != nil {
+	if err := writeln(w, opts, actionHeadingRole(d.Action), "      "+line); err != nil {
 		return err
 	}
 	return writeActionBody(w, d.Action, d.Before, d.After, d.Fields, d.Resource, "      ", opts)
@@ -262,7 +265,7 @@ func writeHumanDefinition(w io.Writer, d semantic.HookDefinition, planNS string,
 
 func writeHumanChange(w io.Writer, c semantic.ResourceChange, planNS, indent string, opts Options) error {
 	line := resourceHeading(c.Action, c.Resource, planNS)
-	if err := writeln(w, opts, actionHeadingToken(c.Action), indent+line); err != nil {
+	if err := writeln(w, opts, actionHeadingRole(c.Action), indent+line); err != nil {
 		return err
 	}
 	return writeActionBody(w, c.Action, c.Before, c.After, c.Fields, c.Resource, indent, opts)
@@ -272,7 +275,7 @@ func writeHumanDrift(w io.Writer, drift []semantic.DriftChange, planNS string, o
 	if len(drift) == 0 {
 		return nil
 	}
-	if err := writeln(w, opts, theme.TextTitle, "Drift"); err != nil {
+	if err := writeln(w, opts, RoleTitle, "Drift"); err != nil {
 		return err
 	}
 	if err := writeBlank(w); err != nil {
@@ -293,7 +296,7 @@ func writeHumanDrift(w io.Writer, drift []semantic.DriftChange, planNS string, o
 
 func writeHumanDriftChange(w io.Writer, d semantic.DriftChange, planNS, indent string, opts Options) error {
 	line := driftHeading(d.Action, d.Resource, planNS)
-	if err := writeln(w, opts, driftHeadingToken(d.Action), indent+line); err != nil {
+	if err := writeln(w, opts, driftHeadingRole(d.Action), indent+line); err != nil {
 		return err
 	}
 	beforeObj, afterObj, renderFields := humanSides(d.Previous, d.Live, d.Fields, d.Resource, opts)
@@ -302,9 +305,9 @@ func writeHumanDriftChange(w io.Writer, d semantic.DriftChange, planNS, indent s
 		beforeProj, afterProj := projectFields(beforeObj, afterObj, renderFields)
 		return writeProjectedDiff(w, beforeProj, afterProj, indent, opts)
 	case semantic.DriftMissing:
-		return writeObjectYAML(w, beforeObj, indent+"- ", theme.StatusError, opts)
+		return writeObjectYAML(w, beforeObj, indent+"- ", RoleDiffRemoved, opts)
 	case semantic.DriftUnexpected:
-		return writeObjectYAML(w, afterObj, indent+"+ ", theme.StatusSuccess, opts)
+		return writeObjectYAML(w, afterObj, indent+"+ ", RoleDiffAdded, opts)
 	default:
 		return nil
 	}
@@ -322,9 +325,9 @@ func writeActionBody(
 	beforeObj, afterObj, renderFields := humanSides(before, after, fields, ref, opts)
 	switch action {
 	case semantic.Create:
-		return writeObjectYAML(w, afterObj, indent+"+ ", theme.StatusSuccess, opts)
+		return writeObjectYAML(w, afterObj, indent+"+ ", RoleDiffAdded, opts)
 	case semantic.Delete:
-		return writeObjectYAML(w, beforeObj, indent+"- ", theme.StatusError, opts)
+		return writeObjectYAML(w, beforeObj, indent+"- ", RoleDiffRemoved, opts)
 	case semantic.Update:
 		beforeProj, afterProj := projectFields(beforeObj, afterObj, renderFields)
 		return writeProjectedDiff(w, beforeProj, afterProj, indent, opts)
@@ -349,12 +352,12 @@ func humanSides(
 	return beforeObj, afterObj, renderFields
 }
 
-func writeObjectYAML(w io.Writer, obj map[string]any, prefix string, token theme.Token, opts Options) error {
+func writeObjectYAML(w io.Writer, obj map[string]any, prefix string, role Role, opts Options) error {
 	text, err := marshalOrderedYAML(obj)
 	if err != nil {
 		return err
 	}
-	return writePrefixedYAML(w, text, prefix, token, opts)
+	return writePrefixedYAML(w, text, prefix, role, opts)
 }
 
 func writeProjectedDiff(w io.Writer, before, after map[string]any, indent string, opts Options) error {
@@ -375,9 +378,9 @@ func writeProjectedDiff(w io.Writer, before, after map[string]any, indent string
 	return writeYAMLDiff(w, beforeYAML, afterYAML, indent, opts)
 }
 
-func writePrefixedYAML(w io.Writer, text, prefix string, token theme.Token, opts Options) error {
+func writePrefixedYAML(w io.Writer, text, prefix string, role Role, opts Options) error {
 	for line := range strings.SplitSeq(strings.TrimRight(revealSecretSentinels(text), "\n"), "\n") {
-		if err := writeln(w, opts, token, prefix+line); err != nil {
+		if err := writeln(w, opts, role, prefix+line); err != nil {
 			return err
 		}
 	}
@@ -391,19 +394,19 @@ func writeYAMLDiff(w io.Writer, beforeYAML, afterYAML, indent string, opts Optio
 		return fmt.Errorf("diff yaml: %w", err)
 	}
 	if len(diff.Hunks) == 0 {
-		return writePrefixedYAML(w, afterYAML, indent+"  ", theme.TextMuted, opts)
+		return writePrefixedYAML(w, afterYAML, indent+"  ", RoleDiffContext, opts)
 	}
 	for _, hunk := range diff.Hunks {
 		for _, line := range hunk.Lines {
 			content := revealSecretSentinels(strings.TrimRight(line.Content, "\n"))
-			prefix, token := indent+"  ", theme.TextMuted
+			prefix, role := indent+"  ", RoleDiffContext
 			switch line.Kind {
 			case udiff.Delete:
-				prefix, token = indent+"- ", theme.StatusError
+				prefix, role = indent+"- ", RoleDiffRemoved
 			case udiff.Insert:
-				prefix, token = indent+"+ ", theme.StatusSuccess
+				prefix, role = indent+"+ ", RoleDiffAdded
 			}
-			if werr := writeln(w, opts, token, prefix+content); werr != nil {
+			if werr := writeln(w, opts, role, prefix+content); werr != nil {
 				return werr
 			}
 		}
@@ -412,12 +415,12 @@ func writeYAMLDiff(w io.Writer, beforeYAML, afterYAML, indent string, opts Optio
 }
 
 func writeHumanFooter(w io.Writer, p semantic.Plan, opts Options) error {
-	if err := writeln(w, opts, theme.TextTitle, "Summary"); err != nil {
+	if err := writeln(w, opts, RoleTitle, "Summary"); err != nil {
 		return err
 	}
 	s := p.Summary
 	resourceLine := fmt.Sprintf("  Resources: %d create, %d update, %d delete", s.Create, s.Update, s.Delete)
-	if err := writeln(w, opts, theme.TextPrimary, resourceLine); err != nil {
+	if err := writeln(w, opts, RolePrimary, resourceLine); err != nil {
 		return err
 	}
 	if p.HasDrift() {
@@ -433,7 +436,7 @@ func writeHumanFooter(w io.Writer, p semantic.Plan, opts Options) error {
 			}
 		}
 		driftLine := fmt.Sprintf("  Drift: %d modified, %d missing, %d unexpected", modified, missing, unexpected)
-		if err := writeln(w, opts, theme.TextPrimary, driftLine); err != nil {
+		if err := writeln(w, opts, RolePrimary, driftLine); err != nil {
 			return err
 		}
 	}
@@ -454,7 +457,7 @@ func writeHumanFooter(w io.Writer, p semantic.Plan, opts Options) error {
 	if schedChanged > 0 {
 		taskLine += fmt.Sprintf(", %d schedule changed", schedChanged)
 	}
-	return writeln(w, opts, theme.TextPrimary, taskLine)
+	return writeln(w, opts, RolePrimary, taskLine)
 }
 
 func writeBlank(w io.Writer) error {
@@ -513,14 +516,14 @@ func driftMarker(action semantic.DriftAction) string {
 	}
 }
 
-func driftHeadingToken(action semantic.DriftAction) theme.Token {
+func driftHeadingRole(action semantic.DriftAction) Role {
 	switch action {
 	case semantic.DriftUnexpected:
-		return theme.StatusSuccess
+		return RoleDiffAdded
 	case semantic.DriftMissing:
-		return theme.StatusError
+		return RoleDiffRemoved
 	default:
-		return theme.StatusWarning
+		return RoleDiffModified
 	}
 }
 
@@ -537,29 +540,29 @@ func actionMarker(action semantic.Action) string {
 	}
 }
 
-func actionHeadingToken(action semantic.Action) theme.Token {
+func actionHeadingRole(action semantic.Action) Role {
 	switch action {
 	case semantic.Create:
-		return theme.StatusSuccess
+		return RoleDiffAdded
 	case semantic.Delete:
-		return theme.StatusError
+		return RoleDiffRemoved
 	case semantic.Update:
-		return theme.StatusWarning
+		return RoleDiffModified
 	default:
-		return theme.StatusWarning
+		return RoleDiffModified
 	}
 }
 
-func taskHeadingToken(t semantic.TaskPlan) theme.Token {
+func taskHeadingRole(t semantic.TaskPlan) Role {
 	switch t.Action {
 	case semantic.TaskCreate:
-		return theme.StatusSuccess
+		return RoleDiffAdded
 	case semantic.TaskDelete:
-		return theme.StatusError
+		return RoleDiffRemoved
 	case semantic.TaskUpdate:
-		return theme.StatusWarning
+		return RoleDiffModified
 	default:
-		return theme.TextPrimary
+		return RolePrimary
 	}
 }
 
@@ -592,11 +595,11 @@ func snapshotMap(s *semantic.ResourceSnapshot) map[string]any {
 	return s.Object
 }
 
-func style(opts Options, token theme.Token, s string) string {
-	return opts.Theme.Style(token).Render(s)
-}
-
-func writeln(w io.Writer, opts Options, token theme.Token, s string) error {
-	_, err := fmt.Fprintln(w, style(opts, token, s))
+func writeln(w io.Writer, opts Options, role Role, s string) error {
+	line := strings.ReplaceAll(s, "\t", strings.Repeat(" ", humanTabWidth))
+	if opts.Styler != nil {
+		line = opts.Styler.Style(role, line)
+	}
+	_, err := fmt.Fprintln(w, line)
 	return err
 }

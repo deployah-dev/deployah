@@ -1,0 +1,35 @@
+Title	Plan for project "web" on environment "prod"
+Primary	Context:   production-eu
+Primary	Namespace: prod
+Primary	Release:   web
+Primary	Revision:  12
+Title	Tasks
+Title	  preDeploy
+DiffModified	    ~ migrate  changed, will run
+DiffModified	      ~ update v1/ConfigMap "env"
+DiffContext	        data:
+DiffRemoved	      -   key: v1
+DiffAdded	      +   key: v2
+Primary	    seed  will run
+Title	  postDeploy
+DiffAdded	    + smoke  new, will run
+DiffAdded	      + create v1/ConfigMap "hook"
+DiffAdded	      + apiVersion: v1
+DiffAdded	      + kind: ConfigMap
+DiffAdded	      + metadata:
+DiffAdded	      +   name: hook
+DiffAdded	      +   namespace: prod
+DiffAdded	      + data:
+DiffAdded	      +   key: v1
+DiffRemoved	    - old-check  removed
+DiffRemoved	      - delete v1/ConfigMap "gone"
+DiffRemoved	      - apiVersion: v1
+DiffRemoved	      - kind: ConfigMap
+DiffRemoved	      - metadata:
+DiffRemoved	      -   name: gone
+DiffRemoved	      -   namespace: prod
+DiffRemoved	      - data:
+DiffRemoved	      -   key: v1
+Title	Summary
+Primary	  Resources: 0 create, 0 update, 0 delete
+Primary	  Tasks: 3 to run

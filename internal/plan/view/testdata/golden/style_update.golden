@@ -1,0 +1,12 @@
+Title	Plan for project "web" on environment "prod"
+Primary	Context:   production-eu
+Primary	Namespace: prod
+Primary	Release:   web
+Primary	Revision:  12
+Title	Resources
+DiffModified	  ~ update v1/ConfigMap "web"
+DiffContext	    data:
+DiffRemoved	  -   key: v1
+DiffAdded	  +   key: v2
+Title	Summary
+Primary	  Resources: 0 create, 1 update, 0 delete
