@@ -36,9 +36,12 @@ const humanTabWidth = 4
 
 const headerLabelWidth = 10
 
-// WriteHuman writes p as text. It does not change p.
-// Resource changes use +, ~, and - markers. The footer counts
-// resources and, when present, tasks and drift.
+// WriteHuman writes a deterministic YAML-oriented rendering of p. It
+// does not mutate p. Resource headings use +, ~, and - markers.
+// Drift, when present, is a separate section. Chart CRDs, when
+// present, are a separate section after Resources that states Helm's
+// chart-CRD lifecycle for each document. The footer is a Summary
+// of resource counts and, when tasks or drift exist, those counts.
 func WriteHuman(w io.Writer, p semantic.Plan, opts Options) error {
 	prepared, err := prepareRender(p, opts)
 	if err != nil {
