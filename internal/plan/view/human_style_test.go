@@ -145,6 +145,9 @@ func TestWriteHuman_StyleRoles(t *testing.T) {
 			}},
 		},
 	})
+	chartCRDs := planWithChartCRDs(t, header, semantic.HelmUpgrade, []semantic.ChartCRD{
+		chartCRD(".deployah/crds/widget.yaml", "widgets.example.com", 0, semantic.ChartCRDUpgrade),
+	})
 	tests := []struct {
 		name   string
 		golden string
@@ -182,6 +185,7 @@ func TestWriteHuman_StyleRoles(t *testing.T) {
 		{name: "drift missing", golden: "style_drift_missing", plan: missing},
 		{name: "drift modified", golden: "style_drift_modified", plan: modified},
 		{name: "tasks", golden: "style_tasks", plan: tasks},
+		{name: "chart crds", golden: "style_chart_crds", plan: chartCRDs},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -36,10 +36,9 @@ const humanTabWidth = 4
 
 const headerLabelWidth = 10
 
-// WriteHuman writes a deterministic YAML-oriented rendering of p. It
-// does not mutate p. Resource headings use +, ~, and - markers.
-// Drift, when present, is a separate section. The footer is a Summary
-// of resource counts and, when tasks or drift exist, those counts.
+// WriteHuman writes p as text. It does not change p.
+// Resource changes use +, ~, and - markers. The footer counts
+// resources and, when present, tasks and drift.
 func WriteHuman(w io.Writer, p semantic.Plan, opts Options) error {
 	prepared, err := prepareRender(p, opts)
 	if err != nil {
@@ -56,6 +55,18 @@ func WriteHuman(w io.Writer, p semantic.Plan, opts Options) error {
 		return rerr
 	}
 	wroteBody = wroteResources
+	// Helm's chart-CRD lifecycle for each document, not a resource change.
+	if len(prepared.ChartCRDs) > 0 {
+		if wroteBody {
+			if berr := writeBlank(w); berr != nil {
+				return berr
+			}
+		}
+		if cerr := writeHumanChartCRDs(w, prepared.ChartCRDs, opts); cerr != nil {
+			return cerr
+		}
+		wroteBody = true
+	}
 	if len(prepared.Tasks) > 0 {
 		if wroteBody {
 			if berr := writeBlank(w); berr != nil {
@@ -67,6 +78,7 @@ func WriteHuman(w io.Writer, p semantic.Plan, opts Options) error {
 		}
 		wroteBody = true
 	}
+	// Drift is observed state.
 	if len(prepared.Drift) > 0 {
 		if wroteBody {
 			if berr := writeBlank(w); berr != nil {
@@ -156,6 +168,83 @@ func writeHumanResources(w io.Writer, changes []semantic.ResourceChange, owned m
 		}
 	}
 	return true, nil
+}
+
+func writeHumanChartCRDs(w io.Writer, crds []semantic.ChartCRD, opts Options) error {
+	if len(crds) == 0 {
+		return nil
+	}
+	if err := writeln(w, opts, RoleTitle, "Chart CRDs"); err != nil {
+		return err
+	}
+	if err := writeBlank(w); err != nil {
+		return err
+	}
+	shared := sharedCRDSources(crds)
+	for i := range crds {
+		if i > 0 {
+			if err := writeBlank(w); err != nil {
+				return err
+			}
+		}
+		if err := writeHumanChartCRD(w, crds[i], shared[crds[i].Source], opts); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func writeHumanChartCRD(w io.Writer, c semantic.ChartCRD, showIndex bool, opts Options) error {
+	heading := "  " + c.Kind + " " + strconv.Quote(c.Name)
+	if err := writeln(w, opts, RolePrimary, heading); err != nil {
+		return err
+	}
+	if c.Source != "" {
+		source := c.Source
+		if showIndex {
+			source += fmt.Sprintf(" (index %d)", c.Index)
+		}
+		if err := writeln(w, opts, RolePrimary, "    "+padLabel("source:")+" "+source); err != nil {
+			return err
+		}
+	}
+	lifecycle := c.Lifecycle.String()
+	if note := chartCRDNote(c.Lifecycle); note != "" {
+		lifecycle += " (" + note + ")"
+	}
+	return writeln(w, opts, RolePrimary, "    "+padLabel("lifecycle:")+" "+lifecycle)
+}
+
+// sharedCRDSources reports sources that appear on more than one chart
+// CRD. An empty source is never shared, so a missing path stays omitted.
+func sharedCRDSources(crds []semantic.ChartCRD) map[string]bool {
+	counts := make(map[string]int, len(crds))
+	for _, c := range crds {
+		if c.Source == "" {
+			continue
+		}
+		counts[c.Source]++
+	}
+	shared := make(map[string]bool)
+	for source, n := range counts {
+		if n > 1 {
+			shared[source] = true
+		}
+	}
+	return shared
+}
+
+func chartCRDNote(lifecycle semantic.ChartCRDLifecycle) string {
+	switch lifecycle {
+	case semantic.ChartCRDProcess:
+		return "Helm install will process this chart CRD"
+	case semantic.ChartCRDSkip:
+		return "Helm install will skip this chart CRD"
+	case semantic.ChartCRDUpgrade:
+		return "Helm upgrade does not process chart CRDs"
+	default:
+		return ""
+	}
 }
 
 func writeHumanTasks(w io.Writer, p semantic.Plan, indexed map[string]semantic.ResourceChange, opts Options) error {

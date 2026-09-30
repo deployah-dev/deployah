@@ -1,0 +1,23 @@
+Plan for project "web" on environment "prod"
+
+Context:   production-eu
+Namespace: prod
+Release:   web
+Revision:  12
+
+Chart CRDs
+
+  CustomResourceDefinition "zeta.example.com"
+    source:    .deployah/crds/bundle.yaml (index 0)
+    lifecycle: upgrade (Helm upgrade does not process chart CRDs)
+
+  CustomResourceDefinition "alpha.example.com"
+    source:    .deployah/crds/bundle.yaml (index 1)
+    lifecycle: upgrade (Helm upgrade does not process chart CRDs)
+
+  CustomResourceDefinition "mu.example.com"
+    source:    .deployah/crds/a.yaml
+    lifecycle: upgrade (Helm upgrade does not process chart CRDs)
+
+Summary
+  Resources: 0 create, 0 update, 0 delete

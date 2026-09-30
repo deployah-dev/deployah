@@ -1,0 +1,15 @@
+Plan for project "web" on environment "prod"
+
+Context:   production-eu
+Namespace: prod
+Release:   web
+Revision:  12
+
+Chart CRDs
+
+  CustomResourceDefinition "widgets.example.com"
+    source:    .deployah/crds/widget.yaml
+    lifecycle: process (Helm install will process this chart CRD)
+
+Summary
+  Resources: 0 create, 0 update, 0 delete
