@@ -16,6 +16,8 @@ package view_test
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -211,6 +213,91 @@ func TestWriteHuman_ChartCRDSectionUsesNoDiffRole(t *testing.T) {
 			assertChartCRDSectionRoles(t, p)
 		})
 	}
+}
+
+func TestWriteHuman_ChartCRDWriteError(t *testing.T) {
+	t.Parallel()
+	p := mustPlanWithHeader(t, humanHeader(), semantic.HelmUpgrade, []semantic.ResourceChange{{
+		Resource: ref("ConfigMap", "app"),
+		Action:   semantic.Create,
+		After:    snap(cm("app", "v1")),
+	}}, nil)
+	var err error
+	p, err = semantic.AttachChartCRDs(p, []semantic.ChartCRD{
+		chartCRD(".deployah/crds/widget.yaml", "widgets.example.com", 0, semantic.ChartCRDUpgrade),
+		chartCRD(".deployah/crds/widget.yaml", "gadgets.example.com", 1, semantic.ChartCRDUpgrade),
+	})
+	require.NoError(t, err)
+
+	var plain captureWriter
+	require.NoError(t, view.WriteHuman(&plain, p, view.Options{}))
+	from, to := chartCRDWriteSpan(t, plain.chunks)
+
+	tests := make([]struct {
+		name string
+		at   int
+	}, 0, to-from+1)
+	for at := from; at <= to; at++ {
+		label := strings.TrimSpace(plain.chunks[at])
+		if label == "" {
+			label = "blank"
+		}
+		tests = append(tests, struct {
+			name string
+			at   int
+		}{name: fmt.Sprintf("%d %s", at, label), at: at})
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			writeErr := view.WriteHuman(&failAtWriter{at: tt.at}, p, view.Options{})
+			require.Error(t, writeErr)
+			assert.ErrorContains(t, writeErr, "write failed")
+		})
+	}
+}
+
+// chartCRDWriteSpan returns the write indexes for the blank line before
+// Chart CRDs through the last lifecycle line. Failing each of those
+// writes checks that a section write error reaches WriteHuman.
+func chartCRDWriteSpan(t *testing.T, chunks []string) (from, to int) {
+	t.Helper()
+	title, last := -1, -1
+	for i, chunk := range chunks {
+		if strings.Contains(chunk, "Chart CRDs") {
+			title = i
+		}
+		if title >= 0 && strings.Contains(chunk, "lifecycle:") {
+			last = i
+		}
+	}
+	require.GreaterOrEqual(t, title, 1, "Chart CRDs write missing")
+	require.GreaterOrEqual(t, last, title, "lifecycle write missing")
+	require.Equal(t, "\n", chunks[title-1], "write before Chart CRDs should be the separating blank line")
+	return title - 1, last
+}
+
+type captureWriter struct {
+	chunks []string
+}
+
+func (w *captureWriter) Write(p []byte) (int, error) {
+	w.chunks = append(w.chunks, string(p))
+	return len(p), nil
+}
+
+// failAtWriter accepts writes until index at, then fails.
+type failAtWriter struct {
+	at int
+	n  int
+}
+
+func (w *failAtWriter) Write(p []byte) (int, error) {
+	if w.n == w.at {
+		return 0, errors.New("write failed")
+	}
+	w.n++
+	return len(p), nil
 }
 
 func chartCRD(source, name string, index int, lc semantic.ChartCRDLifecycle) semantic.ChartCRD {
