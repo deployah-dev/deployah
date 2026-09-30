@@ -1,0 +1,11 @@
+Title	Plan for project "web" on environment "prod"
+Primary	Context:   production-eu
+Primary	Namespace: prod
+Primary	Release:   web
+Primary	Revision:  12
+Title	Chart CRDs
+Primary	  CustomResourceDefinition "widgets.example.com"
+Primary	    source:    .deployah/crds/widget.yaml
+Primary	    lifecycle: upgrade (Helm upgrade does not process chart CRDs)
+Title	Summary
+Primary	  Resources: 0 create, 0 update, 0 delete
