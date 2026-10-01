@@ -45,7 +45,7 @@ var outputFormats = []string{outputFormatHuman, outputFormatJSON}
 
 // ErrChangesPresent means --detailed-exitcode found effects.
 // The root command maps it to exit code 2 and prints no banner.
-var ErrChangesPresent = errors.New("plan has pending changes")
+var ErrChangesPresent = errors.New("plan has pending effects")
 
 // Options holds command-line flags for plan.
 type Options struct {

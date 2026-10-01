@@ -353,5 +353,6 @@ type ChartCRD struct {
 	// Lifecycle is Helm's handling of this document in this invocation.
 	Lifecycle ChartCRDLifecycle
 	// WillProcess is true only when Lifecycle is [ChartCRDProcess].
+	// A true value contributes to [Plan.HasEffects].
 	WillProcess bool
 }
