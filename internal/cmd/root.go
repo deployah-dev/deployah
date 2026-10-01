@@ -39,7 +39,6 @@ import (
 	"deployah.dev/deployah/internal/cmd/shell"
 	"deployah.dev/deployah/internal/cmd/status"
 	"deployah.dev/deployah/internal/cmd/validate"
-	"deployah.dev/deployah/internal/plan"
 	"deployah.dev/deployah/internal/session"
 	"deployah.dev/deployah/internal/spec"
 
@@ -71,12 +70,10 @@ func NewApp(opts ...nabat.Option) *nabat.App {
 		nabat.WithFlag("timeout", session.DefaultTimeout, nabat.WithShort('t'), nabat.WithUsage("Timeout for Deployah operations (install/upgrade, list, status, logs, delete, run)"), nabat.WithPersistent()),
 		nabat.WithFlag("cwd", "", nabat.WithShort('C'), nabat.WithUsage("Run as if deployah was started in this directory instead of the current working directory"), nabat.WithPersistent()),
 		nabat.WithExtension(logging.New(logging.WithVerboseFlag("debug"))),
-		// plan.ErrChangesPresent is a normal CI signal (exit code 2, see
-		// Execute), not a failure, so it gets no error banner. Every other
-		// error keeps the same "error: <msg>" styling nabat's default
-		// handler would have used.
+		// Effects are exit code 2, not a failure, so skip the error banner.
+		// Other errors keep nabat's "error: <msg>" line.
 		nabat.WithErrorHandler(func(err error) {
-			if errors.Is(err, plan.ErrChangesPresent) {
+			if errors.Is(err, planCmd.ErrChangesPresent) {
 				return
 			}
 			errStyle := app.Theme().Style(theme.StatusError)
@@ -142,10 +139,8 @@ func NewApp(opts ...nabat.Option) *nabat.App {
 	return app
 }
 
-// Execute is the main entry point for the Deployah application. It cancels
-// the context on SIGINT/SIGTERM so a mid-flight command can unwind and clean
-// up instead of being killed outright. Exit code: 0 success, 2 when
-// `deployah plan --detailed-exitcode` found pending changes, 1 otherwise.
+// Execute runs the Deployah CLI. On SIGINT or SIGTERM it cancels the
+// context so the running command can clean up.
 func Execute() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	app := NewApp()
@@ -154,11 +149,19 @@ func Execute() {
 	// the error paths below call os.Exit, which skips deferred calls.
 	stop()
 
+	if code := exitCode(err); code != 0 {
+		os.Exit(code)
+	}
+}
+
+// exitCode maps a Run error to a process status.
+// Nil is 0, [planCmd.ErrChangesPresent] is 2, and any other error is 1.
+func exitCode(err error) int {
 	if err == nil {
-		return
+		return 0
 	}
-	if errors.Is(err, plan.ErrChangesPresent) {
-		os.Exit(2)
+	if errors.Is(err, planCmd.ErrChangesPresent) {
+		return 2
 	}
-	os.Exit(1)
+	return 1
 }

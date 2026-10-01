@@ -76,20 +76,57 @@ func TestAttachChartCRDs_PreservesOrder(t *testing.T) {
 	assert.Equal(t, 1, p.ChartCRDs[1].Index)
 }
 
-func TestAttachChartCRDs_DoesNotChangeHasEffects(t *testing.T) {
+func TestAttachChartCRDs_HasEffectsFollowsWillProcess(t *testing.T) {
 	t.Parallel()
-	base, err := semantic.New(semantic.Header{}, semantic.HelmNone, nil, nil)
+	fresh, err := semantic.New(semantic.Header{FreshInstall: true}, semantic.HelmInstall, nil, nil)
 	require.NoError(t, err)
-	require.True(t, base.IsNoOp())
-	p, err := semantic.AttachChartCRDs(base, []semantic.ChartCRD{{
-		Kind:      "CustomResourceDefinition",
-		Name:      "widgets.example.com",
-		Lifecycle: semantic.ChartCRDUpgrade,
-	}})
+	idle, err := semantic.New(semantic.Header{}, semantic.HelmNone, nil, nil)
 	require.NoError(t, err)
-	assert.False(t, p.HasEffects())
-	assert.True(t, p.IsNoOp())
-	assert.Empty(t, p.Changes)
+	require.True(t, idle.IsNoOp())
+
+	tests := []struct {
+		name        string
+		base        semantic.Plan
+		lifecycle   semantic.ChartCRDLifecycle
+		willProcess bool
+		wantEffects bool
+		wantNoOp    bool
+	}{
+		{
+			name:        "process",
+			base:        fresh,
+			lifecycle:   semantic.ChartCRDProcess,
+			willProcess: true,
+			wantEffects: true,
+		},
+		{
+			name:      "skip",
+			base:      fresh,
+			lifecycle: semantic.ChartCRDSkip,
+		},
+		{
+			name:      "upgrade",
+			base:      idle,
+			lifecycle: semantic.ChartCRDUpgrade,
+			wantNoOp:  true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p, attachErr := semantic.AttachChartCRDs(tc.base, []semantic.ChartCRD{{
+				Kind:        "CustomResourceDefinition",
+				Name:        "widgets.example.com",
+				Lifecycle:   tc.lifecycle,
+				WillProcess: tc.willProcess,
+			}})
+			require.NoError(t, attachErr)
+			assert.Equal(t, tc.wantEffects, p.HasEffects())
+			assert.Equal(t, tc.wantNoOp, p.IsNoOp())
+			assert.Empty(t, p.Changes)
+			assert.Equal(t, semantic.Summary{}, p.Summary)
+		})
+	}
 }
 
 func TestAttachChartCRDs_Validation(t *testing.T) {

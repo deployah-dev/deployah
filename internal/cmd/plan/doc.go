@@ -14,12 +14,6 @@
 
 // Package plan implements the deployah plan command.
 //
-// It renders the chart for an environment and diffs it against the last
-// successful release using [deployah.dev/deployah/internal/plan] as the diff
-// engine. --detailed-exitcode returns
-// [deployah.dev/deployah/internal/plan.ErrChangesPresent] on pending
-// changes, so callers can tell "no changes" from "changes pending" from
-// "error"; see [deployah.dev/deployah/internal/cmd.Execute].
-//
-// Register the command with [Register] on a [nabat.dev/nabat.App] instance.
+// [Register] adds the command to a [nabat.dev/nabat.App]. It writes a
+// semantic plan for the environment and does not apply anything.
 package plan

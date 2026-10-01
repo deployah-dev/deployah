@@ -36,6 +36,7 @@ import (
 	"k8s.io/client-go/rest"
 
 	"deployah.dev/deployah/internal/extras"
+	"deployah.dev/deployah/internal/helm"
 	"deployah.dev/deployah/internal/render"
 	"deployah.dev/deployah/internal/spec"
 	"deployah.dev/deployah/internal/target"
@@ -99,6 +100,30 @@ func (m *MockHelmClient) RenderManifests(ctx context.Context, resolved *spec.Res
 		cleanup = func() {}
 	}
 	return result, cleanup, nil
+}
+
+// RenderManifestsWithPrep implements [HelmClient].
+func (m *MockHelmClient) RenderManifestsWithPrep(ctx context.Context, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer, crds []extras.RawFile) (*render.RenderResult, helm.ReleasePrep, func(), error) {
+	args := m.Called(ctx, resolved, postRenderer, crds)
+	if err := args.Error(3); err != nil {
+		return nil, helm.ReleasePrep{}, func() {}, err
+	}
+	if args.Get(0) == nil {
+		return nil, helm.ReleasePrep{}, func() {}, errors.New("mock: render result not set")
+	}
+	result, ok := args.Get(0).(*render.RenderResult)
+	if !ok {
+		return nil, helm.ReleasePrep{}, func() {}, fmt.Errorf("unexpected mock return type %T", args.Get(0))
+	}
+	prep, prepOK := args.Get(1).(helm.ReleasePrep)
+	if !prepOK {
+		return nil, helm.ReleasePrep{}, func() {}, fmt.Errorf("unexpected mock prep type %T", args.Get(1))
+	}
+	cleanup, cleanupOK := args.Get(2).(func())
+	if !cleanupOK || cleanup == nil {
+		cleanup = func() {}
+	}
+	return result, prep, cleanup, nil
 }
 
 // DeleteRelease implements [HelmClient].

@@ -138,12 +138,15 @@ later.
 
 ## Plan vs deploy
 
-- `deployah plan` includes extra manifests in the rendered diff. It does
-  not apply CRDs. Chart CRDs appear as lifecycle entries with `kind` and
-  `metadata.name`. On a fresh install the plan shows each CRD document
-  Helm will process. It does not claim Kubernetes will create versus
-  apply the object. On upgrade, CRDs are listed as present in the chart
-  but not processed.
+- `deployah plan` includes extra manifests as resource changes. It does
+  not apply CRDs. Chart CRDs appear in their own "Chart CRDs" section,
+  and in JSON under `chartCRDs`, with lifecycle `process` on a fresh
+  install or `upgrade` when Helm will not process them. The section does
+  not use resource actions (`+`, `~`, `-`). A chart CRD that Helm will
+  process counts as a pending effect for `--detailed-exitcode`. On a
+  fresh install the plan shows each CRD document Helm will process. It
+  does not claim Kubernetes will create versus apply the object. On
+  upgrade, CRDs are listed as present in the chart but not processed.
 - `deployah deploy` copies those CRD files into the generated chart, then
   runs Helm. On a fresh install Helm processes `crds/` before ordinary
   resources. On upgrade Helm leaves chart CRDs alone, including CRDs added

@@ -4,7 +4,7 @@ Inspect changes for an environment
 
 ### Synopsis
 
-Render the chart for an environment and compare it with the last successful Helm release. With --drift, also compare the rendered manifests with live cluster state. Plan is read-only and never applies anything.
+Render the chart for an environment and compare it with the previous release baseline selected by Helm. For an existing release, also compare that baseline with live cluster state. Plan is read-only and never applies anything.
 
 ```text
 deployah plan <environment> [flags]
@@ -13,12 +13,9 @@ deployah plan <environment> [flags]
 ### Options
 
 ```text
-      --detailed-exitcode   Exit 2 when the plan has pending changes, 0 when it does not, 1 on error (for CI)
-      --drift               Detect drift between the rendered manifests and the live cluster state
-      --output string       Output format (default "text")
-      --raw                 Show raw Kubernetes field paths instead of the compact Deployah vocabulary
-      --show-secrets        Reveal masked secret values in text output (requires an interactive terminal; refused with --output json)
-      --yaml                Show changed fields as YAML blocks instead of a single line
+      --detailed-exitcode   Exit 2 when the plan has effects (resource changes, tasks that change or run, chart CRDs Helm will process), 0 when it has none, 1 on error; drift alone exits 0
+  -o, --output string       Output format: human or json (default "human")
+      --show-secrets        Reveal Kubernetes Secret data and stringData values in the selected output format (human or json); values are redacted by default
 ```
 
 ### Options inherited from parent commands

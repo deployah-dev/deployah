@@ -91,9 +91,8 @@ func New(header Header, helmAction HelmAction, changes []ResourceChange, tasks [
 	}, nil
 }
 
-// AttachChartCRDs returns a copy of p with checked chart CRDs in the
-// given order. [Plan.Changes], [Plan.HasEffects], and [Plan.IsNoOp]
-// stay the same.
+// AttachChartCRDs returns a copy of p with crds attached in order.
+// [Plan.Changes] and [Plan.Summary] stay the same.
 func AttachChartCRDs(p Plan, crds []ChartCRD) (Plan, error) {
 	copied := slices.Clone(crds)
 	if copied == nil {
@@ -105,6 +104,7 @@ func AttachChartCRDs(p Plan, crds []ChartCRD) (Plan, error) {
 		}
 	}
 	p.ChartCRDs = copied
+	// WillProcess still counts in HasEffects. It is not a resource change.
 	return p, nil
 }
 
@@ -125,9 +125,9 @@ func validateChartCRD(c ChartCRD) error {
 	return nil
 }
 
-// HasEffects reports whether the plan lists a resource change or a task
-// that would change or run. [HelmAction] is not an effect. [Plan.Drift]
-// is observed cluster state and is not an effect.
+// HasEffects reports whether the plan would change or run something.
+// A chart CRD with [ChartCRD.WillProcess] counts. A bare [HelmAction]
+// and [Plan.Drift] do not.
 func (p Plan) HasEffects() bool {
 	if len(p.Changes) > 0 {
 		return true
@@ -137,12 +137,16 @@ func (p Plan) HasEffects() bool {
 			return true
 		}
 	}
+	for _, crd := range p.ChartCRDs {
+		if crd.WillProcess {
+			return true
+		}
+	}
 	return false
 }
 
-// IsNoOp reports whether the plan is a non-install [HelmNone] with no
-// known release effects. Drift does not count, so a plan can be a
-// no-op while [Plan.HasDrift] is true.
+// IsNoOp reports a non-install [HelmNone] plan with no effects.
+// Drift can still be present.
 func (p Plan) IsNoOp() bool {
 	return !p.Header.FreshInstall &&
 		p.HelmAction == HelmNone &&
