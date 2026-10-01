@@ -92,6 +92,10 @@ func (s *stubHelmClient) RenderManifests(context.Context, *spec.ResolvedSpec, po
 	return s.renderResult, cleanup, nil
 }
 
+func (s *stubHelmClient) RenderManifestsWithPrep(context.Context, *spec.ResolvedSpec, postrenderer.PostRenderer, []extras.RawFile) (*render.RenderResult, helm.ReleasePrep, func(), error) {
+	panic("unexpected RenderManifestsWithPrep call")
+}
+
 func (s *stubHelmClient) DeleteRelease(context.Context, string, string, bool) error {
 	panic("unexpected DeleteRelease call")
 }

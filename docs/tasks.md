@@ -166,7 +166,7 @@ count and cannot exceed 100000 (the Kubernetes Indexed Job limit).
 On a first install, `preDeploy` runs **before** Deployments and Services.
 Anything the task talks to (Postgres, RabbitMQ, another API) must already
 be reachable: another release, a managed service, or a job you ran first.
-`deployah plan` prints this reminder on a fresh install.
+`deployah plan` lists `preDeploy` tasks under Tasks. It does not check whether their dependencies are reachable.
 
 ## Logs
 

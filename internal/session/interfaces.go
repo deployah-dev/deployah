@@ -22,6 +22,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 
 	"deployah.dev/deployah/internal/extras"
+	"deployah.dev/deployah/internal/helm"
 	"deployah.dev/deployah/internal/render"
 	"deployah.dev/deployah/internal/spec"
 
@@ -29,8 +30,7 @@ import (
 )
 
 // HelmClient is kept in this package so [WithHelmFactory] tests can inject a
-// mock implementation without importing the concrete helm package. Render
-// methods return [render.RenderResult] for the same reason.
+// mock implementation. Render methods return [render.RenderResult].
 type HelmClient interface {
 	// IsReachable checks whether the configured Kubernetes cluster is reachable.
 	IsReachable() error
@@ -49,6 +49,11 @@ type HelmClient interface {
 	// crds are written into the per-invocation chart copy under crds/.
 	// postRenderer, when non-nil, is applied to the rendered manifests.
 	RenderManifests(ctx context.Context, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer, crds []extras.RawFile) (*render.RenderResult, func(), error)
+
+	// RenderManifestsWithPrep is [HelmClient.RenderManifests] and the
+	// [helm.ReleasePrep] that picked install or upgrade.
+	// Cleanup is nil on error. On success the caller runs it once.
+	RenderManifestsWithPrep(ctx context.Context, resolved *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer, crds []extras.RawFile) (*render.RenderResult, helm.ReleasePrep, func(), error)
 
 	// DeleteRelease uninstalls a Helm release. When wait is true the call
 	// blocks until all resources are fully removed using the legacy polling

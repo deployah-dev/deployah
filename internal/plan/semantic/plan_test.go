@@ -518,9 +518,10 @@ func TestPlan_HasEffects(t *testing.T) {
 		helmAction semantic.HelmAction
 		changes    []semantic.ResourceChange
 		tasks      []semantic.TaskPlan
+		crds       []semantic.ChartCRD
 		want       bool
 	}{
-		{name: "empty upgrade", helmAction: semantic.HelmUpgrade},
+		{name: "helm upgrade alone is not an effect", helmAction: semantic.HelmUpgrade},
 		{name: "empty none", helmAction: semantic.HelmNone},
 		{
 			name:       "resource change",
@@ -559,12 +560,47 @@ func TestPlan_HasEffects(t *testing.T) {
 				Action: semantic.TaskUnchanged,
 			}},
 		},
+		{
+			name:       "chart crd helm will process",
+			header:     semantic.Header{FreshInstall: true},
+			helmAction: semantic.HelmInstall,
+			crds: []semantic.ChartCRD{{
+				Kind:        "CustomResourceDefinition",
+				Name:        "widgets.example.com",
+				Lifecycle:   semantic.ChartCRDProcess,
+				WillProcess: true,
+			}},
+			want: true,
+		},
+		{
+			name:       "chart crd skip",
+			header:     semantic.Header{FreshInstall: true},
+			helmAction: semantic.HelmInstall,
+			crds: []semantic.ChartCRD{{
+				Kind:      "CustomResourceDefinition",
+				Name:      "widgets.example.com",
+				Lifecycle: semantic.ChartCRDSkip,
+			}},
+		},
+		{
+			name:       "chart crd upgrade",
+			helmAction: semantic.HelmNone,
+			crds: []semantic.ChartCRD{{
+				Kind:      "CustomResourceDefinition",
+				Name:      "widgets.example.com",
+				Lifecycle: semantic.ChartCRDUpgrade,
+			}},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			p, err := semantic.New(tt.header, tt.helmAction, tt.changes, tt.tasks)
 			require.NoError(t, err)
+			if len(tt.crds) > 0 {
+				p, err = semantic.AttachChartCRDs(p, tt.crds)
+				require.NoError(t, err)
+			}
 			assert.Equal(t, tt.want, p.HasEffects())
 		})
 	}

@@ -15,16 +15,20 @@
 package plan
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
-	"strings"
 
+	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/discovery/cached/memory"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/restmapper"
 	"nabat.dev/nabat"
 
 	"deployah.dev/deployah/internal/cmd/cmdopts"
-	"deployah.dev/deployah/internal/drift"
 	"deployah.dev/deployah/internal/extras"
+	"deployah.dev/deployah/internal/plan/semantic"
+	"deployah.dev/deployah/internal/plan/view"
 	"deployah.dev/deployah/internal/session"
 	"deployah.dev/deployah/internal/spec"
 
@@ -32,68 +36,54 @@ import (
 )
 
 const (
-	outputFormatText = "text"
-	outputFormatJSON = "json"
+	outputFormatHuman = "human"
+	outputFormatJSON  = "json"
 )
 
 // outputFormats lists the choices for --output, in help-text order.
-var outputFormats = []string{outputFormatText, outputFormatJSON}
+var outputFormats = []string{outputFormatHuman, outputFormatJSON}
+
+// ErrChangesPresent means --detailed-exitcode found effects.
+// The root command maps it to exit code 2 and prints no banner.
+var ErrChangesPresent = errors.New("plan has pending changes")
 
 // Options holds command-line flags for plan.
 type Options struct {
 	Environment      string `nabat:"environment"`
-	Drift            bool   `nabat:"drift"`
 	ShowSecrets      bool   `nabat:"show-secrets"`
-	Raw              bool   `nabat:"raw"`
-	YAML             bool   `nabat:"yaml"`
 	OutputFormat     string `nabat:"output"`
 	DetailedExitCode bool   `nabat:"detailed-exitcode"`
 }
+
+// clusterReadersFunc builds a REST mapper and a live reader from cfg.
+// It does not list or get objects.
+type clusterReadersFunc func(
+	cfg *rest.Config,
+) (planengine.RESTMapper, planengine.LiveReader, error)
+
+// The Helm client from the session must be usable by the semantic builder.
+var _ planengine.SemanticBuildClient = session.HelmClient(nil)
 
 // Register adds the plan command to app.
 func Register(app *nabat.App) {
 	app.MustCommand("plan",
 		nabat.WithDescription("Inspect changes for an environment"),
-		nabat.WithLongDescription("Render the chart for an environment and compare it with the last successful Helm release. With --drift, also compare the rendered manifests with live cluster state. Plan is read-only and never applies anything."),
+		nabat.WithLongDescription("Render the chart for an environment and compare it with the previous release baseline selected by Helm. For an existing release, also compare that baseline with live cluster state. Plan is read-only and never applies anything."),
 		nabat.WithArg("environment", "", nabat.WithRequired(), nabat.WithUsage("Environment to plan for"), nabat.WithPrompt("Environment", "", nabat.WithHint("e.g. prod, staging"))),
-		nabat.WithFlag("drift", false, nabat.WithUsage("Detect drift between the rendered manifests and the live cluster state")),
-		nabat.WithFlag("show-secrets", false, nabat.WithUsage("Reveal masked secret values in text output (requires an interactive terminal; refused with --output json)")),
-		nabat.WithFlag("raw", false, nabat.WithUsage("Show raw Kubernetes field paths instead of the compact Deployah vocabulary")),
-		nabat.WithFlag("yaml", false, nabat.WithUsage("Show changed fields as YAML blocks instead of a single line")),
-		nabat.WithSelectFlag("output", outputFormatText, outputFormats, nabat.WithUsage("Output format")),
-		nabat.WithFlag("detailed-exitcode", false, nabat.WithUsage("Exit 2 when the plan has pending changes, 0 when it does not, 1 on error (for CI)")),
-		nabat.WithValidation(validateOptions),
+		nabat.WithSelectFlag("output", outputFormatHuman, outputFormats, nabat.WithShort('o'), nabat.WithUsage("Output format: human or json")),
+		nabat.WithFlag("show-secrets", false, nabat.WithUsage("Reveal Kubernetes Secret data and stringData values in the selected output format (human or json); values are redacted by default")),
+		nabat.WithFlag("detailed-exitcode", false, nabat.WithUsage("Exit 2 when the plan has effects (resource changes, tasks that change or run, chart CRDs Helm will process), 0 when it has none, 1 on error; drift alone exits 0")),
 		nabat.WithExample(`
 # Inspect changes for production
 deployah plan production
 
 # Machine-readable output for CI
-deployah plan production --output json
+deployah plan production -o json
 
-# Gate a CI job on exit code 2 (pending changes) vs. 0 (no changes)
+# Gate a CI job on exit code 2 (pending effects) vs. 0 (no effects)
 deployah plan production --detailed-exitcode`),
 		nabat.WithRun(runPlan),
 	)
-}
-
-// validateOptions rejects flag combinations that cannot both take effect,
-// before runPlan does any work.
-func validateOptions(c *nabat.Context) error {
-	opts := &Options{}
-	if err := c.Bind(opts); err != nil {
-		return fmt.Errorf("binding options: %w", err)
-	}
-
-	if opts.Raw && opts.YAML {
-		return errors.New("--raw and --yaml cannot be used together")
-	}
-	if opts.ShowSecrets && opts.OutputFormat == outputFormatJSON {
-		return errors.New("--show-secrets cannot be used with --output json: JSON output always masks secrets")
-	}
-	if opts.ShowSecrets && !c.IsInteractive() {
-		return errors.New("--show-secrets requires an interactive terminal")
-	}
-	return nil
 }
 
 func runPlan(c *nabat.Context) error {
@@ -131,12 +121,11 @@ func runPlan(c *nabat.Context) error {
 		return fmt.Errorf("resolution failed: %w", err)
 	}
 
-	return executePlan(c, sess, platform, manifest, opts, resolvedSpec)
+	return executePlan(c, sess, platform, manifest, opts, resolvedSpec, newClusterReaders)
 }
 
-// executePlan renders the chart, diffs it against the last successful
-// release, and displays the resulting plan.
-func executePlan(c *nabat.Context, sess *session.Session, platform *spec.PlatformConfig, manifest *spec.Spec, opts *Options, resolvedSpec *spec.ResolvedSpec) error {
+// executePlan builds and writes the plan for opts.
+func executePlan(c *nabat.Context, sess *session.Session, platform *spec.PlatformConfig, manifest *spec.Spec, opts *Options, resolvedSpec *spec.ResolvedSpec, newReaders clusterReadersFunc) error {
 	cluster, err := sess.Target(c, opts.Environment)
 	if err != nil {
 		return fmt.Errorf("target cluster: %w", err)
@@ -153,9 +142,8 @@ func executePlan(c *nabat.Context, sess *session.Session, platform *spec.Platfor
 
 	cmdopts.WarnContextFallback(c, cluster, opts.Environment)
 
-	// Materialize self-signed TLS certs once, before rendering, matching
-	// deploy's determinism guarantee (a fresh keypair per render would make
-	// every plan show a phantom Secret change).
+	// Materialize self-signed TLS once, before render. A new keypair on
+	// every render would show up as a Secret change.
 	k8sClient, k8sErr := cluster.Kubernetes()
 	if k8sErr != nil {
 		c.Logger().Debug("kubernetes client unavailable", "err", k8sErr)
@@ -166,97 +154,75 @@ func executePlan(c *nabat.Context, sess *session.Session, platform *spec.Platfor
 		}
 	}
 
+	// Plan always needs a Kubernetes config.
 	restCfg, restErr := cluster.RESTConfig()
 	if restErr != nil {
-		c.Logger().Debug("rest config unavailable for extras scope discovery", "err", restErr)
+		return fmt.Errorf("kubernetes config: %w", restErr)
 	}
 	bundle, err := extras.LoadFromSpec(sess.Workspace().SpecPath(), manifest, platform, opts.Environment, cluster.Namespace(), restCfg)
 	if err != nil {
 		return fmt.Errorf("load extras: %w", err)
 	}
-	postRenderer := bundle.PostRendererFor()
 
-	p, result, cleanup, err := planengine.BuildPlan(c, helmClient, cluster.Context(), resolvedSpec, postRenderer, bundle.CRDs)
+	mapper, live, err := newReaders(restCfg)
+	if err != nil {
+		return fmt.Errorf("cluster readers: %w%s", err, cmdopts.ClusterHint(err))
+	}
+
+	// Compare with the previous release baseline Helm selected. An existing
+	// release also compares that baseline with live objects.
+	p, _, cleanup, err := planengine.BuildSemanticPlan(c, helmClient, mapper, live, planengine.SemanticBuildInput{
+		ClusterContext: cluster.Context(),
+		Resolved:       resolvedSpec,
+		PostRenderer:   bundle.PostRendererFor(),
+		CRDs:           bundle.CRDs,
+		CRDDocs:        bundle.CRDDocs,
+		SkipCRDs:       false, // plan never asks Helm to skip chart CRDs
+	})
 	defer cleanup()
 	if err != nil {
 		return fmt.Errorf("%w%s", err, cmdopts.ClusterHint(err))
 	}
-	planengine.StampChartCRDs(p, bundle.CRDDocs, result.IsUpgrade, false)
-
-	if opts.Drift {
-		if driftErr := checkDrift(c, cluster, p, result.Manifest); driftErr != nil {
-			return fmt.Errorf("check drift: %w%s", driftErr, cmdopts.ClusterHint(driftErr))
-		}
+	err = writePlan(c, p, opts)
+	if err != nil {
+		return err
 	}
-
-	return outputPlan(c, p, opts)
+	// The plan is already written. Exit 2 is only a signal for CI.
+	if opts.DetailedExitCode && p.HasEffects() {
+		return ErrChangesPresent
+	}
+	return nil
 }
 
-// checkDrift runs `--drift` detection against the resolved cluster and
-// records the outcome directly on p (DriftChecked, Drift, DriftIncomplete),
-// so it takes effect no matter which renderer outputPlan picks. On a fresh
-// install there's no live release to compare against, so it reports that
-// via c.Info (stderr, not the stdout diff body) and leaves DriftChecked
-// false.
-func checkDrift(c *nabat.Context, cluster *session.Cluster, p *planengine.Plan, currentManifest string) error {
-	if p.Header.FreshInstall {
-		c.Info("--drift is a no-op on a fresh install; there is no live release to compare against.")
+func writePlan(c *nabat.Context, p semantic.Plan, opts *Options) error {
+	// --show-secrets reveals values in human and JSON.
+	// Otherwise they stay redacted.
+	renderOpts := view.Options{ShowSecrets: opts.ShowSecrets}
+	if opts.OutputFormat == outputFormatJSON {
+		if err := view.WriteJSON(c.IO().Out, p, renderOpts); err != nil {
+			return fmt.Errorf("write json plan: %w", err)
+		}
 		return nil
 	}
-
-	cfg, err := cluster.RESTConfig()
-	if err != nil {
-		return fmt.Errorf("kubernetes config: %w", err)
-	}
-	predictor, err := drift.NewClient(cfg)
-	if err != nil {
-		return fmt.Errorf("drift client: %w", err)
-	}
-
-	result, err := drift.ComputeDrift(c, predictor, p, currentManifest)
-	if err != nil {
-		return fmt.Errorf("compute drift: %w", err)
-	}
-
-	p.DriftChecked = true
-	p.Drift = result.Changes
-	p.DriftIncomplete = result.Incomplete
-	return nil
-}
-
-func outputPlan(c *nabat.Context, p *planengine.Plan, opts *Options) error {
-	if opts.OutputFormat == outputFormatJSON {
-		var buf bytes.Buffer
-		if err := planengine.RenderJSON(&buf, p); err != nil {
-			return fmt.Errorf("render json: %w", err)
-		}
-		if err := c.FprintHighlight(c.IO().Out, strings.TrimRight(buf.String(), "\n"), "json"); err != nil {
-			return fmt.Errorf("write json: %w", err)
-		}
-	} else {
-		textOpts := planengine.TextOptions{
-			Mode:        textMode(opts),
-			ShowSecrets: opts.ShowSecrets,
-			Theme:       c.Theme(),
-		}
-		if err := planengine.RenderText(c.IO().Out, p, textOpts); err != nil {
-			return fmt.Errorf("render text: %w", err)
-		}
-	}
-
-	if opts.DetailedExitCode && p.HasChanges() {
-		return planengine.ErrChangesPresent
+	renderOpts.Styler = nabatStyler{c: c}
+	if err := view.WriteHuman(c.IO().Out, p, renderOpts); err != nil {
+		return fmt.Errorf("write human plan: %w", err)
 	}
 	return nil
 }
 
-func textMode(opts *Options) planengine.Mode {
-	switch {
-	case opts.Raw:
-		return planengine.ModeRaw
-	case opts.YAML:
-		return planengine.ModeYAML
-	default:
-		return planengine.ModeCompact
+func newClusterReaders(
+	cfg *rest.Config,
+) (planengine.RESTMapper, planengine.LiveReader, error) {
+	// Deferred discovery and the dynamic client send no requests here.
+	disco, err := discovery.NewDiscoveryClientForConfig(cfg)
+	if err != nil {
+		return nil, nil, fmt.Errorf("discovery client: %w", err)
 	}
+	mapper := restmapper.NewDeferredDiscoveryRESTMapper(memory.NewMemCacheClient(disco))
+	dyn, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return nil, nil, fmt.Errorf("dynamic client: %w", err)
+	}
+	return mapper, planengine.NewDynamicLiveReader(dyn), nil
 }

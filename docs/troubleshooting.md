@@ -45,8 +45,9 @@ Hook timeout defaults to `5m` and must be less than the `--timeout` used for
 that deploy (default `10m`). Increase `--timeout` so it stays above every hook
 timeout. A spec may set a hook timeout longer than the default `10m`; deploy
 then needs a matching `--timeout`. Deployah does not raise the flag for you.
-Serial hooks can add up to more than `--timeout`; plan shows each hook timeout
-so you can see the budget.
+Serial hooks can add up to more than `--timeout`. Plan shows a new or changed
+hook Job, including its `activeDeadlineSeconds`. It does not list every hook
+timeout.
 
 **A task did not run on deploy.**
 

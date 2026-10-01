@@ -15,21 +15,29 @@
 package plan
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"helm.sh/helm/v4/pkg/postrenderer"
-	"helm.sh/helm/v4/pkg/release/common"
+	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/rest"
 
 	"deployah.dev/deployah/internal/extras"
 	"deployah.dev/deployah/internal/helm"
+	"deployah.dev/deployah/internal/plan/view"
 	"deployah.dev/deployah/internal/render"
 	"deployah.dev/deployah/internal/session"
 	"deployah.dev/deployah/internal/spec"
@@ -38,36 +46,61 @@ import (
 
 	planengine "deployah.dev/deployah/internal/plan"
 	v1 "helm.sh/helm/v4/pkg/release/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	yamlutil "k8s.io/apimachinery/pkg/util/yaml"
 )
 
+// planKubeconfig resolves a REST config without contacting a cluster.
+const planKubeconfig = `apiVersion: v1
+kind: Config
+current-context: test-context
+clusters:
+- name: test-cluster
+  cluster:
+    server: https://example.com:6443
+contexts:
+- name: test-context
+  context:
+    cluster: test-cluster
+    user: test-user
+users:
+- name: test-user
+  user:
+    token: fake-token
+`
+
 // stubHelmClient implements [session.HelmClient] for plan command tests.
-// Only the methods executePlan actually calls are wired; every other method
-// panics if invoked unexpectedly, matching the pattern in
-// internal/cmd/deploy/deploy_test.go.
+// RenderManifestsWithPrep is the only render path the command may call.
 type stubHelmClient struct {
 	reachableErr error
 
-	renderResult *render.RenderResult
-	renderErr    error
+	result    *render.RenderResult
+	prep      helm.ReleasePrep
+	renderErr error
 
-	history    []*v1.Release
-	historyErr error
+	calls           int
+	gotCRDs         []extras.RawFile
+	gotPostRenderer postrenderer.PostRenderer
 }
 
 func (s *stubHelmClient) IsReachable() error { return s.reachableErr }
 
-func (s *stubHelmClient) RenderManifests(context.Context, *spec.ResolvedSpec, postrenderer.PostRenderer, []extras.RawFile) (*render.RenderResult, func(), error) {
+func (s *stubHelmClient) RenderManifestsWithPrep(_ context.Context, _ *spec.ResolvedSpec, postRenderer postrenderer.PostRenderer, crds []extras.RawFile) (*render.RenderResult, helm.ReleasePrep, func(), error) {
+	s.calls++
+	s.gotCRDs = crds
+	s.gotPostRenderer = postRenderer
 	if s.renderErr != nil {
-		return nil, nil, s.renderErr
+		return nil, helm.ReleasePrep{}, nil, s.renderErr
 	}
-	return s.renderResult, func() {}, nil
+	return s.result, s.prep, func() {}, nil
+}
+
+func (s *stubHelmClient) RenderManifests(context.Context, *spec.ResolvedSpec, postrenderer.PostRenderer, []extras.RawFile) (*render.RenderResult, func(), error) {
+	panic("unexpected RenderManifests call")
 }
 
 func (s *stubHelmClient) GetReleaseHistory(context.Context, string, string) ([]*v1.Release, error) {
-	if s.historyErr != nil {
-		return nil, s.historyErr
-	}
-	return s.history, nil
+	panic("unexpected GetReleaseHistory call")
 }
 
 func (s *stubHelmClient) InstallApp(context.Context, bool, *spec.ResolvedSpec, postrenderer.PostRenderer, []extras.RawFile, bool) error {
@@ -92,21 +125,134 @@ func (s *stubHelmClient) RollbackRelease(context.Context, string, int, time.Dura
 
 var _ session.HelmClient = (*stubHelmClient)(nil)
 
-// sessionWithStub builds a [session.Session] whose Helm client is stub.
-func sessionWithStub(stub *stubHelmClient) *session.Session {
-	return session.New(session.WithHelmFactory(func(*target.Target, session.HelmConfig) (session.HelmClient, error) {
-		return stub, nil
-	}))
+type fakeRESTMapper struct{}
+
+func (fakeRESTMapper) RESTMapping(gk schema.GroupKind, versions ...string) (*meta.RESTMapping, error) {
+	version := ""
+	if len(versions) > 0 {
+		version = versions[0]
+	}
+	scope := meta.RESTScopeNamespace
+	if gk.Kind == "Namespace" || gk.Kind == "CustomResourceDefinition" {
+		scope = meta.RESTScopeRoot
+	}
+	return &meta.RESTMapping{
+		Resource:         schema.GroupVersionResource{Group: gk.Group, Version: version, Resource: strings.ToLower(gk.Kind) + "s"},
+		GroupVersionKind: gk.WithVersion(version),
+		Scope:            scope,
+	}, nil
 }
 
-func releaseAt(version int, status common.Status, manifest string) *v1.Release {
-	return &v1.Release{
-		Name:     "web-production",
-		Version:  version,
-		Manifest: manifest,
-		Info:     &v1.Info{Status: status},
+type fakeLive struct {
+	gets  int
+	lists int
+	objs  []*unstructured.Unstructured
+}
+
+func (f *fakeLive) Get(_ context.Context, mapping *meta.RESTMapping, _, name string) (*unstructured.Unstructured, error) {
+	f.gets++
+	for _, obj := range f.objs {
+		if obj.GetName() == name && obj.GetKind() == mapping.GroupVersionKind.Kind {
+			return obj.DeepCopy(), nil
+		}
+	}
+	gr := schema.GroupResource{Group: mapping.GroupVersionKind.Group, Resource: mapping.Resource.Resource}
+	return nil, apierrors.NewNotFound(gr, name)
+}
+
+func (f *fakeLive) List(context.Context, *meta.RESTMapping, string, labels.Selector) ([]unstructured.Unstructured, error) {
+	f.lists++
+	return nil, nil
+}
+
+var _ planengine.LiveReader = (*fakeLive)(nil)
+
+type recordedReaders struct {
+	host  string
+	calls int
+	err   error
+	live  planengine.LiveReader
+}
+
+func (r *recordedReaders) build(cfg *rest.Config) (planengine.RESTMapper, planengine.LiveReader, error) {
+	r.calls++
+	if cfg != nil {
+		r.host = cfg.Host
+	}
+	if r.err != nil {
+		return nil, nil, r.err
+	}
+	live := r.live
+	if live == nil {
+		live = &fakeLive{}
+	}
+	return fakeRESTMapper{}, live, nil
+}
+
+func testResolved(m *spec.Spec) *spec.ResolvedSpec {
+	if m == nil {
+		m = &spec.Spec{Project: "web", APIVersion: spec.CurrentManifestVersion}
+	}
+	return &spec.ResolvedSpec{Spec: m, Env: spec.NormalizeEnv("production")}
+}
+
+func installResult(manifest string) *render.RenderResult {
+	return &render.RenderResult{
+		ReleaseName: "web-production",
+		Namespace:   "default",
+		Manifest:    manifest,
+		Revision:    1,
 	}
 }
+
+func upgradeResult(manifest string, revision int) *render.RenderResult {
+	result := installResult(manifest)
+	result.IsUpgrade = true
+	result.Revision = revision
+	return result
+}
+
+func installPrep() helm.ReleasePrep {
+	return helm.ReleasePrep{Operation: helm.OperationInstall, NextRevision: 1}
+}
+
+func upgradePrep(manifest string, version int) helm.ReleasePrep {
+	rel := &v1.Release{
+		Name:      "web-production",
+		Namespace: "default",
+		Version:   version,
+		Manifest:  manifest,
+	}
+	return helm.ReleasePrep{
+		Operation:    helm.OperationUpgrade,
+		Current:      rel,
+		Newest:       rel,
+		NextRevision: version + 1,
+	}
+}
+
+func mustObject(t *testing.T, manifest string) *unstructured.Unstructured {
+	t.Helper()
+	obj := &unstructured.Unstructured{}
+	require.NoError(t, yamlutil.NewYAMLOrJSONDecoder(strings.NewReader(manifest), 4096).Decode(obj))
+	return obj
+}
+
+func writeSpecDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "deployah.yaml"), []byte("apiVersion: deployah.dev/v1-alpha.4\nproject: web\n"), 0o600))
+	return dir
+}
+
+func writePlanExtras(t *testing.T, dir, relative, content string) {
+	t.Helper()
+	path := filepath.Join(dir, relative)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o750))
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+}
+
+const planCRDBody = "kind: CustomResourceDefinition\nmetadata:\n  name: widgets.example.com\n"
 
 const deploymentV1 = `
 apiVersion: apps/v1
@@ -138,6 +284,21 @@ spec:
           image: myapp:v1.3
 `
 
+const deploymentLive = `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: default
+spec:
+  replicas: 9
+  template:
+    spec:
+      containers:
+        - name: web
+          image: myapp:v1.2
+`
+
 const configMap = `
 apiVersion: v1
 kind: ConfigMap
@@ -158,350 +319,379 @@ data:
   password: b2xk
 `
 
-const secretV2 = `
-apiVersion: v1
-kind: Secret
-metadata:
-  name: web-secret
-  namespace: default
-data:
-  password: bmV3
-`
-
-func testManifest() *spec.Spec {
-	return &spec.Spec{Project: "web", APIVersion: spec.CurrentManifestVersion}
-}
-
-func testOptions() *Options {
-	return &Options{Environment: "production", OutputFormat: outputFormatText}
-}
-
-func testResolved(m *spec.Spec) *spec.ResolvedSpec {
-	if m == nil {
-		m = testManifest()
-	}
-	return &spec.ResolvedSpec{Spec: m, Env: spec.NormalizeEnv("production")}
-}
-
-func renderResult(manifest string) *render.RenderResult {
-	return &render.RenderResult{
-		ReleaseName: "web-production",
-		Namespace:   "default",
-		Manifest:    manifest,
-		Revision:    1,
+func migrateHook() *v1.Hook {
+	return &v1.Hook{
+		Name:   "migrate",
+		Kind:   "Job",
+		Weight: 1,
+		Events: []v1.HookEvent{v1.HookPreInstall},
+		Manifest: "apiVersion: batch/v1\nkind: Job\nmetadata:\n  name: migrate\n  namespace: default\n  labels:\n    " +
+			spec.LabelTask + ": migrate\n    " + spec.LabelComponent + ": migrate\nspec:\n  template:\n    spec:\n      containers:\n      - name: job\n        image: busybox\n",
 	}
 }
 
-// TestExecutePlan covers the common plan paths: fresh install, image
-// bump, add/remove, no-op, detailed-exitcode, secret masking, and failed-
-// latest-revision warnings. Drift stream discipline keeps its own test
-// because it needs different IO wiring.
-func TestExecutePlan(t *testing.T) {
+func taskResolved() *spec.ResolvedSpec {
+	resolved := testResolved(nil)
+	resolved.Tasks = map[string]spec.ResolvedTask{
+		"migrate": {Task: spec.Task{On: spec.TaskOnPreDeploy}, HookWeight: 1},
+	}
+	return resolved
+}
+
+type planFixture struct {
+	dir        string
+	stub       *stubHelmClient
+	opts       *Options
+	resolved   *spec.ResolvedSpec
+	live       *fakeLive
+	readers    *recordedReaders
+	kubeconfig string
+}
+
+func (f planFixture) run(t *testing.T) (stdout, stderr string, err error) {
+	t.Helper()
+	if f.dir == "" {
+		f.dir = writeSpecDir(t)
+	}
+	if f.opts == nil {
+		f.opts = &Options{Environment: "production", OutputFormat: outputFormatHuman}
+	}
+	if f.resolved == nil {
+		f.resolved = testResolved(nil)
+	}
+	if f.readers == nil {
+		f.readers = &recordedReaders{live: f.live}
+	} else if f.readers.live == nil {
+		f.readers.live = f.live
+	}
+	kube := f.kubeconfig
+	if kube == "" {
+		kube = filepath.Join(t.TempDir(), "kubeconfig")
+		require.NoError(t, os.WriteFile(kube, []byte(planKubeconfig), 0o600))
+	}
+	sess := session.New(
+		session.WithSpecPath(filepath.Join(f.dir, "deployah.yaml")),
+		session.WithKubeconfig(kube),
+		session.WithHelmFactory(func(*target.Target, session.HelmConfig) (session.HelmClient, error) {
+			return f.stub, nil
+		}),
+	)
+	h := nabatctx.New(t, "test")
+	err = executePlan(h.Context, sess, nil, &spec.Spec{Project: "web", APIVersion: spec.CurrentManifestVersion}, f.opts, f.resolved, f.readers.build)
+	return h.Stdout.String(), h.Stderr.String(), err
+}
+
+func TestExecutePlan_Human(t *testing.T) {
 	t.Parallel()
-
 	tests := []struct {
 		name        string
 		stub        *stubHelmClient
-		detailed    bool
-		wantErrIs   error
+		live        *fakeLive
 		contains    []string
 		notContains []string
 	}{
 		{
 			name: "fresh install",
 			stub: &stubHelmClient{
-				historyErr:   helm.ErrReleaseNotFound,
-				renderResult: renderResult(deploymentV1 + "---\n" + configMap),
+				result: installResult(deploymentV1 + "---\n" + configMap),
+				prep:   installPrep(),
 			},
 			contains: []string{
-				"(fresh install)",
-				"+ Deployment/web",
-				"+ ConfigMap/web-config",
-				"Plan: 2 to add, 0 to change, 0 to destroy.",
+				`+ create apps/v1/Deployment "web"`,
+				`+ create v1/ConfigMap "web-config"`,
+				"Resources: 2 create, 0 update, 0 delete",
 			},
 		},
 		{
 			name: "image bump",
 			stub: &stubHelmClient{
-				history:      []*v1.Release{releaseAt(7, common.StatusDeployed, deploymentV1)},
-				renderResult: renderResult(deploymentV2),
+				result: upgradeResult(deploymentV2, 8),
+				prep:   upgradePrep(deploymentV1, 7),
 			},
-			contains: []string{
-				"(revision 7)",
-				"~ Deployment/web",
-				"myapp:v1.2 -> myapp:v1.3",
-				"Plan: 0 to add, 1 to change, 0 to destroy.",
-			},
+			live:     &fakeLive{objs: []*unstructured.Unstructured{mustObject(t, deploymentV1)}},
+			contains: []string{`~ update apps/v1/Deployment "web"`, "myapp:v1.2", "myapp:v1.3"},
 		},
 		{
 			name: "resource added and removed",
 			stub: &stubHelmClient{
-				history:      []*v1.Release{releaseAt(3, common.StatusDeployed, deploymentV1+"---\n"+secretV1)},
-				renderResult: renderResult(deploymentV1 + "---\n" + configMap),
+				result: upgradeResult(deploymentV1+"---\n"+configMap, 4),
+				prep:   upgradePrep(deploymentV1+"---\n"+secretV1, 3),
 			},
+			live: &fakeLive{objs: []*unstructured.Unstructured{
+				mustObject(t, deploymentV1),
+				mustObject(t, secretV1),
+			}},
 			contains: []string{
-				"+ ConfigMap/web-config",
-				"- Secret/web-secret",
-				"Plan: 1 to add, 0 to change, 1 to destroy.",
+				`+ create v1/ConfigMap "web-config"`,
+				`- delete v1/Secret "web-secret"`,
 			},
 		},
 		{
-			name: "no changes with detailed-exitcode stays success",
+			name: "no changes",
 			stub: &stubHelmClient{
-				history:      []*v1.Release{releaseAt(4, common.StatusDeployed, deploymentV1)},
-				renderResult: renderResult(deploymentV1),
+				result: upgradeResult(deploymentV1, 5),
+				prep:   upgradePrep(deploymentV1, 4),
 			},
-			detailed: true,
-			contains: []string{"No changes."},
-		},
-		{
-			name: "detailed-exitcode returns ErrChangesPresent",
-			stub: &stubHelmClient{
-				history:      []*v1.Release{releaseAt(1, common.StatusDeployed, deploymentV1)},
-				renderResult: renderResult(deploymentV2),
-			},
-			detailed:  true,
-			wantErrIs: planengine.ErrChangesPresent,
+			live:     &fakeLive{objs: []*unstructured.Unstructured{mustObject(t, deploymentV1)}},
+			contains: []string{"Resources: 0 create, 0 update, 0 delete"},
 		},
 		{
 			name: "masked secret hides values",
 			stub: &stubHelmClient{
-				history:      []*v1.Release{releaseAt(2, common.StatusDeployed, secretV1)},
-				renderResult: renderResult(secretV2),
+				result: installResult(secretV1),
+				prep:   installPrep(),
 			},
-			contains:    []string{"(masked) changed"},
-			notContains: []string{"b2xk", "bmV3"},
-		},
-		{
-			name: "failed latest revision surfaces warning",
-			stub: &stubHelmClient{
-				history: []*v1.Release{
-					releaseAt(1, common.StatusDeployed, deploymentV1),
-					releaseAt(2, common.StatusFailed, deploymentV2),
-				},
-				renderResult: renderResult(deploymentV2),
-			},
-			contains: []string{"Warning:", "revision 2", "(revision 1)"},
+			contains:    []string{"(redacted)"},
+			notContains: []string{"b2xk"},
 		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			sess := sessionWithStub(tt.stub)
-			h := nabatctx.New(t, "test")
-			opts := testOptions()
-			opts.DetailedExitCode = tt.detailed
-
-			err := executePlan(h.Context, sess, nil, testManifest(), opts, testResolved(nil))
-			if tt.wantErrIs != nil {
-				require.Error(t, err)
-				assert.ErrorIs(t, err, tt.wantErrIs)
-				return
-			}
+			stdout, _, err := (planFixture{stub: tt.stub, live: tt.live}).run(t)
 			require.NoError(t, err)
-			got := h.Stdout.String()
+			assert.NotContains(t, stdout, "\x1b")
 			for _, s := range tt.contains {
-				assert.Contains(t, got, s)
+				assert.Contains(t, stdout, s)
 			}
 			for _, s := range tt.notContains {
-				assert.NotContains(t, got, s)
+				assert.NotContains(t, stdout, s)
 			}
 		})
 	}
 }
 
-// TestExecutePlan_DriftOnFreshInstall_NoStdoutFootprint verifies --drift on a
-// fresh install prints its explanation to stderr (via checkDrift's
-// c.Info), not stdout, and never touches the cluster's REST config.
-func TestExecutePlan_DriftOnFreshInstall_NoStdoutFootprint(t *testing.T) {
+func TestExecutePlan_Tasks(t *testing.T) {
 	t.Parallel()
-	stub := &stubHelmClient{
-		historyErr:   helm.ErrReleaseNotFound,
-		renderResult: renderResult(deploymentV1),
-	}
-	sess := sessionWithStub(stub)
-
-	h := nabatctx.New(t, "test")
-
-	opts := testOptions()
-	opts.Drift = true
-	err := executePlan(h.Context, sess, nil, testManifest(), opts, testResolved(nil))
-	require.NoError(t, err, "checkDrift must short-circuit cleanly without a working cluster config")
-
-	assert.NotContains(t, h.Stdout.String(), "Drift (cluster changed outside deployah):",
-		"a fresh install must not grow a stdout Drift section")
-	assert.NotContains(t, h.Stdout.String(), "no-op on a fresh install",
-		"the explanation must not appear in the captured diff body")
-	assert.Contains(t, h.Stderr.String(), "no-op on a fresh install",
-		"the explanation belongs on stderr, via c.Info")
-}
-
-func writePlanExtras(t *testing.T, dir, relative, content string) {
-	t.Helper()
-	path := filepath.Join(dir, relative)
-	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o750))
-	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
-}
-
-func writePlanCRDFile(t *testing.T, dir, name, body string) {
-	t.Helper()
-	writePlanExtras(t, dir, filepath.Join(".deployah", "crds", name), body)
-}
-
-func TestExecutePlan_LoadExtrasError(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	specPath := filepath.Join(dir, "deployah.yaml")
-	writePlanExtras(t, dir, "deployah.yaml", "apiVersion: deployah.dev/v1-alpha.4\nproject: web\n")
-	writePlanExtras(t, dir, ".deployah/manifests/bad.yaml", "not: [valid")
-	stub := &stubHelmClient{renderResult: renderResult(deploymentV1)}
-	sess := session.New(
-		session.WithSpecPath(specPath),
-		session.WithHelmFactory(func(*target.Target, session.HelmConfig) (session.HelmClient, error) {
-			return stub, nil
-		}),
-	)
-	h := nabatctx.New(t, "test")
-
-	err := executePlan(h.Context, sess, nil, testManifest(), testOptions(), testResolved(nil))
-	require.Error(t, err)
-	assert.ErrorContains(t, err, "load extras")
-}
-
-const planCRDBody = "kind: CustomResourceDefinition\nmetadata:\n  name: widgets.example.com\n"
-
-func TestExecutePlan_PrintsCRDs(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	specPath := filepath.Join(dir, "deployah.yaml")
-	writePlanExtras(t, dir, "deployah.yaml", "apiVersion: deployah.dev/v1-alpha.4\nproject: web\n")
-	writePlanCRDFile(t, dir, "widget.yaml", planCRDBody)
-	stub := &stubHelmClient{
-		historyErr:   helm.ErrReleaseNotFound,
-		renderResult: renderResult(deploymentV1),
-	}
-	sess := session.New(
-		session.WithSpecPath(specPath),
-		session.WithHelmFactory(func(*target.Target, session.HelmConfig) (session.HelmClient, error) {
-			return stub, nil
-		}),
-	)
-	h := nabatctx.New(t, "test")
-	h.Context.SetContext(session.WithContext(h.Context.Context(), sess))
-
-	err := executePlan(h.Context, sess, nil, testManifest(), testOptions(), testResolved(nil))
+	result := installResult("")
+	result.Hooks = []*v1.Hook{migrateHook()}
+	stdout, _, err := (planFixture{
+		stub:     &stubHelmClient{result: result, prep: installPrep()},
+		resolved: taskResolved(),
+	}).run(t)
 	require.NoError(t, err)
-	got := h.Stdout.String()
-	assert.Contains(t, got, "+ CustomResourceDefinition/widgets.example.com")
-	assert.Contains(t, got, "Helm install will process this chart CRD")
-	assert.Contains(t, got, "name: widgets.example.com")
-	assert.NotContains(t, got, "CRD files to process")
+	assert.NotContains(t, stdout, "\x1b")
+	assert.Contains(t, stdout, "Tasks")
+	assert.Contains(t, stdout, "preDeploy")
 }
 
-func TestExecutePlan_PrintsCRDsOnUpgrade(t *testing.T) {
+func TestExecutePlan_FreshInstallDoesNotReadLive(t *testing.T) {
+	t.Parallel()
+	live := &fakeLive{}
+	stdout, _, err := (planFixture{
+		stub: &stubHelmClient{
+			result: installResult(deploymentV1),
+			prep:   installPrep(),
+		},
+		live: live,
+		opts: &Options{Environment: "production", OutputFormat: outputFormatJSON},
+	}).run(t)
+	require.NoError(t, err)
+	assert.Zero(t, live.gets)
+	assert.Zero(t, live.lists)
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal([]byte(stdout), &doc))
+	assert.Empty(t, doc["drift"])
+}
+
+func TestExecutePlan_DriftOnExistingRelease(t *testing.T) {
+	t.Parallel()
+	live := &fakeLive{objs: []*unstructured.Unstructured{mustObject(t, deploymentLive)}}
+	stdout, _, err := (planFixture{
+		stub: &stubHelmClient{
+			result: upgradeResult(deploymentV2, 8),
+			prep:   upgradePrep(deploymentV1, 7),
+		},
+		live: live,
+	}).run(t)
+	require.NoError(t, err)
+	assert.Positive(t, live.gets)
+	assert.Contains(t, stdout, "Drift")
+	assert.Contains(t, stdout, "Drift: ")
+}
+
+func TestExecutePlan_DriftOnExistingRelease_JSON(t *testing.T) {
+	t.Parallel()
+	live := &fakeLive{objs: []*unstructured.Unstructured{mustObject(t, deploymentLive)}}
+	stdout, _, err := (planFixture{
+		stub: &stubHelmClient{
+			result: upgradeResult(deploymentV2, 8),
+			prep:   upgradePrep(deploymentV1, 7),
+		},
+		live: live,
+		opts: &Options{Environment: "production", OutputFormat: outputFormatJSON},
+	}).run(t)
+	require.NoError(t, err)
+	assert.Positive(t, live.gets)
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal([]byte(stdout), &doc))
+	drift, ok := doc["drift"].([]any)
+	require.True(t, ok)
+	assert.NotEmpty(t, drift)
+}
+
+func TestExecutePlan_DriftOnly(t *testing.T) {
+	t.Parallel()
+	stdout, _, err := (planFixture{
+		stub: &stubHelmClient{
+			result: upgradeResult(deploymentV1, 5),
+			prep:   upgradePrep(deploymentV1, 4),
+		},
+		live: &fakeLive{objs: []*unstructured.Unstructured{mustObject(t, deploymentLive)}},
+	}).run(t)
+	require.NoError(t, err)
+	assert.Contains(t, stdout, "Drift")
+}
+
+func TestExecutePlan_DriftOnly_JSON(t *testing.T) {
+	t.Parallel()
+	stdout, _, err := (planFixture{
+		stub: &stubHelmClient{
+			result: upgradeResult(deploymentV1, 5),
+			prep:   upgradePrep(deploymentV1, 4),
+		},
+		live: &fakeLive{objs: []*unstructured.Unstructured{mustObject(t, deploymentLive)}},
+		opts: &Options{Environment: "production", OutputFormat: outputFormatJSON, DetailedExitCode: true},
+	}).run(t)
+	require.NoError(t, err)
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal([]byte(stdout), &doc))
+	assert.Equal(t, "none", doc["helmAction"])
+	assert.Empty(t, doc["changes"])
+	drift, ok := doc["drift"].([]any)
+	require.True(t, ok)
+	assert.NotEmpty(t, drift)
+}
+
+func TestExecutePlan_JSONIsWriterBytes(t *testing.T) {
+	t.Parallel()
+	stub := &stubHelmClient{
+		result: installResult(deploymentV1),
+		prep:   installPrep(),
+	}
+	live := &fakeLive{}
+	dir := writeSpecDir(t)
+	readers := &recordedReaders{live: live}
+	stdout, _, err := (planFixture{
+		dir:     dir,
+		stub:    stub,
+		live:    live,
+		readers: readers,
+		opts:    &Options{Environment: "production", OutputFormat: outputFormatJSON},
+	}).run(t)
+	require.NoError(t, err)
+	assert.NotContains(t, stdout, "\x1b")
+	assert.Equal(t, "https://example.com:6443", readers.host)
+
+	wantPlan, _, cleanup, buildErr := planengine.BuildSemanticPlan(t.Context(), stub, fakeRESTMapper{}, live, planengine.SemanticBuildInput{
+		ClusterContext: "test-context",
+		Resolved:       testResolved(nil),
+		SkipCRDs:       false,
+	})
+	t.Cleanup(cleanup)
+	require.NoError(t, buildErr)
+	var want bytes.Buffer
+	require.NoError(t, view.WriteJSON(&want, wantPlan, view.Options{}))
+	assert.Equal(t, want.String(), stdout)
+
+	dec := json.NewDecoder(strings.NewReader(stdout))
+	var doc map[string]any
+	require.NoError(t, dec.Decode(&doc))
+	var extra any
+	assert.ErrorIs(t, dec.Decode(&extra), io.EOF)
+	for _, key := range []string{"schema", "header", "helmAction", "changes", "drift", "tasks", "chartCRDs", "summary"} {
+		assert.Contains(t, doc, key)
+	}
+	assert.NotContains(t, doc, "chart_crds")
+	assert.NotContains(t, doc, "first_install_note")
+}
+
+func TestExecutePlan_ChartCRDsHuman(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name    string
-		file    string
-		history []*v1.Release
+		name     string
+		result   *render.RenderResult
+		prep     helm.ReleasePrep
+		live     *fakeLive
+		contains string
 	}{
 		{
-			name:    "existing file",
-			file:    "widget.yaml",
-			history: []*v1.Release{releaseAt(3, common.StatusDeployed, deploymentV1)},
+			name:     "fresh install",
+			result:   installResult(deploymentV1),
+			prep:     installPrep(),
+			contains: "lifecycle: process (Helm install will process this chart CRD)",
 		},
 		{
-			name:    "newly added file",
-			file:    "new.yaml",
-			history: []*v1.Release{releaseAt(3, common.StatusDeployed, deploymentV1)},
-		},
-		{
-			name:    "failed-only history",
-			file:    "widget.yaml",
-			history: []*v1.Release{releaseAt(1, common.StatusFailed, deploymentV1)},
+			name:     "upgrade",
+			result:   upgradeResult(deploymentV2, 4),
+			prep:     upgradePrep(deploymentV1, 3),
+			live:     &fakeLive{objs: []*unstructured.Unstructured{mustObject(t, deploymentV1)}},
+			contains: "lifecycle: upgrade (Helm upgrade does not process chart CRDs)",
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			dir := t.TempDir()
-			specPath := filepath.Join(dir, "deployah.yaml")
-			writePlanExtras(t, dir, "deployah.yaml", "apiVersion: deployah.dev/v1-alpha.4\nproject: web\n")
-			writePlanCRDFile(t, dir, tc.file, planCRDBody)
-			result := renderResult(deploymentV1)
-			result.IsUpgrade = true
-			stub := &stubHelmClient{
-				history:      tc.history,
-				renderResult: result,
-			}
-			sess := session.New(
-				session.WithSpecPath(specPath),
-				session.WithHelmFactory(func(*target.Target, session.HelmConfig) (session.HelmClient, error) {
-					return stub, nil
-				}),
-			)
-			h := nabatctx.New(t, "test")
-			h.Context.SetContext(session.WithContext(h.Context.Context(), sess))
-
-			err := executePlan(h.Context, sess, nil, testManifest(), testOptions(), testResolved(nil))
+			dir := writeSpecDir(t)
+			writePlanExtras(t, dir, ".deployah/crds/widget.yaml", planCRDBody)
+			stdout, _, err := (planFixture{
+				dir:  dir,
+				stub: &stubHelmClient{result: tc.result, prep: tc.prep},
+				live: tc.live,
+			}).run(t)
 			require.NoError(t, err)
-			got := h.Stdout.String()
-			assert.Contains(t, got, "CustomResourceDefinition/widgets.example.com")
-			assert.Contains(t, got, "Helm upgrade will not process this chart CRD")
-			assert.NotContains(t, got, "+ CustomResourceDefinition/")
-			assert.NotContains(t, got, "CRD files to process on install:")
+			assert.Contains(t, stdout, tc.contains)
+			resources := strings.Index(stdout, "Resources")
+			crds := strings.Index(stdout, "Chart CRDs")
+			summary := strings.Index(stdout, "Summary")
+			assert.GreaterOrEqual(t, resources, 0)
+			assert.Greater(t, crds, resources)
+			assert.Greater(t, summary, crds)
+			assert.NotContains(t, stdout, "+ CustomResourceDefinition")
 		})
 	}
 }
 
-func TestExecutePlan_JSONStdoutUnmarshalsWithCRDs(t *testing.T) {
+func TestExecutePlan_ChartCRDsJSON(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name        string
-		upgrade     bool
+		result      *render.RenderResult
+		prep        helm.ReleasePrep
+		live        *fakeLive
 		wantLife    string
 		wantProcess bool
 	}{
-		{name: "fresh install", wantLife: "process", wantProcess: true},
-		{name: "upgrade", upgrade: true, wantLife: "upgrade"},
+		{
+			name:        "fresh install",
+			result:      installResult(deploymentV1),
+			prep:        installPrep(),
+			wantLife:    "process",
+			wantProcess: true,
+		},
+		{
+			name:     "upgrade",
+			result:   upgradeResult(deploymentV1, 4),
+			prep:     upgradePrep(deploymentV1, 3),
+			live:     &fakeLive{objs: []*unstructured.Unstructured{mustObject(t, deploymentV1)}},
+			wantLife: "upgrade",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			dir := t.TempDir()
-			specPath := filepath.Join(dir, "deployah.yaml")
-			writePlanExtras(t, dir, "deployah.yaml", "apiVersion: deployah.dev/v1-alpha.4\nproject: web\n")
-			writePlanCRDFile(t, dir, "widget.yaml", planCRDBody)
-			result := renderResult(deploymentV1)
-			stub := &stubHelmClient{renderResult: result}
-			if tc.upgrade {
-				result.IsUpgrade = true
-				stub.history = []*v1.Release{releaseAt(3, common.StatusDeployed, deploymentV1)}
-			} else {
-				stub.historyErr = helm.ErrReleaseNotFound
-			}
-			sess := session.New(
-				session.WithSpecPath(specPath),
-				session.WithHelmFactory(func(*target.Target, session.HelmConfig) (session.HelmClient, error) {
-					return stub, nil
-				}),
-			)
-			h := nabatctx.New(t, "test")
-			h.Context.SetContext(session.WithContext(h.Context.Context(), sess))
-			opts := testOptions()
-			opts.OutputFormat = outputFormatJSON
-
-			err := executePlan(h.Context, sess, nil, testManifest(), opts, testResolved(nil))
+			dir := writeSpecDir(t)
+			writePlanExtras(t, dir, ".deployah/crds/widget.yaml", planCRDBody)
+			stdout, _, err := (planFixture{
+				dir:  dir,
+				stub: &stubHelmClient{result: tc.result, prep: tc.prep},
+				live: tc.live,
+				opts: &Options{Environment: "production", OutputFormat: outputFormatJSON},
+			}).run(t)
 			require.NoError(t, err)
-			stdout := h.Stdout.String()
 			var doc map[string]any
-			require.NoError(t, json.Unmarshal([]byte(stdout), &doc), "stdout must be a single JSON document")
-			assert.NotContains(t, stdout, "Helm install will process this chart CRD")
-			assert.NotContains(t, stdout, "Helm upgrade will not process this chart CRD")
-			assert.NotContains(t, stdout, "CRD files to process")
-			assert.NotContains(t, h.Stderr.String(), "Helm install will process this chart CRD")
-			crds, ok := doc["chart_crds"].([]any)
+			require.NoError(t, json.Unmarshal([]byte(stdout), &doc))
+			crds, ok := doc["chartCRDs"].([]any)
 			require.True(t, ok)
 			require.Len(t, crds, 1)
 			entry, ok := crds[0].(map[string]any)
@@ -509,91 +699,286 @@ func TestExecutePlan_JSONStdoutUnmarshalsWithCRDs(t *testing.T) {
 			assert.Equal(t, "CustomResourceDefinition", entry["kind"])
 			assert.Equal(t, "widgets.example.com", entry["name"])
 			assert.Equal(t, tc.wantLife, entry["lifecycle"])
-			assert.Equal(t, tc.wantProcess, entry["will_process"])
-			assert.NotContains(t, entry, "action")
-			assert.NotContains(t, entry, "api_version")
+			assert.Equal(t, tc.wantProcess, entry["willProcess"])
 		})
 	}
 }
 
-func TestOutputPlan_JSONSkipCRDsStdoutUnmarshals(t *testing.T) {
+func TestExecutePlan_ForwardsCRDsAndPostRendererOnce(t *testing.T) {
 	t.Parallel()
-	p := &planengine.Plan{Header: planengine.Header{Project: "web", FreshInstall: true}}
-	planengine.StampChartCRDs(p, []extras.CRDDoc{{
-		Path: "widget.yaml",
-		Kind: "CustomResourceDefinition",
-		Name: "widgets.example.com",
-		YAML: []byte(planCRDBody),
-	}}, false, true)
-	h := nabatctx.New(t, "test")
-	opts := testOptions()
-	opts.OutputFormat = outputFormatJSON
-	opts.DetailedExitCode = true
-
-	err := outputPlan(h.Context, p, opts)
+	dir := writeSpecDir(t)
+	writePlanExtras(t, dir, ".deployah/crds/widget.yaml", planCRDBody)
+	writePlanExtras(t, dir, ".deployah/manifests/extra.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: extra\ndata:\n  key: value\n")
+	// A closed port makes scope discovery fail fast and fall back to the
+	// built-in table. example.com:6443 would wait out a dial timeout.
+	kube := filepath.Join(t.TempDir(), "kubeconfig")
+	closed := strings.Replace(planKubeconfig, "https://example.com:6443", "https://127.0.0.1:1", 1)
+	require.NoError(t, os.WriteFile(kube, []byte(closed), 0o600))
+	stub := &stubHelmClient{result: installResult(deploymentV1), prep: installPrep()}
+	_, _, err := (planFixture{dir: dir, stub: stub, kubeconfig: kube}).run(t)
 	require.NoError(t, err)
-	stdout := h.Stdout.String()
-	var doc map[string]any
-	require.NoError(t, json.Unmarshal([]byte(stdout), &doc), "stdout must be a single JSON document")
-	assert.NotContains(t, stdout, "install-time CRD processing disabled")
-	assert.Empty(t, h.Stderr.String())
-	crds, ok := doc["chart_crds"].([]any)
-	require.True(t, ok)
-	require.Len(t, crds, 1)
-	entry, ok := crds[0].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "CustomResourceDefinition", entry["kind"])
-	assert.Equal(t, "widgets.example.com", entry["name"])
-	assert.Equal(t, "skip", entry["lifecycle"])
-	assert.Equal(t, false, entry["will_process"])
-	assert.NotContains(t, entry, "api_version")
+	assert.Equal(t, 1, stub.calls)
+	require.Len(t, stub.gotCRDs, 1)
+	assert.NotNil(t, stub.gotPostRenderer)
 }
 
-func TestExecutePlan_DetailedExitCode_ChartCRDs(t *testing.T) {
+func TestExecutePlan_ShowSecrets(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name      string
-		upgrade   bool
-		current   string
-		previous  string
-		wantErrIs error
+		name        string
+		format      string
+		reveal      bool
+		contains    []string
+		notContains []string
 	}{
-		{name: "fresh install only crds", current: "", wantErrIs: planengine.ErrChangesPresent},
-		{name: "upgrade only crds", upgrade: true, current: deploymentV1, previous: deploymentV1},
-		{name: "upgrade with resource change", upgrade: true, current: deploymentV2, previous: deploymentV1, wantErrIs: planengine.ErrChangesPresent},
-		{name: "fresh with resources and crds", current: deploymentV1, wantErrIs: planengine.ErrChangesPresent},
+		{
+			name:        "human default",
+			format:      outputFormatHuman,
+			contains:    []string{"(redacted)"},
+			notContains: []string{"b2xk"},
+		},
+		{
+			name:     "human reveal",
+			format:   outputFormatHuman,
+			reveal:   true,
+			contains: []string{"b2xk"},
+		},
+		{
+			name:        "json default",
+			format:      outputFormatJSON,
+			contains:    []string{"(redacted)"},
+			notContains: []string{"b2xk", "\x1b"},
+		},
+		{
+			name:        "json reveal",
+			format:      outputFormatJSON,
+			reveal:      true,
+			contains:    []string{"b2xk"},
+			notContains: []string{"\x1b"},
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			dir := t.TempDir()
-			specPath := filepath.Join(dir, "deployah.yaml")
-			writePlanExtras(t, dir, "deployah.yaml", "apiVersion: deployah.dev/v1-alpha.4\nproject: web\n")
-			writePlanCRDFile(t, dir, "widget.yaml", planCRDBody)
-			result := renderResult(tc.current)
-			stub := &stubHelmClient{renderResult: result}
-			if tc.upgrade {
-				result.IsUpgrade = true
-				stub.history = []*v1.Release{releaseAt(3, common.StatusDeployed, tc.previous)}
-			} else {
-				stub.historyErr = helm.ErrReleaseNotFound
-			}
-			sess := session.New(
-				session.WithSpecPath(specPath),
-				session.WithHelmFactory(func(*target.Target, session.HelmConfig) (session.HelmClient, error) {
-					return stub, nil
-				}),
-			)
-			h := nabatctx.New(t, "test")
-			h.Context.SetContext(session.WithContext(h.Context.Context(), sess))
-			opts := testOptions()
-			opts.DetailedExitCode = true
-			err := executePlan(h.Context, sess, nil, testManifest(), opts, testResolved(nil))
-			if tc.wantErrIs != nil {
-				require.ErrorIs(t, err, tc.wantErrIs)
-				return
-			}
+			stdout, _, err := (planFixture{
+				stub: &stubHelmClient{result: installResult(secretV1), prep: installPrep()},
+				opts: &Options{Environment: "production", OutputFormat: tc.format, ShowSecrets: tc.reveal},
+			}).run(t)
 			require.NoError(t, err)
+			if tc.format == outputFormatJSON {
+				require.NoError(t, json.Unmarshal([]byte(stdout), &map[string]any{}))
+			}
+			for _, s := range tc.contains {
+				assert.Contains(t, stdout, s)
+			}
+			for _, s := range tc.notContains {
+				assert.NotContains(t, stdout, s)
+			}
 		})
 	}
+
+	hidden, _, err := (planFixture{
+		stub: &stubHelmClient{result: installResult(secretV1), prep: installPrep()},
+		opts: &Options{Environment: "production", OutputFormat: outputFormatJSON},
+	}).run(t)
+	require.NoError(t, err)
+	shown, _, err := (planFixture{
+		stub: &stubHelmClient{result: installResult(secretV1), prep: installPrep()},
+		opts: &Options{Environment: "production", OutputFormat: outputFormatJSON, ShowSecrets: true},
+	}).run(t)
+	require.NoError(t, err)
+	assert.JSONEq(t, hidden, strings.ReplaceAll(shown, "b2xk", "(redacted)"))
+}
+
+func TestShowSecrets_PresentationOnly(t *testing.T) {
+	t.Parallel()
+	stub := &stubHelmClient{result: installResult(secretV1), prep: installPrep()}
+	p, _, cleanup, err := planengine.BuildSemanticPlan(t.Context(), stub, fakeRESTMapper{}, nil, planengine.SemanticBuildInput{
+		ClusterContext: "test-context",
+		Resolved:       testResolved(nil),
+	})
+	t.Cleanup(cleanup)
+	require.NoError(t, err)
+	before, err := json.Marshal(p)
+	require.NoError(t, err)
+
+	var hidden, shown bytes.Buffer
+	require.NoError(t, view.WriteHuman(&hidden, p, view.Options{}))
+	require.NoError(t, view.WriteHuman(&shown, p, view.Options{ShowSecrets: true}))
+	require.NoError(t, view.WriteJSON(&hidden, p, view.Options{}))
+	require.NoError(t, view.WriteJSON(&shown, p, view.Options{ShowSecrets: true}))
+
+	after, err := json.Marshal(p)
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
+	assert.NotContains(t, hidden.String(), "b2xk")
+	assert.Contains(t, shown.String(), "b2xk")
+}
+
+func TestExecutePlan_DetailedExitCode(t *testing.T) {
+	t.Parallel()
+	taskResult := installResult("")
+	taskResult.Hooks = []*v1.Hook{migrateHook()}
+	tests := []struct {
+		name      string
+		stub      *stubHelmClient
+		live      *fakeLive
+		resolved  *spec.ResolvedSpec
+		dirCRD    bool
+		format    string
+		wantErr   error
+		wantPlain string
+		contains  []string
+		off       bool
+	}{
+		{
+			name: "resource change",
+			stub: &stubHelmClient{
+				result: upgradeResult(deploymentV2, 8),
+				prep:   upgradePrep(deploymentV1, 7),
+			},
+			live:     &fakeLive{objs: []*unstructured.Unstructured{mustObject(t, deploymentV1)}},
+			wantErr:  ErrChangesPresent,
+			contains: []string{`~ update apps/v1/Deployment "web"`, "Summary"},
+		},
+		{
+			name:     "task only",
+			stub:     &stubHelmClient{result: taskResult, prep: installPrep()},
+			resolved: taskResolved(),
+			wantErr:  ErrChangesPresent,
+		},
+		{
+			name:    "chart crd process",
+			stub:    &stubHelmClient{result: installResult(""), prep: installPrep()},
+			dirCRD:  true,
+			wantErr: ErrChangesPresent,
+		},
+		{
+			name: "no changes",
+			stub: &stubHelmClient{
+				result: upgradeResult(deploymentV1, 5),
+				prep:   upgradePrep(deploymentV1, 4),
+			},
+			live: &fakeLive{objs: []*unstructured.Unstructured{mustObject(t, deploymentV1)}},
+		},
+		{
+			name: "drift only",
+			stub: &stubHelmClient{
+				result: upgradeResult(deploymentV1, 5),
+				prep:   upgradePrep(deploymentV1, 4),
+			},
+			live: &fakeLive{objs: []*unstructured.Unstructured{mustObject(t, deploymentLive)}},
+		},
+		{
+			name: "chart crd upgrade",
+			stub: &stubHelmClient{
+				result: upgradeResult("", 2),
+				prep:   upgradePrep("", 1),
+			},
+			dirCRD: true,
+			live:   &fakeLive{},
+		},
+		{
+			name: "render error",
+			stub: &stubHelmClient{
+				result:    installResult(deploymentV1),
+				prep:      installPrep(),
+				renderErr: errors.New("render broke"),
+			},
+			wantPlain: "render manifests",
+		},
+		{
+			name:   "json resource change",
+			format: outputFormatJSON,
+			stub: &stubHelmClient{
+				result: upgradeResult(deploymentV2, 8),
+				prep:   upgradePrep(deploymentV1, 7),
+			},
+			live:    &fakeLive{objs: []*unstructured.Unstructured{mustObject(t, deploymentV1)}},
+			wantErr: ErrChangesPresent,
+		},
+		{
+			name: "flag off ignores effects",
+			stub: &stubHelmClient{
+				result: upgradeResult(deploymentV2, 8),
+				prep:   upgradePrep(deploymentV1, 7),
+			},
+			live: &fakeLive{objs: []*unstructured.Unstructured{mustObject(t, deploymentV1)}},
+			off:  true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := ""
+			if tc.dirCRD {
+				dir = writeSpecDir(t)
+				writePlanExtras(t, dir, ".deployah/crds/widget.yaml", planCRDBody)
+			}
+			format := tc.format
+			if format == "" {
+				format = outputFormatHuman
+			}
+			stdout, _, err := (planFixture{
+				dir:      dir,
+				stub:     tc.stub,
+				live:     tc.live,
+				resolved: tc.resolved,
+				opts:     &Options{Environment: "production", OutputFormat: format, DetailedExitCode: !tc.off},
+			}).run(t)
+			if tc.wantPlain != "" {
+				require.Error(t, err)
+				assert.ErrorContains(t, err, tc.wantPlain)
+				assert.NotErrorIs(t, err, ErrChangesPresent)
+				return
+			}
+			assert.NotEmpty(t, stdout)
+			for _, s := range tc.contains {
+				assert.Contains(t, stdout, s)
+			}
+			if tc.wantErr != nil {
+				require.ErrorIs(t, err, tc.wantErr)
+			} else {
+				require.NoError(t, err)
+			}
+			if format == outputFormatJSON {
+				require.NoError(t, json.Unmarshal([]byte(stdout), &map[string]any{}))
+			}
+		})
+	}
+}
+
+func TestExecutePlan_ReaderError(t *testing.T) {
+	t.Parallel()
+	readers := &recordedReaders{err: errors.New("mapper down")}
+	_, _, err := (planFixture{
+		stub:    &stubHelmClient{result: installResult(deploymentV1), prep: installPrep()},
+		readers: readers,
+	}).run(t)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "cluster readers")
+	assert.ErrorContains(t, err, "mapper down")
+	assert.NotErrorIs(t, err, ErrChangesPresent)
+}
+
+func TestExecutePlan_MissingKubeconfig(t *testing.T) {
+	t.Parallel()
+	_, _, err := (planFixture{
+		stub:       &stubHelmClient{result: installResult(deploymentV1), prep: installPrep()},
+		kubeconfig: filepath.Join(t.TempDir(), "missing"),
+	}).run(t)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "kubernetes config")
+}
+
+func TestExecutePlan_LoadExtrasError(t *testing.T) {
+	t.Parallel()
+	dir := writeSpecDir(t)
+	writePlanExtras(t, dir, ".deployah/manifests/bad.yaml", "not: [valid")
+	_, _, err := (planFixture{
+		dir:  dir,
+		stub: &stubHelmClient{result: installResult(deploymentV1), prep: installPrep()},
+	}).run(t)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "load extras")
 }

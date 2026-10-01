@@ -60,17 +60,19 @@ func TestBuildSemanticPlan_ChartCRDLifecycle(t *testing.T) {
 		Name: "widgets.example.com",
 	}}
 	tests := []struct {
-		name        string
-		op          helm.Operation
-		skip        bool
-		wantLife    semantic.ChartCRDLifecycle
-		wantProcess bool
-		wantAction  semantic.HelmAction
-		wantChanges int
-		wantEffects bool
-		wantNoOp    bool
+		name          string
+		op            helm.Operation
+		skip          bool
+		wantLife      semantic.ChartCRDLifecycle
+		wantProcess   bool
+		wantAction    semantic.HelmAction
+		wantChanges   int
+		wantEffects   bool
+		wantNoOp      bool
+		emptyManifest bool
 	}{
 		{name: "fresh install", op: helm.OperationInstall, wantLife: semantic.ChartCRDProcess, wantProcess: true, wantAction: semantic.HelmInstall, wantChanges: 1, wantEffects: true},
+		{name: "fresh install only crds", op: helm.OperationInstall, emptyManifest: true, wantLife: semantic.ChartCRDProcess, wantProcess: true, wantAction: semantic.HelmInstall, wantEffects: true},
 		{name: "fresh skip", op: helm.OperationInstall, skip: true, wantLife: semantic.ChartCRDSkip, wantAction: semantic.HelmInstall, wantChanges: 1, wantEffects: true},
 		{name: "upgrade", op: helm.OperationUpgrade, wantLife: semantic.ChartCRDUpgrade, wantAction: semantic.HelmNone, wantNoOp: true},
 		{name: "upgrade ignores skip", op: helm.OperationUpgrade, skip: true, wantLife: semantic.ChartCRDUpgrade, wantAction: semantic.HelmNone, wantNoOp: true},
@@ -82,7 +84,11 @@ func TestBuildSemanticPlan_ChartCRDLifecycle(t *testing.T) {
 			var client *fakeBuildClient
 			switch tc.op {
 			case helm.OperationInstall:
-				client = installClient(configMapYAML("app", "prod", "v1"))
+				desired := configMapYAML("app", "prod", "v1")
+				if tc.emptyManifest {
+					desired = ""
+				}
+				client = installClient(desired)
 			case helm.OperationUpgrade:
 				client = upgradeClient(manifest, manifest, 4)
 			}
