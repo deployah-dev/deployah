@@ -59,14 +59,6 @@ func DiscoverScenarios(scenariosDir string) ([]TestScenario, error) {
 			return filepath.SkipDir
 		}
 
-		// plan-* directories hold plan-config.yaml scenarios (see
-		// plan_scenarios.go), not render/golden-file scenarios: skip them
-		// here so they never get treated as a render scenario missing its
-		// expected/ directory.
-		if strings.HasPrefix(info.Name(), "plan-") {
-			return filepath.SkipDir
-		}
-
 		manifestPath := filepath.Join(path, "deployah.yaml")
 		if _, statErr := os.Stat(manifestPath); errors.Is(statErr, fs.ErrNotExist) {
 			return nil

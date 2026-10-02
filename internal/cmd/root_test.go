@@ -21,8 +21,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"deployah.dev/deployah/internal/plan"
-
 	planCmd "deployah.dev/deployah/internal/cmd/plan"
 )
 
@@ -35,7 +33,6 @@ func TestExitCode(t *testing.T) {
 	}{
 		{name: "nil", want: 0},
 		{name: "plan changes", err: fmt.Errorf("wrap: %w", planCmd.ErrChangesPresent), want: 2},
-		{name: "legacy sentinel", err: fmt.Errorf("wrap: %w", plan.ErrChangesPresent), want: 1},
 		{name: "ordinary", err: errors.New("boom"), want: 1},
 	}
 	for _, tc := range tests {
