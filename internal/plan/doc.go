@@ -20,20 +20,15 @@
 // [SemanticBuildClient.RenderManifestsWithPrep]. It picks install,
 // upgrade, or none from the Helm operation and from comparing the
 // previous release with the render and its hooks. Resource changes
-// compare the previous manifest with the rendered Desired manifest.
-// Discovery supplies scope only. An existing release also reads Live
-// with GET and LIST to compute Drift. Chart CRDs pass through to Helm.
-// The result is a [deployah.dev/deployah/internal/plan/semantic.Plan].
-// Those types live in plan/semantic. Their rendering lives in plan/view.
+// are Previous to Desired. [RESTMapper] supplies scope only. An
+// existing release reads Live through [LiveReader] with GET and LIST,
+// so Drift is Previous to Live. Chart CRD lifecycle comes from the
+// loaded documents, not from object diffs. The result is a
+// [deployah.dev/deployah/internal/plan/semantic.Plan]. Those types
+// live in plan/semantic. Their rendering lives in plan/view.
 //
-// [BuildPlan] diffs the rendered manifest against the last successful
-// Helm release. [ComputeDiff] is the older diff. It parses two rendered
-// manifests, matches by apiVersion, kind, namespace, and name, and runs
-// [github.com/homeport/dyff] on resources present on both sides. [Plan]
-// is that model. [RenderText] prints it, and [NewJSONDocument] encodes
-// it as JSON. [DeploymentIntent] records resize and hostname flags. It
-// does not decide whether deploy runs Helm. [BuildPlan] and [ComputeDiff]
-// remain while callers move to the semantic plan.
+// [LastSuccessfulRelease] remains for deploy hostname and workload
+// guards. [BuildSemanticPlan] does not use it.
 //
 // Chart rendering is on [deployah.dev/deployah/internal/helm.Client].
 // `deployah plan` and `deployah deploy` share it.

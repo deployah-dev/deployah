@@ -38,10 +38,10 @@ type historyClient interface {
 
 // LastSuccessfulRelease walks a release's history, newest revision first,
 // and returns the newest revision whose status is "deployed" or
-// "superseded": the manifest a plan should diff the current render
-// against. warning is set when the newest revision itself isn't
-// successful, so the caller can surface that alongside the older
-// successful revision actually used for the diff.
+// "superseded". Deploy hostname and workload guards use it.
+// [BuildSemanticPlan] does not. Warning is set when the newest revision
+// itself is not successful, so the caller can surface that alongside the
+// older successful revision.
 func LastSuccessfulRelease(ctx context.Context, client historyClient, project, environment string) (release *v1.Release, warning string, err error) {
 	history, err := client.GetReleaseHistory(ctx, project, environment)
 	if err != nil {
@@ -60,8 +60,8 @@ func LastSuccessfulRelease(ctx context.Context, client historyClient, project, e
 	})
 
 	if len(releases) == 0 {
-		// No history at all: treat as a fresh install, where every
-		// resource in the current render is an addition.
+		// No history at all: there is no successful revision for the
+		// deploy guards.
 		return nil, "", nil
 	}
 
@@ -79,9 +79,9 @@ func LastSuccessfulRelease(ctx context.Context, client historyClient, project, e
 		}
 	}
 
-	// History exists but no revision ever succeeded (e.g. every attempt
-	// failed). Treat like a fresh install for diffing purposes, but keep
-	// the warning so the caller knows this is not really a first deploy.
+	// History exists but no revision ever succeeded (every attempt
+	// failed). The nil return means the guards have no successful
+	// release to compare. The warning says this is not a first deploy.
 	if warning == "" {
 		warning = fmt.Sprintf("no successful revision found in history (latest revision %d is %s)", latest.Version, latest.Info.Status)
 	}
