@@ -61,31 +61,11 @@ func TestWriteHuman_SemanticPlan(t *testing.T) {
 	t.Parallel()
 	p := semanticUpgradePlan(t, previousProductSpec(), currentProductSpec())
 	text := writeHuman(t, p)
-	assertGolden(t, "human_semantic_plan", text) // full-output contract; Contains below are invariants only
-	assertHumanLayout(t, text)
-	assertSemanticHeader(t, text, 2)
+	assertGolden(t, "human_semantic_plan", text)
 	assert.Equal(t, "web-prod", p.Header.Release)
 	assert.Equal(t, productNamespace, p.Header.Namespace)
 	assert.False(t, p.Header.FreshInstall)
-	assert.Contains(t, text, `~ update apps/v1/Deployment "web-prod-api"`)
-	assert.Contains(t, text, `+ create apps/v1/Deployment "web-prod-worker"`)
-	assert.Contains(t, text, `- delete apps/v1/Deployment "web-prod-legacy"`)
-	assert.Contains(t, text, "deployah.dev/project: web")
-	assert.Contains(t, text, "deployah.dev/environment: prod")
-	assert.Contains(t, text, "deployah.dev/instance: web-prod")
-	assert.Contains(t, text, "app.kubernetes.io/managed-by: Helm")
-	assert.Contains(t, text, "helm.sh/chart:")
-	assert.Contains(t, text, "helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded")
-	assert.Contains(t, text, "  preDeploy")
-	assert.Contains(t, text, "~ migrate  changed, will run")
-	assert.Contains(t, text, "  postDeploy")
-	assert.Contains(t, text, "+ smoke  new, will run")
-	assert.Contains(t, text, "- old-check  removed")
-	assert.Contains(t, text, "  schedule")
-	assert.Contains(t, text, "~ cleanup  changed")
 	assert.NotContains(t, text, "~ cleanup  changed, will run")
-	assert.Contains(t, text, `-   schedule: 0 2 * * *`)
-	assert.Contains(t, text, `+   schedule: 0 3 * * *`)
 	assertCronJobOnlyUnderTasks(t, text, "web-prod-cleanup")
 	assert.NotContains(t, text, `create v1/Namespace`)
 	assert.NotContains(t, text, "-/+")
@@ -143,20 +123,6 @@ func TestWriteHuman_SemanticScheduleDelete(t *testing.T) {
 	assertSemanticCronJobBody(t, text)
 	assert.NotContains(t, text, `create v1/Namespace`)
 	assert.NotContains(t, text, "-/+")
-}
-
-func assertSemanticHeader(t *testing.T, text string, revision int) {
-	t.Helper()
-	block := fmt.Sprintf("Context:   %s\nNamespace: %s\nRelease:   web-prod\nRevision:  %d\n", productClusterContext, productNamespace, revision)
-	assert.Contains(t, text, block)
-	contextIdx := strings.Index(text, "Context:")
-	nsIdx := strings.Index(text, "Namespace:")
-	relIdx := strings.Index(text, "Release:")
-	revIdx := strings.Index(text, "Revision:")
-	require.Greater(t, contextIdx, -1)
-	assert.Greater(t, nsIdx, contextIdx)
-	assert.Greater(t, relIdx, nsIdx)
-	assert.Greater(t, revIdx, relIdx)
 }
 
 func assertCronJobOnlyUnderTasks(t *testing.T, text, name string) {
@@ -348,7 +314,18 @@ func previousReleaseFromRender(t *testing.T, result *render.RenderResult) *v1.Re
 	if values == nil {
 		values = map[string]any{}
 	}
-	tasks, ok := nestedMap(values, "deployah", "resolved", "tasks")
+	cur := values
+	var tasks map[string]any
+	ok := true
+	for _, key := range []string{"deployah", "resolved", "tasks"} {
+		next, isMap := cur[key].(map[string]any)
+		if !isMap || next == nil {
+			ok = false
+			break
+		}
+		cur = next
+		tasks = next
+	}
 	require.True(t, ok && len(tasks) > 0, "previous chart values must include deployah.resolved.tasks")
 	return &v1.Release{
 		Name:      result.ReleaseName,
@@ -358,18 +335,6 @@ func previousReleaseFromRender(t *testing.T, result *render.RenderResult) *v1.Re
 		Config:    values,
 		Version:   1,
 	}
-}
-
-func nestedMap(root map[string]any, keys ...string) (map[string]any, bool) {
-	cur := root
-	for _, key := range keys {
-		next, ok := cur[key].(map[string]any)
-		if !ok || next == nil {
-			return nil, false
-		}
-		cur = next
-	}
-	return cur, true
 }
 
 func buildSemanticPlan(t *testing.T, client plan.SemanticBuildClient, resolved *spec.ResolvedSpec, live plan.LiveReader) semantic.Plan {

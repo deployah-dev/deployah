@@ -27,6 +27,8 @@ import (
 
 	"deployah.dev/deployah/internal/plan/semantic"
 	"deployah.dev/deployah/internal/plan/view"
+
+	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
 )
 
 var update = flag.Bool("update", false, "update golden files")
@@ -367,17 +369,35 @@ func assertJSONPaths(tb testing.TB, raw []byte, wants []jsonPathWant) {
 }
 
 // assertGolden is the primary golden contract: got must equal
-// testdata/golden/<name>.golden in full. Contains checks in callers are
-// secondary invariants only. A normal run never skips the comparison.
-// -update rewrites the file from got, then the same equality still runs.
+// testdata/golden/<name>.golden in full. A mismatch stops the test.
+// A normal run never skips the comparison. -update rewrites the file
+// from got, then the same equality still runs.
 func assertGolden(t *testing.T, name, got string) {
 	t.Helper()
-	assert.Equal(t, string(readGolden(t, name, got)), got)
+	require.Equal(t, string(readGolden(t, name, got)), got)
 }
 
 func assertJSONGolden(t *testing.T, name, got string) {
 	t.Helper()
-	assert.JSONEq(t, string(readGolden(t, name, got)), got)
+	require.JSONEq(t, string(readGolden(t, name, got)), got)
+}
+
+func compilePlanSchema(t *testing.T) *jsonschema.Schema {
+	t.Helper()
+	compiler := jsonschema.NewCompiler()
+	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(view.SchemaV1()))
+	require.NoError(t, err)
+	require.NoError(t, compiler.AddResource(view.SchemaV1ID, doc))
+	sch, err := compiler.Compile(view.SchemaV1ID)
+	require.NoError(t, err)
+	return sch
+}
+
+func validatePlanSchema(t *testing.T, raw []byte) {
+	t.Helper()
+	var v any
+	require.NoError(t, json.Unmarshal(raw, &v))
+	require.NoError(t, compilePlanSchema(t).Validate(v))
 }
 
 func readGolden(t *testing.T, name, got string) []byte {

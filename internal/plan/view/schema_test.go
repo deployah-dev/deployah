@@ -36,14 +36,12 @@ func TestSchemaV1ID_MatchesEmbeddedAndRendered(t *testing.T) {
 	assert.Equal(t, "https://json-schema.org/draft/2020-12/schema", sch["$schema"])
 	props, ok := sch["properties"].(map[string]any)
 	require.True(t, ok)
-	_, hasChartCRDs := props["chartCRDs"]
-	assert.True(t, hasChartCRDs)
+	assert.Contains(t, props, "chartCRDs")
 	required, ok := sch["required"].([]any)
 	require.True(t, ok)
 	assert.Contains(t, required, "chartCRDs")
 	assert.NotContains(t, required, "completeness")
-	_, hasCompleteness := props["completeness"]
-	assert.False(t, hasCompleteness)
+	assert.NotContains(t, props, "completeness")
 
 	defs, ok := sch["$defs"].(map[string]any)
 	require.True(t, ok)
@@ -51,8 +49,7 @@ func TestSchemaV1ID_MatchesEmbeddedAndRendered(t *testing.T) {
 	require.True(t, ok)
 	summaryProps, ok := summary["properties"].(map[string]any)
 	require.True(t, ok)
-	_, hasReplace := summaryProps["replace"]
-	assert.False(t, hasReplace)
+	assert.NotContains(t, summaryProps, "replace")
 	change, ok := defs["ResourceChange"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, []any{"resource", "action", "before", "after", "fields"}, change["required"])
@@ -190,10 +187,10 @@ func TestSchemaV1_RejectsHookUpdateWithoutFields(t *testing.T) {
 	}}))
 	tasks, ok := doc["tasks"].([]any)
 	require.True(t, ok)
-	require.NotEmpty(t, tasks)
+	require.Len(t, tasks, 1)
 	defs, ok := asObject(t, tasks[0])["definitions"].([]any)
 	require.True(t, ok)
-	require.NotEmpty(t, defs)
+	require.Len(t, defs, 1)
 	asObject(t, defs[0])["fields"] = []any{}
 	raw, err := json.Marshal(doc)
 	require.NoError(t, err)
@@ -395,6 +392,13 @@ func firstChartCRD(t *testing.T, doc map[string]any) map[string]any {
 	require.True(t, ok)
 	require.NotEmpty(t, crds)
 	return asObject(t, crds[0])
+}
+
+func assertSchemaRejects(t *testing.T, raw []byte) {
+	t.Helper()
+	var v any
+	require.NoError(t, json.Unmarshal(raw, &v))
+	require.Error(t, compilePlanSchema(t).Validate(v))
 }
 
 func mustPlanDoc(t *testing.T, p semantic.Plan) map[string]any {

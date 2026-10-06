@@ -45,7 +45,6 @@ func TestWriteHuman_ChartCRDLifecycle(t *testing.T) {
 		action semantic.HelmAction
 		lc     semantic.ChartCRDLifecycle
 		golden string
-		note   string
 	}{
 		{
 			name:   "process",
@@ -53,7 +52,6 @@ func TestWriteHuman_ChartCRDLifecycle(t *testing.T) {
 			action: semantic.HelmInstall,
 			lc:     semantic.ChartCRDProcess,
 			golden: "human_chart_crds_process",
-			note:   "lifecycle: process (Helm install will process this chart CRD)",
 		},
 		{
 			name:   "skip",
@@ -61,7 +59,6 @@ func TestWriteHuman_ChartCRDLifecycle(t *testing.T) {
 			action: semantic.HelmInstall,
 			lc:     semantic.ChartCRDSkip,
 			golden: "human_chart_crds_skip",
-			note:   "lifecycle: skip (Helm install will skip this chart CRD)",
 		},
 		{
 			name:   "upgrade",
@@ -69,7 +66,6 @@ func TestWriteHuman_ChartCRDLifecycle(t *testing.T) {
 			action: semantic.HelmUpgrade,
 			lc:     semantic.ChartCRDUpgrade,
 			golden: "human_chart_crds_upgrade",
-			note:   "lifecycle: upgrade (Helm upgrade does not process chart CRDs)",
 		},
 	}
 	for _, tt := range tests {
@@ -80,9 +76,6 @@ func TestWriteHuman_ChartCRDLifecycle(t *testing.T) {
 			})
 			text := writeHuman(t, p)
 			assertGolden(t, tt.golden, text)
-			assertHumanLayout(t, text)
-			assert.Contains(t, text, "  Resources: 0 create, 0 update, 0 delete")
-			assert.Contains(t, text, tt.note)
 			assertChartCRDSectionHasNoDiff(t, chartCRDSection(t, text))
 		})
 	}

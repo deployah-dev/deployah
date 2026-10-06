@@ -67,8 +67,7 @@ func TestWriteHuman_StylerPreservesLayout(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			plain := assertRoleTrace(t, tt.golden+".roles", tt.plan)
-			assertGolden(t, tt.golden, plain)
+			assertRoleTrace(t, tt.golden+".roles", tt.plan)
 		})
 	}
 }
@@ -155,7 +154,7 @@ func TestWriteHuman_StyleRoles(t *testing.T) {
 	}{
 		{
 			name:   "create",
-			golden: "style_create",
+			golden: "human_create.roles",
 			plan: mustPlanWithHeader(t, header, semantic.HelmUpgrade, []semantic.ResourceChange{{
 				Resource: ref("ConfigMap", "app"),
 				Action:   semantic.Create,
@@ -164,7 +163,7 @@ func TestWriteHuman_StyleRoles(t *testing.T) {
 		},
 		{
 			name:   "delete",
-			golden: "style_delete",
+			golden: "human_delete.roles",
 			plan: mustPlanWithHeader(t, header, semantic.HelmUpgrade, []semantic.ResourceChange{{
 				Resource: ref("ConfigMap", "old"),
 				Action:   semantic.Delete,
@@ -173,7 +172,7 @@ func TestWriteHuman_StyleRoles(t *testing.T) {
 		},
 		{
 			name:   "update",
-			golden: "style_update",
+			golden: "human_update.roles",
 			plan: mustPlanWithHeader(t, header, semantic.HelmUpgrade, []semantic.ResourceChange{{
 				Resource: ref("ConfigMap", "web"),
 				Action:   semantic.Update,
@@ -181,11 +180,11 @@ func TestWriteHuman_StyleRoles(t *testing.T) {
 				After:    snap(cm("web", "v2")),
 			}}, nil),
 		},
-		{name: "drift unexpected", golden: "style_drift_unexpected", plan: unexpected},
-		{name: "drift missing", golden: "style_drift_missing", plan: missing},
-		{name: "drift modified", golden: "style_drift_modified", plan: modified},
-		{name: "tasks", golden: "style_tasks", plan: tasks},
-		{name: "chart crds", golden: "style_chart_crds", plan: chartCRDs},
+		{name: "drift unexpected", golden: "human_drift_unexpected.roles", plan: unexpected},
+		{name: "drift missing", golden: "human_drift_missing.roles", plan: missing},
+		{name: "drift modified", golden: "human_drift_modified.roles", plan: modified},
+		{name: "tasks", golden: "human_tasks.roles", plan: tasks},
+		{name: "chart crds", golden: "human_chart_crds.roles", plan: chartCRDs},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

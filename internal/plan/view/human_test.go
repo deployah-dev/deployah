@@ -30,52 +30,11 @@ import (
 
 func TestWriteHuman_CreateUpdateDelete(t *testing.T) {
 	t.Parallel()
-	p := allActionsPlan(t)
-	var buf bytes.Buffer
-	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
-	text := buf.String()
-	assertGolden(t, "human_all_actions", text) // full-output contract; Contains below are invariants only
-	assertHumanLayout(t, text)
-	assertHumanHeaderMetadata(t, text, "production-eu", 12)
-	assert.Contains(t, text, "Resources")
-	assert.Contains(t, text, `+ create v1/ConfigMap "app"`)
-	assert.Contains(t, text, "+     example.com/keep: yes")
-	assert.Contains(t, text, "+     app: web")
-	assert.Contains(t, text, "+   key: v1")
-	assert.Contains(t, text, `~ update v1/ConfigMap "web"`)
-	assert.Contains(t, text, `- delete v1/ConfigMap "old"`)
-	assert.Contains(t, text, "-     example.com/keep: yes")
-	assert.Contains(t, text, "-     app: web")
-	assert.Contains(t, text, "-   key: v1")
-	assert.Contains(t, text, "Tasks")
-	assert.Contains(t, text, "  preDeploy")
-	assert.Contains(t, text, "~ migrate  changed, will run")
-	assert.Contains(t, text, `~ update v1/ConfigMap "web-migrate-env"`)
-	assert.Contains(t, text, "    seed  will run")
-	assert.Contains(t, text, "  postDeploy")
-	assert.Contains(t, text, "+ smoke  new, will run")
-	assert.Contains(t, text, `+ create batch/v1/Job "web-smoke"`)
-	assert.Contains(t, text, "deployah.dev/task: smoke")
-	assert.Contains(t, text, "helm.sh/hook: post-install,post-upgrade")
-	assert.Contains(t, text, `helm.sh/hook-weight: "0"`)
-	assert.Contains(t, text, "backoffLimit: 1")
-	assert.Contains(t, text, "image: ghcr.io/example/web:1.2.3")
-	assert.Contains(t, text, "- ./smoke")
-	assert.Contains(t, text, "- old-check  removed")
-	assert.Contains(t, text, `- delete batch/v1/Job "web-old-check"`)
-	assert.Contains(t, text, "deployah.dev/task: old-check")
-	assert.Contains(t, text, `helm.sh/hook-weight: "1"`)
-	assert.Contains(t, text, "- ./old-check")
-	assert.Contains(t, text, "  schedule")
-	assert.Contains(t, text, "~ cleanup  changed")
+	text := writeHuman(t, allActionsPlan(t))
+	assertGolden(t, "human_all_actions", text)
 	assert.NotContains(t, text, "~ cleanup  changed, will run")
-	assert.Contains(t, text, `~ update batch/v1/CronJob "web-cleanup"`)
-	assert.Contains(t, text, "-   schedule: 0 2 * * *")
-	assert.Contains(t, text, "+   schedule: 0 3 * * *")
 	assert.NotContains(t, text, "jobTemplate:")
 	assert.Equal(t, 1, strings.Count(text, `batch/v1/CronJob "web-cleanup"`))
-	assert.Contains(t, text, "  Resources: 1 create, 2 update, 1 delete")
-	assert.Contains(t, text, "  Tasks: 3 to run, 1 schedule changed")
 	assert.NotContains(t, text, "~ ConfigMap/prod/rs")
 	assert.NotContains(t, text, "-/+")
 	assert.NotContains(t, strings.ToLower(text), "recreate")
@@ -86,10 +45,6 @@ func TestWriteHuman_CreateUpdateDelete(t *testing.T) {
 	assert.NotContains(t, text, "field_manager=")
 	assert.NotContains(t, text, "force_conflicts=")
 	assert.NotContains(t, text, "delete=")
-	assert.Contains(t, text, "+ apiVersion: v1")
-	assert.Contains(t, text, "- apiVersion: v1")
-	assert.Contains(t, text, "-   key: v1")
-	assert.Contains(t, text, "+   key: v2")
 	assert.NotContains(t, text, "before:")
 	assert.NotContains(t, text, "after:")
 	assert.NotContains(t, text, "--- before")
@@ -111,10 +66,7 @@ func TestWriteHuman_DeterministicMapOrder(t *testing.T) {
 		Action:   semantic.Create,
 		After:    snap(second),
 	}})
-	var b1, b2 bytes.Buffer
-	require.NoError(t, view.WriteHuman(&b1, p1, view.Options{}))
-	require.NoError(t, view.WriteHuman(&b2, p2, view.Options{}))
-	assert.Equal(t, b1.String(), b2.String())
+	assert.Equal(t, writeHuman(t, p1), writeHuman(t, p2))
 }
 
 func TestWriteHuman_DoesNotHTMLEscape(t *testing.T) {
@@ -125,9 +77,7 @@ func TestWriteHuman_DoesNotHTMLEscape(t *testing.T) {
 		Before:   snap(map[string]any{"note": "plain"}),
 		After:    snap(map[string]any{"note": map[string]any{"html": "a < b & c"}}),
 	}})
-	var buf bytes.Buffer
-	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
-	text := buf.String()
+	text := writeHuman(t, p)
 	assert.Contains(t, text, `a < b & c`)
 	assert.NotContains(t, text, `\u003c`)
 	assert.NotContains(t, text, `\u0026`)
@@ -172,9 +122,7 @@ func TestWriteHuman_KubernetesKeyOrder(t *testing.T) {
 		Action:   semantic.Create,
 		After:    snap(obj),
 	}})
-	var buf bytes.Buffer
-	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
-	text := buf.String()
+	text := writeHuman(t, p)
 	api := strings.Index(text, "+ apiVersion: apps/v1")
 	kind := strings.Index(text, "+ kind: Deployment")
 	meta := strings.Index(text, "+ metadata:")
@@ -217,9 +165,7 @@ func TestWriteHuman_GenerateNameBeforeNamespace(t *testing.T) {
 		Action:   semantic.Create,
 		After:    snap(obj),
 	}})
-	var buf bytes.Buffer
-	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
-	text := buf.String()
+	text := writeHuman(t, p)
 	gen := strings.Index(text, "+   generateName: app-")
 	ns := strings.Index(text, "+   namespace: prod")
 	require.Greater(t, gen, -1)
@@ -240,9 +186,7 @@ func TestWriteHuman_ArrayOrderPreserved(t *testing.T) {
 		Action:   semantic.Create,
 		After:    snap(obj),
 	}})
-	var buf bytes.Buffer
-	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
-	text := buf.String()
+	text := writeHuman(t, p)
 	zeta := strings.Index(text, "zeta")
 	alpha := strings.Index(text, "alpha")
 	mu := strings.Index(text, "mu")
@@ -288,9 +232,7 @@ func TestWriteHuman_HeaderMetadata(t *testing.T) {
 				helmAction = semantic.HelmInstall
 			}
 			p := mustPlanWithHeader(t, tt.header, helmAction, nil, nil)
-			var buf bytes.Buffer
-			require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
-			text := buf.String()
+			text := writeHuman(t, p)
 			assertHumanLayout(t, text)
 			assertHumanHeaderMetadata(t, text, tt.context, tt.revision)
 			assert.Equal(t, tt.context, p.Header.Context)
@@ -306,9 +248,7 @@ func TestWriteHuman_HeaderMetadata(t *testing.T) {
 func TestWriteHuman_EmptyPlan(t *testing.T) {
 	t.Parallel()
 	p := mustPlan(t, semantic.HelmNone, nil)
-	var buf bytes.Buffer
-	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
-	text := buf.String()
+	text := writeHuman(t, p)
 	assert.Contains(t, text, `Plan for project "web" on environment "prod"`)
 	assert.NotContains(t, text, "completeness:")
 	assert.NotContains(t, text, "Executions:")
@@ -385,9 +325,7 @@ func TestWriteHuman_UnknownGVKActions(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{tt.change})
-			var buf bytes.Buffer
-			require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
-			text := buf.String()
+			text := writeHuman(t, p)
 			for _, want := range tt.contains {
 				assert.Contains(t, text, want)
 			}
@@ -444,9 +382,7 @@ func TestWriteHuman_GVKAndNamespaceHeadings(t *testing.T) {
 				Action:   semantic.Create,
 				After:    snap(k8sObj(tt.ref.APIVersion, tt.ref.Kind, tt.ref.Namespace, tt.ref.Name)),
 			}})
-			var buf bytes.Buffer
-			require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
-			text := buf.String()
+			text := writeHuman(t, p)
 			assert.Contains(t, text, tt.heading)
 			for _, omit := range tt.omits {
 				assert.NotContains(t, text, omit)
@@ -545,9 +481,7 @@ func TestWriteHuman_UpdateProjection(t *testing.T) {
 				Before:   snap(tt.before),
 				After:    snap(tt.after),
 			}})
-			var buf bytes.Buffer
-			require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
-			text := buf.String()
+			text := writeHuman(t, p)
 			for _, want := range tt.contains {
 				assert.Contains(t, text, want)
 			}
@@ -590,9 +524,7 @@ func TestWriteHuman_ScheduledTaskNotDuplicated(t *testing.T) {
 		Action:    semantic.TaskUpdate,
 		Resources: []semantic.ResourceRef{cron},
 	}})
-	var buf bytes.Buffer
-	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
-	text := buf.String()
+	text := writeHuman(t, p)
 	assert.Contains(t, text, "Resources")
 	assert.Contains(t, text, `+ create v1/ConfigMap "api"`)
 	assert.Contains(t, text, "Tasks")
@@ -672,9 +604,7 @@ func TestWriteHuman_ScheduleCreateDeleteRendersFullObject(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			p := mustPlanWithTasks(t, semantic.HelmUpgrade, []semantic.ResourceChange{tt.change}, []semantic.TaskPlan{tt.task})
-			var buf bytes.Buffer
-			require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
-			text := buf.String()
+			text := writeHuman(t, p)
 			assertHumanLayout(t, text)
 			assert.Contains(t, text, "Tasks")
 			assert.Contains(t, text, "  schedule")
@@ -697,9 +627,7 @@ func TestWriteHuman_UnchangedTaskWillRun(t *testing.T) {
 		Action:  semantic.TaskUnchanged,
 		WillRun: true,
 	}})
-	var buf bytes.Buffer
-	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
-	text := buf.String()
+	text := writeHuman(t, p)
 	assert.Contains(t, text, "seed  will run")
 	assert.NotContains(t, text, "apiVersion")
 	assertHumanLayout(t, text)
@@ -750,9 +678,7 @@ func TestWriteHuman_TaskFooter(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			p := mustPlanWithTasks(t, semantic.HelmUpgrade, nil, tt.tasks)
-			var buf bytes.Buffer
-			require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
-			text := buf.String()
+			text := writeHuman(t, p)
 			assertHumanLayout(t, text)
 			assert.Contains(t, text, "  Resources: 0 create, 0 update, 0 delete")
 			for _, s := range tt.wantContains {
@@ -857,9 +783,7 @@ func TestWriteHuman_BlockSpacing(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			var buf bytes.Buffer
-			require.NoError(t, view.WriteHuman(&buf, tt.plan, view.Options{}))
-			text := buf.String()
+			text := writeHuman(t, tt.plan)
 			assertHumanLayout(t, text)
 			for _, want := range tt.contains {
 				assert.Contains(t, text, want)
@@ -872,9 +796,7 @@ func TestWriteHuman_BlockSpacing(t *testing.T) {
 func TestWriteHuman_SummaryOmitsTasksWhenAbsent(t *testing.T) {
 	t.Parallel()
 	p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{createChangeForHuman()})
-	var buf bytes.Buffer
-	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
-	text := buf.String()
+	text := writeHuman(t, p)
 	assertHumanLayout(t, text)
 	assert.Contains(t, text, "  Resources: 1 create, 0 update, 0 delete")
 	assert.NotContains(t, text, "  Tasks:")
@@ -1000,16 +922,8 @@ func humanDriftPlan(t *testing.T) semantic.Plan {
 func TestWriteHuman_DriftSection(t *testing.T) {
 	t.Parallel()
 	p := humanDriftPlan(t)
-	var buf bytes.Buffer
-	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
-	text := buf.String()
+	text := writeHuman(t, p)
 	assertGolden(t, "human_drift", text)
-	assert.Contains(t, text, "\nDrift\n")
-	assert.Contains(t, text, "~ modified v1/ConfigMap \"app\"")
-	assert.Contains(t, text, "- missing v1/ConfigMap \"other\"")
-	assert.Contains(t, text, "+ unexpected v1/ConfigMap \"extra\"")
-	assert.Contains(t, text, "  Resources: 0 create, 0 update, 0 delete")
-	assert.Contains(t, text, "  Drift: 1 modified, 1 missing, 1 unexpected")
 	assert.Less(t, strings.Index(text, "\nDrift\n"), strings.Index(text, "\nSummary\n"))
 	assert.NotContains(t, text, "Resources\n")
 }
@@ -1017,9 +931,7 @@ func TestWriteHuman_DriftSection(t *testing.T) {
 func TestWriteHuman_EmptyDriftHasNoSection(t *testing.T) {
 	t.Parallel()
 	p := mustPlanWithHeader(t, humanHeader(), semantic.HelmNone, nil, nil)
-	var buf bytes.Buffer
-	require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
-	assert.NotContains(t, buf.String(), "Drift")
+	assert.NotContains(t, writeHuman(t, p), "Drift")
 }
 
 func TestWriteHuman_DriftSecretNormalizedPath(t *testing.T) {

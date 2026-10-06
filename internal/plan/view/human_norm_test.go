@@ -28,9 +28,13 @@ import (
 func TestWriteHuman_SecretDiffs(t *testing.T) {
 	t.Parallel()
 	addAfter := secretObj("s", "same-pass", "same-tok")
-	secretData(t, addAfter)["extra"] = "added-secret"
+	addData, ok := addAfter["data"].(map[string]any)
+	require.True(t, ok)
+	addData["extra"] = "added-secret"
 	removeBefore := secretObj("s", "same-pass", "same-tok")
-	secretData(t, removeBefore)["extra"] = "removed-secret"
+	removeData, ok := removeBefore["data"].(map[string]any)
+	require.True(t, ok)
+	removeData["extra"] = "removed-secret"
 	emptySecret := map[string]any{
 		"apiVersion": "v1",
 		"kind":       "Secret",
@@ -166,10 +170,9 @@ func TestWriteHuman_OmitsBookkeepingFields(t *testing.T) {
 		After:    snap(after),
 	}})
 
-	var human, jsonBuf bytes.Buffer
-	require.NoError(t, view.WriteHuman(&human, p, view.Options{}))
+	text := writeHuman(t, p)
+	var jsonBuf bytes.Buffer
 	require.NoError(t, view.WriteJSON(&jsonBuf, p, view.Options{}))
-	text := human.String()
 	assertNoBookkeeping(t, text)
 	assert.Contains(t, text, "-   key: v1")
 	assert.Contains(t, text, "+   key: v2")
@@ -210,9 +213,7 @@ func TestWriteHuman_OmitsBookkeepingOnCreateDelete(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			p := mustPlan(t, semantic.HelmUpgrade, tt.changes)
-			var buf bytes.Buffer
-			require.NoError(t, view.WriteHuman(&buf, p, view.Options{}))
-			text := buf.String()
+			text := writeHuman(t, p)
 			assertNoBookkeeping(t, text)
 			assertKeepsUserMeta(t, text)
 			for _, line := range tt.want {
@@ -220,11 +221,4 @@ func TestWriteHuman_OmitsBookkeepingOnCreateDelete(t *testing.T) {
 			}
 		})
 	}
-}
-
-func secretData(t *testing.T, obj map[string]any) map[string]any {
-	t.Helper()
-	m, ok := obj["data"].(map[string]any)
-	require.True(t, ok)
-	return m
 }
