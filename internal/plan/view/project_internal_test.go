@@ -77,26 +77,48 @@ func TestProjectFields_KeepsAncestorsAndNameSibling(t *testing.T) {
 
 func TestProjectFields_AddAfterOnlyRemoveBeforeOnly(t *testing.T) {
 	t.Parallel()
-	obj := map[string]any{"data": map[string]any{"keep": "yes"}}
-	gotBefore, gotAfter := projectFields(obj, map[string]any{
-		"data": map[string]any{"keep": "yes", "extra": "x"},
-	}, []semantic.FieldChange{{
-		Path:  "/data/extra",
-		Op:    semantic.FieldAdd,
-		After: "x",
-	}})
-	assert.Empty(t, gotBefore)
-	assert.Equal(t, map[string]any{"data": map[string]any{"extra": "x"}}, gotAfter)
-
-	gotBefore, gotAfter = projectFields(map[string]any{
-		"data": map[string]any{"keep": "yes", "gone": "y"},
-	}, obj, []semantic.FieldChange{{
-		Path:   "/data/gone",
-		Op:     semantic.FieldRemove,
-		Before: "y",
-	}})
-	assert.Equal(t, map[string]any{"data": map[string]any{"gone": "y"}}, gotBefore)
-	assert.Empty(t, gotAfter)
+	base := map[string]any{"data": map[string]any{"keep": "yes"}}
+	tests := []struct {
+		name       string
+		before     map[string]any
+		after      map[string]any
+		field      semantic.FieldChange
+		wantBefore map[string]any
+		wantAfter  map[string]any
+	}{
+		{
+			name:   "add is after only",
+			before: base,
+			after:  map[string]any{"data": map[string]any{"keep": "yes", "extra": "x"}},
+			field: semantic.FieldChange{
+				Path:  "/data/extra",
+				Op:    semantic.FieldAdd,
+				After: "x",
+			},
+			wantBefore: map[string]any{},
+			wantAfter:  map[string]any{"data": map[string]any{"extra": "x"}},
+		},
+		{
+			name:   "remove is before only",
+			before: map[string]any{"data": map[string]any{"keep": "yes", "gone": "y"}},
+			after:  base,
+			field: semantic.FieldChange{
+				Path:   "/data/gone",
+				Op:     semantic.FieldRemove,
+				Before: "y",
+			},
+			wantBefore: map[string]any{"data": map[string]any{"gone": "y"}},
+			wantAfter:  map[string]any{},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			gotBefore, gotAfter := projectFields(tt.before, tt.after, []semantic.FieldChange{tt.field})
+			assert.Equal(t, tt.wantBefore, gotBefore)
+			assert.Equal(t, tt.wantAfter, gotAfter)
+		})
+	}
 }
 
 func TestProjectFields_WholeNamedListElement(t *testing.T) {

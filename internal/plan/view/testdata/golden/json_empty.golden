@@ -1,0 +1,20 @@
+{
+  "schema": "https://deployah.dev/schemas/plan/v1/schema.json",
+  "header": {
+    "project": "web",
+    "environment": "prod",
+    "release": "web",
+    "namespace": "prod"
+  },
+  "helmAction": "none",
+  "changes": [],
+  "drift": [],
+  "tasks": [],
+  "chartCRDs": [],
+  "summary": {
+    "create": 0,
+    "update": 0,
+    "delete": 0,
+    "total": 0
+  }
+}

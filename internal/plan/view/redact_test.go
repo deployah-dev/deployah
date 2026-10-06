@@ -288,56 +288,6 @@ func TestWriteRenderers_CopyIsolation(t *testing.T) {
 	assert.NotEqual(t, "(redacted)", p.Changes[0].Fields[0].After)
 }
 
-func TestWriteRenderers_ManualSnapshotShapes(t *testing.T) {
-	t.Parallel()
-	p := semantic.Plan{
-		HelmAction: semantic.HelmUpgrade,
-		Header:     semantic.Header{Release: "web"},
-		Changes: []semantic.ResourceChange{
-			{
-				Resource: ref("ConfigMap", "app"),
-				Action:   semantic.Create,
-				After: &semantic.ResourceSnapshot{Object: map[string]any{
-					"labels": map[string]string{"app": "web"},
-					"args":   []string{"serve"},
-					"nested": []any{"x"},
-					"empty":  map[string]any(nil),
-				}},
-			},
-			{
-				Resource: ref("ConfigMap", "blank"),
-				Action:   semantic.Create,
-				After:    &semantic.ResourceSnapshot{},
-			},
-		},
-	}
-	var human, jsonBuf bytes.Buffer
-	require.NoError(t, view.WriteHuman(&human, p, view.Options{}))
-	require.NoError(t, view.WriteJSON(&jsonBuf, p, view.Options{}))
-	assert.Contains(t, human.String(), "app: web")
-	assert.Contains(t, human.String(), "serve")
-	assertJSONAt(t, jsonBuf.Bytes(), `{
-		"labels": {"app": "web"},
-		"args": ["serve"],
-		"nested": ["x"],
-		"empty": null
-	}`, "changes", 0, "after")
-	assertJSONAt(t, jsonBuf.Bytes(), `{}`, "changes", 1, "after")
-}
-
-func TestWriteRenderers_NilTasks(t *testing.T) {
-	t.Parallel()
-	p := semantic.Plan{
-		HelmAction: semantic.HelmNone,
-		Header:     semantic.Header{Release: "web"},
-	}
-	assert.Nil(t, p.Tasks)
-	require.NoError(t, view.WriteHuman(&bytes.Buffer{}, p, view.Options{}))
-	var jsonBuf bytes.Buffer
-	require.NoError(t, view.WriteJSON(&jsonBuf, p, view.Options{}))
-	assertJSONAt(t, jsonBuf.Bytes(), `[]`, "tasks")
-}
-
 func TestSecretRedaction_OmitsPlaintext(t *testing.T) {
 	t.Parallel()
 	redactedData := `{"token":"(redacted)"}`

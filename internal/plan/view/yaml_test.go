@@ -147,7 +147,7 @@ func TestMarshalOrderedYAML_NestedMapsAndArrays(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	assert.Regexp(t, `(?s)a: ["']?2["']?.*items:.*tags:.*z: ["']?1["']?`, got)
+	assertYAMLOrder(t, got, []string{"\n  a:", "\n  items:", "\n  tags:", "\n  z:"})
 	assert.Less(t, strings.Index(got, "zeta"), strings.Index(got, "alpha"))
 }
 

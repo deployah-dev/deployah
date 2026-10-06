@@ -1,0 +1,52 @@
+{
+  "schema": "https://deployah.dev/schemas/plan/v1/schema.json",
+  "header": {
+    "project": "web",
+    "environment": "prod",
+    "release": "web",
+    "namespace": "prod"
+  },
+  "helmAction": "upgrade",
+  "changes": [],
+  "drift": [],
+  "tasks": [
+    {
+      "name": "migrate",
+      "phase": "preDeploy",
+      "action": "create",
+      "willRun": true,
+      "definitions": [
+        {
+          "resource": {
+            "apiVersion": "v1",
+            "kind": "Job",
+            "namespace": "prod",
+            "name": "migrate"
+          },
+          "action": "create",
+          "before": null,
+          "after": {
+            "apiVersion": "v1",
+            "data": {
+              "key": "v1"
+            },
+            "kind": "ConfigMap",
+            "metadata": {
+              "name": "migrate",
+              "namespace": "prod"
+            }
+          },
+          "fields": []
+        }
+      ],
+      "resources": []
+    }
+  ],
+  "chartCRDs": [],
+  "summary": {
+    "create": 0,
+    "update": 0,
+    "delete": 0,
+    "total": 0
+  }
+}

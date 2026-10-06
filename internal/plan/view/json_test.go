@@ -25,8 +25,6 @@ import (
 
 	"deployah.dev/deployah/internal/plan/semantic"
 	"deployah.dev/deployah/internal/plan/view"
-
-	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
 )
 
 func TestWriteJSON_HeaderContextAndRevision(t *testing.T) {
@@ -44,34 +42,13 @@ func TestWriteJSON_SchemaAndTasks(t *testing.T) {
 	p := mustPlan(t, semantic.HelmNone, nil)
 	var buf bytes.Buffer
 	require.NoError(t, view.WriteJSON(&buf, p, view.Options{}))
-	assert.JSONEq(t, `{
-		"schema": "https://deployah.dev/schemas/plan/v1/schema.json",
-		"header": {
-			"project": "web",
-			"environment": "prod",
-			"release": "web",
-			"namespace": "prod"
-		},
-		"helmAction": "none",
-		"changes": [],
-		"drift": [],
-		"tasks": [],
-		"chartCRDs": [],
-		"summary": {
-			"create": 0,
-			"update": 0,
-			"delete": 0,
-			"total": 0
-		}
-	}`, buf.String())
+	assertJSONGolden(t, "json_empty", buf.String())
 	var doc map[string]any
 	require.NoError(t, json.Unmarshal(buf.Bytes(), &doc))
-	_, hasCompleteness := doc["completeness"]
-	assert.False(t, hasCompleteness)
+	assert.NotContains(t, doc, "completeness")
 	summary, ok := doc["summary"].(map[string]any)
 	require.True(t, ok)
-	_, hasReplace := summary["replace"]
-	assert.False(t, hasReplace)
+	assert.NotContains(t, summary, "replace")
 	assertNoJSONKeysFromBytes(t, buf.Bytes())
 	validatePlanSchema(t, buf.Bytes())
 }
@@ -109,39 +86,7 @@ func TestWriteJSON_TasksContract(t *testing.T) {
 	}})
 	var buf bytes.Buffer
 	require.NoError(t, view.WriteJSON(&buf, p, view.Options{}))
-	assert.JSONEq(t, `{
-		"schema": "https://deployah.dev/schemas/plan/v1/schema.json",
-		"header": {
-			"project": "web",
-			"environment": "prod",
-			"release": "web",
-			"namespace": "prod"
-		},
-		"helmAction": "upgrade",
-		"changes": [],
-		"drift": [],
-		"tasks": [{
-			"name": "migrate",
-			"phase": "preDeploy",
-			"action": "create",
-			"willRun": true,
-			"definitions": [{
-				"resource": {"apiVersion": "v1", "kind": "Job", "namespace": "prod", "name": "migrate"},
-				"action": "create",
-				"before": null,
-				"after": {
-					"apiVersion": "v1",
-					"kind": "ConfigMap",
-					"metadata": {"name": "migrate", "namespace": "prod"},
-					"data": {"key": "v1"}
-				},
-				"fields": []
-			}],
-			"resources": []
-		}],
-		"chartCRDs": [],
-		"summary": {"create": 0, "update": 0, "delete": 0, "total": 0}
-	}`, buf.String())
+	assertJSONGolden(t, "json_tasks", buf.String())
 	validatePlanSchema(t, buf.Bytes())
 	assertNoJSONKeysFromBytes(t, buf.Bytes())
 }
@@ -445,31 +390,6 @@ func TestWriteJSON_SnapshotMayUseProtocolKeyNames(t *testing.T) {
 	validatePlanSchema(t, buf.Bytes())
 }
 
-func compilePlanSchema(t *testing.T) *jsonschema.Schema {
-	t.Helper()
-	compiler := jsonschema.NewCompiler()
-	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(view.SchemaV1()))
-	require.NoError(t, err)
-	require.NoError(t, compiler.AddResource(view.SchemaV1ID, doc))
-	sch, err := compiler.Compile(view.SchemaV1ID)
-	require.NoError(t, err)
-	return sch
-}
-
-func validatePlanSchema(t *testing.T, raw []byte) {
-	t.Helper()
-	var v any
-	require.NoError(t, json.Unmarshal(raw, &v))
-	require.NoError(t, compilePlanSchema(t).Validate(v))
-}
-
-func assertSchemaRejects(t *testing.T, raw []byte) {
-	t.Helper()
-	var v any
-	require.NoError(t, json.Unmarshal(raw, &v))
-	require.Error(t, compilePlanSchema(t).Validate(v))
-}
-
 func assertNoJSONKeysFromBytes(t *testing.T, raw []byte) {
 	t.Helper()
 	var doc map[string]any
@@ -685,6 +605,56 @@ func assertNoJSONFieldKeys(t *testing.T, raw any) {
 	for _, field := range jsonObjects(t, raw) {
 		assertNoJSONKeys(t, field)
 	}
+}
+
+func TestWriteRenderers_ManualSnapshotShapes(t *testing.T) {
+	t.Parallel()
+	p := semantic.Plan{
+		HelmAction: semantic.HelmUpgrade,
+		Header:     semantic.Header{Release: "web"},
+		Changes: []semantic.ResourceChange{
+			{
+				Resource: ref("ConfigMap", "app"),
+				Action:   semantic.Create,
+				After: &semantic.ResourceSnapshot{Object: map[string]any{
+					"labels": map[string]string{"app": "web"},
+					"args":   []string{"serve"},
+					"nested": []any{"x"},
+					"empty":  map[string]any(nil),
+				}},
+			},
+			{
+				Resource: ref("ConfigMap", "blank"),
+				Action:   semantic.Create,
+				After:    &semantic.ResourceSnapshot{},
+			},
+		},
+	}
+	var human, jsonBuf bytes.Buffer
+	require.NoError(t, view.WriteHuman(&human, p, view.Options{}))
+	require.NoError(t, view.WriteJSON(&jsonBuf, p, view.Options{}))
+	assert.Contains(t, human.String(), "app: web")
+	assert.Contains(t, human.String(), "serve")
+	assertJSONAt(t, jsonBuf.Bytes(), `{
+		"labels": {"app": "web"},
+		"args": ["serve"],
+		"nested": ["x"],
+		"empty": null
+	}`, "changes", 0, "after")
+	assertJSONAt(t, jsonBuf.Bytes(), `{}`, "changes", 1, "after")
+}
+
+func TestWriteRenderers_NilTasks(t *testing.T) {
+	t.Parallel()
+	p := semantic.Plan{
+		HelmAction: semantic.HelmNone,
+		Header:     semantic.Header{Release: "web"},
+	}
+	assert.Nil(t, p.Tasks)
+	require.NoError(t, view.WriteHuman(&bytes.Buffer{}, p, view.Options{}))
+	var jsonBuf bytes.Buffer
+	require.NoError(t, view.WriteJSON(&jsonBuf, p, view.Options{}))
+	assertJSONAt(t, jsonBuf.Bytes(), `[]`, "tasks")
 }
 
 func assertNoJSONKeys(t *testing.T, obj map[string]any) {
