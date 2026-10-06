@@ -62,16 +62,6 @@ func validateRenderable(p semantic.Plan) error {
 			}
 		}
 	}
-	owned := make(map[string]string)
-	changeKeys := make(map[string]int, len(p.Changes))
-	for i, c := range p.Changes {
-		key := refKey(c.Resource)
-		if _, exists := changeKeys[key]; exists {
-			changeKeys[key] = -1
-			continue
-		}
-		changeKeys[key] = i
-	}
 	for i, t := range p.Tasks {
 		if err := requireEnum(fmt.Sprintf("task %d phase", i), t.Phase.String(),
 			semantic.TaskPreDeploy.String(), semantic.TaskPostDeploy.String(), semantic.TaskSchedule.String()); err != nil {
@@ -81,34 +71,6 @@ func validateRenderable(p semantic.Plan) error {
 			semantic.TaskUnchanged.String(), semantic.TaskCreate.String(),
 			semantic.TaskUpdate.String(), semantic.TaskDelete.String()); err != nil {
 			return err
-		}
-		if t.Phase == semantic.TaskSchedule {
-			if len(t.Definitions) > 0 {
-				return fmt.Errorf("task %s: schedule must not have hook definitions", t.Name)
-			}
-			if t.WillRun {
-				return fmt.Errorf("task %s: schedule must not will run", t.Name)
-			}
-			for _, ref := range t.Resources {
-				key := refKey(ref)
-				idx, ok := changeKeys[key]
-				if !ok {
-					return fmt.Errorf("task %s: dangling resource %s", t.Name, ref)
-				}
-				if idx < 0 {
-					return fmt.Errorf("task %s: resource %s matches more than one change", t.Name, ref)
-				}
-				if prev, taken := owned[key]; taken {
-					return fmt.Errorf("task %s: resource %s already referenced by task %s", t.Name, ref, prev)
-				}
-				owned[key] = t.Name
-			}
-		}
-		if (t.Phase == semantic.TaskPreDeploy || t.Phase == semantic.TaskPostDeploy) && len(t.Resources) > 0 {
-			return fmt.Errorf("task %s: %s must not reference resource changes", t.Name, t.Phase)
-		}
-		if t.Action == semantic.TaskDelete && t.WillRun {
-			return fmt.Errorf("task %s: delete must not will run", t.Name)
 		}
 		for j, d := range t.Definitions {
 			if err := requireEnum(fmt.Sprintf("task %d definition %d action", i, j), d.Action.String(),

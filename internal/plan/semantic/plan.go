@@ -21,9 +21,8 @@ import (
 
 // Plan is one run's Helm release intent, its Previous-to-Desired
 // resource changes, and its Previous-to-Live drift. Build it with
-// [New]. Add chart CRDs with [AttachChartCRDs] and drift with
-// [AttachDrift]. Snapshots still contain secrets, and this type is
-// not the plan JSON document.
+// [New]. Snapshots still contain secrets, and this type is not the
+// plan JSON document.
 type Plan struct {
 	Header     Header
 	HelmAction HelmAction
@@ -34,78 +33,128 @@ type Plan struct {
 	Summary    Summary
 }
 
-// New checks and sorts its inputs, fills [Summary], and returns
-// non-nil slices. Chart CRDs and drift stay empty. It returns an
-// error if a task reference is missing, ambiguous, or shared.
-// helmAction and field changes are stored as given. Drift is
-// observed cluster state and is not an input here.
-func New(header Header, helmAction HelmAction, changes []ResourceChange, tasks []TaskPlan) (Plan, error) {
-	if !helmAction.valid() {
-		return Plan{}, fmt.Errorf("invalid helm action %s", helmAction)
+// Input is the caller data for [New]. Task WillRun values in Tasks
+// are ignored. [New] derives them.
+type Input struct {
+	Header     Header
+	HelmAction HelmAction
+	Changes    []ResourceChange
+	Tasks      []TaskPlan
+	Drift      []DriftChange
+	ChartCRDs  []ChartCRD
+}
+
+// New copies in and returns a complete plan, or a zero Plan and an
+// error. Nil slices become empty slices.
+//
+// Order is: copy and normalize, enum and shape checks, derived
+// WillRun, Helm and content checks, drift and chart CRD checks, sort,
+// then [Summary]. Summary counts resource changes only. Chart CRDs
+// stay in the order given. Changes, tasks, and drift are sorted.
+func New(in Input) (Plan, error) {
+	changes := normalizeChanges(in.Changes)
+	tasks, normErr := normalizeTasks(in.Tasks)
+	if normErr != nil {
+		return Plan{}, normErr
 	}
-	if err := validateHelmAction(header, helmAction); err != nil {
+	drift := copyDrift(in.Drift)
+	crds := slices.Clone(in.ChartCRDs)
+	if crds == nil {
+		crds = []ChartCRD{}
+	}
+
+	if !in.HelmAction.valid() {
+		return Plan{}, fmt.Errorf("invalid helm action %s", in.HelmAction)
+	}
+	if err := validateHelmAction(in.Header, in.HelmAction); err != nil {
+		return Plan{}, err
+	}
+	for i := range changes {
+		if err := validateChange(changes[i]); err != nil {
+			return Plan{}, fmt.Errorf("resource %s: %w", changes[i].Resource, err)
+		}
+	}
+	if err := validateTasks(tasks, changes); err != nil {
 		return Plan{}, err
 	}
 
-	copiedChanges := slices.Clone(changes)
-	if copiedChanges == nil {
-		copiedChanges = []ResourceChange{}
-	}
-	copiedTasks := copyTasks(tasks)
+	deriveWillRun(tasks, in.HelmAction)
 
-	for i := range copiedChanges {
-		if err := validateChange(copiedChanges[i]); err != nil {
-			return Plan{}, fmt.Errorf("resource %s: %w", copiedChanges[i].Resource, err)
-		}
-		normalized, nerr := normalizeChange(copiedChanges[i])
-		if nerr != nil {
-			return Plan{}, fmt.Errorf("resource %s: %w", copiedChanges[i].Resource, nerr)
-		}
-		copiedChanges[i] = normalized
-	}
-	for i := range copiedTasks {
-		normalized, nerr := normalizeTask(copiedTasks[i])
-		if nerr != nil {
-			return Plan{}, fmt.Errorf("task %s: %w", copiedTasks[i].Name, nerr)
-		}
-		copiedTasks[i] = normalized
-	}
-	if err := validateTasks(copiedTasks, copiedChanges); err != nil {
+	if err := validateHelmContent(in.HelmAction, changes, tasks); err != nil {
 		return Plan{}, err
 	}
-	if err := validateHelmContent(helmAction, copiedChanges, copiedTasks); err != nil {
+	if err := validateDriftSet(in.Header, drift); err != nil {
+		return Plan{}, err
+	}
+	if err := validateChartCRDs(crds); err != nil {
 		return Plan{}, err
 	}
 
-	sortChanges(copiedChanges)
-	sortTasks(copiedTasks, copiedChanges)
+	sortChanges(changes)
+	sortTasks(tasks, changes)
+	sortDrift(drift)
 
 	return Plan{
-		Header:     header,
-		HelmAction: helmAction,
-		Changes:    copiedChanges,
-		Tasks:      copiedTasks,
-		Drift:      []DriftChange{},
-		ChartCRDs:  []ChartCRD{},
-		Summary:    Summarize(copiedChanges),
+		Header:     in.Header,
+		HelmAction: in.HelmAction,
+		Changes:    changes,
+		Tasks:      tasks,
+		Drift:      drift,
+		ChartCRDs:  crds,
+		Summary:    Summarize(changes),
 	}, nil
 }
 
-// AttachChartCRDs returns a copy of p with crds attached in order.
-// [Plan.Changes] and [Plan.Summary] stay the same.
-func AttachChartCRDs(p Plan, crds []ChartCRD) (Plan, error) {
-	copied := slices.Clone(crds)
-	if copied == nil {
-		copied = []ChartCRD{}
+func normalizeChanges(in []ResourceChange) []ResourceChange {
+	out := slices.Clone(in)
+	if out == nil {
+		out = []ResourceChange{}
 	}
-	for i, c := range copied {
+	for i := range out {
+		out[i] = normalizeChange(out[i])
+	}
+	return out
+}
+
+func normalizeTasks(in []TaskPlan) ([]TaskPlan, error) {
+	out := copyTasks(in)
+	for i := range out {
+		normalized, err := normalizeTask(out[i])
+		if err != nil {
+			return nil, fmt.Errorf("task %s: %w", out[i].Name, err)
+		}
+		out[i] = normalized
+	}
+	return out, nil
+}
+
+// deriveWillRun overwrites caller WillRun. Schedule and delete tasks
+// do not run. Other preDeploy and postDeploy tasks run only when the
+// Helm action is install or upgrade.
+func deriveWillRun(tasks []TaskPlan, helmAction HelmAction) {
+	transition := helmAction == HelmInstall || helmAction == HelmUpgrade
+	for i := range tasks {
+		tasks[i].WillRun = false
+		if !transition {
+			continue
+		}
+		if tasks[i].Phase != TaskPreDeploy && tasks[i].Phase != TaskPostDeploy {
+			continue
+		}
+		if tasks[i].Action == TaskDelete {
+			continue
+		}
+		tasks[i].WillRun = true
+	}
+}
+
+func validateChartCRDs(crds []ChartCRD) error {
+	for i, c := range crds {
 		if err := validateChartCRD(c); err != nil {
-			return Plan{}, fmt.Errorf("chart crd %d: %w", i, err)
+			return fmt.Errorf("chart crd %d: %w", i, err)
 		}
 	}
-	p.ChartCRDs = copied
-	// WillProcess still counts in HasEffects. It is not a resource change.
-	return p, nil
+	return nil
 }
 
 func validateChartCRD(c ChartCRD) error {
@@ -153,14 +202,14 @@ func (p Plan) IsNoOp() bool {
 		!p.HasEffects()
 }
 
-func normalizeChange(c ResourceChange) (ResourceChange, error) {
+func normalizeChange(c ResourceChange) ResourceChange {
 	c.Before = copySnapshot(c.Before)
 	c.After = copySnapshot(c.After)
 	c.Fields = copyFields(c.Fields)
 	if c.Fields == nil {
 		c.Fields = []FieldChange{}
 	}
-	return c, nil
+	return c
 }
 
 func normalizeTask(t TaskPlan) (TaskPlan, error) {
@@ -225,16 +274,10 @@ func validateTask(t TaskPlan, changeIndex map[string]int, owned map[string]strin
 	if !t.Action.valid() {
 		return fmt.Errorf("invalid action %s", t.Action)
 	}
-	if t.Action == TaskDelete && t.WillRun {
-		return fmt.Errorf("delete must not will run")
-	}
 	switch t.Phase {
 	case TaskSchedule:
 		if len(t.Definitions) > 0 {
 			return fmt.Errorf("schedule must not have hook definitions")
-		}
-		if t.WillRun {
-			return fmt.Errorf("schedule must not will run")
 		}
 		for _, ref := range t.Resources {
 			key := ref.refKey()
@@ -338,9 +381,6 @@ func validateHelmContent(helmAction HelmAction, changes []ResourceChange, tasks 
 		}
 		if t.Action != TaskUnchanged {
 			return fmt.Errorf("helm none must not include changed %s task %s", t.Phase, t.Name)
-		}
-		if t.WillRun {
-			return fmt.Errorf("helm none must not will run %s task %s", t.Phase, t.Name)
 		}
 	}
 	return nil

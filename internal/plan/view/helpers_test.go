@@ -242,9 +242,45 @@ func mustPlanWithTasks(tb testing.TB, helmAction semantic.HelmAction, changes []
 
 func mustPlanWithHeader(tb testing.TB, header semantic.Header, helmAction semantic.HelmAction, changes []semantic.ResourceChange, tasks []semantic.TaskPlan) semantic.Plan {
 	tb.Helper()
-	p, err := semantic.New(header, helmAction, fillUpdateFields(changes), fillTaskFields(tasks))
+	return mustPlanInput(tb, semantic.Input{
+		Header:     header,
+		HelmAction: helmAction,
+		Changes:    changes,
+		Tasks:      tasks,
+	})
+}
+
+func mustPlanInput(tb testing.TB, in semantic.Input) semantic.Plan {
+	tb.Helper()
+	in.Changes = fillUpdateFields(in.Changes)
+	in.Tasks = fillTaskFields(in.Tasks)
+	p, err := semantic.New(in)
 	require.NoError(tb, err)
 	return p
+}
+
+func rebuildWithDrift(tb testing.TB, base semantic.Plan, drift []semantic.DriftChange) (semantic.Plan, error) {
+	tb.Helper()
+	return semantic.New(semantic.Input{
+		Header:     base.Header,
+		HelmAction: base.HelmAction,
+		Changes:    base.Changes,
+		Tasks:      base.Tasks,
+		Drift:      drift,
+		ChartCRDs:  base.ChartCRDs,
+	})
+}
+
+func rebuildWithChartCRDs(tb testing.TB, base semantic.Plan, crds []semantic.ChartCRD) (semantic.Plan, error) {
+	tb.Helper()
+	return semantic.New(semantic.Input{
+		Header:     base.Header,
+		HelmAction: base.HelmAction,
+		Changes:    base.Changes,
+		Tasks:      base.Tasks,
+		Drift:      base.Drift,
+		ChartCRDs:  crds,
+	})
 }
 
 func fillUpdateFields(changes []semantic.ResourceChange) []semantic.ResourceChange {

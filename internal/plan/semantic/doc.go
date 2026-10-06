@@ -14,6 +14,10 @@
 
 // Package semantic is Deployah's unredacted semantic plan model.
 //
+// [New] is the only constructor. It derives [TaskPlan.WillRun] from
+// the Helm action and the task phase and action. This package does
+// not read the cluster and does not render charts.
+//
 // This package is not the deployah plan command and is not a JSON API.
 // Snapshots and field values stay complete. Serialization and secret
 // redaction belong to deployah.dev/deployah/internal/plan/view.

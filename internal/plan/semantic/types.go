@@ -266,8 +266,11 @@ type TaskPlan struct {
 	Name   string
 	Phase  TaskPhase
 	Action TaskAction
-	// WillRun reports whether the task's hook takes part in the Helm
-	// transition the plan describes. It does not predict whether a later
+	// WillRun reports whether this task's hook takes part in the Helm
+	// transition. [New] sets it and ignores a caller value. Schedule
+	// and delete tasks do not run. Other preDeploy and postDeploy
+	// tasks run for [HelmInstall] and [HelmUpgrade], and do not run
+	// for [HelmNone]. It does not predict whether a later
 	// `deployah deploy` skips the hook.
 	WillRun     bool
 	Definitions []HookDefinition

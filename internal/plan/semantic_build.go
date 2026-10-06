@@ -156,20 +156,18 @@ func BuildSemanticPlan(
 	if err != nil {
 		return semantic.Plan{}, nil, cleanup, fmt.Errorf("assemble semantic plan: %w", err)
 	}
-	stampTaskWillRun(tasks, helmAction)
-	p, err := semantic.New(header, helmAction, changes, tasks)
-	if err != nil {
-		return semantic.Plan{}, nil, cleanup, fmt.Errorf("assemble semantic plan: %w", err)
-	}
-	p, err = semantic.AttachChartCRDs(p, chartCRDsFromDocs(input.CRDDocs, prep.Operation, input.SkipCRDs))
-	if err != nil {
-		return semantic.Plan{}, nil, cleanup, fmt.Errorf("assemble semantic plan: %w", err)
-	}
 	drift, err := observeDrift(ctx, live, previous, header)
 	if err != nil {
 		return semantic.Plan{}, nil, cleanup, fmt.Errorf("observe drift: %w", err)
 	}
-	p, err = semantic.AttachDrift(p, drift)
+	p, err := semantic.New(semantic.Input{
+		Header:     header,
+		HelmAction: helmAction,
+		Changes:    changes,
+		Tasks:      tasks,
+		Drift:      drift,
+		ChartCRDs:  chartCRDsFromDocs(input.CRDDocs, prep.Operation, input.SkipCRDs),
+	})
 	if err != nil {
 		return semantic.Plan{}, nil, cleanup, fmt.Errorf("assemble semantic plan: %w", err)
 	}

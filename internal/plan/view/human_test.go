@@ -32,24 +32,7 @@ func TestWriteHuman_CreateUpdateDelete(t *testing.T) {
 	t.Parallel()
 	text := writeHuman(t, allActionsPlan(t))
 	assertGolden(t, "human_all_actions", text)
-	assert.NotContains(t, text, "~ cleanup  changed, will run")
-	assert.NotContains(t, text, "jobTemplate:")
-	assert.Equal(t, 1, strings.Count(text, `batch/v1/CronJob "web-cleanup"`))
 	assert.NotContains(t, text, "~ ConfigMap/prod/rs")
-	assert.NotContains(t, text, "-/+")
-	assert.NotContains(t, strings.ToLower(text), "recreate")
-	assert.NotContains(t, text, "Actions:")
-	assert.NotContains(t, text, "create helm")
-	assert.NotContains(t, text, "completeness:")
-	assert.NotContains(t, text, "write=")
-	assert.NotContains(t, text, "field_manager=")
-	assert.NotContains(t, text, "force_conflicts=")
-	assert.NotContains(t, text, "delete=")
-	assert.NotContains(t, text, "before:")
-	assert.NotContains(t, text, "after:")
-	assert.NotContains(t, text, "--- before")
-	assert.NotContains(t, text, "+++ after")
-	assert.NotContains(t, text, "@@")
 }
 
 func TestWriteHuman_DeterministicMapOrder(t *testing.T) {
@@ -891,7 +874,7 @@ func allActionsInputs() (semantic.Header, []semantic.ResourceChange, []semantic.
 
 func humanDriftPlan(t *testing.T) semantic.Plan {
 	t.Helper()
-	p, err := semantic.AttachDrift(mustPlanWithHeader(t, humanHeader(), semantic.HelmNone, nil, nil), []semantic.DriftChange{
+	p, err := rebuildWithDrift(t, mustPlanWithHeader(t, humanHeader(), semantic.HelmNone, nil, nil), []semantic.DriftChange{
 		{
 			Resource: ref("ConfigMap", "app"),
 			Action:   semantic.DriftModified,
@@ -936,7 +919,7 @@ func TestWriteHuman_EmptyDriftHasNoSection(t *testing.T) {
 
 func TestWriteHuman_DriftSecretNormalizedPath(t *testing.T) {
 	t.Parallel()
-	p, err := semantic.AttachDrift(mustPlan(t, semantic.HelmNone, nil), []semantic.DriftChange{{
+	p, err := rebuildWithDrift(t, mustPlan(t, semantic.HelmNone, nil), []semantic.DriftChange{{
 		Resource: ref("Secret", "db"),
 		Action:   semantic.DriftModified,
 		Previous: snap(map[string]any{

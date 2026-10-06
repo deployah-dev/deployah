@@ -160,11 +160,11 @@ func TestWriteHuman_ChartCRDPlacement(t *testing.T) {
 		WillRun: true,
 	}})
 	var err error
-	p, err = semantic.AttachChartCRDs(p, []semantic.ChartCRD{
+	p, err = rebuildWithChartCRDs(t, p, []semantic.ChartCRD{
 		chartCRD(".deployah/crds/widget.yaml", "widgets.example.com", 0, semantic.ChartCRDUpgrade),
 	})
 	require.NoError(t, err)
-	p, err = semantic.AttachDrift(p, []semantic.DriftChange{{
+	p, err = rebuildWithDrift(t, p, []semantic.DriftChange{{
 		Resource: ref("ConfigMap", "extra"),
 		Action:   semantic.DriftUnexpected,
 		Live:     snap(cm("extra", "live")),
@@ -216,7 +216,7 @@ func TestWriteHuman_ChartCRDWriteError(t *testing.T) {
 		After:    snap(cm("app", "v1")),
 	}}, nil)
 	var err error
-	p, err = semantic.AttachChartCRDs(p, []semantic.ChartCRD{
+	p, err = rebuildWithChartCRDs(t, p, []semantic.ChartCRD{
 		chartCRD(".deployah/crds/widget.yaml", "widgets.example.com", 0, semantic.ChartCRDUpgrade),
 		chartCRD(".deployah/crds/widget.yaml", "gadgets.example.com", 1, semantic.ChartCRDUpgrade),
 	})
@@ -306,7 +306,7 @@ func chartCRD(source, name string, index int, lc semantic.ChartCRDLifecycle) sem
 
 func planWithChartCRDs(tb testing.TB, header semantic.Header, action semantic.HelmAction, crds []semantic.ChartCRD) semantic.Plan {
 	tb.Helper()
-	p, err := semantic.AttachChartCRDs(mustPlanWithHeader(tb, header, action, nil, nil), crds)
+	p, err := rebuildWithChartCRDs(tb, mustPlanWithHeader(tb, header, action, nil, nil), crds)
 	require.NoError(tb, err)
 	return p
 }

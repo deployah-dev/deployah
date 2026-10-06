@@ -74,7 +74,7 @@ func driftActionRank(a DriftAction) int {
 }
 
 // DriftChange is one difference between Previous and Live.
-// [AttachDrift] checks and stores it. It is cluster state, separate
+// [New] checks and stores it. It is cluster state, separate
 // from a release change.
 //
 // Name is required, and GenerateName must be empty. Modified and
@@ -85,7 +85,7 @@ func driftActionRank(a DriftAction) int {
 // Previous is unset for Unexpected and is never rewritten. Live is
 // unset for Missing. Modified Live keeps only the declared surface.
 // Unexpected Live has server bookkeeping removed. Only Modified has
-// Fields. [AttachDrift] keeps them and does not recompute them.
+// Fields. [New] keeps them and does not recompute them.
 type DriftChange struct {
 	Resource ResourceRef
 	Action   DriftAction
@@ -100,33 +100,25 @@ func (p Plan) HasDrift() bool {
 	return len(p.Drift) > 0
 }
 
-// AttachDrift returns a copy of p with drift checked and sorted. A
-// fresh install ([Header.FreshInstall]) accepts only an empty
-// collection. Other plan fields stay as they are, including whether
-// the plan has effects or is a no-op.
-//
-// Entries sort by group, kind, namespace, and name, then by apiVersion
-// and action. Group comes from apiVersion. The same group, kind,
-// namespace, and name twice is an error.
-func AttachDrift(p Plan, drift []DriftChange) (Plan, error) {
-	copied := copyDrift(drift)
-	if p.Header.FreshInstall && len(copied) > 0 {
-		return Plan{}, fmt.Errorf("fresh install must not include drift")
+// validateDriftSet checks drift before [New] sorts it. A fresh install
+// accepts only an empty collection. Entries with the same group, kind,
+// namespace, and name are an error. Group comes from apiVersion.
+func validateDriftSet(header Header, drift []DriftChange) error {
+	if header.FreshInstall && len(drift) > 0 {
+		return fmt.Errorf("fresh install must not include drift")
 	}
-	seen := make(map[string]struct{}, len(copied))
-	for i := range copied {
-		if err := validateDrift(copied[i]); err != nil {
-			return Plan{}, fmt.Errorf("drift %d: %w", i, err)
+	seen := make(map[string]struct{}, len(drift))
+	for i := range drift {
+		if err := validateDrift(drift[i]); err != nil {
+			return fmt.Errorf("drift %d: %w", i, err)
 		}
-		key := driftIdentityKey(copied[i].Resource)
+		key := driftIdentityKey(drift[i].Resource)
 		if _, dup := seen[key]; dup {
-			return Plan{}, fmt.Errorf("drift %s: duplicate logical identity", copied[i].Resource)
+			return fmt.Errorf("drift %s: duplicate logical identity", drift[i].Resource)
 		}
 		seen[key] = struct{}{}
 	}
-	sortDrift(copied)
-	p.Drift = copied
-	return p, nil
+	return nil
 }
 
 func validateDrift(d DriftChange) error {

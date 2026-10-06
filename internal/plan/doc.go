@@ -24,8 +24,11 @@
 // existing release reads Live through [LiveReader] with GET and LIST,
 // so Drift is Previous to Live. Chart CRD lifecycle comes from the
 // loaded documents, not from object diffs. The result is a
-// [deployah.dev/deployah/internal/plan/semantic.Plan]. Those types
-// live in plan/semantic. Their rendering lives in plan/view.
+// [deployah.dev/deployah/internal/plan/semantic.Plan] from
+// [deployah.dev/deployah/internal/plan/semantic.New]. That constructor
+// derives whether each task will run. Task assembly in this package
+// leaves WillRun false. Those types live in plan/semantic. Their
+// rendering lives in plan/view.
 //
 // [LastSuccessfulRelease] remains for deploy hostname and workload
 // guards. [BuildSemanticPlan] does not use it.

@@ -43,13 +43,6 @@ func TestWriteJSON_SchemaAndTasks(t *testing.T) {
 	var buf bytes.Buffer
 	require.NoError(t, view.WriteJSON(&buf, p, view.Options{}))
 	assertJSONGolden(t, "json_empty", buf.String())
-	var doc map[string]any
-	require.NoError(t, json.Unmarshal(buf.Bytes(), &doc))
-	assert.NotContains(t, doc, "completeness")
-	summary, ok := doc["summary"].(map[string]any)
-	require.True(t, ok)
-	assert.NotContains(t, summary, "replace")
-	assertNoJSONKeysFromBytes(t, buf.Bytes())
 	validatePlanSchema(t, buf.Bytes())
 }
 
@@ -71,6 +64,24 @@ func TestWriteJSON_CreateChangeShape(t *testing.T) {
 	validatePlanSchema(t, buf.Bytes())
 }
 
+func TestWriteJSON_DeleteChangeShape(t *testing.T) {
+	t.Parallel()
+	p := mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
+		Resource: ref("ConfigMap", "app"),
+		Action:   semantic.Delete,
+		Before:   snap(cm("app", "v1")),
+	}})
+	var buf bytes.Buffer
+	require.NoError(t, view.WriteJSON(&buf, p, view.Options{}))
+	change := jsonObjects(t, jsonObject(mustJSON(t, buf.Bytes()))["changes"])[0]
+	assert.Equal(t, []string{"action", "after", "before", "fields", "resource"}, sortedKeys(change))
+	assert.Equal(t, "delete", change["action"])
+	assert.NotNil(t, change["before"])
+	assert.Nil(t, change["after"])
+	assert.Empty(t, change["fields"])
+	validatePlanSchema(t, buf.Bytes())
+}
+
 func TestWriteJSON_TasksContract(t *testing.T) {
 	t.Parallel()
 	p := mustPlanWithTasks(t, semantic.HelmUpgrade, nil, []semantic.TaskPlan{{
@@ -88,7 +99,6 @@ func TestWriteJSON_TasksContract(t *testing.T) {
 	require.NoError(t, view.WriteJSON(&buf, p, view.Options{}))
 	assertJSONGolden(t, "json_tasks", buf.String())
 	validatePlanSchema(t, buf.Bytes())
-	assertNoJSONKeysFromBytes(t, buf.Bytes())
 }
 
 func TestWriteJSON_ChartCRDs(t *testing.T) {
@@ -109,7 +119,7 @@ func TestWriteJSON_ChartCRDs(t *testing.T) {
 			t.Parallel()
 			p := mustPlanWithHeader(t, tc.header, tc.action, nil, nil)
 			var err error
-			p, err = semantic.AttachChartCRDs(p, []semantic.ChartCRD{{
+			p, err = rebuildWithChartCRDs(t, p, []semantic.ChartCRD{{
 				Source:      ".deployah/crds/widgets.yaml",
 				Kind:        "CustomResourceDefinition",
 				Name:        "widgets.example.com",
@@ -131,12 +141,8 @@ func TestWriteJSON_ChartCRDs(t *testing.T) {
 			assert.Equal(t, tc.lifecycle.String(), entry["lifecycle"])
 			assert.Equal(t, tc.willProcess, entry["willProcess"])
 			assert.Equal(t, float64(0), entry["index"])
-			for _, banned := range []string{"action", "origin", "before", "after", "apply", "fields", "namespace", "apiVersion"} {
-				assert.NotContains(t, entry, banned)
-			}
 			assert.NotContains(t, buf.String(), "Helm install will process")
 			validatePlanSchema(t, buf.Bytes())
-			assertNoJSONKeysFromBytes(t, buf.Bytes())
 		})
 	}
 }
@@ -154,7 +160,6 @@ func TestWriteJSON_Deterministic(t *testing.T) {
 	require.NoError(t, view.WriteJSON(&b2, p, view.Options{}))
 	assert.Equal(t, b1.String(), b2.String())
 	assertJSONGolden(t, "json_update", b1.String())
-	assertNoJSONKeysFromBytes(t, b1.Bytes())
 	validatePlanSchema(t, b1.Bytes())
 }
 
@@ -197,7 +202,6 @@ func TestWriteJSON_CamelCasePropertyNames(t *testing.T) {
 	change := jsonObjects(t, jsonObject(mustJSON(t, raw))["changes"])[0]
 	assert.Equal(t, "create", change["action"])
 	assert.Empty(t, change["fields"])
-	assertNoJSONKeysFromBytes(t, raw)
 	validatePlanSchema(t, raw)
 }
 
@@ -304,68 +308,6 @@ func TestWriteJSON_ExplicitNullFields(t *testing.T) {
 	validatePlanSchema(t, buf.Bytes())
 }
 
-func TestWriteJSON_MatchesSchemaForRepresentativePlans(t *testing.T) {
-	t.Parallel()
-	res := ref("ConfigMap", "app")
-	tests := []struct {
-		name string
-		plan semantic.Plan
-	}{
-		{name: "empty", plan: mustPlan(t, semantic.HelmNone, nil)},
-		{name: "create", plan: mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
-			Resource: res,
-			Action:   semantic.Create,
-			After:    snap(cm("app", "v1")),
-		}})},
-		{name: "delete", plan: mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
-			Resource: res,
-			Action:   semantic.Delete,
-			Before:   snap(cm("app", "v1")),
-		}})},
-		{name: "update", plan: mustPlan(t, semantic.HelmUpgrade, []semantic.ResourceChange{{
-			Resource: res,
-			Action:   semantic.Update,
-			Before:   snap(cm("app", "v1")),
-			After:    snap(cm("app", "v2")),
-		}})},
-		{name: "namespace create", plan: mustPlanWithHeader(t, semantic.Header{
-			Project:      "web",
-			Environment:  "prod",
-			Release:      "web",
-			Namespace:    "prod",
-			FreshInstall: true,
-		}, semantic.HelmInstall, []semantic.ResourceChange{{
-			Resource: semantic.ResourceRef{APIVersion: "v1", Kind: "Namespace", Name: "prod"},
-			Action:   semantic.Create,
-			After: snap(map[string]any{
-				"apiVersion": "v1",
-				"kind":       "Namespace",
-				"metadata":   map[string]any{"name": "prod"},
-			}),
-		}}, nil)},
-		{name: "task create", plan: mustPlanWithTasks(t, semantic.HelmUpgrade, nil, []semantic.TaskPlan{{
-			Name:    "migrate",
-			Phase:   semantic.TaskPreDeploy,
-			Action:  semantic.TaskCreate,
-			WillRun: true,
-			Definitions: []semantic.HookDefinition{{
-				Resource: ref("Job", "migrate"),
-				Action:   semantic.Create,
-				After:    snap(cm("migrate", "v1")),
-			}},
-		}})},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			var buf bytes.Buffer
-			require.NoError(t, view.WriteJSON(&buf, tt.plan, view.Options{}))
-			validatePlanSchema(t, buf.Bytes())
-			assertNoJSONKeysFromBytes(t, buf.Bytes())
-		})
-	}
-}
-
 func TestWriteJSON_SnapshotMayUseProtocolKeyNames(t *testing.T) {
 	t.Parallel()
 	obj := cm("app", "v1")
@@ -386,31 +328,7 @@ func TestWriteJSON_SnapshotMayUseProtocolKeyNames(t *testing.T) {
 		"api_version": "1",
 		"will_run": "yes"
 	}`, "changes", 0, "after", "data")
-	assertNoJSONKeysFromBytes(t, buf.Bytes())
 	validatePlanSchema(t, buf.Bytes())
-}
-
-func assertNoJSONKeysFromBytes(t *testing.T, raw []byte) {
-	t.Helper()
-	var doc map[string]any
-	require.NoError(t, json.Unmarshal(raw, &doc))
-	assertNoJSONKeys(t, doc)
-	assert.Contains(t, doc, "helmAction")
-	if header := jsonObject(doc["header"]); header != nil {
-		assertNoJSONKeys(t, header)
-	}
-	if summary := jsonObject(doc["summary"]); summary != nil {
-		assertNoJSONKeys(t, summary)
-	}
-	for _, item := range jsonObjects(t, doc["changes"]) {
-		assertNoJSONChangeKeys(t, item)
-	}
-	for _, item := range jsonObjects(t, doc["tasks"]) {
-		assertNoJSONTaskKeys(t, item)
-	}
-	for _, item := range jsonObjects(t, doc["chartCRDs"]) {
-		assertNoJSONKeys(t, item)
-	}
 }
 
 func mustJSON(t *testing.T, raw []byte) map[string]any {
@@ -453,13 +371,6 @@ func jsonObjects(t *testing.T, v any) []map[string]any {
 	return out
 }
 
-func assertNoJSONChangeKeys(t *testing.T, change map[string]any) {
-	t.Helper()
-	assertNoJSONKeys(t, change)
-	assertNoJSONResourceKeys(t, change["resource"])
-	assertNoJSONFieldKeys(t, change["fields"])
-}
-
 func TestWriteJSON_DriftShapes(t *testing.T) {
 	t.Parallel()
 	var buf bytes.Buffer
@@ -468,8 +379,6 @@ func TestWriteJSON_DriftShapes(t *testing.T) {
 	validatePlanSchema(t, raw)
 	var doc map[string]any
 	require.NoError(t, json.Unmarshal(raw, &doc))
-	_, hasChecked := doc["driftChecked"]
-	assert.False(t, hasChecked)
 	entries := jsonObjects(t, doc["drift"])
 	require.Len(t, entries, 3)
 
@@ -490,7 +399,6 @@ func TestWriteJSON_DriftShapes(t *testing.T) {
 	assert.NotNil(t, missing["previous"])
 	assert.Nil(t, missing["live"])
 	assert.Empty(t, missing["fields"])
-	assertNoJSONKeysFromBytes(t, raw)
 }
 
 func TestWriteJSON_DriftSecretRedaction(t *testing.T) {
@@ -542,7 +450,7 @@ func TestWriteJSON_DriftSecretRedaction(t *testing.T) {
 
 func secretDriftPlan(t *testing.T) semantic.Plan {
 	t.Helper()
-	p, err := semantic.AttachDrift(mustPlan(t, semantic.HelmNone, nil), []semantic.DriftChange{
+	p, err := rebuildWithDrift(t, mustPlan(t, semantic.HelmNone, nil), []semantic.DriftChange{
 		{
 			Resource: ref("Secret", "db"),
 			Action:   semantic.DriftModified,
@@ -578,33 +486,6 @@ func secretDriftPlan(t *testing.T) semantic.Plan {
 	})
 	require.NoError(t, err)
 	return p
-}
-
-func assertNoJSONTaskKeys(t *testing.T, task map[string]any) {
-	t.Helper()
-	assertNoJSONKeys(t, task)
-	for _, item := range jsonObjects(t, task["resources"]) {
-		assertNoJSONKeys(t, item)
-	}
-	for _, def := range jsonObjects(t, task["definitions"]) {
-		assertNoJSONKeys(t, def)
-		assertNoJSONResourceKeys(t, def["resource"])
-		assertNoJSONFieldKeys(t, def["fields"])
-	}
-}
-
-func assertNoJSONResourceKeys(t *testing.T, raw any) {
-	t.Helper()
-	res, isObject := raw.(map[string]any)
-	require.True(t, isObject)
-	assertNoJSONKeys(t, res)
-}
-
-func assertNoJSONFieldKeys(t *testing.T, raw any) {
-	t.Helper()
-	for _, field := range jsonObjects(t, raw) {
-		assertNoJSONKeys(t, field)
-	}
 }
 
 func TestWriteRenderers_ManualSnapshotShapes(t *testing.T) {
@@ -655,23 +536,4 @@ func TestWriteRenderers_NilTasks(t *testing.T) {
 	var jsonBuf bytes.Buffer
 	require.NoError(t, view.WriteJSON(&jsonBuf, p, view.Options{}))
 	assertJSONAt(t, jsonBuf.Bytes(), `[]`, "tasks")
-}
-
-func assertNoJSONKeys(t *testing.T, obj map[string]any) {
-	t.Helper()
-	require.NotNil(t, obj)
-	for _, name := range []string{
-		"fresh_install",
-		"api_version",
-		"generate_name",
-		"field_manager",
-		"force_conflicts",
-		"will_run",
-		"marker",
-		"displayAction",
-		"executions",
-		"helm_action",
-	} {
-		assert.NotContains(t, obj, name)
-	}
 }

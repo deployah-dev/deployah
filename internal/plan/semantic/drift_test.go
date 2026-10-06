@@ -25,7 +25,7 @@ import (
 
 func TestNew_DriftStartsEmpty(t *testing.T) {
 	t.Parallel()
-	p, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, nil, nil)
+	p, err := semantic.New(semantic.Input{Header: semantic.Header{}, HelmAction: semantic.HelmUpgrade, Changes: nil, Tasks: nil})
 	require.NoError(t, err)
 	require.NotNil(t, p.Drift)
 	assert.Empty(t, p.Drift)
@@ -48,7 +48,7 @@ func TestAttachDrift_FreshInstallRejectsDrift(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := semantic.AttachDrift(base, tt.drift)
+			got, err := withDrift(base, tt.drift)
 			if tt.wantErr != "" {
 				require.Error(t, err)
 				assert.ErrorContains(t, err, tt.wantErr)
@@ -145,7 +145,7 @@ func TestAttachDrift_Validation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := semantic.AttachDrift(base, []semantic.DriftChange{tt.drift})
+			_, err := withDrift(base, []semantic.DriftChange{tt.drift})
 			require.Error(t, err)
 			assert.ErrorContains(t, err, tt.wantErr)
 		})
@@ -158,7 +158,7 @@ func TestAttachDrift_DuplicateLogicalIdentity(t *testing.T) {
 	first := missingDrift("app")
 	second := missingDrift("app")
 	second.Resource.APIVersion = "core/v1"
-	_, err := semantic.AttachDrift(base, []semantic.DriftChange{first, second})
+	_, err := withDrift(base, []semantic.DriftChange{first, second})
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "duplicate logical identity")
 }
@@ -166,7 +166,7 @@ func TestAttachDrift_DuplicateLogicalIdentity(t *testing.T) {
 func TestAttachDrift_SortsAndCopies(t *testing.T) {
 	t.Parallel()
 	change := updateChange("app", "v1", "v2")
-	base, err := semantic.New(semantic.Header{Release: "web"}, semantic.HelmUpgrade, []semantic.ResourceChange{change}, nil)
+	base, err := semantic.New(semantic.Input{Header: semantic.Header{Release: "web"}, HelmAction: semantic.HelmUpgrade, Changes: []semantic.ResourceChange{change}, Tasks: nil})
 	require.NoError(t, err)
 	summary := base.Summary
 
@@ -180,7 +180,7 @@ func TestAttachDrift_SortsAndCopies(t *testing.T) {
 		{Path: "/a", Op: semantic.FieldReplace, Before: "1", After: "2"},
 	}
 	input := []semantic.DriftChange{zeta, alpha, mod}
-	got, err := semantic.AttachDrift(base, input)
+	got, err := withDrift(base, input)
 	require.NoError(t, err)
 	require.Len(t, got.Drift, 3)
 	// Group sorts before kind, so core ConfigMaps precede apps/Deployment.
@@ -210,9 +210,9 @@ func TestAttachDrift_SortsAndCopies(t *testing.T) {
 
 func TestAttachDrift_DoesNotChangeReleaseIntent(t *testing.T) {
 	t.Parallel()
-	base, err := semantic.New(semantic.Header{Release: "web"}, semantic.HelmNone, nil, nil)
+	base, err := semantic.New(semantic.Input{Header: semantic.Header{Release: "web"}, HelmAction: semantic.HelmNone, Changes: nil, Tasks: nil})
 	require.NoError(t, err)
-	got, err := semantic.AttachDrift(base, []semantic.DriftChange{missingDrift("app")})
+	got, err := withDrift(base, []semantic.DriftChange{missingDrift("app")})
 	require.NoError(t, err)
 	assert.Equal(t, semantic.HelmNone, got.HelmAction)
 	assert.Empty(t, got.Changes)
@@ -243,9 +243,31 @@ func TestDriftAction_String(t *testing.T) {
 
 func mustPlan(t *testing.T, header semantic.Header, action semantic.HelmAction) semantic.Plan {
 	t.Helper()
-	p, err := semantic.New(header, action, nil, nil)
+	p, err := semantic.New(semantic.Input{Header: header, HelmAction: action, Changes: nil, Tasks: nil})
 	require.NoError(t, err)
 	return p
+}
+
+func withDrift(base semantic.Plan, drift []semantic.DriftChange) (semantic.Plan, error) {
+	return semantic.New(semantic.Input{
+		Header:     base.Header,
+		HelmAction: base.HelmAction,
+		Changes:    base.Changes,
+		Tasks:      base.Tasks,
+		Drift:      drift,
+		ChartCRDs:  base.ChartCRDs,
+	})
+}
+
+func withChartCRDs(base semantic.Plan, crds []semantic.ChartCRD) (semantic.Plan, error) {
+	return semantic.New(semantic.Input{
+		Header:     base.Header,
+		HelmAction: base.HelmAction,
+		Changes:    base.Changes,
+		Tasks:      base.Tasks,
+		Drift:      base.Drift,
+		ChartCRDs:  crds,
+	})
 }
 
 func missingDrift(name string) semantic.DriftChange {

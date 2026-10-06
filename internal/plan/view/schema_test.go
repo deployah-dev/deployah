@@ -40,16 +40,9 @@ func TestSchemaV1ID_MatchesEmbeddedAndRendered(t *testing.T) {
 	required, ok := sch["required"].([]any)
 	require.True(t, ok)
 	assert.Contains(t, required, "chartCRDs")
-	assert.NotContains(t, required, "completeness")
-	assert.NotContains(t, props, "completeness")
 
 	defs, ok := sch["$defs"].(map[string]any)
 	require.True(t, ok)
-	summary, ok := defs["Summary"].(map[string]any)
-	require.True(t, ok)
-	summaryProps, ok := summary["properties"].(map[string]any)
-	require.True(t, ok)
-	assert.NotContains(t, summaryProps, "replace")
 	change, ok := defs["ResourceChange"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, []any{"resource", "action", "before", "after", "fields"}, change["required"])
@@ -138,14 +131,8 @@ func TestSchemaV1_RejectsMalformedDocuments(t *testing.T) {
 		{name: "delete with fields", raw: patched(t, deleteDoc, func(d map[string]any) {
 			firstChange(t, d)["fields"] = []any{addField}
 		})},
-		{name: "top-level completeness", raw: patched(t, update, func(d map[string]any) {
-			d["completeness"] = "complete"
-		})},
-		{name: "action replace", raw: patched(t, update, func(d map[string]any) {
-			firstChange(t, d)["action"] = "replace"
-		})},
-		{name: "unknown top-level executions", raw: patched(t, update, func(d map[string]any) {
-			d["executions"] = []any{}
+		{name: "action nope", raw: patched(t, update, func(d map[string]any) {
+			firstChange(t, d)["action"] = "nope"
 		})},
 		{name: "unknown top-level field", raw: patched(t, update, func(d map[string]any) {
 			d["unknown"] = true
@@ -247,7 +234,7 @@ func TestSchemaV1_ChartCRDs(t *testing.T) {
 			t.Parallel()
 			p := mustPlanWithHeader(t, tc.header, tc.action, nil, nil)
 			var attachErr error
-			p, attachErr = semantic.AttachChartCRDs(p, []semantic.ChartCRD{{
+			p, attachErr = rebuildWithChartCRDs(t, p, []semantic.ChartCRD{{
 				Source:      ".deployah/crds/widgets.yaml",
 				Kind:        "CustomResourceDefinition",
 				Name:        "widgets.example.com",
@@ -263,7 +250,7 @@ func TestSchemaV1_ChartCRDs(t *testing.T) {
 
 	p := mustPlan(t, semantic.HelmUpgrade, nil)
 	var err error
-	p, err = semantic.AttachChartCRDs(p, []semantic.ChartCRD{{
+	p, err = rebuildWithChartCRDs(t, p, []semantic.ChartCRD{{
 		Source:    ".deployah/crds/widgets.yaml",
 		Kind:      "CustomResourceDefinition",
 		Name:      "widgets.example.com",
@@ -298,13 +285,6 @@ func TestSchemaV1_ChartCRDs(t *testing.T) {
 			assertSchemaRejects(t, patched(t, base, tt.fn))
 		})
 	}
-}
-
-func TestSchemaV1_AcceptsHelmNoneWithDrift(t *testing.T) {
-	t.Parallel()
-	var buf bytes.Buffer
-	require.NoError(t, view.WriteJSON(&buf, sampleDriftPlan(t), view.Options{}))
-	validatePlanSchema(t, buf.Bytes())
 }
 
 func TestSchemaV1_RejectsMalformedDrift(t *testing.T) {
@@ -358,7 +338,7 @@ func TestSchemaV1_RejectsMalformedDrift(t *testing.T) {
 
 func sampleDriftPlan(t *testing.T) semantic.Plan {
 	t.Helper()
-	p, err := semantic.AttachDrift(mustPlan(t, semantic.HelmNone, nil), []semantic.DriftChange{
+	p, err := rebuildWithDrift(t, mustPlan(t, semantic.HelmNone, nil), []semantic.DriftChange{
 		{
 			Resource: ref("ConfigMap", "app"),
 			Action:   semantic.DriftModified,

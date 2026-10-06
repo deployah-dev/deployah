@@ -75,19 +75,19 @@ func TestWriteHuman_StylerPreservesLayout(t *testing.T) {
 func TestWriteHuman_StyleRoles(t *testing.T) {
 	t.Parallel()
 	header := humanHeader()
-	unexpected, err := semantic.AttachDrift(mustPlanWithHeader(t, header, semantic.HelmNone, nil, nil), []semantic.DriftChange{{
+	unexpected, err := rebuildWithDrift(t, mustPlanWithHeader(t, header, semantic.HelmNone, nil, nil), []semantic.DriftChange{{
 		Resource: ref("ConfigMap", "extra"),
 		Action:   semantic.DriftUnexpected,
 		Live:     snap(cm("extra", "live")),
 	}})
 	require.NoError(t, err)
-	missing, err := semantic.AttachDrift(mustPlanWithHeader(t, header, semantic.HelmNone, nil, nil), []semantic.DriftChange{{
+	missing, err := rebuildWithDrift(t, mustPlanWithHeader(t, header, semantic.HelmNone, nil, nil), []semantic.DriftChange{{
 		Resource: ref("ConfigMap", "other"),
 		Action:   semantic.DriftMissing,
 		Previous: snap(cm("other", "gone")),
 	}})
 	require.NoError(t, err)
-	modified, err := semantic.AttachDrift(mustPlanWithHeader(t, header, semantic.HelmNone, nil, nil), []semantic.DriftChange{{
+	modified, err := rebuildWithDrift(t, mustPlanWithHeader(t, header, semantic.HelmNone, nil, nil), []semantic.DriftChange{{
 		Resource: ref("ConfigMap", "app"),
 		Action:   semantic.DriftModified,
 		Previous: snap(cm("app", "old")),
