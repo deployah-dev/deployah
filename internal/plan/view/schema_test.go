@@ -232,31 +232,38 @@ func TestSchemaV1_ChartCRDs(t *testing.T) {
 	for _, tc := range valid {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			p := mustPlanWithHeader(t, tc.header, tc.action, nil, nil)
-			var attachErr error
-			p, attachErr = rebuildWithChartCRDs(t, p, []semantic.ChartCRD{{
-				Source:      ".deployah/crds/widgets.yaml",
-				Kind:        "CustomResourceDefinition",
-				Name:        "widgets.example.com",
-				Lifecycle:   tc.lifecycle,
-				WillProcess: tc.willProcess,
-			}})
-			require.NoError(t, attachErr)
+			p := mustPlanInput(t, semantic.Input{
+				Header:     tc.header,
+				HelmAction: tc.action,
+				ChartCRDs: []semantic.ChartCRD{{
+					Source:      ".deployah/crds/widgets.yaml",
+					Kind:        "CustomResourceDefinition",
+					Name:        "widgets.example.com",
+					Lifecycle:   tc.lifecycle,
+					WillProcess: tc.willProcess,
+				}},
+			})
 			raw, err := json.Marshal(mustPlanDoc(t, p))
 			require.NoError(t, err)
 			validatePlanSchema(t, raw)
 		})
 	}
 
-	p := mustPlan(t, semantic.HelmUpgrade, nil)
-	var err error
-	p, err = rebuildWithChartCRDs(t, p, []semantic.ChartCRD{{
-		Source:    ".deployah/crds/widgets.yaml",
-		Kind:      "CustomResourceDefinition",
-		Name:      "widgets.example.com",
-		Lifecycle: semantic.ChartCRDUpgrade,
-	}})
-	require.NoError(t, err)
+	p := mustPlanInput(t, semantic.Input{
+		Header: semantic.Header{
+			Project:     "web",
+			Environment: "prod",
+			Release:     "web",
+			Namespace:   "prod",
+		},
+		HelmAction: semantic.HelmUpgrade,
+		ChartCRDs: []semantic.ChartCRD{{
+			Source:    ".deployah/crds/widgets.yaml",
+			Kind:      "CustomResourceDefinition",
+			Name:      "widgets.example.com",
+			Lifecycle: semantic.ChartCRDUpgrade,
+		}},
+	})
 	base := mustPlanDoc(t, p)
 
 	tests := []struct {
@@ -338,32 +345,39 @@ func TestSchemaV1_RejectsMalformedDrift(t *testing.T) {
 
 func sampleDriftPlan(t *testing.T) semantic.Plan {
 	t.Helper()
-	p, err := rebuildWithDrift(t, mustPlan(t, semantic.HelmNone, nil), []semantic.DriftChange{
-		{
-			Resource: ref("ConfigMap", "app"),
-			Action:   semantic.DriftModified,
-			Previous: snap(cm("app", "old")),
-			Live:     snap(cm("app", "new")),
-			Fields: []semantic.FieldChange{{
-				Path:   "/data/key",
-				Op:     semantic.FieldReplace,
-				Before: "old",
-				After:  "new",
-			}},
+	return mustPlanInput(t, semantic.Input{
+		Header: semantic.Header{
+			Project:     "web",
+			Environment: "prod",
+			Release:     "web",
+			Namespace:   "prod",
 		},
-		{
-			Resource: ref("ConfigMap", "other"),
-			Action:   semantic.DriftMissing,
-			Previous: snap(cm("other", "gone")),
-		},
-		{
-			Resource: ref("ConfigMap", "extra"),
-			Action:   semantic.DriftUnexpected,
-			Live:     snap(cm("extra", "live")),
+		HelmAction: semantic.HelmNone,
+		Drift: []semantic.DriftChange{
+			{
+				Resource: ref("ConfigMap", "app"),
+				Action:   semantic.DriftModified,
+				Previous: snap(cm("app", "old")),
+				Live:     snap(cm("app", "new")),
+				Fields: []semantic.FieldChange{{
+					Path:   "/data/key",
+					Op:     semantic.FieldReplace,
+					Before: "old",
+					After:  "new",
+				}},
+			},
+			{
+				Resource: ref("ConfigMap", "other"),
+				Action:   semantic.DriftMissing,
+				Previous: snap(cm("other", "gone")),
+			},
+			{
+				Resource: ref("ConfigMap", "extra"),
+				Action:   semantic.DriftUnexpected,
+				Live:     snap(cm("extra", "live")),
+			},
 		},
 	})
-	require.NoError(t, err)
-	return p
 }
 
 func firstChartCRD(t *testing.T, doc map[string]any) map[string]any {

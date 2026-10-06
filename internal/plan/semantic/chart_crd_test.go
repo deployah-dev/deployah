@@ -23,11 +23,8 @@ import (
 	"deployah.dev/deployah/internal/plan/semantic"
 )
 
-func TestAttachChartCRDs_Lifecycle(t *testing.T) {
+func TestNew_ChartCRDLifecycle(t *testing.T) {
 	t.Parallel()
-	base, err := semantic.New(semantic.Input{Header: semantic.Header{FreshInstall: true}, HelmAction: semantic.HelmInstall, Changes: nil, Tasks: nil})
-	require.NoError(t, err)
-	changesBefore := len(base.Changes)
 	tests := []struct {
 		name        string
 		lifecycle   semantic.ChartCRDLifecycle
@@ -40,32 +37,36 @@ func TestAttachChartCRDs_Lifecycle(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			p, attachErr := withChartCRDs(base, []semantic.ChartCRD{{
-				Source:      ".deployah/crds/widget.yaml",
-				Kind:        "CustomResourceDefinition",
-				Name:        "widgets.example.com",
-				Lifecycle:   tc.lifecycle,
-				WillProcess: tc.willProcess,
-			}})
-			require.NoError(t, attachErr)
+			p, err := semantic.New(semantic.Input{
+				Header:     semantic.Header{FreshInstall: true},
+				HelmAction: semantic.HelmInstall,
+				ChartCRDs: []semantic.ChartCRD{{
+					Source:      ".deployah/crds/widget.yaml",
+					Kind:        "CustomResourceDefinition",
+					Name:        "widgets.example.com",
+					Lifecycle:   tc.lifecycle,
+					WillProcess: tc.willProcess,
+				}},
+			})
+			require.NoError(t, err)
 			require.Len(t, p.ChartCRDs, 1)
 			assert.Equal(t, "CustomResourceDefinition", p.ChartCRDs[0].Kind)
 			assert.Equal(t, "widgets.example.com", p.ChartCRDs[0].Name)
 			assert.Equal(t, tc.lifecycle, p.ChartCRDs[0].Lifecycle)
 			assert.Equal(t, tc.willProcess, p.ChartCRDs[0].WillProcess)
-			assert.Equal(t, changesBefore, len(p.Changes))
 			assert.Empty(t, p.Changes)
 		})
 	}
 }
 
-func TestAttachChartCRDs_PreservesOrder(t *testing.T) {
+func TestNew_ChartCRDPreservesOrder(t *testing.T) {
 	t.Parallel()
-	base, err := semantic.New(semantic.Input{Header: semantic.Header{}, HelmAction: semantic.HelmUpgrade, Changes: nil, Tasks: nil})
-	require.NoError(t, err)
-	p, err := withChartCRDs(base, []semantic.ChartCRD{
-		{Kind: "CustomResourceDefinition", Name: "one.example.com", Lifecycle: semantic.ChartCRDUpgrade},
-		{Kind: "CustomResourceDefinition", Name: "two.example.com", Index: 1, Lifecycle: semantic.ChartCRDUpgrade},
+	p, err := semantic.New(semantic.Input{
+		HelmAction: semantic.HelmUpgrade,
+		ChartCRDs: []semantic.ChartCRD{
+			{Kind: "CustomResourceDefinition", Name: "one.example.com", Lifecycle: semantic.ChartCRDUpgrade},
+			{Kind: "CustomResourceDefinition", Name: "two.example.com", Index: 1, Lifecycle: semantic.ChartCRDUpgrade},
+		},
 	})
 	require.NoError(t, err)
 	require.Len(t, p.ChartCRDs, 2)
@@ -75,17 +76,12 @@ func TestAttachChartCRDs_PreservesOrder(t *testing.T) {
 	assert.Equal(t, 1, p.ChartCRDs[1].Index)
 }
 
-func TestAttachChartCRDs_HasEffectsFollowsWillProcess(t *testing.T) {
+func TestNew_ChartCRDHasEffectsFollowsWillProcess(t *testing.T) {
 	t.Parallel()
-	fresh, err := semantic.New(semantic.Input{Header: semantic.Header{FreshInstall: true}, HelmAction: semantic.HelmInstall, Changes: nil, Tasks: nil})
-	require.NoError(t, err)
-	idle, err := semantic.New(semantic.Input{Header: semantic.Header{}, HelmAction: semantic.HelmNone, Changes: nil, Tasks: nil})
-	require.NoError(t, err)
-	require.True(t, idle.IsNoOp())
-
 	tests := []struct {
 		name        string
-		base        semantic.Plan
+		header      semantic.Header
+		action      semantic.HelmAction
 		lifecycle   semantic.ChartCRDLifecycle
 		willProcess bool
 		wantEffects bool
@@ -93,19 +89,21 @@ func TestAttachChartCRDs_HasEffectsFollowsWillProcess(t *testing.T) {
 	}{
 		{
 			name:        "process",
-			base:        fresh,
+			header:      semantic.Header{FreshInstall: true},
+			action:      semantic.HelmInstall,
 			lifecycle:   semantic.ChartCRDProcess,
 			willProcess: true,
 			wantEffects: true,
 		},
 		{
 			name:      "skip",
-			base:      fresh,
+			header:    semantic.Header{FreshInstall: true},
+			action:    semantic.HelmInstall,
 			lifecycle: semantic.ChartCRDSkip,
 		},
 		{
 			name:      "upgrade",
-			base:      idle,
+			action:    semantic.HelmNone,
 			lifecycle: semantic.ChartCRDUpgrade,
 			wantNoOp:  true,
 		},
@@ -113,13 +111,17 @@ func TestAttachChartCRDs_HasEffectsFollowsWillProcess(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			p, attachErr := withChartCRDs(tc.base, []semantic.ChartCRD{{
-				Kind:        "CustomResourceDefinition",
-				Name:        "widgets.example.com",
-				Lifecycle:   tc.lifecycle,
-				WillProcess: tc.willProcess,
-			}})
-			require.NoError(t, attachErr)
+			p, err := semantic.New(semantic.Input{
+				Header:     tc.header,
+				HelmAction: tc.action,
+				ChartCRDs: []semantic.ChartCRD{{
+					Kind:        "CustomResourceDefinition",
+					Name:        "widgets.example.com",
+					Lifecycle:   tc.lifecycle,
+					WillProcess: tc.willProcess,
+				}},
+			})
+			require.NoError(t, err)
 			assert.Equal(t, tc.wantEffects, p.HasEffects())
 			assert.Equal(t, tc.wantNoOp, p.IsNoOp())
 			assert.Empty(t, p.Changes)
@@ -128,10 +130,8 @@ func TestAttachChartCRDs_HasEffectsFollowsWillProcess(t *testing.T) {
 	}
 }
 
-func TestAttachChartCRDs_Validation(t *testing.T) {
+func TestNew_ChartCRDValidation(t *testing.T) {
 	t.Parallel()
-	base, err := semantic.New(semantic.Input{Header: semantic.Header{}, HelmAction: semantic.HelmUpgrade, Changes: nil, Tasks: nil})
-	require.NoError(t, err)
 	tests := []struct {
 		name    string
 		crd     semantic.ChartCRD
@@ -147,9 +147,12 @@ func TestAttachChartCRDs_Validation(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			_, attachErr := withChartCRDs(base, []semantic.ChartCRD{tc.crd})
-			require.Error(t, attachErr)
-			assert.ErrorContains(t, attachErr, tc.wantErr)
+			_, err := semantic.New(semantic.Input{
+				HelmAction: semantic.HelmUpgrade,
+				ChartCRDs:  []semantic.ChartCRD{tc.crd},
+			})
+			require.Error(t, err)
+			assert.ErrorContains(t, err, tc.wantErr)
 		})
 	}
 }

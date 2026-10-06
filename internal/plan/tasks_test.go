@@ -42,20 +42,20 @@ func TestAssembleTasks_FreshInstallPrePost(t *testing.T) {
 		testHook("Job", "smoke", "smoke", "v1", 2),
 	}, nil)
 	require.NoError(t, err)
-	byName := taskByName(t, tasksWithDerivedWillRun(t, semantic.HelmInstall, nil, tasks))
+	byName := taskByName(t, tasks)
 	require.Contains(t, byName, "migrate")
 	require.Contains(t, byName, "smoke")
 	assert.NotContains(t, byName, "run")
 	assert.Equal(t, semantic.TaskCreate, byName["migrate"].Action)
-	assert.True(t, byName["migrate"].WillRun)
+	assert.False(t, byName["migrate"].WillRun)
 	assert.Equal(t, semantic.TaskPreDeploy, byName["migrate"].Phase)
 	assert.Len(t, byName["migrate"].Definitions, 2)
 	assert.Equal(t, semantic.TaskCreate, byName["smoke"].Action)
-	assert.True(t, byName["smoke"].WillRun)
+	assert.False(t, byName["smoke"].WillRun)
 	assert.Empty(t, byName["migrate"].Resources)
 }
 
-func TestAssembleTasks_ManifestChangeUnchangedHookWillRun(t *testing.T) {
+func TestAssembleTasks_ManifestChangeLeavesHookUnchanged(t *testing.T) {
 	t.Parallel()
 	resolved := resolvedWithTasks(map[string]spec.ResolvedTask{
 		"seed": hookResolved(spec.TaskOnPreDeploy, 1),
@@ -64,10 +64,10 @@ func TestAssembleTasks_ManifestChangeUnchangedHookWillRun(t *testing.T) {
 	prep := upgradePrep(map[string]any{"seed": map[string]any{"on": "preDeploy", "hookWeight": 1}}, []*v1.Hook{hook}, nil)
 	tasks, err := assembleTasks(resolved, prep, []*v1.Hook{hook}, []semantic.ResourceChange{labeledCreate("api", "api")})
 	require.NoError(t, err)
-	byName := taskByName(t, tasksWithDerivedWillRun(t, semantic.HelmUpgrade, nil, tasks))
+	byName := taskByName(t, tasks)
 	require.Contains(t, byName, "seed")
 	assert.Equal(t, semantic.TaskUnchanged, byName["seed"].Action)
-	assert.True(t, byName["seed"].WillRun)
+	assert.False(t, byName["seed"].WillRun)
 	assert.Empty(t, byName["seed"].Definitions)
 }
 
@@ -81,10 +81,10 @@ func TestAssembleTasks_HookDefinitionOnly(t *testing.T) {
 	prep := upgradePrep(map[string]any{"migrate": map[string]any{"on": "preDeploy", "hookWeight": 1}}, []*v1.Hook{prev}, nil)
 	tasks, err := assembleTasks(resolved, prep, []*v1.Hook{desired}, nil)
 	require.NoError(t, err)
-	byName := taskByName(t, tasksWithDerivedWillRun(t, semantic.HelmUpgrade, nil, tasks))
+	byName := taskByName(t, tasks)
 	require.Contains(t, byName, "migrate")
 	assert.Equal(t, semantic.TaskUpdate, byName["migrate"].Action)
-	assert.True(t, byName["migrate"].WillRun)
+	assert.False(t, byName["migrate"].WillRun)
 	require.Len(t, byName["migrate"].Definitions, 1)
 	assert.Equal(t, semantic.Update, byName["migrate"].Definitions[0].Action)
 }
@@ -101,18 +101,18 @@ func TestAssembleTasks_HookCreateAndDelete(t *testing.T) {
 	}, []*v1.Hook{prev}, nil)
 	tasks, err := assembleTasks(resolved, prep, []*v1.Hook{desired}, nil)
 	require.NoError(t, err)
-	byName := taskByName(t, tasksWithDerivedWillRun(t, semantic.HelmUpgrade, nil, tasks))
+	byName := taskByName(t, tasks)
 	require.Contains(t, byName, "smoke")
 	require.Contains(t, byName, "old")
 	assert.Equal(t, semantic.TaskCreate, byName["smoke"].Action)
-	assert.True(t, byName["smoke"].WillRun)
+	assert.False(t, byName["smoke"].WillRun)
 	assert.Equal(t, semantic.TaskDelete, byName["old"].Action)
 	assert.False(t, byName["old"].WillRun)
 	require.Len(t, byName["old"].Definitions, 1)
 	assert.Equal(t, semantic.Delete, byName["old"].Definitions[0].Action)
 }
 
-func TestAssembleTasks_AllCurrentHooksRunOnHelmChange(t *testing.T) {
+func TestAssembleTasks_ResourceChangeKeepsHooks(t *testing.T) {
 	t.Parallel()
 	resolved := resolvedWithTasks(map[string]spec.ResolvedTask{
 		"migrate": hookResolved(spec.TaskOnPreDeploy, 1),
@@ -127,9 +127,9 @@ func TestAssembleTasks_AllCurrentHooksRunOnHelmChange(t *testing.T) {
 	changes := []semantic.ResourceChange{labeledCreate("api", "api")}
 	tasks, err := assembleTasks(resolved, prep, []*v1.Hook{migrate, seed}, changes)
 	require.NoError(t, err)
-	byName := taskByName(t, tasksWithDerivedWillRun(t, semantic.HelmUpgrade, nil, tasks))
-	assert.True(t, byName["migrate"].WillRun)
-	assert.True(t, byName["seed"].WillRun)
+	byName := taskByName(t, tasks)
+	assert.False(t, byName["migrate"].WillRun)
+	assert.False(t, byName["seed"].WillRun)
 	assert.Equal(t, semantic.TaskUnchanged, byName["migrate"].Action)
 	assert.Equal(t, semantic.TaskUnchanged, byName["seed"].Action)
 }
@@ -303,12 +303,11 @@ func TestAssembleTasks_FailClosed(t *testing.T) {
 	}
 }
 
-func TestAssembleTasks_HookChangeRunsAllCurrentHooks(t *testing.T) {
+func TestAssembleTasks_HookChangeKeepsSiblings(t *testing.T) {
 	t.Parallel()
 	type want struct {
-		Action  semantic.TaskAction
-		Phase   semantic.TaskPhase
-		WillRun bool
+		Action semantic.TaskAction
+		Phase  semantic.TaskPhase
 	}
 	seed := testHook("Job", "seed", "seed", "same", 1)
 	migrateV1 := testHook("Job", "migrate", "migrate", "v1", 1)
@@ -324,7 +323,7 @@ func TestAssembleTasks_HookChangeRunsAllCurrentHooks(t *testing.T) {
 		want     map[string]want
 	}{
 		{
-			name: "definition change runs unchanged sibling",
+			name: "definition change keeps unchanged sibling",
 			resolved: map[string]spec.ResolvedTask{
 				"migrate": hookResolved(spec.TaskOnPreDeploy, 1),
 				"seed":    hookResolved(spec.TaskOnPreDeploy, 2),
@@ -336,12 +335,12 @@ func TestAssembleTasks_HookChangeRunsAllCurrentHooks(t *testing.T) {
 			prev:    []*v1.Hook{migrateV1, seed},
 			desired: []*v1.Hook{migrateV2, seed},
 			want: map[string]want{
-				"migrate": {Action: semantic.TaskUpdate, Phase: semantic.TaskPreDeploy, WillRun: true},
-				"seed":    {Action: semantic.TaskUnchanged, Phase: semantic.TaskPreDeploy, WillRun: true},
+				"migrate": {Action: semantic.TaskUpdate, Phase: semantic.TaskPreDeploy},
+				"seed":    {Action: semantic.TaskUnchanged, Phase: semantic.TaskPreDeploy},
 			},
 		},
 		{
-			name: "new hook runs unchanged sibling",
+			name: "new hook keeps unchanged sibling",
 			resolved: map[string]spec.ResolvedTask{
 				"seed":  hookResolved(spec.TaskOnPreDeploy, 1),
 				"smoke": hookResolved(spec.TaskOnPostDeploy, 2),
@@ -352,12 +351,12 @@ func TestAssembleTasks_HookChangeRunsAllCurrentHooks(t *testing.T) {
 			prev:    []*v1.Hook{seed},
 			desired: []*v1.Hook{seed, smoke},
 			want: map[string]want{
-				"seed":  {Action: semantic.TaskUnchanged, Phase: semantic.TaskPreDeploy, WillRun: true},
-				"smoke": {Action: semantic.TaskCreate, Phase: semantic.TaskPostDeploy, WillRun: true},
+				"seed":  {Action: semantic.TaskUnchanged, Phase: semantic.TaskPreDeploy},
+				"smoke": {Action: semantic.TaskCreate, Phase: semantic.TaskPostDeploy},
 			},
 		},
 		{
-			name: "removed hook runs remaining sibling",
+			name: "removed hook keeps remaining sibling",
 			resolved: map[string]spec.ResolvedTask{
 				"seed": hookResolved(spec.TaskOnPreDeploy, 1),
 			},
@@ -368,8 +367,8 @@ func TestAssembleTasks_HookChangeRunsAllCurrentHooks(t *testing.T) {
 			prev:    []*v1.Hook{old, seed},
 			desired: []*v1.Hook{seed},
 			want: map[string]want{
-				"old":  {Action: semantic.TaskDelete, Phase: semantic.TaskPreDeploy, WillRun: false},
-				"seed": {Action: semantic.TaskUnchanged, Phase: semantic.TaskPreDeploy, WillRun: true},
+				"old":  {Action: semantic.TaskDelete, Phase: semantic.TaskPreDeploy},
+				"seed": {Action: semantic.TaskUnchanged, Phase: semantic.TaskPreDeploy},
 			},
 		},
 	}
@@ -379,14 +378,14 @@ func TestAssembleTasks_HookChangeRunsAllCurrentHooks(t *testing.T) {
 			prep := upgradePrep(tt.previous, tt.prev, nil)
 			tasks, err := assembleTasks(resolvedWithTasks(tt.resolved), prep, tt.desired, nil)
 			require.NoError(t, err)
-			byName := taskByName(t, tasksWithDerivedWillRun(t, semantic.HelmUpgrade, nil, tasks))
+			byName := taskByName(t, tasks)
 			require.Len(t, byName, len(tt.want))
 			for name, want := range tt.want {
 				got, ok := byName[name]
 				require.True(t, ok, "missing task %s", name)
 				assert.Equal(t, want.Action, got.Action, name)
 				assert.Equal(t, want.Phase, got.Phase, name)
-				assert.Equal(t, want.WillRun, got.WillRun, name)
+				assert.False(t, got.WillRun, name)
 			}
 		})
 	}
@@ -516,10 +515,10 @@ func TestAssembleTasks_HookPhaseChange(t *testing.T) {
 			}, []*v1.Hook{tt.prev}, nil)
 			tasks, err := assembleTasks(resolved, prep, []*v1.Hook{tt.desired}, nil)
 			require.NoError(t, err)
-			got := taskByName(t, tasksWithDerivedWillRun(t, semantic.HelmUpgrade, nil, tasks))["migrate"]
+			got := taskByName(t, tasks)["migrate"]
 			assert.Equal(t, tt.wantPhase, got.Phase)
 			assert.Equal(t, semantic.TaskUpdate, got.Action)
-			assert.True(t, got.WillRun)
+			assert.False(t, got.WillRun)
 		})
 	}
 }
@@ -542,7 +541,6 @@ func TestAssembleTasks_HookScheduleTransition(t *testing.T) {
 		changes         []semantic.ResourceChange
 		wantPhase       semantic.TaskPhase
 		wantAction      semantic.TaskAction
-		wantWillRun     bool
 		wantDefActions  []semantic.Action
 		wantOwned       []string
 		wantChangeNames []string
@@ -555,7 +553,6 @@ func TestAssembleTasks_HookScheduleTransition(t *testing.T) {
 			changes:         []semantic.ResourceChange{cronDelete},
 			wantPhase:       semantic.TaskPreDeploy,
 			wantAction:      semantic.TaskUpdate,
-			wantWillRun:     true,
 			wantDefActions:  []semantic.Action{semantic.Create},
 			wantOwned:       []string{},
 			wantChangeNames: []string{"work"},
@@ -568,7 +565,6 @@ func TestAssembleTasks_HookScheduleTransition(t *testing.T) {
 			changes:         []semantic.ResourceChange{cronDelete},
 			wantPhase:       semantic.TaskPostDeploy,
 			wantAction:      semantic.TaskUpdate,
-			wantWillRun:     true,
 			wantDefActions:  []semantic.Action{semantic.Create},
 			wantOwned:       []string{},
 			wantChangeNames: []string{"work"},
@@ -581,7 +577,6 @@ func TestAssembleTasks_HookScheduleTransition(t *testing.T) {
 			changes:         []semantic.ResourceChange{cronCreate},
 			wantPhase:       semantic.TaskSchedule,
 			wantAction:      semantic.TaskUpdate,
-			wantWillRun:     false,
 			wantDefActions:  []semantic.Action{},
 			wantOwned:       []string{"work"},
 			wantChangeNames: []string{"work"},
@@ -594,7 +589,6 @@ func TestAssembleTasks_HookScheduleTransition(t *testing.T) {
 			changes:         []semantic.ResourceChange{cronCreate},
 			wantPhase:       semantic.TaskSchedule,
 			wantAction:      semantic.TaskUpdate,
-			wantWillRun:     false,
 			wantDefActions:  []semantic.Action{},
 			wantOwned:       []string{"work"},
 			wantChangeNames: []string{"work"},
@@ -607,7 +601,6 @@ func TestAssembleTasks_HookScheduleTransition(t *testing.T) {
 			changes:         []semantic.ResourceChange{cronCreate},
 			wantPhase:       semantic.TaskSchedule,
 			wantAction:      semantic.TaskCreate,
-			wantWillRun:     false,
 			wantDefActions:  []semantic.Action{},
 			wantOwned:       []string{"work"},
 			wantChangeNames: []string{"work"},
@@ -620,7 +613,6 @@ func TestAssembleTasks_HookScheduleTransition(t *testing.T) {
 			changes:         []semantic.ResourceChange{cronCreate},
 			wantPhase:       semantic.TaskSchedule,
 			wantAction:      semantic.TaskCreate,
-			wantWillRun:     false,
 			wantDefActions:  []semantic.Action{},
 			wantOwned:       []string{"work"},
 			wantChangeNames: []string{"work"},
@@ -635,16 +627,20 @@ func TestAssembleTasks_HookScheduleTransition(t *testing.T) {
 			prep := upgradePrep(tt.previous, tt.prevHooks, nil)
 			tasks, err := assembleTasks(resolved, prep, tt.desired, tt.changes)
 			require.NoError(t, err)
-			p, err := semantic.New(semantic.Input{Header: semantic.Header{}, HelmAction: semantic.HelmUpgrade, Changes: tt.changes, Tasks: tasks})
-			require.NoError(t, err)
-			byName := taskByName(t, p.Tasks)
+			byName := taskByName(t, tasks)
 			require.Contains(t, byName, "work")
 			got := byName["work"]
 			assert.Equal(t, tt.wantPhase, got.Phase)
 			assert.Equal(t, tt.wantAction, got.Action)
-			assert.Equal(t, tt.wantWillRun, got.WillRun)
+			assert.False(t, got.WillRun)
 			assert.Equal(t, tt.wantDefActions, definitionActions(got.Definitions))
 			assert.Equal(t, tt.wantOwned, resourceNames(got.Resources))
+			p, err := semantic.New(semantic.Input{
+				HelmAction: semantic.HelmUpgrade,
+				Changes:    tt.changes,
+				Tasks:      tasks,
+			})
+			require.NoError(t, err)
 			assert.Equal(t, tt.wantChangeNames, resourceNames(changeResources(p.Changes)))
 		})
 	}
@@ -915,22 +911,6 @@ func labeledLegacyDelete(name, component string) semantic.ResourceChange {
 
 func snapObj(obj map[string]any) *semantic.ResourceSnapshot {
 	return &semantic.ResourceSnapshot{Object: obj}
-}
-
-func tasksWithDerivedWillRun(t *testing.T, action semantic.HelmAction, changes []semantic.ResourceChange, tasks []semantic.TaskPlan) []semantic.TaskPlan {
-	t.Helper()
-	header := semantic.Header{}
-	if action == semantic.HelmInstall {
-		header.FreshInstall = true
-	}
-	p, err := semantic.New(semantic.Input{
-		Header:     header,
-		HelmAction: action,
-		Changes:    changes,
-		Tasks:      tasks,
-	})
-	require.NoError(t, err)
-	return p.Tasks
 }
 
 func taskByName(t *testing.T, tasks []semantic.TaskPlan) map[string]semantic.TaskPlan {

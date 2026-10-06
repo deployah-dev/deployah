@@ -100,9 +100,9 @@ func (p Plan) HasDrift() bool {
 	return len(p.Drift) > 0
 }
 
-// validateDriftSet checks drift before [New] sorts it. A fresh install
-// accepts only an empty collection. Entries with the same group, kind,
-// namespace, and name are an error. Group comes from apiVersion.
+// validateDriftSet checks drift. A fresh install accepts only an empty
+// collection. The same group, kind, namespace, and name twice is an
+// error. Group comes from apiVersion.
 func validateDriftSet(header Header, drift []DriftChange) error {
 	if header.FreshInstall && len(drift) > 0 {
 		return fmt.Errorf("fresh install must not include drift")

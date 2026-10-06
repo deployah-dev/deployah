@@ -33,8 +33,8 @@ type Plan struct {
 	Summary    Summary
 }
 
-// Input is the caller data for [New]. Task WillRun values in Tasks
-// are ignored. [New] derives them.
+// Input is the caller data for [New]. [TaskPlan.WillRun] on Tasks is
+// ignored.
 type Input struct {
 	Header     Header
 	HelmAction HelmAction
@@ -44,13 +44,12 @@ type Input struct {
 	ChartCRDs  []ChartCRD
 }
 
-// New copies in and returns a complete plan, or a zero Plan and an
-// error. Nil slices become empty slices.
+// New copies in and returns a complete [Plan], or a zero Plan and an
+// error. Nil slices become empty slices. Incoming [TaskPlan.WillRun]
+// values are ignored.
 //
-// Order is: copy and normalize, enum and shape checks, derived
-// WillRun, Helm and content checks, drift and chart CRD checks, sort,
-// then [Summary]. Summary counts resource changes only. Chart CRDs
-// stay in the order given. Changes, tasks, and drift are sorted.
+// [Summary] counts resource changes only. Chart CRDs stay in the
+// given order. Changes, tasks, and drift are sorted.
 func New(in Input) (Plan, error) {
 	changes := normalizeChanges(in.Changes)
 	tasks, normErr := normalizeTasks(in.Tasks)

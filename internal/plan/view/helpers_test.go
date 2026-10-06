@@ -259,30 +259,6 @@ func mustPlanInput(tb testing.TB, in semantic.Input) semantic.Plan {
 	return p
 }
 
-func rebuildWithDrift(tb testing.TB, base semantic.Plan, drift []semantic.DriftChange) (semantic.Plan, error) {
-	tb.Helper()
-	return semantic.New(semantic.Input{
-		Header:     base.Header,
-		HelmAction: base.HelmAction,
-		Changes:    base.Changes,
-		Tasks:      base.Tasks,
-		Drift:      drift,
-		ChartCRDs:  base.ChartCRDs,
-	})
-}
-
-func rebuildWithChartCRDs(tb testing.TB, base semantic.Plan, crds []semantic.ChartCRD) (semantic.Plan, error) {
-	tb.Helper()
-	return semantic.New(semantic.Input{
-		Header:     base.Header,
-		HelmAction: base.HelmAction,
-		Changes:    base.Changes,
-		Tasks:      base.Tasks,
-		Drift:      base.Drift,
-		ChartCRDs:  crds,
-	})
-}
-
 func fillUpdateFields(changes []semantic.ResourceChange) []semantic.ResourceChange {
 	out := append([]semantic.ResourceChange(nil), changes...)
 	for i, c := range out {

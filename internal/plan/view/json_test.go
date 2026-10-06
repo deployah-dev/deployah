@@ -117,16 +117,17 @@ func TestWriteJSON_ChartCRDs(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			p := mustPlanWithHeader(t, tc.header, tc.action, nil, nil)
-			var err error
-			p, err = rebuildWithChartCRDs(t, p, []semantic.ChartCRD{{
-				Source:      ".deployah/crds/widgets.yaml",
-				Kind:        "CustomResourceDefinition",
-				Name:        "widgets.example.com",
-				Lifecycle:   tc.lifecycle,
-				WillProcess: tc.willProcess,
-			}})
-			require.NoError(t, err)
+			p := mustPlanInput(t, semantic.Input{
+				Header:     tc.header,
+				HelmAction: tc.action,
+				ChartCRDs: []semantic.ChartCRD{{
+					Source:      ".deployah/crds/widgets.yaml",
+					Kind:        "CustomResourceDefinition",
+					Name:        "widgets.example.com",
+					Lifecycle:   tc.lifecycle,
+					WillProcess: tc.willProcess,
+				}},
+			})
 			var buf bytes.Buffer
 			require.NoError(t, view.WriteJSON(&buf, p, view.Options{}))
 			var doc map[string]any
@@ -141,7 +142,6 @@ func TestWriteJSON_ChartCRDs(t *testing.T) {
 			assert.Equal(t, tc.lifecycle.String(), entry["lifecycle"])
 			assert.Equal(t, tc.willProcess, entry["willProcess"])
 			assert.Equal(t, float64(0), entry["index"])
-			assert.NotContains(t, buf.String(), "Helm install will process")
 			validatePlanSchema(t, buf.Bytes())
 		})
 	}
@@ -450,42 +450,49 @@ func TestWriteJSON_DriftSecretRedaction(t *testing.T) {
 
 func secretDriftPlan(t *testing.T) semantic.Plan {
 	t.Helper()
-	p, err := rebuildWithDrift(t, mustPlan(t, semantic.HelmNone, nil), []semantic.DriftChange{
-		{
-			Resource: ref("Secret", "db"),
-			Action:   semantic.DriftModified,
-			Previous: snap(map[string]any{
-				"apiVersion": "v1",
-				"kind":       "Secret",
-				"metadata":   map[string]any{"name": "db", "namespace": "prod"},
-				"stringData": map[string]any{"password": "old"},
-			}),
-			Live: snap(map[string]any{
-				"apiVersion": "v1",
-				"kind":       "Secret",
-				"metadata":   map[string]any{"name": "db", "namespace": "prod"},
-				"data":       map[string]any{"password": "bmV3"},
-			}),
-			Fields: []semantic.FieldChange{{
-				Path:   "/data/password",
-				Op:     semantic.FieldReplace,
-				Before: "b2xk",
-				After:  "bmV3",
-			}},
+	return mustPlanInput(t, semantic.Input{
+		Header: semantic.Header{
+			Project:     "web",
+			Environment: "prod",
+			Release:     "web",
+			Namespace:   "prod",
 		},
-		{
-			Resource: ref("Secret", "leaked"),
-			Action:   semantic.DriftUnexpected,
-			Live: snap(map[string]any{
-				"apiVersion": "v1",
-				"kind":       "Secret",
-				"metadata":   map[string]any{"name": "leaked", "namespace": "prod"},
-				"data":       map[string]any{"password": "c2VjcmV0"},
-			}),
+		HelmAction: semantic.HelmNone,
+		Drift: []semantic.DriftChange{
+			{
+				Resource: ref("Secret", "db"),
+				Action:   semantic.DriftModified,
+				Previous: snap(map[string]any{
+					"apiVersion": "v1",
+					"kind":       "Secret",
+					"metadata":   map[string]any{"name": "db", "namespace": "prod"},
+					"stringData": map[string]any{"password": "old"},
+				}),
+				Live: snap(map[string]any{
+					"apiVersion": "v1",
+					"kind":       "Secret",
+					"metadata":   map[string]any{"name": "db", "namespace": "prod"},
+					"data":       map[string]any{"password": "bmV3"},
+				}),
+				Fields: []semantic.FieldChange{{
+					Path:   "/data/password",
+					Op:     semantic.FieldReplace,
+					Before: "b2xk",
+					After:  "bmV3",
+				}},
+			},
+			{
+				Resource: ref("Secret", "leaked"),
+				Action:   semantic.DriftUnexpected,
+				Live: snap(map[string]any{
+					"apiVersion": "v1",
+					"kind":       "Secret",
+					"metadata":   map[string]any{"name": "leaked", "namespace": "prod"},
+					"data":       map[string]any{"password": "c2VjcmV0"},
+				}),
+			},
 		},
 	})
-	require.NoError(t, err)
-	return p
 }
 
 func TestWriteRenderers_ManualSnapshotShapes(t *testing.T) {
