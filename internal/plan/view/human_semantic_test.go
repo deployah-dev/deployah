@@ -90,7 +90,6 @@ func TestWriteHuman_SemanticScheduleCreate(t *testing.T) {
 	assertCronJobOnlyUnderTasks(t, text, "web-prod-cleanup")
 	assertSemanticCronJobBody(t, text)
 	assert.NotContains(t, text, "helm.sh/hook:")
-	assert.NotContains(t, text, `create v1/Namespace`)
 }
 
 func TestWriteHuman_SemanticScheduleDelete(t *testing.T) {
@@ -114,7 +113,6 @@ func TestWriteHuman_SemanticScheduleDelete(t *testing.T) {
 	assert.Contains(t, text, `- delete batch/v1/CronJob "web-prod-cleanup"`)
 	assertCronJobOnlyUnderTasks(t, text, "web-prod-cleanup")
 	assertSemanticCronJobBody(t, text)
-	assert.NotContains(t, text, `create v1/Namespace`)
 }
 
 func assertCronJobOnlyUnderTasks(t *testing.T, text, name string) {

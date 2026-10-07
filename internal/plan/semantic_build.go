@@ -74,29 +74,9 @@ type SemanticBuildInput struct {
 	SkipCRDs bool
 }
 
-// BuildSemanticPlan renders the spec and returns Helm release intent,
-// changes from Previous to Desired, and Drift from Previous to Live.
-//
-// Rendering calls [SemanticBuildClient.RenderManifestsWithPrep] as
-// given. A Helm client may read release history and dry-run Desired
-// on the client. mapper then only checks scope and whether a resource
-// can be built. It does not read Live or write.
-//
-// Drift is always set. A fresh install leaves it empty, and live may
-// be nil. An existing release requires live. Drift only gets and
-// lists. A failed read fails the plan, except when the object is
-// missing. Drift leaves the Helm action, changes, tasks, chart CRDs,
-// and summary as they are.
-//
-// Previous is the stored release, empty on install. Desired is the
-// render. Only Desired is [semantic.Create], only Previous is
-// [semantic.Delete], and a difference is [semantic.Update]. Equal
-// objects are left out. The target namespace in the render, or in
-// Previous on upgrade, fails the plan. Other namespaces stay ordinary
-// changes.
-//
-// Chart CRD files go to Helm. Their lifecycle comes from
-// [SemanticBuildInput.CRDDocs], not from changes or drift.
+// BuildSemanticPlan builds a read-only semantic deployment plan from
+// the rendered release and, on upgrade, from live cluster state. An
+// upgrade requires live. A fresh install may pass a nil reader.
 //
 // Call the returned cleanup once. It is never nil. On error the plan
 // is empty and the render result is nil.

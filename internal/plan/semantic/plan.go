@@ -52,10 +52,7 @@ type Input struct {
 // given order. Changes, tasks, and drift are sorted.
 func New(in Input) (Plan, error) {
 	changes := normalizeChanges(in.Changes)
-	tasks, normErr := normalizeTasks(in.Tasks)
-	if normErr != nil {
-		return Plan{}, normErr
-	}
+	tasks := normalizeTasks(in.Tasks)
 	drift := copyDrift(in.Drift)
 	crds := slices.Clone(in.ChartCRDs)
 	if crds == nil {
@@ -115,16 +112,12 @@ func normalizeChanges(in []ResourceChange) []ResourceChange {
 	return out
 }
 
-func normalizeTasks(in []TaskPlan) ([]TaskPlan, error) {
+func normalizeTasks(in []TaskPlan) []TaskPlan {
 	out := copyTasks(in)
 	for i := range out {
-		normalized, err := normalizeTask(out[i])
-		if err != nil {
-			return nil, fmt.Errorf("task %s: %w", out[i].Name, err)
-		}
-		out[i] = normalized
+		out[i] = normalizeTask(out[i])
 	}
-	return out, nil
+	return out
 }
 
 // deriveWillRun overwrites caller WillRun. Schedule and delete tasks
@@ -211,7 +204,7 @@ func normalizeChange(c ResourceChange) ResourceChange {
 	return c
 }
 
-func normalizeTask(t TaskPlan) (TaskPlan, error) {
+func normalizeTask(t TaskPlan) TaskPlan {
 	if t.Definitions == nil {
 		t.Definitions = []HookDefinition{}
 	}
@@ -219,23 +212,19 @@ func normalizeTask(t TaskPlan) (TaskPlan, error) {
 		t.Resources = []ResourceRef{}
 	}
 	for i := range t.Definitions {
-		normalized, err := normalizeDefinition(t.Definitions[i])
-		if err != nil {
-			return TaskPlan{}, fmt.Errorf("definition %s: %w", t.Definitions[i].Resource, err)
-		}
-		t.Definitions[i] = normalized
+		t.Definitions[i] = normalizeDefinition(t.Definitions[i])
 	}
-	return t, nil
+	return t
 }
 
-func normalizeDefinition(d HookDefinition) (HookDefinition, error) {
+func normalizeDefinition(d HookDefinition) HookDefinition {
 	d.Before = copySnapshot(d.Before)
 	d.After = copySnapshot(d.After)
 	d.Fields = copyFields(d.Fields)
 	if d.Fields == nil {
 		d.Fields = []FieldChange{}
 	}
-	return d, nil
+	return d
 }
 
 func validateTasks(tasks []TaskPlan, changes []ResourceChange) error {
