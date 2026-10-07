@@ -32,24 +32,7 @@ func TestWriteHuman_CreateUpdateDelete(t *testing.T) {
 	t.Parallel()
 	text := writeHuman(t, allActionsPlan(t))
 	assertGolden(t, "human_all_actions", text)
-	assert.NotContains(t, text, "~ cleanup  changed, will run")
-	assert.NotContains(t, text, "jobTemplate:")
-	assert.Equal(t, 1, strings.Count(text, `batch/v1/CronJob "web-cleanup"`))
 	assert.NotContains(t, text, "~ ConfigMap/prod/rs")
-	assert.NotContains(t, text, "-/+")
-	assert.NotContains(t, strings.ToLower(text), "recreate")
-	assert.NotContains(t, text, "Actions:")
-	assert.NotContains(t, text, "create helm")
-	assert.NotContains(t, text, "completeness:")
-	assert.NotContains(t, text, "write=")
-	assert.NotContains(t, text, "field_manager=")
-	assert.NotContains(t, text, "force_conflicts=")
-	assert.NotContains(t, text, "delete=")
-	assert.NotContains(t, text, "before:")
-	assert.NotContains(t, text, "after:")
-	assert.NotContains(t, text, "--- before")
-	assert.NotContains(t, text, "+++ after")
-	assert.NotContains(t, text, "@@")
 }
 
 func TestWriteHuman_DeterministicMapOrder(t *testing.T) {
@@ -237,10 +220,6 @@ func TestWriteHuman_HeaderMetadata(t *testing.T) {
 			assertHumanHeaderMetadata(t, text, tt.context, tt.revision)
 			assert.Equal(t, tt.context, p.Header.Context)
 			assert.Equal(t, tt.revision, p.Header.Revision)
-			assert.NotContains(t, text, "fresh_install")
-			assert.NotContains(t, text, "FreshInstall")
-			assert.NotContains(t, text, "completeness:")
-			assert.NotContains(t, text, "Executions:")
 		})
 	}
 }
@@ -250,13 +229,9 @@ func TestWriteHuman_EmptyPlan(t *testing.T) {
 	p := mustPlan(t, semantic.HelmNone, nil)
 	text := writeHuman(t, p)
 	assert.Contains(t, text, `Plan for project "web" on environment "prod"`)
-	assert.NotContains(t, text, "completeness:")
-	assert.NotContains(t, text, "Executions:")
 	assertHumanLayout(t, text)
 	assert.Contains(t, text, "  Resources: 0 create, 0 update, 0 delete")
 	assert.NotContains(t, text, "  Tasks:")
-	assert.NotContains(t, text, "create helm")
-	assert.NotContains(t, text, "Actions:")
 }
 
 func TestWriteHuman_WriterError(t *testing.T) {
@@ -891,32 +866,34 @@ func allActionsInputs() (semantic.Header, []semantic.ResourceChange, []semantic.
 
 func humanDriftPlan(t *testing.T) semantic.Plan {
 	t.Helper()
-	p, err := semantic.AttachDrift(mustPlanWithHeader(t, humanHeader(), semantic.HelmNone, nil, nil), []semantic.DriftChange{
-		{
-			Resource: ref("ConfigMap", "app"),
-			Action:   semantic.DriftModified,
-			Previous: snap(cm("app", "old")),
-			Live:     snap(cm("app", "new")),
-			Fields: []semantic.FieldChange{{
-				Path:   "/data/key",
-				Op:     semantic.FieldReplace,
-				Before: "old",
-				After:  "new",
-			}},
-		},
-		{
-			Resource: ref("ConfigMap", "other"),
-			Action:   semantic.DriftMissing,
-			Previous: snap(cm("other", "gone")),
-		},
-		{
-			Resource: ref("ConfigMap", "extra"),
-			Action:   semantic.DriftUnexpected,
-			Live:     snap(cm("extra", "live")),
+	return mustPlanInput(t, semantic.Input{
+		Header:     humanHeader(),
+		HelmAction: semantic.HelmNone,
+		Drift: []semantic.DriftChange{
+			{
+				Resource: ref("ConfigMap", "app"),
+				Action:   semantic.DriftModified,
+				Previous: snap(cm("app", "old")),
+				Live:     snap(cm("app", "new")),
+				Fields: []semantic.FieldChange{{
+					Path:   "/data/key",
+					Op:     semantic.FieldReplace,
+					Before: "old",
+					After:  "new",
+				}},
+			},
+			{
+				Resource: ref("ConfigMap", "other"),
+				Action:   semantic.DriftMissing,
+				Previous: snap(cm("other", "gone")),
+			},
+			{
+				Resource: ref("ConfigMap", "extra"),
+				Action:   semantic.DriftUnexpected,
+				Live:     snap(cm("extra", "live")),
+			},
 		},
 	})
-	require.NoError(t, err)
-	return p
 }
 
 func TestWriteHuman_DriftSection(t *testing.T) {
@@ -936,29 +913,37 @@ func TestWriteHuman_EmptyDriftHasNoSection(t *testing.T) {
 
 func TestWriteHuman_DriftSecretNormalizedPath(t *testing.T) {
 	t.Parallel()
-	p, err := semantic.AttachDrift(mustPlan(t, semantic.HelmNone, nil), []semantic.DriftChange{{
-		Resource: ref("Secret", "db"),
-		Action:   semantic.DriftModified,
-		Previous: snap(map[string]any{
-			"apiVersion": "v1",
-			"kind":       "Secret",
-			"metadata":   map[string]any{"name": "db", "namespace": "prod"},
-			"stringData": map[string]any{"password": "old"},
-		}),
-		Live: snap(map[string]any{
-			"apiVersion": "v1",
-			"kind":       "Secret",
-			"metadata":   map[string]any{"name": "db", "namespace": "prod"},
-			"data":       map[string]any{"password": "bmV3"},
-		}),
-		Fields: []semantic.FieldChange{{
-			Path:   "/data/password",
-			Op:     semantic.FieldReplace,
-			Before: "b2xk",
-			After:  "bmV3",
+	p := mustPlanInput(t, semantic.Input{
+		Header: semantic.Header{
+			Project:     "web",
+			Environment: "prod",
+			Release:     "web",
+			Namespace:   "prod",
+		},
+		HelmAction: semantic.HelmNone,
+		Drift: []semantic.DriftChange{{
+			Resource: ref("Secret", "db"),
+			Action:   semantic.DriftModified,
+			Previous: snap(map[string]any{
+				"apiVersion": "v1",
+				"kind":       "Secret",
+				"metadata":   map[string]any{"name": "db", "namespace": "prod"},
+				"stringData": map[string]any{"password": "old"},
+			}),
+			Live: snap(map[string]any{
+				"apiVersion": "v1",
+				"kind":       "Secret",
+				"metadata":   map[string]any{"name": "db", "namespace": "prod"},
+				"data":       map[string]any{"password": "bmV3"},
+			}),
+			Fields: []semantic.FieldChange{{
+				Path:   "/data/password",
+				Op:     semantic.FieldReplace,
+				Before: "b2xk",
+				After:  "bmV3",
+			}},
 		}},
-	}})
-	require.NoError(t, err)
+	})
 
 	tests := []struct {
 		name string

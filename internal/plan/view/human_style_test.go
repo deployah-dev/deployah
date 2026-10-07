@@ -75,31 +75,40 @@ func TestWriteHuman_StylerPreservesLayout(t *testing.T) {
 func TestWriteHuman_StyleRoles(t *testing.T) {
 	t.Parallel()
 	header := humanHeader()
-	unexpected, err := semantic.AttachDrift(mustPlanWithHeader(t, header, semantic.HelmNone, nil, nil), []semantic.DriftChange{{
-		Resource: ref("ConfigMap", "extra"),
-		Action:   semantic.DriftUnexpected,
-		Live:     snap(cm("extra", "live")),
-	}})
-	require.NoError(t, err)
-	missing, err := semantic.AttachDrift(mustPlanWithHeader(t, header, semantic.HelmNone, nil, nil), []semantic.DriftChange{{
-		Resource: ref("ConfigMap", "other"),
-		Action:   semantic.DriftMissing,
-		Previous: snap(cm("other", "gone")),
-	}})
-	require.NoError(t, err)
-	modified, err := semantic.AttachDrift(mustPlanWithHeader(t, header, semantic.HelmNone, nil, nil), []semantic.DriftChange{{
-		Resource: ref("ConfigMap", "app"),
-		Action:   semantic.DriftModified,
-		Previous: snap(cm("app", "old")),
-		Live:     snap(cm("app", "new")),
-		Fields: []semantic.FieldChange{{
-			Path:   "/data/key",
-			Op:     semantic.FieldReplace,
-			Before: "old",
-			After:  "new",
+	unexpected := mustPlanInput(t, semantic.Input{
+		Header:     header,
+		HelmAction: semantic.HelmNone,
+		Drift: []semantic.DriftChange{{
+			Resource: ref("ConfigMap", "extra"),
+			Action:   semantic.DriftUnexpected,
+			Live:     snap(cm("extra", "live")),
 		}},
-	}})
-	require.NoError(t, err)
+	})
+	missing := mustPlanInput(t, semantic.Input{
+		Header:     header,
+		HelmAction: semantic.HelmNone,
+		Drift: []semantic.DriftChange{{
+			Resource: ref("ConfigMap", "other"),
+			Action:   semantic.DriftMissing,
+			Previous: snap(cm("other", "gone")),
+		}},
+	})
+	modified := mustPlanInput(t, semantic.Input{
+		Header:     header,
+		HelmAction: semantic.HelmNone,
+		Drift: []semantic.DriftChange{{
+			Resource: ref("ConfigMap", "app"),
+			Action:   semantic.DriftModified,
+			Previous: snap(cm("app", "old")),
+			Live:     snap(cm("app", "new")),
+			Fields: []semantic.FieldChange{{
+				Path:   "/data/key",
+				Op:     semantic.FieldReplace,
+				Before: "old",
+				After:  "new",
+			}},
+		}},
+	})
 	tasks := mustPlanWithHeader(t, header, semantic.HelmUpgrade, nil, []semantic.TaskPlan{
 		{
 			Name:    "migrate",

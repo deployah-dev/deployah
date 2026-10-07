@@ -12,20 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package plan computes and renders read-only deployment plans.
-// Planning looks at release changes. It does not decide whether
-// `deployah deploy` runs Helm.
+// Package plan builds a read-only deployment plan from a rendered
+// release and, on upgrade, from live cluster objects.
 //
-// [BuildSemanticPlan] renders with
-// [SemanticBuildClient.RenderManifestsWithPrep]. It picks install,
-// upgrade, or none from the Helm operation and from comparing the
-// previous release with the render and its hooks. Resource changes
-// are Previous to Desired. [RESTMapper] supplies scope only. An
-// existing release reads Live through [LiveReader] with GET and LIST,
-// so Drift is Previous to Live. Chart CRD lifecycle comes from the
-// loaded documents, not from object diffs. The result is a
-// [deployah.dev/deployah/internal/plan/semantic.Plan]. Those types
-// live in plan/semantic. Their rendering lives in plan/view.
+// [BuildSemanticPlan] returns a
+// [deployah.dev/deployah/internal/plan/semantic.Plan]. Task assembly
+// records what changed. [deployah.dev/deployah/internal/plan/semantic.New]
+// decides whether each task will run. Human text and JSON live in
+// plan/view.
 //
 // [LastSuccessfulRelease] remains for deploy hostname and workload
 // guards. [BuildSemanticPlan] does not use it.

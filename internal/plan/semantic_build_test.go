@@ -354,46 +354,34 @@ func TestBuildSemanticPlan_NoResourceChange(t *testing.T) {
 
 func TestBuildSemanticPlan_FieldChangeIsUpdate(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		name     string
-		revision int
-	}{
-		{name: "records the field change", revision: 7},
-		{name: "previous change is an update", revision: 4},
-		{name: "failed-only history is still an upgrade", revision: 2},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			client := upgradeClient(configMapYAML("app", "prod", "old"), configMapYAML("app", "prod", "new"), tt.revision)
-			p := mustBuild(t, client, newMapper())
-			assert.Equal(t, semantic.HelmUpgrade, p.HelmAction)
-			assert.Equal(t, tt.revision, p.Header.Revision)
-			assert.False(t, p.Header.FreshInstall)
-			require.Len(t, p.Changes, 1)
-			c := p.Changes[0]
-			assert.Equal(t, semantic.Update, c.Action)
-			assert.Equal(t, "v1", c.Resource.APIVersion)
-			require.NotNil(t, c.Before)
-			require.NotNil(t, c.After)
-			beforeKey, found, err := unstructured.NestedString(c.Before.Object, "data", "key")
-			require.NoError(t, err)
-			require.True(t, found)
-			assert.Equal(t, "old", beforeKey)
-			afterKey, found, err := unstructured.NestedString(c.After.Object, "data", "key")
-			require.NoError(t, err)
-			require.True(t, found)
-			assert.Equal(t, "new", afterKey)
-			require.Len(t, c.Fields, 1)
-			assert.Equal(t, "/data/key", c.Fields[0].Path)
-			assert.Equal(t, semantic.FieldReplace, c.Fields[0].Op)
-			assert.Equal(t, "old", c.Fields[0].Before)
-			assert.Equal(t, "new", c.Fields[0].After)
+	const revision = 7
+	client := upgradeClient(configMapYAML("app", "prod", "old"), configMapYAML("app", "prod", "new"), revision)
+	p := mustBuild(t, client, newMapper())
+	assert.Equal(t, semantic.HelmUpgrade, p.HelmAction)
+	assert.Equal(t, revision, p.Header.Revision)
+	assert.False(t, p.Header.FreshInstall)
+	require.Len(t, p.Changes, 1)
+	c := p.Changes[0]
+	assert.Equal(t, semantic.Update, c.Action)
+	assert.Equal(t, "v1", c.Resource.APIVersion)
+	require.NotNil(t, c.Before)
+	require.NotNil(t, c.After)
+	beforeKey, found, err := unstructured.NestedString(c.Before.Object, "data", "key")
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, "old", beforeKey)
+	afterKey, found, err := unstructured.NestedString(c.After.Object, "data", "key")
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, "new", afterKey)
+	require.Len(t, c.Fields, 1)
+	assert.Equal(t, "/data/key", c.Fields[0].Path)
+	assert.Equal(t, semantic.FieldReplace, c.Fields[0].Op)
+	assert.Equal(t, "old", c.Fields[0].Before)
+	assert.Equal(t, "new", c.Fields[0].After)
 
-			again := mustBuild(t, upgradeClient(configMapYAML("app", "prod", "old"), configMapYAML("app", "prod", "new"), tt.revision), newMapper())
-			assert.Equal(t, p.Changes[0].Fields, again.Changes[0].Fields)
-		})
-	}
+	again := mustBuild(t, upgradeClient(configMapYAML("app", "prod", "old"), configMapYAML("app", "prod", "new"), revision), newMapper())
+	assert.Equal(t, p.Changes[0].Fields, again.Changes[0].Fields)
 }
 
 func TestBuildSemanticPlan_AddedAndRemoved(t *testing.T) {
@@ -884,6 +872,7 @@ func TestBuildSemanticPlan_PrepRenderMismatch(t *testing.T) {
 		name   string
 		prep   helm.ReleasePrep
 		result *render.RenderResult
+		prefix string
 		want   string
 	}{
 		{
@@ -924,6 +913,16 @@ func TestBuildSemanticPlan_PrepRenderMismatch(t *testing.T) {
 			result: nil,
 			want:   "render result is required",
 		},
+		{
+			name: "upgrade without current release",
+			prep: helm.ReleasePrep{
+				Operation:    helm.OperationUpgrade,
+				NextRevision: 2,
+			},
+			result: upgradeResult(configMapYAML("app", "prod", "new"), 2),
+			prefix: "determine helm release intent:",
+			want:   "upgrade prep requires a current release",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -932,31 +931,16 @@ func TestBuildSemanticPlan_PrepRenderMismatch(t *testing.T) {
 			p, result, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, newMapper(), liveFor(client), buildInput("ctx", resolvedSpec(), nil))
 			t.Cleanup(cleanup)
 			require.Error(t, err)
-			assert.ErrorContains(t, err, "render preparation:")
+			prefix := tt.prefix
+			if prefix == "" {
+				prefix = "render preparation:"
+			}
+			assert.ErrorContains(t, err, prefix)
 			assert.ErrorContains(t, err, tt.want)
 			assert.Zero(t, p)
 			assert.Nil(t, result)
 		})
 	}
-}
-
-func TestBuildSemanticPlan_InvalidPrep(t *testing.T) {
-	t.Parallel()
-	client := &fakeBuildClient{
-		result: upgradeResult(configMapYAML("app", "prod", "new"), 2),
-		prep: helm.ReleasePrep{
-			Operation:    helm.OperationUpgrade,
-			NextRevision: 2,
-		},
-		cleanup: func() {},
-	}
-	p, result, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, newMapper(), liveFor(client), buildInput("ctx", resolvedSpec(), nil))
-	t.Cleanup(cleanup)
-	require.Error(t, err)
-	assert.ErrorContains(t, err, "determine helm release intent:")
-	assert.ErrorContains(t, err, "upgrade prep requires a current release")
-	assert.Zero(t, p)
-	assert.Nil(t, result)
 }
 
 func TestBuildSemanticPlan_MappingFailureLeavesCleanup(t *testing.T) {

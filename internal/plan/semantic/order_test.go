@@ -89,7 +89,7 @@ func TestNew_OrderTieBreakers(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			p, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, tt.changes, nil)
+			p, err := semantic.New(semantic.Input{Header: semantic.Header{}, HelmAction: semantic.HelmUpgrade, Changes: tt.changes, Tasks: nil})
 			require.NoError(t, err)
 			require.Len(t, p.Changes, len(tt.want))
 			got := make([]semantic.ResourceRef, 0, len(p.Changes))
@@ -104,7 +104,7 @@ func TestNew_OrderTieBreakers(t *testing.T) {
 func TestNew_ActionRank(t *testing.T) {
 	t.Parallel()
 	res := ref("ConfigMap", "app")
-	p, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, []semantic.ResourceChange{
+	p, err := semantic.New(semantic.Input{Header: semantic.Header{}, HelmAction: semantic.HelmUpgrade, Changes: []semantic.ResourceChange{
 		{
 			Resource: res,
 			Action:   semantic.Delete,
@@ -122,7 +122,7 @@ func TestNew_ActionRank(t *testing.T) {
 			Action:   semantic.Create,
 			After:    &semantic.ResourceSnapshot{Object: cm("app", "v1")},
 		},
-	}, nil)
+	}, Tasks: nil})
 	require.NoError(t, err)
 	require.Len(t, p.Changes, 3)
 	assert.Equal(t, []semantic.Action{
@@ -134,7 +134,7 @@ func TestNew_ActionRank(t *testing.T) {
 
 func TestNew_FieldChangeOrder(t *testing.T) {
 	t.Parallel()
-	p, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, []semantic.ResourceChange{{
+	p, err := semantic.New(semantic.Input{Header: semantic.Header{}, HelmAction: semantic.HelmUpgrade, Changes: []semantic.ResourceChange{{
 		Resource: ref("ConfigMap", "app"),
 		Action:   semantic.Update,
 		Before:   &semantic.ResourceSnapshot{Object: map[string]any{"z": "1", "a": "1", "m": "1"}},
@@ -144,7 +144,7 @@ func TestNew_FieldChangeOrder(t *testing.T) {
 			{Path: "/a", Op: semantic.FieldReplace, Before: "1", After: "2"},
 			{Path: "/m", Op: semantic.FieldReplace, Before: "1", After: "2"},
 		},
-	}}, nil)
+	}}, Tasks: nil})
 	require.NoError(t, err)
 	require.Len(t, p.Changes[0].Fields, 3)
 	assert.Equal(t, []string{"/a", "/m", "/z"}, []string{
@@ -162,7 +162,7 @@ func TestNew_HelmOrderThenRef(t *testing.T) {
 	tiedHigh.HelmOrder = 1
 	tiedLow := createChange("a", "v1")
 	tiedLow.HelmOrder = 1
-	p, err := semantic.New(semantic.Header{}, semantic.HelmUpgrade, []semantic.ResourceChange{later, tiedHigh, tiedLow}, nil)
+	p, err := semantic.New(semantic.Input{Header: semantic.Header{}, HelmAction: semantic.HelmUpgrade, Changes: []semantic.ResourceChange{later, tiedHigh, tiedLow}, Tasks: nil})
 	require.NoError(t, err)
 	require.Len(t, p.Changes, 3)
 	assert.Equal(t, "a", p.Changes[0].Resource.Name)

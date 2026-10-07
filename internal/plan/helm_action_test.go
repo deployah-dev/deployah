@@ -99,33 +99,7 @@ func configMapManifest(name, data string) string {
 	return "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: " + name + "\n  namespace: prod\ndata:\n  key: " + data + "\n"
 }
 
-func TestStampTaskWillRun_UnchangedHook(t *testing.T) {
-	t.Parallel()
-	unchanged := []semantic.TaskPlan{{
-		Name:   "seed",
-		Phase:  semantic.TaskPreDeploy,
-		Action: semantic.TaskUnchanged,
-	}}
-
-	tests := []struct {
-		name    string
-		action  semantic.HelmAction
-		wantRun bool
-	}{
-		{name: "none leaves idle", action: semantic.HelmNone},
-		{name: "upgrade will run", action: semantic.HelmUpgrade, wantRun: true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			tasks := append([]semantic.TaskPlan(nil), unchanged...)
-			stampTaskWillRun(tasks, tt.action)
-			assert.Equal(t, tt.wantRun, tasks[0].WillRun)
-		})
-	}
-}
-
-func TestAssembleTasks_DoesNotStampWillRun(t *testing.T) {
+func TestAssembleTasks_LeavesWillRunFalse(t *testing.T) {
 	t.Parallel()
 	resolved := resolvedWithTasks(map[string]spec.ResolvedTask{
 		"migrate": hookResolved(spec.TaskOnPreDeploy, 1),
@@ -136,6 +110,4 @@ func TestAssembleTasks_DoesNotStampWillRun(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
 	assert.False(t, tasks[0].WillRun)
-	stampTaskWillRun(tasks, semantic.HelmInstall)
-	assert.True(t, tasks[0].WillRun)
 }

@@ -12,13 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package semantic is Deployah's unredacted semantic plan model.
+// Package semantic is the unredacted model of one deployment plan.
 //
-// This package is not the deployah plan command and is not a JSON API.
+// [New] is the only constructor. It ignores a caller's [TaskPlan.WillRun]
+// and derives that flag from the Helm action and the task. This
+// package does not render charts and does not read the cluster.
+//
 // Snapshots and field values stay complete. Serialization and secret
 // redaction belong to deployah.dev/deployah/internal/plan/view.
 // [deployah.dev/deployah/internal/plan/view.WriteJSON] is the only
-// machine-readable output contract.
-//
-// Do not treat encoding/json of these types as a supported output path.
+// machine-readable output. encoding/json of these types is not a
+// supported output path.
 package semantic

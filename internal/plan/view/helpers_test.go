@@ -242,7 +242,19 @@ func mustPlanWithTasks(tb testing.TB, helmAction semantic.HelmAction, changes []
 
 func mustPlanWithHeader(tb testing.TB, header semantic.Header, helmAction semantic.HelmAction, changes []semantic.ResourceChange, tasks []semantic.TaskPlan) semantic.Plan {
 	tb.Helper()
-	p, err := semantic.New(header, helmAction, fillUpdateFields(changes), fillTaskFields(tasks))
+	return mustPlanInput(tb, semantic.Input{
+		Header:     header,
+		HelmAction: helmAction,
+		Changes:    changes,
+		Tasks:      tasks,
+	})
+}
+
+func mustPlanInput(tb testing.TB, in semantic.Input) semantic.Plan {
+	tb.Helper()
+	in.Changes = fillUpdateFields(in.Changes)
+	in.Tasks = fillTaskFields(in.Tasks)
+	p, err := semantic.New(in)
 	require.NoError(tb, err)
 	return p
 }
