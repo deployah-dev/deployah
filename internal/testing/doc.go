@@ -18,5 +18,6 @@
 // files, expected Kubernetes output, and optional e2e.yaml Kind fixtures.
 // [DiscoverScenarios] finds them; [IntegrationTestSuite] loads a spec,
 // generates a chart, renders templates, and compares results to golden
-// files. [LoadE2EFixture] decodes e2e.yaml.
+// files. [LoadE2EFixture] decodes e2e.yaml. [NewScenarioWorkspace] copies a
+// scenario into a temporary directory for end-to-end tests.
 package testing

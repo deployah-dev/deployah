@@ -28,6 +28,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	planCmd "deployah.dev/deployah/internal/cmd/plan"
+	inttest "deployah.dev/deployah/internal/testing"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -36,8 +37,8 @@ func (s *E2ESuite) TestPlanCLI() {
 	t := s.T()
 	src := filepath.Join(s.scenariosDir, "basic-web-service")
 	require.DirExists(t, src)
-	dir := t.TempDir()
-	copyTree(t, src, dir)
+	dir, err := inttest.NewScenarioWorkspace(t, src)
+	require.NoError(t, err)
 
 	ns := fixtureNamespace("plan-cli")
 	t.Cleanup(func() {

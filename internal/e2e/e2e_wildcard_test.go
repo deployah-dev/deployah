@@ -49,8 +49,8 @@ func (s *E2ESuite) TestWildcardInstances() {
 	src := filepath.Join(s.scenariosDir, "wildcard-review")
 	require.DirExists(t, src)
 
-	dir := t.TempDir()
-	copyTree(t, src, dir)
+	dir, err := inttest.NewScenarioWorkspace(t, src)
+	require.NoError(t, err)
 
 	ns := fixtureNamespace("wildcard-review")
 	s.createNamespace(t, ns)
