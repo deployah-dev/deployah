@@ -20,6 +20,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"math/big"
 	"strings"
 
 	"cel.dev/cel-go/cel"
@@ -43,7 +45,7 @@ var (
 	// ErrNotBool means the expression result is not a Boolean.
 	ErrNotBool = errors.New("expression result is not bool")
 
-	// ErrIntegerRange means a digit-only JSON integer does not fit in int64.
+	// ErrIntegerRange means a JSON integer does not fit in int64.
 	ErrIntegerRange = errors.New("integer outside int64")
 
 	errNilContext      = errors.New("context is nil")
@@ -215,10 +217,11 @@ func prepare(vars map[string]interface{}) (map[string]interface{}, error) {
 		if err != nil {
 			return nil, err
 		}
-		if intErr := checkIntegers(normalized); intErr != nil {
-			return nil, intErr
+		numbered, err := normalizeNumbers(normalized)
+		if err != nil {
+			return nil, err
 		}
-		out[name] = normalized
+		out[name] = numbered
 	}
 	return out, nil
 }
@@ -284,67 +287,81 @@ func decodeJSON(raw json.RawMessage) (interface{}, error) {
 	if err := dec.Decode(&value); err != nil {
 		return nil, fmt.Errorf("decoding JSON input: %w", err)
 	}
+	var extra interface{}
+	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
+		// The extra value is not included in the error text.
+		return nil, errors.New("decoding JSON input: trailing data")
+	}
 	return value, nil
 }
 
-func checkIntegers(value interface{}) error {
+func normalizeNumbers(value interface{}) (interface{}, error) {
 	switch v := value.(type) {
 	case json.Number:
-		return checkInteger(v)
+		return normalizeNumber(v)
 	case []json.Number:
+		out := make([]json.Number, 0, len(v))
 		for _, n := range v {
-			if err := checkInteger(n); err != nil {
-				return err
+			nn, err := normalizeNumber(n)
+			if err != nil {
+				return nil, err
 			}
+			out = append(out, nn)
 		}
+		return out, nil
 	case map[string]interface{}:
-		for _, child := range v {
-			if err := checkIntegers(child); err != nil {
-				return err
+		out := make(map[string]interface{}, len(v))
+		for k, child := range v {
+			nv, err := normalizeNumbers(child)
+			if err != nil {
+				return nil, err
 			}
+			out[k] = nv
 		}
+		return out, nil
 	case []map[string]interface{}:
+		out := make([]map[string]interface{}, 0, len(v))
 		for _, child := range v {
-			if err := checkIntegers(child); err != nil {
-				return err
+			nv, err := normalizeNumbers(child)
+			if err != nil {
+				return nil, err
 			}
+			m, ok := nv.(map[string]interface{})
+			if !ok {
+				return nil, errors.New("normalizing numbers: expected a map")
+			}
+			out = append(out, m)
 		}
+		return out, nil
 	case []interface{}:
+		out := make([]interface{}, 0, len(v))
 		for _, child := range v {
-			if err := checkIntegers(child); err != nil {
-				return err
+			nv, err := normalizeNumbers(child)
+			if err != nil {
+				return nil, err
 			}
+			out = append(out, nv)
 		}
+		return out, nil
+	default:
+		return value, nil
 	}
-	return nil
 }
 
-func checkInteger(n json.Number) error {
+// normalizeNumber keeps integers exact for CEL.
+func normalizeNumber(n json.Number) (json.Number, error) {
+	// A plain int64 needs no rewrite.
 	if _, err := n.Int64(); err == nil {
-		return nil
+		return n, nil
 	}
-	// Fractions and exponent spellings are not digit-only, so CEL keeps them.
-	if !decimalInteger(string(n)) {
-		return nil
+	// Fractions stay as written. Integers that fit are rewritten as
+	// decimals so CEL does not round them through float64.
+	r, ok := new(big.Rat).SetString(string(n))
+	if !ok || !r.IsInt() {
+		return n, nil
 	}
-	// Name this number only. Leave the rest of the input out of the error.
-	return fmt.Errorf("json number %s: %w", n, ErrIntegerRange)
-}
-
-func decimalInteger(s string) bool {
-	if s == "" {
-		return false
+	if !r.Num().IsInt64() {
+		return "", fmt.Errorf("json number %s: %w", n, ErrIntegerRange)
 	}
-	if s[0] == '-' {
-		s = s[1:]
-	}
-	if s == "" {
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		if s[i] < '0' || s[i] > '9' {
-			return false
-		}
-	}
-	return true
+	return json.Number(r.Num().String()), nil
 }

@@ -275,16 +275,55 @@ func TestEval_NonBoolValue(t *testing.T) {
 	assert.NotContains(t, err.Error(), plantedSecret)
 }
 
-func TestEval_MalformedJSON(t *testing.T) {
+func TestEval_JSONDocuments(t *testing.T) {
 	t.Parallel()
 
 	p := mustCompile(t, `object.kind == "Pod"`, celassert.WithVariable("object"))
-	err := p.Eval(t.Context(), map[string]interface{}{
-		"object": json.RawMessage(`{`),
-	})
-	require.Error(t, err)
-	assert.ErrorContains(t, err, "decoding JSON input")
-	assert.NotErrorIs(t, err, celassert.ErrFalse)
+	valid := []struct {
+		name string
+		raw  string
+	}{
+		{name: "object", raw: `{"kind":"Pod"}`},
+		{name: "whitespace", raw: " \n\t{\"kind\":\"Pod\"}\n "},
+	}
+	for _, tt := range valid {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := p.Eval(t.Context(), map[string]interface{}{
+				"object": json.RawMessage(tt.raw),
+			})
+			require.NoError(t, err)
+		})
+	}
+
+	items := mustCompile(t, `items.size() == 2`, celassert.WithVariable("items"))
+	require.NoError(t, items.Eval(t.Context(), map[string]interface{}{
+		"items": json.RawMessage(`[1, 2]`),
+	}))
+
+	invalid := []struct {
+		name string
+		raw  string
+	}{
+		{name: "two objects", raw: `{"kind":"Pod"}{"kind":"Service"}`},
+		{name: "second value", raw: `{"kind":"Pod"} true`},
+		{name: "trailing junk", raw: `{"kind":"Pod"} leftover`},
+		{name: "incomplete", raw: `{`},
+	}
+	for _, tt := range invalid {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := p.Eval(t.Context(), map[string]interface{}{
+				"object": json.RawMessage(tt.raw),
+				"note":   plantedSecret,
+			})
+			require.Error(t, err)
+			assert.ErrorContains(t, err, "decoding JSON input")
+			assert.NotErrorIs(t, err, celassert.ErrFalse)
+			assert.NotContains(t, err.Error(), plantedSecret)
+			assert.NotContains(t, err.Error(), "Service")
+		})
+	}
 }
 
 func TestEval_DeploymentReadiness(t *testing.T) {
@@ -394,20 +433,77 @@ func TestEval_DynamicNumbers(t *testing.T) {
 	}
 }
 
-func TestEval_JSONNumberInsideInt64(t *testing.T) {
+func TestEval_JSONNumberExact(t *testing.T) {
 	t.Parallel()
 
-	p := mustCompile(t,
-		`n == 9007199254740992 && n != 9007199254740993`,
-		celassert.WithVariable("n"),
-	)
-	require.NoError(t, p.Eval(t.Context(), map[string]interface{}{
-		"n": json.Number("9007199254740992"),
-	}))
+	// 9007199254740993 is 2^53+1. float64 rounds it to 2^53.
+	rounded, err := json.Number("9007199254740993e0").Float64()
+	require.NoError(t, err)
+	boundary, err := json.Number("9007199254740992").Float64()
+	require.NoError(t, err)
+	require.Equal(t, boundary, rounded)
+
+	tests := []struct {
+		name  string
+		expr  string
+		value interface{}
+	}{
+		{
+			name:  "within int64",
+			expr:  `n == 7`,
+			value: json.Number("7"),
+		},
+		{
+			name:  "beyond 2^53",
+			expr:  `n == 9007199254740992 && n != 9007199254740993`,
+			value: json.Number("9007199254740992"),
+		},
+		{
+			name:  "scientific beyond 2^53",
+			expr:  `n == 9007199254740993 && n != 9007199254740992`,
+			value: json.Number("9007199254740993e0"),
+		},
+		{
+			name:  "1e2",
+			expr:  `n == 100`,
+			value: json.Number("1e2"),
+		},
+		{
+			name:  "1.5e2",
+			expr:  `n == 150`,
+			value: json.Number("1.5e2"),
+		},
+		{
+			name:  "fraction",
+			expr:  `n == 1.5`,
+			value: json.Number("1.5"),
+		},
+		{
+			name: "nested scientific",
+			expr: `n.nums[0] == 9007199254740993`,
+			value: map[string]interface{}{
+				"nums": []interface{}{json.Number("9007199254740993e0")},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			p := mustCompile(t, tt.expr, celassert.WithVariable("n"))
+			require.NoError(t, p.Eval(t.Context(), map[string]interface{}{"n": tt.value}))
+		})
+	}
 }
 
 func TestEval_JSONNumberOutsideInt64(t *testing.T) {
 	t.Parallel()
+
+	// These two integers are distinct, but float64 rounds both to 2^63.
+	low, lowErr := json.Number("9223372036854775809e0").Float64()
+	require.NoError(t, lowErr)
+	high, highErr := json.Number("9223372036854775810e0").Float64()
+	require.NoError(t, highErr)
+	require.Equal(t, low, high)
 
 	p := mustCompile(t, `true`, celassert.WithVariable("n"))
 	tests := []struct {
@@ -423,10 +519,27 @@ func TestEval_JSONNumberOutsideInt64(t *testing.T) {
 			value: json.Number("9223372036854775810"),
 		},
 		{
+			name:  "scientific",
+			value: json.Number("9223372036854775809e0"),
+		},
+		{
+			name:  "other scientific",
+			value: json.Number("9223372036854775810e0"),
+		},
+		{
 			name: "map",
 			value: map[string]interface{}{
-				"value": json.Number("9223372036854775809"),
+				"value": json.Number("9223372036854775809e0"),
 				"note":  plantedSecret,
+			},
+		},
+		{
+			name: "array",
+			value: []interface{}{
+				map[string]interface{}{
+					"n":    json.Number("9223372036854775810e0"),
+					"note": plantedSecret,
+				},
 			},
 		},
 		{
