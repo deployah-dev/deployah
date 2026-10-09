@@ -112,6 +112,11 @@ func TestCompile_RejectsBadOptions(t *testing.T) {
 			opts:     duplicate,
 			contains: "duplicate variable",
 		},
+		{
+			name:     "empty variable",
+			opts:     []celassert.Option{celassert.WithVariable("")},
+			contains: "variable name is empty",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -119,6 +124,101 @@ func TestCompile_RejectsBadOptions(t *testing.T) {
 			_, err := celassert.Compile("true", tt.opts...)
 			require.Error(t, err)
 			assert.ErrorContains(t, err, tt.contains)
+		})
+	}
+}
+
+func TestEval_UnstructuredValues(t *testing.T) {
+	t.Parallel()
+
+	pod := map[string]any{"apiVersion": "v1", "kind": "Pod"}
+	obj := unstructured.Unstructured{Object: pod}
+	list := unstructured.UnstructuredList{Items: []unstructured.Unstructured{obj}}
+	objectExpr := `object.kind == "Pod"`
+	itemsExpr := `items[0].kind == "Pod"`
+	tests := []struct {
+		name  string
+		expr  string
+		key   string
+		value any
+	}{
+		{name: "value", expr: objectExpr, key: "object", value: obj},
+		{name: "list", expr: itemsExpr, key: "items", value: list},
+		{name: "list pointer", expr: itemsExpr, key: "items", value: &list},
+		{name: "slice", expr: itemsExpr, key: "items", value: []unstructured.Unstructured{obj}},
+		{
+			name:  "pointer slice",
+			expr:  itemsExpr,
+			key:   "items",
+			value: []*unstructured.Unstructured{&obj},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			p := mustCompile(t, tt.expr, celassert.WithVariable(tt.key))
+			require.NoError(t, p.Eval(t.Context(), map[string]any{tt.key: tt.value}))
+		})
+	}
+}
+
+func TestEval_NilUnstructured(t *testing.T) {
+	t.Parallel()
+
+	p := mustCompile(t, `true`, celassert.WithVariable("object"))
+	tests := []struct {
+		name  string
+		value any
+	}{
+		{name: "nil pointer", value: (*unstructured.Unstructured)(nil)},
+		{name: "nil object", value: unstructured.Unstructured{}},
+		{name: "nil list pointer", value: (*unstructured.UnstructuredList)(nil)},
+		{
+			name:  "nil item object",
+			value: unstructured.UnstructuredList{Items: []unstructured.Unstructured{{}}},
+		},
+		{name: "nil pointer in slice", value: []*unstructured.Unstructured{nil}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := p.Eval(t.Context(), map[string]any{
+				"object": tt.value,
+				"note":   plantedSecret,
+			})
+			require.Error(t, err)
+			assert.ErrorContains(t, err, "unstructured object is nil")
+			assert.NotContains(t, err.Error(), plantedSecret)
+		})
+	}
+}
+
+func TestEval_TypedCollections(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		expr  string
+		value interface{}
+	}{
+		{
+			name:  "numbers",
+			expr:  `n[0] == 7`,
+			value: []json.Number{json.Number("7")},
+		},
+		{
+			name: "maps",
+			expr: `n[0].kind == "Pod"`,
+			value: []map[string]interface{}{{
+				"kind": "Pod",
+			}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			p := mustCompile(t, tt.expr, celassert.WithVariable("n"))
+			require.NoError(t, p.Eval(t.Context(), map[string]interface{}{"n": tt.value}))
 		})
 	}
 }
