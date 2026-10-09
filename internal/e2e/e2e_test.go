@@ -213,6 +213,12 @@ func (s *E2ESuite) loadE2ECases(t *testing.T) []e2eCase {
 
 func (s *E2ESuite) runE2ECase(t *testing.T, c e2eCase) {
 	t.Helper()
+	// Copy before createNamespace so a bad scenario fails before the
+	// cluster is touched. TempDir cleanup is registered first, so it runs
+	// after the Kubernetes cleanup below.
+	dir, err := inttest.NewScenarioWorkspace(t, c.Dir)
+	require.NoError(t, err)
+
 	ns := fixtureNamespace(c.Name)
 	s.createNamespace(t, ns)
 	t.Cleanup(func() {
@@ -224,14 +230,14 @@ func (s *E2ESuite) runE2ECase(t *testing.T, c e2eCase) {
 		// clear. t.Context() is canceled before Cleanup.
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), namespaceWaitTimeout)
 		defer cancel()
-		if _, _, delErr := runInErrContext(t, cleanupCtx, c.Dir, "delete", c.Project, c.Fixture.Env,
+		if _, _, delErr := runInErrContext(t, cleanupCtx, dir, "delete", c.Project, c.Fixture.Env,
 			"--yes", "--wait", "--allow-missing-platform",
 			"--context", kindContext, "--namespace", ns); delErr != nil {
 			t.Logf("cleanup deployah delete failed (non-fatal): %v", delErr)
 		}
 		s.deleteNamespace(t, ns)
 	})
-	s.assertE2EFixture(t, c.Dir, c.Project, ns, c.Fixture)
+	s.assertE2EFixture(t, dir, c.Project, ns, c.Fixture)
 }
 
 func (s *E2ESuite) preloadImages(t *testing.T) {

@@ -19,7 +19,6 @@ package e2e_test
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,6 +35,7 @@ import (
 
 	"deployah.dev/deployah/internal/spec"
 
+	inttest "deployah.dev/deployah/internal/testing"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apiextensionsclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -60,8 +60,8 @@ func (s *E2ESuite) TestCRDLifecycle() {
 	src := filepath.Join(s.scenariosDir, "crd-lifecycle")
 	require.DirExists(t, src)
 
-	dir := t.TempDir()
-	copyTree(t, src, dir)
+	dir, err := inttest.NewScenarioWorkspace(t, src)
+	require.NoError(t, err)
 
 	ns := fixtureNamespace("crd-lifecycle")
 	s.createNamespace(t, ns)
@@ -117,7 +117,7 @@ func (s *E2ESuite) TestCRDLifecycle() {
 	runIn(t, dir, "delete", "crd-lifecycle", "dev",
 		"--yes", "--wait", "--allow-missing-platform",
 		"--context", kindContext, "--namespace", ns)
-	_, err := ext.ApiextensionsV1().CustomResourceDefinitions().Get(
+	_, err = ext.ApiextensionsV1().CustomResourceDefinitions().Get(
 		t.Context(), crdLifecycleName, metav1.GetOptions{})
 	require.NoError(t, err, "CRD must survive deployah delete")
 }
@@ -152,8 +152,8 @@ func (s *E2ESuite) TestCRDNewlyAddedOnUpgrade() {
 	src := filepath.Join(s.scenariosDir, "crd-lifecycle")
 	require.DirExists(t, src)
 
-	dir := t.TempDir()
-	copyTree(t, src, dir)
+	dir, err := inttest.NewScenarioWorkspace(t, src)
+	require.NoError(t, err)
 
 	ns := fixtureNamespace("crd-added")
 	s.createNamespace(t, ns)
@@ -189,7 +189,7 @@ func (s *E2ESuite) TestCRDNewlyAddedOnUpgrade() {
 	runIn(t, dir, "deploy", "dev", "--context", kindContext,
 		"--namespace", ns)
 
-	_, err := ext.ApiextensionsV1().CustomResourceDefinitions().Get(
+	_, err = ext.ApiextensionsV1().CustomResourceDefinitions().Get(
 		t.Context(), crdAddedName, metav1.GetOptions{})
 	require.True(t, apierrors.IsNotFound(err),
 		"Helm upgrade must not install a CRD added after first install, got: %v", err)
@@ -226,39 +226,6 @@ func hideExtrasManifest(t *testing.T, dir, name string) string {
 	raw := readFixtureFile(t, path)
 	require.NoError(t, os.Remove(path))
 	return raw
-}
-
-func copyTree(tb testing.TB, src, dst string) {
-	tb.Helper()
-	err := filepath.WalkDir(src, func(path string, d os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		rel, relErr := filepath.Rel(src, path)
-		if relErr != nil {
-			return relErr
-		}
-		target := filepath.Join(dst, rel)
-		if d.IsDir() {
-			return os.MkdirAll(target, 0o750)
-		}
-		in, openErr := os.Open(path) // #nosec G304 G122 -- path under scenarios/
-		if openErr != nil {
-			return openErr
-		}
-		defer in.Close()                                                                 //nolint:errcheck // read-only copy helper
-		out, createErr := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600) // #nosec G304 -- temp fixture copy
-		if createErr != nil {
-			return createErr
-		}
-		_, copyErr := io.Copy(out, in)
-		closeErr := out.Close()
-		if copyErr != nil {
-			return copyErr
-		}
-		return closeErr
-	})
-	require.NoError(tb, err)
 }
 
 func readFixtureFile(tb testing.TB, path string) string {
