@@ -30,7 +30,8 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	inttest "deployah.dev/deployah/internal/testing"
+	"deployah.dev/deployah/internal/testing/e2e"
+
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	netutil "k8s.io/apimachinery/pkg/util/net"
 )
@@ -38,7 +39,7 @@ import (
 const (
 	resourcePollInterval = 2 * time.Second
 	namespaceWaitTimeout = 2 * time.Minute
-	e2eSchemaModeLine    = "# $schema: ../../internal/testing/e2e.schema.json"
+	e2eSchemaModeLine    = "# $schema: ../../internal/testing/e2e/e2e.schema.json"
 )
 
 // isRetryableAPIError reports whether resource polling should retry err.
@@ -68,7 +69,7 @@ func isRetryableAPIError(err error) bool {
 		netutil.IsTimeout(err)
 }
 
-func (s *E2ESuite) scaffoldSimple(t *testing.T, dir, ns string, fx inttest.E2EFixture) {
+func (s *E2ESuite) scaffoldSimple(t *testing.T, dir, ns string, fx e2e.E2EFixture) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -106,7 +107,7 @@ func (s *E2ESuite) scaffoldSimple(t *testing.T, dir, ns string, fx inttest.E2EFi
 	require.NoError(t, err)
 	out := e2eSchemaModeLine + "\n" + string(body)
 
-	path := filepath.Join(dir, inttest.E2EFixtureFile)
+	path := filepath.Join(dir, e2e.FixtureFile)
 	if _, statErr := os.Stat(path); statErr == nil {
 		t.Logf("-e2e.scaffold: %s already exists; skeleton follows\n%s", path, out)
 		return

@@ -32,6 +32,7 @@ import (
 
 	"deployah.dev/deployah/internal/helm"
 	"deployah.dev/deployah/internal/spec"
+	"deployah.dev/deployah/internal/testing/e2e"
 
 	inttest "deployah.dev/deployah/internal/testing"
 )
@@ -85,7 +86,7 @@ func (s *E2ESuite) TestWildcardInstances() {
 		"--context", kindContext, "--namespace", ns)
 
 	s.waitWild(t, ns, []wildCheck{
-		{sel: inttest.ResourceSelect{
+		{sel: e2e.ResourceSelect{
 			APIVersion: "apps/v1",
 			Kind:       "Deployment",
 			Labels:     map[string]string{spec.LabelInstance: releaseA},
@@ -111,7 +112,7 @@ func (s *E2ESuite) waitWildcardReady(t *testing.T, ns, original, release, slot s
 }
 
 type wildCheck struct {
-	sel    inttest.ResourceSelect
+	sel    e2e.ResourceSelect
 	expect map[string]any
 	empty  bool
 }
@@ -156,7 +157,7 @@ func (s *E2ESuite) waitWild(t *testing.T, ns string, checks []wildCheck, timeout
 
 func wildcardDeployment(original, release string) wildCheck {
 	return wildCheck{
-		sel: inttest.ResourceSelect{
+		sel: e2e.ResourceSelect{
 			APIVersion: "apps/v1",
 			Kind:       "Deployment",
 			Name:       release + "-web",
@@ -179,7 +180,7 @@ func wildcardDeployment(original, release string) wildCheck {
 
 func wildcardEnvConfigMap(release, slot string) wildCheck {
 	return wildCheck{
-		sel: inttest.ResourceSelect{
+		sel: e2e.ResourceSelect{
 			APIVersion: "v1",
 			Kind:       "ConfigMap",
 			Name:       release + "-web-env",

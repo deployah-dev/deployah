@@ -43,13 +43,16 @@ type CommandResult struct {
 	ExitCode    int
 	NotExecuted bool
 	Interrupted bool
+	// Retryable marks a nonzero exit that may succeed on a later poll.
+	// The caller sets it. A nonzero exit alone is terminal.
+	Retryable bool
 }
 
 // ExecFunc runs one deployah invocation. dir may be empty.
 type ExecFunc func(ctx context.Context, dir string, args []string) CommandResult
 
 // ObserveFunc reads the objects for sel. An empty slice means nothing matched.
-type ObserveFunc func(ctx context.Context, sel inttest.ResourceSelect, scenarioNS string) ([]map[string]any, error)
+type ObserveFunc func(ctx context.Context, sel ResourceSelect, scenarioNS string) ([]map[string]any, error)
 
 // ErrObserveRetry means the resource read should be tried again.
 var ErrObserveRetry = errors.New("resource observation should retry")
@@ -64,7 +67,7 @@ type RunInput struct {
 	Namespace    string
 	Project      string
 	Env          string
-	Fixture      inttest.PreparedFixture
+	Fixture      PreparedFixture
 	Exec         ExecFunc
 	Observe      ObserveFunc
 	ResourcePoll time.Duration
@@ -107,7 +110,7 @@ func Run(ctx context.Context, in RunInput) RunResult {
 	return RunResult{Steps: steps}
 }
 
-func runOne(parent context.Context, in RunInput, step inttest.PreparedStep, index int) StepResult {
+func runOne(parent context.Context, in RunInput, step PreparedStep, index int) StepResult {
 	ctx, cancel := context.WithTimeout(parent, step.Timeout)
 	defer cancel()
 	switch step.Op {
@@ -120,7 +123,7 @@ func runOne(parent context.Context, in RunInput, step inttest.PreparedStep, inde
 	}
 }
 
-func runCommand(ctx context.Context, in RunInput, step inttest.PreparedStep, index int) StepResult {
+func runCommand(ctx context.Context, in RunInput, step PreparedStep, index int) StepResult {
 	base := StepResult{Index: index, Op: step.Op}
 	args, err := stepArgs(in, step)
 	if err != nil {
@@ -148,7 +151,7 @@ func runCommand(ctx context.Context, in RunInput, step inttest.PreparedStep, ind
 		base.Unsafe = parentCanceled(ctx)
 		return base
 	}
-	if err = inttest.CheckOutput(got.Stdout, got.Stderr, got.ExitCode, step.Output); err != nil {
+	if err = CheckOutput(got.Stdout, got.Stderr, got.ExitCode, step.Output); err != nil {
 		base.Status = StatusFail
 		base.Detail = err.Error()
 		return base
@@ -160,7 +163,7 @@ func runCommand(ctx context.Context, in RunInput, step inttest.PreparedStep, ind
 	return base
 }
 
-func evalPlan(ctx context.Context, base StepResult, plan *inttest.PreparedPlan, stdout string) StepResult {
+func evalPlan(ctx context.Context, base StepResult, plan *PreparedPlan, stdout string) StepResult {
 	var doc any
 	if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
 		base.Status = StatusError
@@ -180,6 +183,7 @@ func evalPlan(ctx context.Context, base StepResult, plan *inttest.PreparedPlan, 
 		}
 		base.Status = StatusError
 		base.Detail = fmt.Sprintf("expr[%d] %s: %v", i, expr, err)
+		base.Unsafe = parentCanceled(ctx)
 		return base
 	}
 	if len(problems) > 0 {
@@ -191,7 +195,7 @@ func evalPlan(ctx context.Context, base StepResult, plan *inttest.PreparedPlan, 
 	return base
 }
 
-func runLogs(ctx context.Context, in RunInput, step inttest.PreparedStep, index int) StepResult {
+func runLogs(ctx context.Context, in RunInput, step PreparedStep, index int) StepResult {
 	base := StepResult{Index: index, Op: step.Op}
 	args, err := stepArgs(in, step)
 	if err != nil {
@@ -210,7 +214,7 @@ func runLogs(ctx context.Context, in RunInput, step inttest.PreparedStep, index 
 	sawOutput := false
 	for {
 		if ctx.Err() != nil {
-			return logsTimeout(base, sawOutput, last, ctx.Err())
+			return logsTimeout(base, sawOutput, last, ctx)
 		}
 		got := in.Exec(ctx, in.Dir, args)
 		if got.NotExecuted {
@@ -221,7 +225,7 @@ func runLogs(ctx context.Context, in RunInput, step inttest.PreparedStep, index 
 		}
 		if got.Interrupted {
 			if ctx.Err() != nil {
-				return logsTimeout(base, sawOutput, last, ctx.Err())
+				return logsTimeout(base, sawOutput, last, ctx)
 			}
 			base.Status = StatusError
 			base.Detail = "logs interrupted"
@@ -229,9 +233,19 @@ func runLogs(ctx context.Context, in RunInput, step inttest.PreparedStep, index 
 			return base
 		}
 		if got.ExitCode != 0 {
-			base.Status = StatusError
-			base.Detail = fmt.Sprintf("logs exit %d\nstderr:\n%s", got.ExitCode, strings.TrimSpace(got.Stderr))
-			return base
+			last = logsExitDetail(got)
+			if !got.Retryable {
+				base.Status = StatusError
+				base.Detail = last
+				return base
+			}
+			if ctx.Err() != nil {
+				return logsTimeout(base, false, last, ctx)
+			}
+			if !waitPoll(ctx, in.LogsPoll) {
+				continue
+			}
+			continue
 		}
 		sawOutput = true
 		missing := unmatched(step.Logs.Patterns, step.Logs.Raw, got.Stdout)
@@ -240,19 +254,35 @@ func runLogs(ctx context.Context, in RunInput, step inttest.PreparedStep, index 
 			return base
 		}
 		last = strings.Join(missing, "; ")
+		if ctx.Err() != nil {
+			return logsTimeout(base, true, last, ctx)
+		}
 		if !waitPoll(ctx, in.LogsPoll) {
 			continue
 		}
 	}
 }
 
-func logsTimeout(base StepResult, sawOutput bool, last string, cause error) StepResult {
+func logsExitDetail(got CommandResult) string {
+	detail := fmt.Sprintf("logs exit %d", got.ExitCode)
+	if stderr := strings.TrimSpace(got.Stderr); stderr != "" {
+		detail += "\nstderr:\n" + stderr
+	}
+	return detail
+}
+
+func logsTimeout(base StepResult, sawOutput bool, last string, ctx context.Context) StepResult {
+	cause := ctx.Err()
+	if cause == nil {
+		cause = context.DeadlineExceeded
+	}
 	if last != "" {
 		base.Detail = last + "; timeout " + cause.Error()
 	} else {
 		base.Detail = "timeout " + cause.Error()
 	}
-	if sawOutput {
+	base.Unsafe = parentCanceled(ctx)
+	if sawOutput && !base.Unsafe {
 		base.Status = StatusFail
 		return base
 	}
@@ -260,7 +290,7 @@ func logsTimeout(base StepResult, sawOutput bool, last string, cause error) Step
 	return base
 }
 
-func runAssert(ctx context.Context, in RunInput, step inttest.PreparedStep, index int) StepResult {
+func runAssert(ctx context.Context, in RunInput, step PreparedStep, index int) StepResult {
 	base := StepResult{Index: index, Op: step.Op, Assertions: make([]AssertResult, len(step.Assert))}
 	pending := make([]int, 0, len(step.Assert))
 	for i := range step.Assert {
@@ -298,10 +328,9 @@ func runAssert(ctx context.Context, in RunInput, step inttest.PreparedStep, inde
 	}
 }
 
-func evalPending(ctx context.Context, in RunInput, step inttest.PreparedStep, results []AssertResult, pending []int) ([]int, bool) {
+func evalPending(ctx context.Context, in RunInput, step PreparedStep, results []AssertResult, pending []int) ([]int, bool) {
 	next := make([]int, 0, len(pending))
-	fatal := false
-	for _, i := range pending {
+	for n, i := range pending {
 		status, detail, terminal, unsafe := evalAssert(ctx, in, step.Assert[i])
 		if !terminal {
 			results[i] = AssertResult{Index: i, Detail: detail}
@@ -310,17 +339,18 @@ func evalPending(ctx context.Context, in RunInput, step inttest.PreparedStep, re
 		}
 		results[i] = AssertResult{Index: i, Status: status, Detail: detail, Unsafe: unsafe}
 		if status != StatusPass && (assertionStop(step.Assert[i], status) || unsafe) {
-			fatal = true
+			skipPending(results, pending[n+1:])
+			return next, true
 		}
 	}
-	return next, fatal
+	return next, false
 }
 
-func assertionStop(assertion inttest.PreparedAssert, status Status) bool {
+func assertionStop(assertion PreparedAssert, status Status) bool {
 	return assertion.StopOnFailure && status != StatusPass
 }
 
-func evalAssert(ctx context.Context, in RunInput, assertion inttest.PreparedAssert) (Status, string, bool, bool) {
+func evalAssert(ctx context.Context, in RunInput, assertion PreparedAssert) (Status, string, bool, bool) {
 	if in.Observe == nil {
 		return StatusError, "resource observer is nil", true, true
 	}
@@ -354,7 +384,7 @@ func evalAssert(ctx context.Context, in RunInput, assertion inttest.PreparedAsse
 	return StatusFail, detail, false, false
 }
 
-func expectProblems(assertion inttest.PreparedAssert, objects []map[string]any) []string {
+func expectProblems(assertion PreparedAssert, objects []map[string]any) []string {
 	if !assertion.HasExpect {
 		return nil
 	}
@@ -370,7 +400,7 @@ func expectProblems(assertion inttest.PreparedAssert, objects []map[string]any) 
 	return problems
 }
 
-func exprProblems(ctx context.Context, assertion inttest.PreparedAssert, objects []map[string]any) ([]string, error) {
+func exprProblems(ctx context.Context, assertion PreparedAssert, objects []map[string]any) ([]string, error) {
 	list := make([]any, 0, len(objects))
 	for i := range objects {
 		list = append(list, objects[i])
@@ -435,7 +465,7 @@ func assertUnsafe(results []AssertResult) bool {
 	return false
 }
 
-func stepArgs(in RunInput, step inttest.PreparedStep) ([]string, error) {
+func stepArgs(in RunInput, step PreparedStep) ([]string, error) {
 	nsFlag := []string{"--context", KindContext, "--namespace", in.Namespace}
 	switch step.Op {
 	case "deploy":

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package testing
+package e2e
 
 import (
 	"encoding/json"
@@ -27,22 +27,11 @@ import (
 	k8sjson "k8s.io/apimachinery/pkg/util/json"
 )
 
-// E2EFixtureFile is the Kind fixture filename in a scenario directory.
-const E2EFixtureFile = "e2e.yaml"
+// FixtureFile is the Kind fixture filename in a scenario directory.
+const FixtureFile = "e2e.yaml"
 
 // DefaultE2EStepTimeout is the wait applied when e2e.yaml omits timeout.
 const DefaultE2EStepTimeout = 3 * time.Minute
-
-// AllowedE2EImages is the Kind preload list.
-// Specs that use anything else are rejected.
-var AllowedE2EImages = []string{
-	"nginx:latest",
-	"nginx:1.26",
-	"busybox:1.36",
-	"redis:7-alpine",
-	"redis:7",
-	"postgres:16",
-}
 
 // E2EFixture is the decoded form of scenarios/*/e2e.yaml.
 type E2EFixture struct {
@@ -231,7 +220,8 @@ func (s Step) Output() *OutputExpectation {
 	}
 }
 
-// LoadE2EFixture reads path, checks the schema, and checks images.
+// LoadE2EFixture reads path, checks the schema, then decodes it.
+// A deploy.spec path that does not name a file is rejected.
 func LoadE2EFixture(path, scenarioDir string) (E2EFixture, error) {
 	raw, err := os.ReadFile(path) // #nosec G304 -- scenario e2e.yaml under test
 	if err != nil {
@@ -252,78 +242,25 @@ func LoadE2EFixture(path, scenarioDir string) (E2EFixture, error) {
 	if err = k8sjson.Unmarshal(jsonBytes, &fx); err != nil {
 		return E2EFixture{}, &ConfigError{File: path, Step: -1, Assertion: -1, Err: fmt.Errorf("decode e2e.yaml: %w", err)}
 	}
-	if err = validateScenarioImages(scenarioDir, fx); err != nil {
+	if err = validateDeploySpecs(scenarioDir, fx); err != nil {
 		return E2EFixture{}, &ConfigError{File: path, Step: -1, Assertion: -1, Err: err}
 	}
 	return fx, nil
 }
 
-func validateScenarioImages(scenarioDir string, fx E2EFixture) error {
-	specs := []string{filepath.Join(scenarioDir, "deployah.yaml")}
-	for _, step := range fx.Steps {
-		if step.Deploy != nil && step.Deploy.Spec != "" {
-			specs = append(specs, filepath.Join(scenarioDir, step.Deploy.Spec))
-		}
-	}
-	seen := map[string]struct{}{}
-	for _, specPath := range specs {
-		if _, err := os.Stat(specPath); err != nil {
+func validateDeploySpecs(scenarioDir string, fx E2EFixture) error {
+	for i, step := range fx.Steps {
+		if step.Deploy == nil || step.Deploy.Spec == "" {
 			continue
 		}
-		raw, err := os.ReadFile(specPath) // #nosec G304 -- scenario spec under test
+		specPath := filepath.Join(scenarioDir, step.Deploy.Spec)
+		info, err := os.Stat(specPath)
 		if err != nil {
-			return fmt.Errorf("read spec %s: %w", specPath, err)
+			return fmt.Errorf("steps[%d].deploy.spec %q: %w", i, step.Deploy.Spec, err)
 		}
-		var doc any
-		if parseErr := yaml.Unmarshal(raw, &doc); parseErr != nil {
-			return fmt.Errorf("parse spec %s: %w", specPath, parseErr)
-		}
-		for _, img := range collectImages(doc) {
-			if _, ok := seen[img]; ok {
-				continue
-			}
-			seen[img] = struct{}{}
-			if !imageAllowed(img) {
-				return fmt.Errorf("image %q is not on the e2e allowlist", img)
-			}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("steps[%d].deploy.spec %q is not a file", i, step.Deploy.Spec)
 		}
 	}
 	return nil
-}
-
-func collectImages(v any) []string {
-	var out []string
-	switch n := v.(type) {
-	case map[string]any:
-		for k, child := range n {
-			if k == "image" {
-				if s, ok := child.(string); ok && s != "" && !strings.Contains(s, "${") {
-					out = append(out, s)
-				}
-				continue
-			}
-			out = append(out, collectImages(child)...)
-		}
-	case []any:
-		for _, child := range n {
-			out = append(out, collectImages(child)...)
-		}
-	}
-	return out
-}
-
-func imageAllowed(img string) bool {
-	norm := normalizeImageRef(img)
-	for _, allowed := range AllowedE2EImages {
-		if normalizeImageRef(allowed) == norm {
-			return true
-		}
-	}
-	return false
-}
-
-func normalizeImageRef(img string) string {
-	img = strings.TrimPrefix(img, "docker.io/library/")
-	img = strings.TrimPrefix(img, "docker.io/")
-	return img
 }

@@ -1,0 +1,18 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: addedwidgets.example.com
+spec:
+  group: example.com
+  scope: Namespaced
+  names:
+    kind: AddedWidget
+    plural: addedwidgets
+    singular: addedwidget
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object

@@ -74,7 +74,7 @@ type e2eCase struct {
 	Name     string
 	Dir      string
 	Project  string
-	Fixture  inttest.E2EFixture
+	Fixture  e2e.E2EFixture
 	Parallel bool
 	LoadErr  error
 }
@@ -94,8 +94,7 @@ func TestE2E(t *testing.T) {
 	suite.Run(t, new(E2ESuite))
 }
 
-// SetupSuite creates the Kind cluster, preloads allowlisted images, and
-// builds a discovery RESTMapper.
+// SetupSuite creates the Kind cluster and builds a discovery RESTMapper.
 func (s *E2ESuite) SetupSuite() {
 	t := s.T()
 	requireEngine(t)
@@ -126,7 +125,6 @@ func (s *E2ESuite) SetupSuite() {
 	s.Require().FileExists(s.kcPath)
 
 	s.client = newKlient(t, s.kcPath, kindContext)
-	s.preloadImages(t)
 	s.mapper = newRESTMapper(t, s.client)
 }
 
@@ -194,7 +192,7 @@ func (s *E2ESuite) loadE2ECases(t *testing.T) []e2eCase {
 		seen[sc.ScenarioDir] = struct{}{}
 
 		dir := filepath.Join(s.scenariosDir, sc.ScenarioDir)
-		fx, loadErr := inttest.LoadE2EFixture(sc.E2EFixturePath, dir)
+		fx, loadErr := e2e.LoadE2EFixture(sc.E2EFixturePath, dir)
 		project, projErr := projectName(dir)
 		if projErr != nil && loadErr == nil {
 			loadErr = projErr
@@ -225,13 +223,13 @@ func (s *E2ESuite) runE2ECase(t *testing.T, c e2eCase) {
 	// create or other Kubernetes write.
 	dir, err := inttest.NewScenarioWorkspace(t, c.Dir)
 	require.NoError(t, err)
-	fixturePath := filepath.Join(dir, inttest.E2EFixtureFile)
-	fx, err := inttest.LoadE2EFixture(fixturePath, dir)
+	fixturePath := filepath.Join(dir, e2e.FixtureFile)
+	fx, err := e2e.LoadE2EFixture(fixturePath, dir)
 	if err != nil {
 		t.Errorf("load %s: %v", fixturePath, err)
 		return
 	}
-	prepared, err := inttest.PrepareE2EFixture(fixturePath, fx)
+	prepared, err := e2e.PrepareE2EFixture(fixturePath, fx)
 	if err != nil {
 		t.Errorf("prepare %s: %v", fixturePath, err)
 		return
@@ -269,21 +267,6 @@ func (s *E2ESuite) runE2ECase(t *testing.T, c e2eCase) {
 	}
 	if *flagScaffold {
 		s.scaffoldSimple(t, dir, ns, fx)
-	}
-}
-
-func (s *E2ESuite) preloadImages(t *testing.T) {
-	t.Helper()
-	m, err := localkube.New()
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		if closeErr := m.Close(); closeErr != nil {
-			t.Logf("close localkube manager: %v", closeErr)
-		}
-	})
-	for _, img := range inttest.AllowedE2EImages {
-		t.Logf("preloading image %s", img)
-		require.NoErrorf(t, m.LoadImage(t.Context(), clusterName, img), "load %s", img)
 	}
 }
 

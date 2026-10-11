@@ -34,7 +34,6 @@ import (
 	"deployah.dev/deployah/internal/testing/e2e"
 
 	planCmd "deployah.dev/deployah/internal/cmd/plan"
-	inttest "deployah.dev/deployah/internal/testing"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -62,7 +61,8 @@ func execCommand(t *testing.T) e2e.ExecFunc {
 				code = 2
 			}
 		}
-		return e2e.CommandResult{Stdout: stdout, Stderr: stderr, ExitCode: code}
+		retryable := len(args) > 0 && args[0] == "logs" && code != 0 && isRetryableAPIError(err)
+		return e2e.CommandResult{Stdout: stdout, Stderr: stderr, ExitCode: code, Retryable: retryable}
 	}
 }
 
@@ -83,7 +83,11 @@ func (s *E2ESuite) claimNamespace(ctx context.Context, name string) (e2e.Claim, 
 	var got *e2e.NamespaceView
 	var getErr error
 	if class == e2e.CreateSucceeded && ns.UID != "" {
-		got = &e2e.NamespaceView{Name: ns.Name, UID: string(ns.UID), Run: runID}
+		run := ""
+		if ns.Annotations != nil {
+			run = ns.Annotations[e2e.RunAnnotation]
+		}
+		got = &e2e.NamespaceView{Name: ns.Name, UID: string(ns.UID), Run: run}
 	}
 	for attempt := range e2e.NamespaceReconcileAttempts {
 		if attempt > 0 || got == nil {
@@ -322,7 +326,7 @@ func (s *E2ESuite) deletePVCs(ctx context.Context, namespace string) error {
 	return errors.Join(errs...)
 }
 
-func (s *E2ESuite) observe(ctx context.Context, sel inttest.ResourceSelect, scenarioNS string) ([]map[string]any, error) {
+func (s *E2ESuite) observe(ctx context.Context, sel e2e.ResourceSelect, scenarioNS string) ([]map[string]any, error) {
 	gvk, err := parseSelectGVK(sel)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", e2e.ErrObserveTerminal, err)
@@ -382,7 +386,7 @@ func wrapObserve(err error) error {
 	return fmt.Errorf("%w: %w", e2e.ErrObserveTerminal, err)
 }
 
-func parseSelectGVK(sel inttest.ResourceSelect) (schema.GroupVersionKind, error) {
+func parseSelectGVK(sel e2e.ResourceSelect) (schema.GroupVersionKind, error) {
 	if sel.Kind == "" || sel.APIVersion == "" {
 		return schema.GroupVersionKind{}, errors.New("select requires apiVersion and kind")
 	}

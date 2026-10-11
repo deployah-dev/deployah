@@ -1,4 +1,4 @@
-# $schema: ../../internal/testing/e2e.schema.json
+# $schema: ../../internal/testing/e2e/e2e.schema.json
 env: dev
 parallel: false
 steps:

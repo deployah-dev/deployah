@@ -40,6 +40,10 @@ var errorScenarioIndicators = []string{
 	"malformed-",
 }
 
+// scenarioE2EFile is the Kind fixture filename. It stays in this package so
+// discovery does not import the e2e runner.
+const scenarioE2EFile = "e2e.yaml"
+
 // DiscoverScenarios discovers test scenarios from the directory structure.
 func DiscoverScenarios(scenariosDir string) ([]TestScenario, error) {
 	var scenarios []TestScenario
@@ -83,7 +87,7 @@ func DiscoverScenarios(scenariosDir string) ([]TestScenario, error) {
 			base.PlatformFile = "deployah.platform.yaml"
 		}
 
-		e2ePath := filepath.Join(path, E2EFixtureFile)
+		e2ePath := filepath.Join(path, scenarioE2EFile)
 		if e2eInfo, statErr := os.Stat(e2ePath); statErr == nil && e2eInfo.Mode().IsRegular() {
 			abs, absErr := filepath.Abs(e2ePath)
 			if absErr != nil {

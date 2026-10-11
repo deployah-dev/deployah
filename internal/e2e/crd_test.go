@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -73,7 +74,6 @@ func (s *E2ESuite) TestCRDLifecycle() {
 	restCfg := kubeRESTConfig(t, s.kcPath, kindContext)
 	ext := newApiextensionsClient(t, restCfg)
 	dyn := newDynamicClient(t, restCfg)
-	require.NoError(t, requireCRDAbsent(t.Context(), ext, crdLifecycleName))
 	var crdUID types.UID
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), namespaceWaitTimeout)
@@ -93,12 +93,12 @@ func (s *E2ESuite) TestCRDLifecycle() {
 			t.Errorf("cleanup: %v", joined)
 		}
 	})
+	require.NoError(t, requireCRDAbsent(t.Context(), ext, crdLifecycleName))
 
 	widget := hideExtrasManifest(t, dir, "widget.yaml")
 	runIn(t, dir, "deploy", "dev", "--context", kindContext,
 		"--namespace", ns)
-	crd := waitCRDEstablished(t, ext, crdLifecycleName)
-	crdUID = crd.UID
+	crd := waitCRDEstablished(t, ext, crdLifecycleName, &crdUID)
 	require.NotEmpty(t, crdUID)
 	assertCRDUserMetadata(t, crd)
 
@@ -133,28 +133,7 @@ func (s *E2ESuite) TestCRDLifecycle() {
 	require.NoError(t, err, "CRD must survive deployah delete")
 }
 
-const (
-	crdAddedName = "addedwidgets.example.com"
-	crdAddedYAML = `apiVersion: apiextensions.k8s.io/v1
-kind: CustomResourceDefinition
-metadata:
-  name: addedwidgets.example.com
-spec:
-  group: example.com
-  scope: Namespaced
-  names:
-    kind: AddedWidget
-    plural: addedwidgets
-    singular: addedwidget
-  versions:
-    - name: v1
-      served: true
-      storage: true
-      schema:
-        openAPIV3Schema:
-          type: object
-`
-)
+const crdAddedName = "addedwidgets.example.com"
 
 // TestCRDNewlyAddedOnUpgrade checks that a CRD file added after the
 // first install is not installed by an ordinary Helm Upgrade.
@@ -172,8 +151,6 @@ func (s *E2ESuite) TestCRDNewlyAddedOnUpgrade() {
 
 	restCfg := kubeRESTConfig(t, s.kcPath, kindContext)
 	ext := newApiextensionsClient(t, restCfg)
-	require.NoError(t, requireCRDAbsent(t.Context(), ext, crdLifecycleName))
-	require.NoError(t, requireCRDAbsent(t.Context(), ext, crdAddedName))
 	var crdUID types.UID
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), namespaceWaitTimeout)
@@ -193,18 +170,23 @@ func (s *E2ESuite) TestCRDNewlyAddedOnUpgrade() {
 			t.Errorf("cleanup: %v", joined)
 		}
 	})
+	require.NoError(t, requireCRDAbsent(t.Context(), ext, crdLifecycleName))
+	require.NoError(t, requireCRDAbsent(t.Context(), ext, crdAddedName))
 
 	hideExtrasManifest(t, dir, "widget.yaml")
 	runIn(t, dir, "deploy", "dev", "--context", kindContext,
 		"--namespace", ns)
-	crd := waitCRDEstablished(t, ext, crdLifecycleName)
-	crdUID = crd.UID
+	waitCRDEstablished(t, ext, crdLifecycleName, &crdUID)
 	require.NotEmpty(t, crdUID)
 	assertReleaseExists(t, dir, ns, "crd-lifecycle", "dev")
 
-	require.NoError(t, os.WriteFile(
+	_, sourceFile, _, ok := runtime.Caller(0)
+	require.True(t, ok)
+	added, err := os.ReadFile(filepath.Join(filepath.Dir(sourceFile), "testdata", "added-widget-crd.yaml")) // #nosec G304 -- package testdata
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile( // #nosec G703 -- path under the copied workspace
 		filepath.Join(dir, ".deployah", "crds", "addedwidget.yaml"),
-		[]byte(crdAddedYAML), 0o600))
+		added, 0o600))
 	runIn(t, dir, "deploy", "dev", "--context", kindContext,
 		"--namespace", ns)
 
@@ -311,7 +293,7 @@ func getCRD(tb testing.TB, ext apiextensionsclient.Interface, name string) *apie
 	return crd
 }
 
-func waitCRDEstablished(tb testing.TB, ext apiextensionsclient.Interface, name string) *apiextensionsv1.CustomResourceDefinition {
+func waitCRDEstablished(tb testing.TB, ext apiextensionsclient.Interface, name string, uid *types.UID) *apiextensionsv1.CustomResourceDefinition {
 	tb.Helper()
 	var latest *apiextensionsv1.CustomResourceDefinition
 	require.NoError(tb, wait.For(func(ctx context.Context) (bool, error) {
@@ -324,6 +306,9 @@ func waitCRDEstablished(tb testing.TB, ext apiextensionsclient.Interface, name s
 			return false, err
 		}
 		latest = crd
+		if uid != nil && *uid == "" && crd.UID != "" {
+			*uid = crd.UID
+		}
 		for _, cond := range crd.Status.Conditions {
 			if cond.Type == apiextensionsv1.Established &&
 				cond.Status == apiextensionsv1.ConditionTrue {

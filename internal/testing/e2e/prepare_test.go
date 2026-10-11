@@ -12,12 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package testing
+package e2e
 
 import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -128,6 +129,13 @@ steps:
 	prepared, err := PrepareE2EFixture("e2e.yaml", fx)
 	require.NoError(t, err)
 	require.NoError(t, CheckOutput("done and ok extra", "task foo not found", 1, prepared.Steps[0].Output))
+}
+
+func TestCheckOutput_excerpt(t *testing.T) {
+	t.Parallel()
+	err := CheckOutput(strings.Repeat("a", outputExcerptLimit+10), "", 1, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "...")
 }
 
 func TestCheckOutput_nilExitZero(t *testing.T) {

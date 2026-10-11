@@ -12,10 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package testing
+package e2e
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -23,6 +24,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"sigs.k8s.io/yaml"
+
+	inttest "deployah.dev/deployah/internal/testing"
 )
 
 const specNginxLatest = `
@@ -32,6 +35,24 @@ components:
   web:
     image: nginx:latest
 `
+
+func TestE2ESchemaJSON(t *testing.T) {
+	t.Parallel()
+	raw := E2ESchemaJSON()
+	require.NotEmpty(t, raw)
+	raw[0] = 'x'
+	assert.NotEqual(t, raw[0], E2ESchemaJSON()[0])
+}
+
+func TestConfigErrorUnwrap(t *testing.T) {
+	t.Parallel()
+	base := errors.New("boom")
+	err := &ConfigError{File: "e2e.yaml", Step: 1, Assertion: 2, Path: "expr", Err: base}
+	assert.ErrorIs(t, err, base)
+	assert.Contains(t, err.Error(), "e2e.yaml")
+	assert.Contains(t, err.Error(), "steps[1]")
+	assert.Contains(t, err.Error(), "expr")
+}
 
 func TestE2ESchema_compiles(t *testing.T) {
 	t.Parallel()
@@ -74,6 +95,10 @@ steps:
         expect:
           spec:
             replicas: 2
+            template:
+              metadata:
+                annotations:
+                  example.com/unlisted: kept
         expr:
           - 'objects.size() == 1'
 `},
@@ -123,6 +148,18 @@ steps:
         exitCode: -1
 `, wantErr: "minimum"},
 		{name: "stopOnFailure type", doc: "env: dev\nsteps:\n  - deploy: {}\n    stopOnFailure: yes-please\n", wantErr: "stopOnFailure"},
+		{name: "misspelled stopOnFailure", doc: "env: dev\nsteps:\n  - deploy: {}\n    stopOnFailur: true\n", wantErr: "additional"},
+		{name: "unknown assertion key", doc: `
+env: dev
+steps:
+  - assert:
+      - select:
+          apiVersion: v1
+          kind: ConfigMap
+        expr: ['true']
+        match: {}
+`, wantErr: "additional"},
+		{name: "old stdoutContains", doc: "env: dev\nsteps:\n  - deploy: {}\n    stdoutContains: Deployed\n", wantErr: "additional"},
 		{name: "empty expr", doc: `
 env: dev
 steps:
@@ -159,10 +196,10 @@ steps:
 
 func TestE2ESchema_scenarioFiles(t *testing.T) {
 	t.Parallel()
-	if _, err := os.Stat(TestScenariosDir); err != nil {
+	if _, err := os.Stat(inttest.TestScenariosDir); err != nil {
 		t.Skip("scenarios directory not found")
 	}
-	scenarios, err := DiscoverScenarios(TestScenariosDir)
+	scenarios, err := inttest.DiscoverScenarios(inttest.TestScenariosDir)
 	require.NoError(t, err)
 	found := 0
 	for _, sc := range scenarios {
@@ -219,7 +256,7 @@ steps:
 	assert.True(t, fx.Steps[0].StopOnFailureEnabled())
 }
 
-func TestLoadE2EFixture_unknownImage(t *testing.T) {
+func TestLoadE2EFixture_specFile(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "deployah.yaml"), []byte(`
@@ -227,12 +264,17 @@ apiVersion: v1-alpha.5
 project: demo
 components:
   web:
-    image: ghcr.io/acme/not-allowed:1
+    image: ghcr.io/acme/api:1.2.3
 `), 0o600))
 	path := filepath.Join(dir, "e2e.yaml")
-	require.NoError(t, os.WriteFile(path, []byte("env: dev\nsteps:\n  - deploy: {}\n"), 0o600))
-	_, err := LoadE2EFixture(path, dir)
-	require.ErrorContains(t, err, "allowlist")
+	require.NoError(t, os.WriteFile(path, []byte("env: dev\nsteps:\n  - deploy:\n      spec: deployah.yaml\n"), 0o600))
+	fx, err := LoadE2EFixture(path, dir)
+	require.NoError(t, err)
+	require.NotNil(t, fx.Steps[0].Deploy)
+
+	require.NoError(t, os.WriteFile(path, []byte("env: dev\nsteps:\n  - deploy:\n      spec: missing.yaml\n"), 0o600))
+	_, err = LoadE2EFixture(path, dir)
+	require.ErrorContains(t, err, "missing.yaml")
 }
 
 func TestLoadE2EFixture_invalidYAML(t *testing.T) {
@@ -245,22 +287,4 @@ func TestLoadE2EFixture_invalidYAML(t *testing.T) {
 	var cfg *ConfigError
 	require.ErrorAs(t, err, &cfg)
 	assert.Equal(t, path, cfg.File)
-}
-
-func TestImageAllowed(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name  string
-		image string
-		want  bool
-	}{
-		{name: "docker hub library prefix", image: "docker.io/library/nginx:latest", want: true},
-		{name: "unknown tag", image: "nginx:not-a-real-tag", want: false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tt.want, imageAllowed(tt.image))
-		})
-	}
 }
