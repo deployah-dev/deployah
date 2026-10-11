@@ -45,6 +45,7 @@ import (
 
 	"deployah.dev/deployah/internal/cmd"
 	"deployah.dev/deployah/internal/localkube"
+	"deployah.dev/deployah/internal/testing/e2e"
 
 	inttest "deployah.dev/deployah/internal/testing"
 )
@@ -55,10 +56,7 @@ const (
 	maxDNSLabel = 63
 )
 
-var (
-	flagScaffold = flag.Bool("e2e.scaffold", false, "generate e2e.yaml skeleton from live cluster state")
-	flagPreserve = flag.Bool("e2e.preserve", false, "preserve namespace on test failure for debugging")
-)
+var flagScaffold = flag.Bool("e2e.scaffold", false, "generate e2e.yaml skeleton from live cluster state")
 
 // E2ESuite drives Deployah against a live Kind cluster created by
 // `deployah cluster up`.
@@ -78,6 +76,7 @@ type e2eCase struct {
 	Project  string
 	Fixture  inttest.E2EFixture
 	Parallel bool
+	LoadErr  error
 }
 
 // clusterStatusView mirrors the JSON tags on the unexported status view in
@@ -196,16 +195,21 @@ func (s *E2ESuite) loadE2ECases(t *testing.T) []e2eCase {
 
 		dir := filepath.Join(s.scenariosDir, sc.ScenarioDir)
 		fx, loadErr := inttest.LoadE2EFixture(sc.E2EFixturePath, dir)
-		require.NoErrorf(t, loadErr, "load %s", sc.E2EFixturePath)
 		project, projErr := projectName(dir)
-		require.NoError(t, projErr)
-
+		if projErr != nil && loadErr == nil {
+			loadErr = projErr
+		}
+		parallel := false
+		if loadErr == nil {
+			parallel = fx.RunParallel()
+		}
 		cases = append(cases, e2eCase{
 			Name:     sc.ScenarioDir,
 			Dir:      dir,
 			Project:  project,
 			Fixture:  fx,
-			Parallel: fx.RunParallel(),
+			Parallel: parallel,
+			LoadErr:  loadErr,
 		})
 	}
 	return cases
@@ -213,31 +217,59 @@ func (s *E2ESuite) loadE2ECases(t *testing.T) []e2eCase {
 
 func (s *E2ESuite) runE2ECase(t *testing.T, c e2eCase) {
 	t.Helper()
-	// Copy before createNamespace so a bad scenario fails before the
-	// cluster is touched. TempDir cleanup is registered first, so it runs
-	// after the Kubernetes cleanup below.
+	if c.LoadErr != nil {
+		t.Errorf("load %s: %v", c.Name, c.LoadErr)
+		return
+	}
+	// The workspace is local. Preflight must finish before any namespace
+	// create or other Kubernetes write.
 	dir, err := inttest.NewScenarioWorkspace(t, c.Dir)
 	require.NoError(t, err)
+	fixturePath := filepath.Join(dir, inttest.E2EFixtureFile)
+	fx, err := inttest.LoadE2EFixture(fixturePath, dir)
+	if err != nil {
+		t.Errorf("load %s: %v", fixturePath, err)
+		return
+	}
+	prepared, err := inttest.PrepareE2EFixture(fixturePath, fx)
+	if err != nil {
+		t.Errorf("prepare %s: %v", fixturePath, err)
+		return
+	}
 
 	ns := fixtureNamespace(c.Name)
-	s.createNamespace(t, ns)
+	claim, err := s.claimNamespace(t.Context(), ns)
+	if err != nil {
+		t.Errorf("namespace %s: %v", ns, err)
+		return
+	}
 	t.Cleanup(func() {
-		if t.Failed() && *flagPreserve {
-			t.Logf("preserving namespace %s (-e2e.preserve)", ns)
-			return
+		cleanupErr := s.cleanupClaim(t, dir, claim, []releaseTarget{{
+			Project: c.Project,
+			Env:     fx.Env,
+		}})
+		if cleanupErr != nil {
+			t.Errorf("cleanup: %v", cleanupErr)
 		}
-		// Helm uninstall drops pods so PVC protection finalizers can
-		// clear. t.Context() is canceled before Cleanup.
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), namespaceWaitTimeout)
-		defer cancel()
-		if _, _, delErr := runInErrContext(t, cleanupCtx, dir, "delete", c.Project, c.Fixture.Env,
-			"--yes", "--wait", "--allow-missing-platform",
-			"--context", kindContext, "--namespace", ns); delErr != nil {
-			t.Logf("cleanup deployah delete failed (non-fatal): %v", delErr)
-		}
-		s.deleteNamespace(t, ns)
 	})
-	s.assertE2EFixture(t, dir, c.Project, ns, c.Fixture)
+	result := e2e.Run(t.Context(), e2e.RunInput{
+		Dir:       dir,
+		Namespace: ns,
+		Project:   c.Project,
+		Env:       fx.Env,
+		Fixture:   prepared,
+		Exec:      execCommand(t),
+		Observe:   s.observe,
+	})
+	for _, step := range result.Steps {
+		if step.Status == e2e.StatusPass {
+			continue
+		}
+		t.Errorf("%s", step)
+	}
+	if *flagScaffold {
+		s.scaffoldSimple(t, dir, ns, fx)
+	}
 }
 
 func (s *E2ESuite) preloadImages(t *testing.T) {

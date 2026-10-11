@@ -520,10 +520,8 @@ Put `e2e.yaml` in `scenarios/<name>/` to run that spec on Kind. Generate a
 skeleton with:
 
 ```sh
-go test ./internal/e2e/ -tags e2e -run TestE2EFixtures/<name> -e2e.scaffold
+go test -tags e2e ./internal/testing/e2e -run TestE2EFixtures/<name> -e2e.scaffold
 ```
-
-`-e2e.preserve` keeps the namespace after a failure.
 
 ### Build and run
 

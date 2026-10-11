@@ -18,14 +18,14 @@ package e2e_test
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"deployah.dev/deployah/internal/testing/e2e"
 
 	planCmd "deployah.dev/deployah/internal/cmd/plan"
 	inttest "deployah.dev/deployah/internal/testing"
@@ -41,15 +41,17 @@ func (s *E2ESuite) TestPlanCLI() {
 	require.NoError(t, err)
 
 	ns := fixtureNamespace("plan-cli")
+	var claim e2e.Claim
 	t.Cleanup(func() {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		defer cancel()
-		if _, _, delErr := runInErrContext(t, cleanupCtx, dir, "delete", "basic-web-service", "dev",
-			"--yes", "--wait", "--allow-missing-platform",
-			"--context", kindContext, "--namespace", ns); delErr != nil {
-			t.Logf("cleanup delete failed (non-fatal): %v", delErr)
+		if claim.UID == "" {
+			return
 		}
-		s.deleteNamespace(t, ns)
+		if cleanupErr := s.cleanupClaim(t, dir, claim, []releaseTarget{{
+			Project: "basic-web-service",
+			Env:     "dev",
+		}}); cleanupErr != nil {
+			t.Errorf("cleanup: %v", cleanupErr)
+		}
 	})
 
 	stdout, _, err := runInErr(t, dir, "plan", "dev", "-o", "json",
@@ -62,7 +64,9 @@ func (s *E2ESuite) TestPlanCLI() {
 	_, err = cs.CoreV1().Namespaces().Get(t.Context(), ns, metav1.GetOptions{})
 	require.True(t, apierrors.IsNotFound(err), "fresh plan must not create namespace %s: %v", ns, err)
 
-	s.createNamespace(t, ns)
+	got, err := s.claimNamespace(t.Context(), ns)
+	require.NoError(t, err)
+	claim = got
 	runIn(t, dir, "deploy", "dev", "--context", kindContext, "--namespace", ns)
 
 	stdout, _, err = runInErr(t, dir, "plan", "dev", "-o", "json",

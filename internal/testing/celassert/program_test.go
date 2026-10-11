@@ -496,8 +496,6 @@ spec:
 func TestEval_JobConfigMapOwnership(t *testing.T) {
 	t.Parallel()
 
-	// Name link from internal/helm/generate_env_test.go.
-	// Owner link from internal/e2e/e2e_wildcard_test.go.
 	// UIDs are fixed literals, not client-generated values.
 	migrateCM := "shop-dev-migrate-env"
 	resources := []interface{}{

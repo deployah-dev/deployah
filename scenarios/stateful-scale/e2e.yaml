@@ -2,33 +2,37 @@
 env: dev
 steps:
   - deploy: {}
-    resources:
-      - match:
+    stopOnFailure: true
+  - assert:
+      - select:
           apiVersion: apps/v1
           kind: StatefulSet
-          metadata:
-            name: stateful-scale-dev-cache
+          name: stateful-scale-dev-cache
+        expect:
           status:
             readyReplicas: 1
   - deploy:
       spec: deployah-replicas-2.yaml
     timeout: 5m
-    resources:
-      - match:
+    stopOnFailure: true
+  - assert:
+      - select:
           apiVersion: apps/v1
           kind: StatefulSet
-          metadata:
-            name: stateful-scale-dev-cache
+          name: stateful-scale-dev-cache
+        expect:
           spec:
             replicas: 2
           status:
             readyReplicas: 2
-      - minCount: 2
-        match:
+      - select:
           apiVersion: v1
           kind: PersistentVolumeClaim
-          metadata:
-            labels:
-              deployah.dev/component: cache
+          labels:
+            deployah.dev/component: cache
+        expect:
           status:
             phase: Bound
+        expr:
+          - 'objects.size() >= 2'
+    timeout: 5m

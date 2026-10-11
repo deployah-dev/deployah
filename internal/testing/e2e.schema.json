@@ -2,38 +2,24 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://deployah.dev/schemas/e2e.schema.json",
   "title": "Deployah e2e fixture",
-  "description": "Kind cluster assertions for a scenarios/*/e2e.yaml file. Exactly one of resources (simple deploy-then-assert) or steps (explicit CLI sequence) must be set.",
+  "description": "Declarative Kind scenario for scenarios/*/e2e.yaml. steps is a non-empty list. Each step has exactly one operation.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["env"],
-  "oneOf": [
-    {
-      "required": ["resources"],
-      "not": { "required": ["steps"] }
-    },
-    {
-      "required": ["steps"],
-      "not": { "required": ["resources"] }
-    }
-  ],
+  "required": ["env", "steps"],
   "properties": {
     "env": {
       "type": "string",
       "minLength": 1,
-      "description": "Positional environment argument passed to deploy/run/delete."
+      "description": "Positional environment argument passed to deploy, plan, run, and delete."
     },
     "parallel": {
       "type": "boolean",
-      "description": "When false, the fixture runs sequentially after parallel fixtures. Default true."
+      "description": "When false, the fixture runs after parallel fixtures. Default true."
     },
     "timeout": {
       "type": "string",
-      "description": "Default per-step wait (Go duration, e.g. 3m). Default 3m."
-    },
-    "resources": {
-      "type": "array",
-      "minItems": 1,
-      "items": { "$ref": "#/$defs/resourceAssertion" }
+      "minLength": 1,
+      "description": "Default per-step wait as a Go duration, for example 3m. Default 3m."
     },
     "steps": {
       "type": "array",
@@ -42,59 +28,70 @@
     }
   },
   "$defs": {
-    "resourceAssertion": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["match"],
-      "properties": {
-        "match": {
-          "type": "object",
-          "description": "Partial Kubernetes object compared as a subset of the live object.",
-          "required": ["apiVersion", "kind"],
-          "properties": {
-            "apiVersion": { "type": "string", "minLength": 1 },
-            "kind": { "type": "string", "minLength": 1 }
-          }
-        },
-        "minCount": {
-          "type": "integer",
-          "minimum": 0,
-          "description": "Minimum matching resources when selecting by labels. Default 1. 0 asserts absence. Must be 0 or 1 when match.metadata.name is set."
-        }
-      }
-    },
     "step": {
       "type": "object",
       "additionalProperties": false,
-      "oneOf": [
-        { "required": ["deploy"], "not": { "anyOf": [{ "required": ["run"] }, { "required": ["logs"] }, { "required": ["delete"] }] } },
-        { "required": ["run"], "not": { "anyOf": [{ "required": ["deploy"] }, { "required": ["logs"] }, { "required": ["delete"] }] } },
-        { "required": ["logs"], "not": { "anyOf": [{ "required": ["deploy"] }, { "required": ["run"] }, { "required": ["delete"] }] } },
-        { "required": ["delete"], "not": { "anyOf": [{ "required": ["deploy"] }, { "required": ["run"] }, { "required": ["logs"] }] } }
-      ],
       "properties": {
         "deploy": { "$ref": "#/$defs/deployOp" },
+        "plan": { "$ref": "#/$defs/planOp" },
         "run": { "$ref": "#/$defs/runOp" },
         "logs": { "$ref": "#/$defs/logsOp" },
         "delete": { "$ref": "#/$defs/deleteOp" },
-        "timeout": { "type": "string" },
-        "stderrContains": { "type": "string" },
-        "stdoutContains": { "type": "string" },
-        "resources": {
+        "assert": { "$ref": "#/$defs/assertList" },
+        "timeout": { "type": "string", "minLength": 1 },
+        "stopOnFailure": { "type": "boolean" }
+      },
+      "oneOf": [
+        { "required": ["deploy"], "not": { "anyOf": [{ "required": ["plan"] }, { "required": ["run"] }, { "required": ["logs"] }, { "required": ["delete"] }, { "required": ["assert"] }] } },
+        { "required": ["plan"], "not": { "anyOf": [{ "required": ["deploy"] }, { "required": ["run"] }, { "required": ["logs"] }, { "required": ["delete"] }, { "required": ["assert"] }] } },
+        { "required": ["run"], "not": { "anyOf": [{ "required": ["deploy"] }, { "required": ["plan"] }, { "required": ["logs"] }, { "required": ["delete"] }, { "required": ["assert"] }] } },
+        { "required": ["logs"], "not": { "anyOf": [{ "required": ["deploy"] }, { "required": ["plan"] }, { "required": ["run"] }, { "required": ["delete"] }, { "required": ["assert"] }] } },
+        { "required": ["delete"], "not": { "anyOf": [{ "required": ["deploy"] }, { "required": ["plan"] }, { "required": ["run"] }, { "required": ["logs"] }, { "required": ["assert"] }] } },
+        { "required": ["assert"], "not": { "anyOf": [{ "required": ["deploy"] }, { "required": ["plan"] }, { "required": ["run"] }, { "required": ["logs"] }, { "required": ["delete"] }] } }
+      ]
+    },
+    "outputExpectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "exitCode": { "type": "integer", "minimum": 0 },
+        "stdout": { "$ref": "#/$defs/streamMatch" },
+        "stderr": { "$ref": "#/$defs/streamMatch" }
+      }
+    },
+    "streamMatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contains"],
+      "properties": {
+        "contains": {
           "type": "array",
-          "items": { "$ref": "#/$defs/resourceAssertion" }
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
         }
       }
+    },
+    "exprList": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
     },
     "deployOp": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "spec": { "type": "string" },
-        "args": {
-          "type": "array",
-          "items": { "type": "string" }
-        }
+        "spec": { "type": "string", "minLength": 1 },
+        "args": { "type": "array", "items": { "type": "string" } },
+        "output": { "$ref": "#/$defs/outputExpectation" }
+      }
+    },
+    "planOp": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "detailedExitCode": { "type": "boolean" },
+        "output": { "$ref": "#/$defs/outputExpectation" },
+        "expr": { "$ref": "#/$defs/exprList" }
       }
     },
     "runOp": {
@@ -102,7 +99,8 @@
       "additionalProperties": false,
       "required": ["task"],
       "properties": {
-        "task": { "type": "string", "minLength": 1 }
+        "task": { "type": "string", "minLength": 1 },
+        "output": { "$ref": "#/$defs/outputExpectation" }
       }
     },
     "logsOp": {
@@ -111,12 +109,55 @@
       "required": ["component", "contains"],
       "properties": {
         "component": { "type": "string", "minLength": 1 },
-        "contains": { "type": "string", "minLength": 1 }
+        "contains": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        }
       }
     },
     "deleteOp": {
       "type": "object",
-      "additionalProperties": false
+      "additionalProperties": false,
+      "properties": {
+        "output": { "$ref": "#/$defs/outputExpectation" }
+      }
+    },
+    "assertList": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/resourceAssertion" }
+    },
+    "resourceAssertion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["select"],
+      "anyOf": [
+        { "required": ["expect"] },
+        { "required": ["expr"] }
+      ],
+      "properties": {
+        "select": { "$ref": "#/$defs/resourceSelect" },
+        "expect": { "type": "object" },
+        "expr": { "$ref": "#/$defs/exprList" },
+        "stopOnFailure": { "type": "boolean" }
+      }
+    },
+    "resourceSelect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["apiVersion", "kind"],
+      "properties": {
+        "apiVersion": { "type": "string", "minLength": 1 },
+        "kind": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "namespace": { "type": "string", "minLength": 1 },
+        "labels": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "type": "string" }
+        }
+      }
     }
   }
 }

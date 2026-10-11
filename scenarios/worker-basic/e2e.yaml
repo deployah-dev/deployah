@@ -1,32 +1,35 @@
 # $schema: ../../internal/testing/e2e.schema.json
 env: dev
-resources:
-  - match:
-      apiVersion: apps/v1
-      kind: Deployment
-      metadata:
-        name: worker-basic-dev
-        labels:
-          deployah.dev/project: worker-basic
-          deployah.dev/environment: dev
-          deployah.dev/component: worker
-      spec:
-        replicas: 1
-        template:
+steps:
+  - deploy: {}
+    stopOnFailure: true
+  - assert:
+      - select:
+          apiVersion: apps/v1
+          kind: Deployment
+          name: worker-basic-dev
+          labels:
+            deployah.dev/project: worker-basic
+            deployah.dev/environment: dev
+            deployah.dev/component: worker
+        expect:
           spec:
-            containers:
-              - name: worker
-                image: docker.io/library/busybox:1.36
-                command: ["sleep"]
-                args: ["infinity"]
-      status:
-        readyReplicas: 1
-  - match:
-      apiVersion: v1
-      kind: Pod
-      metadata:
-        labels:
-          deployah.dev/project: worker-basic
-          deployah.dev/environment: dev
-      status:
-        phase: Running
+            replicas: 1
+            template:
+              spec:
+                containers:
+                  - name: worker
+                    image: docker.io/library/busybox:1.36
+                    command: ["sleep"]
+                    args: ["infinity"]
+          status:
+            readyReplicas: 1
+      - select:
+          apiVersion: v1
+          kind: Pod
+          labels:
+            deployah.dev/project: worker-basic
+            deployah.dev/environment: dev
+        expect:
+          status:
+            phase: Running

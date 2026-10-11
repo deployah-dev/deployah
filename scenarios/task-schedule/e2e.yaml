@@ -2,15 +2,17 @@
 env: dev
 steps:
   - deploy: {}
-    resources:
-      - match:
+    stopOnFailure: true
+  - assert:
+      - select:
           apiVersion: batch/v1
           kind: CronJob
+          name: taskcron-dev-cleanup
+          labels:
+            deployah.dev/project: taskcron
+            deployah.dev/component: cleanup
+        expect:
           metadata:
-            name: taskcron-dev-cleanup
-            labels:
-              deployah.dev/project: taskcron
-              deployah.dev/component: cleanup
             annotations:
               helm.sh/hook: null
           spec:
@@ -30,17 +32,28 @@ steps:
                     containers:
                       - name: cleanup
                         command: ["echo", "cleanup-ok"]
+  - plan:
+      detailedExitCode: true
+      output:
+        exitCode: 2
+      expr:
+        - 'plan.helmAction == "none"'
+        - 'plan.changes.size() == 0'
+        - 'plan.summary.total == 0'
+        - 'plan.tasks.exists(t, t.name == "cleanup" && t.phase == "schedule" && t.action == "create" && !t.willRun)'
+    stopOnFailure: true
   - run:
       task: cleanup
-    resources:
-      - match:
+    stopOnFailure: true
+  - assert:
+      - select:
           apiVersion: batch/v1
           kind: Job
-          metadata:
-            labels:
-              deployah.dev/project: taskcron
-              deployah.dev/component: cleanup
-              deployah.dev/managed-by: deployah
+          labels:
+            deployah.dev/project: taskcron
+            deployah.dev/component: cleanup
+            deployah.dev/managed-by: deployah
+        expect:
           spec:
             activeDeadlineSeconds: null
           status:

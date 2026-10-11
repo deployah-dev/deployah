@@ -98,9 +98,13 @@ func (s *E2ESuite) TestSemanticPlanDoesNotMutateLive() {
 		ns := fixtureNamespace("semantic-plan-upgrade")
 		manifest := configMapManifest(ns, "app", "same") + "---\n" + configMapManifest(ns, "other", "same")
 		cs, dyn := s.kubeClients(t)
-		_, err := cs.CoreV1().Namespaces().Create(t.Context(), &corev1.Namespace{Name: ns}, metav1.CreateOptions{})
+		claim, err := s.claimNamespace(t.Context(), ns)
 		require.NoError(t, err)
-		t.Cleanup(func() { s.deleteNamespace(t, ns) })
+		t.Cleanup(func() {
+			if cleanupErr := s.cleanupClaim(t, "", claim, nil); cleanupErr != nil {
+				t.Errorf("cleanup: %v", cleanupErr)
+			}
+		})
 		for _, name := range []string{"app", "other"} {
 			_, err = cs.CoreV1().ConfigMaps(ns).Create(t.Context(), &corev1.ConfigMap{
 				Name: name, Namespace: ns,

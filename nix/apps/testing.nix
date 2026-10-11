@@ -25,7 +25,7 @@
     tags = "e2e";
     coverProfile = "coverage-e2e.out";
     junitFile = "junit-e2e.xml";
-    testPackages = "./internal/e2e";
+    testPackages = "./internal/testing/e2e";
     timeout = "30m";
     extraArgs = "-parallel=4";
     race = false; # the work is a live cluster, not concurrent Go

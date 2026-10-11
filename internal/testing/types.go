@@ -48,6 +48,7 @@ func getTestScenariosDir() string {
 	// Try different possible locations relative to the test file
 	possiblePaths := []string{
 		"../../scenarios",
+		"../../../scenarios",
 		"../scenarios",
 		"./scenarios",
 		"scenarios",

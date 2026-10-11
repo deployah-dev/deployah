@@ -19,6 +19,8 @@ package e2e_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,6 +30,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -64,31 +67,39 @@ func (s *E2ESuite) TestCRDLifecycle() {
 	require.NoError(t, err)
 
 	ns := fixtureNamespace("crd-lifecycle")
-	s.createNamespace(t, ns)
+	claim, err := s.claimNamespace(t.Context(), ns)
+	require.NoError(t, err)
 
 	restCfg := kubeRESTConfig(t, s.kcPath, kindContext)
 	ext := newApiextensionsClient(t, restCfg)
 	dyn := newDynamicClient(t, restCfg)
+	require.NoError(t, requireCRDAbsent(t.Context(), ext, crdLifecycleName))
+	var crdUID types.UID
 	t.Cleanup(func() {
-		// t.Context() is canceled before Cleanup; teardown needs its own.
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		ctx, cancel := context.WithTimeout(context.Background(), namespaceWaitTimeout)
 		defer cancel()
-		if delCRDErr := ext.ApiextensionsV1().CustomResourceDefinitions().Delete(
-			cleanupCtx, crdLifecycleName, metav1.DeleteOptions{}); delCRDErr != nil {
-			t.Logf("cleanup CRD delete failed (non-fatal): %v", delCRDErr)
+		var errs []error
+		if crdUID != "" {
+			if delErr := deleteOwnedCRD(ctx, ext, crdLifecycleName, crdUID); delErr != nil {
+				errs = append(errs, delErr)
+			}
 		}
-		if _, _, delErr := runInErrContext(t, cleanupCtx, dir, "delete", "crd-lifecycle", "dev",
-			"--yes", "--wait", "--allow-missing-platform",
-			"--context", kindContext, "--namespace", ns); delErr != nil {
-			t.Logf("cleanup delete failed (non-fatal): %v", delErr)
+		if cleanupErr := s.cleanupClaim(t, dir, claim, []releaseTarget{{
+			Project: "crd-lifecycle", Env: "dev",
+		}}); cleanupErr != nil {
+			errs = append(errs, cleanupErr)
 		}
-		s.deleteNamespace(t, ns)
+		if joined := errors.Join(errs...); joined != nil {
+			t.Errorf("cleanup: %v", joined)
+		}
 	})
 
 	widget := hideExtrasManifest(t, dir, "widget.yaml")
 	runIn(t, dir, "deploy", "dev", "--context", kindContext,
 		"--namespace", ns)
 	crd := waitCRDEstablished(t, ext, crdLifecycleName)
+	crdUID = crd.UID
+	require.NotEmpty(t, crdUID)
 	assertCRDUserMetadata(t, crd)
 
 	require.NoError(t, os.WriteFile(
@@ -156,31 +167,39 @@ func (s *E2ESuite) TestCRDNewlyAddedOnUpgrade() {
 	require.NoError(t, err)
 
 	ns := fixtureNamespace("crd-added")
-	s.createNamespace(t, ns)
+	claim, err := s.claimNamespace(t.Context(), ns)
+	require.NoError(t, err)
 
 	restCfg := kubeRESTConfig(t, s.kcPath, kindContext)
 	ext := newApiextensionsClient(t, restCfg)
+	require.NoError(t, requireCRDAbsent(t.Context(), ext, crdLifecycleName))
+	require.NoError(t, requireCRDAbsent(t.Context(), ext, crdAddedName))
+	var crdUID types.UID
 	t.Cleanup(func() {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		ctx, cancel := context.WithTimeout(context.Background(), namespaceWaitTimeout)
 		defer cancel()
-		for _, name := range []string{crdLifecycleName, crdAddedName} {
-			if delCRDErr := ext.ApiextensionsV1().CustomResourceDefinitions().Delete(
-				cleanupCtx, name, metav1.DeleteOptions{}); delCRDErr != nil {
-				t.Logf("cleanup CRD delete failed (non-fatal): %v", delCRDErr)
+		var errs []error
+		if crdUID != "" {
+			if delErr := deleteOwnedCRD(ctx, ext, crdLifecycleName, crdUID); delErr != nil {
+				errs = append(errs, delErr)
 			}
 		}
-		if _, _, delErr := runInErrContext(t, cleanupCtx, dir, "delete", "crd-lifecycle", "dev",
-			"--yes", "--wait", "--allow-missing-platform",
-			"--context", kindContext, "--namespace", ns); delErr != nil {
-			t.Logf("cleanup delete failed (non-fatal): %v", delErr)
+		if cleanupErr := s.cleanupClaim(t, dir, claim, []releaseTarget{{
+			Project: "crd-lifecycle", Env: "dev",
+		}}); cleanupErr != nil {
+			errs = append(errs, cleanupErr)
 		}
-		s.deleteNamespace(t, ns)
+		if joined := errors.Join(errs...); joined != nil {
+			t.Errorf("cleanup: %v", joined)
+		}
 	})
 
 	hideExtrasManifest(t, dir, "widget.yaml")
 	runIn(t, dir, "deploy", "dev", "--context", kindContext,
 		"--namespace", ns)
-	waitCRDEstablished(t, ext, crdLifecycleName)
+	crd := waitCRDEstablished(t, ext, crdLifecycleName)
+	crdUID = crd.UID
+	require.NotEmpty(t, crdUID)
 	assertReleaseExists(t, dir, ns, "crd-lifecycle", "dev")
 
 	require.NoError(t, os.WriteFile(
@@ -193,6 +212,30 @@ func (s *E2ESuite) TestCRDNewlyAddedOnUpgrade() {
 		t.Context(), crdAddedName, metav1.GetOptions{})
 	require.True(t, apierrors.IsNotFound(err),
 		"Helm upgrade must not install a CRD added after first install, got: %v", err)
+}
+
+func requireCRDAbsent(ctx context.Context, ext apiextensionsclient.Interface, name string) error {
+	_, err := ext.ApiextensionsV1().CustomResourceDefinitions().Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("crd %s: ownership uncertain: %w", name, err)
+	}
+	return fmt.Errorf("crd %s already exists, not owned by this run", name)
+}
+
+func deleteOwnedCRD(ctx context.Context, ext apiextensionsclient.Interface, name string, uid types.UID) error {
+	if uid == "" {
+		return fmt.Errorf("crd %s: ownership uncertain, not deleting", name)
+	}
+	err := ext.ApiextensionsV1().CustomResourceDefinitions().Delete(ctx, name, metav1.DeleteOptions{
+		Preconditions: &metav1.Preconditions{UID: &uid},
+	})
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	return err
 }
 
 func assertReleaseExists(t *testing.T, dir, ns, project, env string) {
