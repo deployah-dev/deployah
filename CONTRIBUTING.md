@@ -65,6 +65,44 @@ nix run .#test-integration
 DEPLOYAH_E2E_FORCE=1 nix run .#test-e2e
 ```
 
+`test-unit` and `test-integration` run the race detector and shuffle test
+order. `test-e2e` does not use the race detector. The subject is a live
+cluster. `go test ./...` with no tags skips tests that require the
+`integration` or `e2e` build tag.
+
+Regenerate golden files only after you have confirmed the new output is
+intended. Review the diff, then run the tests again without `-update`. Do
+not pass `-update` in CI. `go test ./... -update` is not supported.
+
+```sh
+go test ./internal/plan/view -update
+go test ./internal/plan/view -run '^TestWriteHuman' -update
+go test -tags integration ./internal/testing -update
+go test -tags integration ./internal/testing \
+  -run '^TestDeployahIntegration$' \
+  -update
+```
+
+The `integration` tag is required for scenario manifests. Without it those
+tests are not compiled, and nothing under `scenarios/` is regenerated.
+
+To generate an `e2e.yaml` skeleton, replace `<scenario-name>` with the
+scenario directory name. The scenario runs under `parallel` or
+`sequential`:
+
+```sh
+go test -v -tags e2e ./internal/e2e \
+  -run 'TestE2E/TestE2EFixtures/(parallel|sequential)/<scenario-name>' \
+  -e2e.scaffold
+```
+
+Pass `-v` so the logged skeleton is visible. Scaffold uses a temporary copy
+of the scenario and does not edit the source-controlled files. When
+`e2e.yaml` is already in that copy, the skeleton is printed and the file is
+left unchanged. When it is absent, the skeleton is written only in the
+temporary copy. Review the output and copy it into the scenario yourself if
+you want to keep it. `-e2e.scaffold` does not regenerate golden files.
+
 Before you open a pull request, make sure lint and the tests you touched are
 clean. CI runs flake validation, lint/fmt/tidy, unit, integration, and e2e on
 every pull request and push to `main`.
