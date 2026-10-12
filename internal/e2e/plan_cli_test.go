@@ -18,14 +18,15 @@ package e2e_test
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"time"
+	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"deployah.dev/deployah/internal/testing/e2e"
 
 	planCmd "deployah.dev/deployah/internal/cmd/plan"
 	inttest "deployah.dev/deployah/internal/testing"
@@ -33,39 +34,45 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func (s *E2ESuite) TestPlanCLI() {
-	t := s.T()
-	src := filepath.Join(s.scenariosDir, "basic-web-service")
+// Failures in this test should point here, not at the suite caller.
+//
+//nolint:thelper
+func runPlanCLI(t *testing.T, env *e2eEnv) {
+	src := filepath.Join(env.scenariosDir, "basic-web-service")
 	require.DirExists(t, src)
 	dir, err := inttest.NewScenarioWorkspace(t, src)
 	require.NoError(t, err)
 
 	ns := fixtureNamespace("plan-cli")
+	var claim e2e.Claim
 	t.Cleanup(func() {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		defer cancel()
-		if _, _, delErr := runInErrContext(t, cleanupCtx, dir, "delete", "basic-web-service", "dev",
-			"--yes", "--wait", "--allow-missing-platform",
-			"--context", kindContext, "--namespace", ns); delErr != nil {
-			t.Logf("cleanup delete failed (non-fatal): %v", delErr)
+		if claim.UID == "" {
+			return
 		}
-		s.deleteNamespace(t, ns)
+		if cleanupErr := env.cleanupClaim(t, dir, claim, []releaseTarget{{
+			Project: "basic-web-service",
+			Env:     "dev",
+		}}); cleanupErr != nil {
+			t.Errorf("cleanup: %v", cleanupErr)
+		}
 	})
 
-	stdout, _, err := runInErr(t, dir, "plan", "dev", "-o", "json",
+	stdout, _, err := runInErrContext(t, t.Context(), dir, "plan", "dev", "-o", "json",
 		"--context", kindContext, "--namespace", ns)
 	require.NoError(t, err)
 	var fresh map[string]any
 	require.NoError(t, json.Unmarshal([]byte(stdout), &fresh))
 	assert.Empty(t, fresh["drift"])
-	cs, _ := s.kubeClients(t)
+	cs, _ := env.kubeClients(t)
 	_, err = cs.CoreV1().Namespaces().Get(t.Context(), ns, metav1.GetOptions{})
 	require.True(t, apierrors.IsNotFound(err), "fresh plan must not create namespace %s: %v", ns, err)
 
-	s.createNamespace(t, ns)
+	got, err := env.claimNamespace(t.Context(), ns)
+	require.NoError(t, err)
+	claim = got
 	runIn(t, dir, "deploy", "dev", "--context", kindContext, "--namespace", ns)
 
-	stdout, _, err = runInErr(t, dir, "plan", "dev", "-o", "json",
+	stdout, _, err = runInErrContext(t, t.Context(), dir, "plan", "dev", "-o", "json",
 		"--context", kindContext, "--namespace", ns)
 	require.NoError(t, err)
 	var same map[string]any
@@ -73,7 +80,7 @@ func (s *E2ESuite) TestPlanCLI() {
 	assert.Empty(t, same["changes"])
 	assert.Empty(t, same["drift"])
 
-	_, _, err = runInErr(t, dir, "plan", "dev", "--detailed-exitcode",
+	_, _, err = runInErrContext(t, t.Context(), dir, "plan", "dev", "--detailed-exitcode",
 		"--context", kindContext, "--namespace", ns)
 	require.NoError(t, err)
 
@@ -84,7 +91,7 @@ func (s *E2ESuite) TestPlanCLI() {
 	_, err = cs.AppsV1().Deployments(ns).Update(t.Context(), dep, metav1.UpdateOptions{})
 	require.NoError(t, err)
 
-	stdout, _, err = runInErr(t, dir, "plan", "dev", "-o", "json",
+	stdout, _, err = runInErrContext(t, t.Context(), dir, "plan", "dev", "-o", "json",
 		"--context", kindContext, "--namespace", ns)
 	require.NoError(t, err)
 	var drifted map[string]any
@@ -101,11 +108,11 @@ func (s *E2ESuite) TestPlanCLI() {
 	}
 	assert.Equal(t, 1, modified)
 
-	_, _, err = runInErr(t, dir, "plan", "dev", "--detailed-exitcode",
+	_, _, err = runInErrContext(t, t.Context(), dir, "plan", "dev", "--detailed-exitcode",
 		"--context", kindContext, "--namespace", ns)
 	require.NoError(t, err, "drift alone must not exit 2")
 
-	human, _, err := runInErr(t, dir, "plan", "dev",
+	human, _, err := runInErrContext(t, t.Context(), dir, "plan", "dev",
 		"--context", kindContext, "--namespace", ns)
 	require.NoError(t, err)
 	assert.Contains(t, human, "Drift")
@@ -117,7 +124,7 @@ func (s *E2ESuite) TestPlanCLI() {
 	require.Equal(t, 1, bytes.Count(raw, old))
 	updated := bytes.Replace(raw, old, []byte("port: 80\n    replicas: 2\n"), 1)
 	require.NoError(t, os.WriteFile(specPath, updated, 0o600)) // #nosec G703 -- path under test-controlled temp dir
-	stdout, _, err = runInErr(t, dir, "plan", "dev", "--detailed-exitcode",
+	stdout, _, err = runInErrContext(t, t.Context(), dir, "plan", "dev", "--detailed-exitcode",
 		"--context", kindContext, "--namespace", ns)
 	require.ErrorIs(t, err, planCmd.ErrChangesPresent)
 	assert.NotEmpty(t, stdout)

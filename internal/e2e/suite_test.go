@@ -29,10 +29,10 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 	"unicode"
 
 	"github.com/stretchr/testify/require"
-	"github.com/stretchr/testify/suite"
 	"go.yaml.in/yaml/v3"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/discovery/cached/memory"
@@ -45,7 +45,9 @@ import (
 
 	"deployah.dev/deployah/internal/cmd"
 	"deployah.dev/deployah/internal/localkube"
+	"deployah.dev/deployah/internal/testing/e2e"
 
+	live "deployah.dev/deployah/internal/e2e"
 	inttest "deployah.dev/deployah/internal/testing"
 )
 
@@ -55,29 +57,24 @@ const (
 	maxDNSLabel = 63
 )
 
-var (
-	flagScaffold = flag.Bool("e2e.scaffold", false, "generate e2e.yaml skeleton from live cluster state")
-	flagPreserve = flag.Bool("e2e.preserve", false, "preserve namespace on test failure for debugging")
-)
+var flagScaffold = flag.Bool("e2e.scaffold", false, "generate e2e.yaml skeleton from live cluster state")
 
-// E2ESuite drives Deployah against a live Kind cluster created by
-// `deployah cluster up`.
-type E2ESuite struct {
-	suite.Suite
+// e2eEnv is the shared Kind cluster for one TestE2E run.
+type e2eEnv struct {
 	kcPath       string
 	client       klient.Client
 	mapper       *restmapper.DeferredDiscoveryRESTMapper
 	mapperMu     sync.Mutex
 	scenariosDir string
-	created      bool // TearDownSuite runs cluster down when true
 }
 
 type e2eCase struct {
 	Name     string
 	Dir      string
 	Project  string
-	Fixture  inttest.E2EFixture
+	Fixture  e2e.E2EFixture
 	Parallel bool
+	LoadErr  error
 }
 
 // clusterStatusView mirrors the JSON tags on the unexported status view in
@@ -92,62 +89,87 @@ type clusterStatusView struct {
 
 // TestE2E runs the Kind-based end-to-end suite.
 func TestE2E(t *testing.T) {
-	suite.Run(t, new(E2ESuite))
+	env := startCluster(t)
+	t.Run("TestCRDLifecycle", func(t *testing.T) { runCRDLifecycle(t, env) })
+	t.Run("TestCRDNewlyAddedOnUpgrade", func(t *testing.T) { runCRDNewlyAddedOnUpgrade(t, env) })
+	t.Run("TestDeployCreatesNamespace", func(t *testing.T) { runDeployCreatesNamespace(t, env) })
+	t.Run("TestE2EFixtures", func(t *testing.T) { runE2EFixtures(t, env) })
+	t.Run("TestPlanCLI", func(t *testing.T) { runPlanCLI(t, env) })
+	t.Run("TestPublicImagePull", func(t *testing.T) { runPublicImagePull(t, env) })
+	t.Run("TestSemanticPlanDoesNotMutateLive", func(t *testing.T) { runSemanticPlanDoesNotMutateLive(t, env) })
+	t.Run("TestWildcardInstances", func(t *testing.T) { runWildcardInstances(t, env) })
 }
 
-// SetupSuite creates the Kind cluster, preloads allowlisted images, and
-// builds a discovery RESTMapper.
-func (s *E2ESuite) SetupSuite() {
-	t := s.T()
+// startCluster creates the Kind cluster owned by this test.
+func startCluster(t *testing.T) *e2eEnv {
+	t.Helper()
+	// Cleanup is registered before create. A pre-existing cluster is left
+	// alone unless DEPLOYAH_E2E_FORCE=1.
 	requireEngine(t)
-
-	scenariosDir, err := filepath.Abs(inttest.TestScenariosDir)
-	s.Require().NoError(err)
-	s.scenariosDir = scenariosDir
-
-	// Run from a temp dir; cluster up writes deployah.platform.yaml into cwd.
-	// t.Chdir restores cwd when the suite ends.
+	// cluster up writes deployah.platform.yaml into the process directory.
+	// Child scenarios pass their own directory and do not change it.
 	t.Chdir(t.TempDir())
 
-	requireNoCollision(t)
-	// Mark before up so TearDownSuite cleans up if create succeeds but a
-	// later step in cluster up fails. down --force is a no-op when missing.
-	s.created = true
-	run(t, "cluster", "up")
-
-	raw := run(t, "cluster", "status", "--output", "json")
-	var status clusterStatusView
-	s.Require().NoError(json.Unmarshal([]byte(raw), &status))
-	s.Require().Equal(clusterName, status.Name)
-	s.Require().Equal("running", status.Status)
-	s.Require().Equal(kindContext, status.Context)
-	s.Require().True(status.CloudProviderRunning)
-
-	s.kcPath = status.Kubeconfig
-	s.Require().FileExists(s.kcPath)
-
-	s.client = newKlient(t, s.kcPath, kindContext)
-	s.preloadImages(t)
-	s.mapper = newRESTMapper(t, s.client)
+	scenariosDir, err := filepath.Abs(inttest.TestScenariosDir)
+	require.NoError(t, err)
+	found, getErr := lookupCluster(t)
+	force := os.Getenv("DEPLOYAH_E2E_FORCE") == "1"
+	intent := live.PlanCluster(found, getErr, force)
+	if intent == live.ClusterReplace {
+		t.Log("DEPLOYAH_E2E_FORCE=1: destroying the existing cluster")
+	}
+	switch intent {
+	case live.ClusterRefuse:
+		t.Fatal("cluster 'deployah' already exists; " +
+			"set DEPLOYAH_E2E_FORCE=1 to destroy and recreate it")
+	case live.ClusterUncertain:
+		t.Fatalf("cluster lookup: %v", getErr)
+	}
+	var env e2eEnv
+	env.scenariosDir = scenariosDir
+	err = live.PrepareCluster(t, intent, func() error {
+		// Cleanup runs after t.Context is canceled, so down needs its own deadline.
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		_, stderr, downErr := runInErrContext(t, ctx, "", "cluster", "down", "--force")
+		if downErr == nil {
+			return nil
+		}
+		if trimmed := strings.TrimSpace(stderr); trimmed != "" {
+			return fmt.Errorf("%w\nstderr:\n%s", downErr, trimmed)
+		}
+		return downErr
+	}, func() error {
+		run(t, "cluster", "up")
+		raw := run(t, "cluster", "status", "--output", "json")
+		var status clusterStatusView
+		if unmarshalErr := json.Unmarshal([]byte(raw), &status); unmarshalErr != nil {
+			return unmarshalErr
+		}
+		if status.Name != clusterName || status.Status != "running" || status.Context != kindContext || !status.CloudProviderRunning {
+			return fmt.Errorf("cluster status %+v", status)
+		}
+		if _, statErr := os.Stat(status.Kubeconfig); statErr != nil {
+			return fmt.Errorf("kubeconfig %s: %w", status.Kubeconfig, statErr)
+		}
+		env.kcPath = status.Kubeconfig
+		env.client = newKlient(t, env.kcPath, kindContext)
+		env.mapper = newRESTMapper(t, env.client)
+		return nil
+	})
+	require.NoError(t, err)
+	return &env
 }
 
-// TearDownSuite destroys the Kind cluster only when this suite created it.
-func (s *E2ESuite) TearDownSuite() {
-	if !s.created {
-		return
-	}
-	if err := runErr(s.T(), "cluster", "down", "--force"); err != nil {
-		s.T().Errorf("cluster down failed: %v", err)
-	}
-}
-
-// TestE2EFixtures runs every scenarios/*/e2e.yaml. Parallel fixtures run
-// first (bounded by go test -parallel); sequential fixtures run after,
-// alphabetically by directory name.
-func (s *E2ESuite) TestE2EFixtures() {
-	t := s.T()
-	cases := s.loadE2ECases(t)
-	require.NotEmpty(t, cases, "no e2e.yaml fixtures under %s", s.scenariosDir)
+// runE2EFixtures runs every scenarios/*/e2e.yaml.
+// Failures in this test should point here, not at the suite caller.
+//
+//nolint:thelper
+func runE2EFixtures(t *testing.T, env *e2eEnv) {
+	// Parallel fixtures share the go test -parallel limit. Sequential
+	// fixtures run after them, in directory name order.
+	cases := env.loadE2ECases(t)
+	require.NotEmpty(t, cases, "no e2e.yaml fixtures under %s", env.scenariosDir)
 
 	var parallel, sequential []e2eCase
 	for _, c := range cases {
@@ -161,26 +183,12 @@ func (s *E2ESuite) TestE2EFixtures() {
 		return strings.Compare(a.Name, b.Name)
 	})
 
-	t.Run("parallel", func(t *testing.T) {
-		for _, c := range parallel {
-			t.Run(c.Name, func(t *testing.T) {
-				t.Parallel()
-				s.runE2ECase(t, c)
-			})
-		}
-	})
-	t.Run("sequential", func(t *testing.T) {
-		for _, c := range sequential {
-			t.Run(c.Name, func(t *testing.T) {
-				s.runE2ECase(t, c)
-			})
-		}
-	})
+	live.RunGroups(t, parallel, sequential, func(c e2eCase) string { return c.Name }, env.runE2ECase)
 }
 
-func (s *E2ESuite) loadE2ECases(t *testing.T) []e2eCase {
+func (env *e2eEnv) loadE2ECases(t *testing.T) []e2eCase {
 	t.Helper()
-	scenarios, err := inttest.DiscoverScenarios(s.scenariosDir)
+	scenarios, err := inttest.DiscoverScenarios(env.scenariosDir)
 	require.NoError(t, err)
 
 	seen := map[string]struct{}{}
@@ -194,64 +202,90 @@ func (s *E2ESuite) loadE2ECases(t *testing.T) []e2eCase {
 		}
 		seen[sc.ScenarioDir] = struct{}{}
 
-		dir := filepath.Join(s.scenariosDir, sc.ScenarioDir)
-		fx, loadErr := inttest.LoadE2EFixture(sc.E2EFixturePath, dir)
-		require.NoErrorf(t, loadErr, "load %s", sc.E2EFixturePath)
+		dir := filepath.Join(env.scenariosDir, sc.ScenarioDir)
+		fx, loadErr := e2e.LoadE2EFixture(sc.E2EFixturePath, dir)
 		project, projErr := projectName(dir)
-		require.NoError(t, projErr)
-
+		if projErr != nil && loadErr == nil {
+			loadErr = projErr
+		}
+		parallel := false
+		if loadErr == nil {
+			parallel = fx.RunParallel()
+		}
 		cases = append(cases, e2eCase{
 			Name:     sc.ScenarioDir,
 			Dir:      dir,
 			Project:  project,
 			Fixture:  fx,
-			Parallel: fx.RunParallel(),
+			Parallel: parallel,
+			LoadErr:  loadErr,
 		})
 	}
 	return cases
 }
 
-func (s *E2ESuite) runE2ECase(t *testing.T, c e2eCase) {
-	t.Helper()
-	// Copy before createNamespace so a bad scenario fails before the
-	// cluster is touched. TempDir cleanup is registered first, so it runs
-	// after the Kubernetes cleanup below.
+// Step lines stay here. t.Helper would point them at the group loop.
+//
+//nolint:thelper
+func (env *e2eEnv) runE2ECase(t *testing.T, c e2eCase) {
+	if c.LoadErr != nil {
+		t.Errorf("load %s: %v", c.Name, c.LoadErr)
+		return
+	}
+	// The workspace is local. Preflight must finish before any namespace
+	// create or other Kubernetes write.
 	dir, err := inttest.NewScenarioWorkspace(t, c.Dir)
 	require.NoError(t, err)
+	fixturePath := filepath.Join(dir, e2e.FixtureFile)
+	fx, err := e2e.LoadE2EFixture(fixturePath, dir)
+	if err != nil {
+		t.Errorf("load %s: %v", fixturePath, err)
+		return
+	}
+	prepared, err := e2e.PrepareE2EFixture(fixturePath, fx)
+	if err != nil {
+		t.Errorf("prepare %s: %v", fixturePath, err)
+		return
+	}
 
 	ns := fixtureNamespace(c.Name)
-	s.createNamespace(t, ns)
+	claim, err := env.claimNamespace(t.Context(), ns)
+	if err != nil {
+		t.Errorf("namespace %s: %v", ns, err)
+		return
+	}
 	t.Cleanup(func() {
-		if t.Failed() && *flagPreserve {
-			t.Logf("preserving namespace %s (-e2e.preserve)", ns)
+		started := time.Now()
+		cleanupErr := env.cleanupClaim(t, dir, claim, []releaseTarget{{
+			Project: c.Project,
+			Env:     fx.Env,
+		}})
+		if cleanupErr != nil {
+			t.Errorf("cleanup: %v", cleanupErr)
 			return
 		}
-		// Helm uninstall drops pods so PVC protection finalizers can
-		// clear. t.Context() is canceled before Cleanup.
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), namespaceWaitTimeout)
-		defer cancel()
-		if _, _, delErr := runInErrContext(t, cleanupCtx, dir, "delete", c.Project, c.Fixture.Env,
-			"--yes", "--wait", "--allow-missing-platform",
-			"--context", kindContext, "--namespace", ns); delErr != nil {
-			t.Logf("cleanup deployah delete failed (non-fatal): %v", delErr)
-		}
-		s.deleteNamespace(t, ns)
-	})
-	s.assertE2EFixture(t, dir, c.Project, ns, c.Fixture)
-}
-
-func (s *E2ESuite) preloadImages(t *testing.T) {
-	t.Helper()
-	m, err := localkube.New()
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		if closeErr := m.Close(); closeErr != nil {
-			t.Logf("close localkube manager: %v", closeErr)
+		if testing.Verbose() {
+			t.Logf("PASS  cleanup (%s)", time.Since(started).Round(time.Millisecond))
 		}
 	})
-	for _, img := range inttest.AllowedE2EImages {
-		t.Logf("preloading image %s", img)
-		require.NoErrorf(t, m.LoadImage(t.Context(), clusterName, img), "load %s", img)
+	result := e2e.Run(t.Context(), e2e.RunInput{
+		Dir:       dir,
+		Namespace: ns,
+		Project:   c.Project,
+		Env:       fx.Env,
+		Fixture:   prepared,
+		Exec:      execCommand(t),
+		Observe:   env.observe,
+	})
+	info, fails := e2e.StepReports(testing.Verbose(), c.Name, result.Steps)
+	for _, line := range info {
+		t.Log(line)
+	}
+	for _, line := range fails {
+		t.Error(line)
+	}
+	if *flagScaffold {
+		env.scaffoldSimple(t, dir, ns, fx)
 	}
 }
 
@@ -280,8 +314,8 @@ func newKlient(tb testing.TB, kubeconfigPath, contextName string) klient.Client 
 
 // newResources returns a dedicated Resources client. klient.Client.Resources
 // mutates a shared namespace field, which is not safe under t.Parallel.
-func (s *E2ESuite) newResources(ns string) (*resources.Resources, error) {
-	res, err := resources.New(s.client.RESTConfig())
+func (env *e2eEnv) newResources(ns string) (*resources.Resources, error) {
+	res, err := resources.New(env.client.RESTConfig())
 	if err != nil {
 		return nil, err
 	}
@@ -324,32 +358,20 @@ func fixtureNamespace(name string) string {
 
 func run(tb testing.TB, args ...string) string {
 	tb.Helper()
-	stdout, _ := runCapture(tb, args...)
-	return stdout
-}
-
-// runCapture runs deployah in the process cwd and returns stdout and stderr.
-func runCapture(tb testing.TB, args ...string) (stdout, stderr string) {
-	tb.Helper()
 	appIO, _, out, errOut := nabattest.NewIO()
 	app := cmd.NewApp(nabat.WithIO(appIO))
 	err := nabattest.Run(tb, app, args)
 	require.NoErrorf(tb, err, "deployah %s\nstderr:\n%s",
 		strings.Join(args, " "), errOut.String())
-	return out.String(), errOut.String()
+	return out.String()
 }
 
 func runIn(tb testing.TB, dir string, args ...string) (stdout, stderr string) {
 	tb.Helper()
-	stdout, stderr, err := runInErr(tb, dir, args...)
+	stdout, stderr, err := runInErrContext(tb, tb.Context(), dir, args...)
 	require.NoErrorf(tb, err, "deployah %s\nstderr:\n%s",
 		strings.Join(args, " "), stderr)
 	return stdout, stderr
-}
-
-func runInErr(tb testing.TB, dir string, args ...string) (stdout, stderr string, err error) {
-	tb.Helper()
-	return runInErrContext(tb, tb.Context(), dir, args...)
 }
 
 func runInErrContext(tb testing.TB, ctx context.Context, dir string, args ...string) (stdout, stderr string, err error) {
@@ -364,18 +386,6 @@ func runInErrContext(tb testing.TB, ctx context.Context, dir string, args ...str
 	return out.String(), errOut.String(), err
 }
 
-func runErr(tb testing.TB, args ...string) error {
-	tb.Helper()
-	_, stderr, err := runInErr(tb, "", args...)
-	if err == nil {
-		return nil
-	}
-	if trimmed := strings.TrimSpace(stderr); trimmed != "" {
-		return fmt.Errorf("%w\nstderr:\n%s", err, trimmed)
-	}
-	return err
-}
-
 func requireEngine(tb testing.TB) {
 	tb.Helper()
 	if err := exec.Command("docker", "info").Run(); err != nil {
@@ -386,7 +396,7 @@ func requireEngine(tb testing.TB) {
 	}
 }
 
-func requireNoCollision(tb testing.TB) {
+func lookupCluster(tb testing.TB) (bool, error) {
 	tb.Helper()
 	m, err := localkube.New()
 	require.NoError(tb, err)
@@ -395,17 +405,12 @@ func requireNoCollision(tb testing.TB) {
 			tb.Logf("close localkube manager: %v", closeErr)
 		}
 	})
-
 	_, getErr := m.Get(tb.Context(), clusterName)
 	if errors.Is(getErr, localkube.ErrNotFound) {
-		return
+		return false, nil
 	}
-	require.NoError(tb, getErr)
-
-	if os.Getenv("DEPLOYAH_E2E_FORCE") != "1" {
-		tb.Fatal("cluster 'deployah' already exists; " +
-			"set DEPLOYAH_E2E_FORCE=1 to destroy and recreate it")
+	if getErr != nil {
+		return false, getErr
 	}
-	tb.Log("DEPLOYAH_E2E_FORCE=1: destroying the existing cluster")
-	require.NoError(tb, runErr(tb, "cluster", "down", "--force"))
+	return true, nil
 }

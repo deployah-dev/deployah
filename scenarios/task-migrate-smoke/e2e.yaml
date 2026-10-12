@@ -1,17 +1,18 @@
-# $schema: ../../internal/testing/e2e.schema.json
+# $schema: ../../internal/testing/e2e/e2e.schema.json
 env: dev
 steps:
   - deploy: {}
-    resources:
-      - match:
+    stopOnFailure: true
+  - assert:
+      - select:
           apiVersion: apps/v1
           kind: Deployment
-          metadata:
-            name: taskdemo-dev-api
-            labels:
-              deployah.dev/project: taskdemo
-              deployah.dev/environment: dev
-              deployah.dev/component: api
+          name: taskdemo-dev-api
+          labels:
+            deployah.dev/project: taskdemo
+            deployah.dev/environment: dev
+            deployah.dev/component: api
+        expect:
           spec:
             replicas: 1
             template:
@@ -21,11 +22,11 @@ steps:
                     image: docker.io/library/nginx:latest
           status:
             readyReplicas: 1
-      - match:
+      - select:
           apiVersion: v1
           kind: Service
-          metadata:
-            name: taskdemo-dev-api
+          name: taskdemo-dev-api
+        expect:
           spec:
             ports:
               - name: http
@@ -35,27 +36,31 @@ steps:
       task: backfill
   - run:
       task: backfill
-    resources:
-      - minCount: 2
-        match:
+    stopOnFailure: true
+  - assert:
+      - select:
           apiVersion: batch/v1
           kind: Job
-          metadata:
-            labels:
-              deployah.dev/project: taskdemo
-              deployah.dev/component: backfill
+          labels:
+            deployah.dev/project: taskdemo
+            deployah.dev/component: backfill
+        expect:
           status:
             succeeded: 1
+        expr:
+          - 'objects.size() >= 2'
   - logs:
       component: backfill
-      contains: backfill-ok
+      contains:
+        - backfill-ok
   - delete: {}
-    resources:
-      - minCount: 0
-        match:
+    stopOnFailure: true
+  - assert:
+      - select:
           apiVersion: batch/v1
           kind: Job
-          metadata:
-            labels:
-              deployah.dev/project: taskdemo
-              deployah.dev/environment: dev
+          labels:
+            deployah.dev/project: taskdemo
+            deployah.dev/environment: dev
+        expr:
+          - 'objects.size() == 0'

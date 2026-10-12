@@ -1,4 +1,4 @@
-// Copyright 2025 The Deployah Authors
+// Copyright 2026 The Deployah Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package e2e drives the Deployah CLI against a live Kind cluster.
+// Package e2e runs Deployah scenarios on a Kind cluster.
 //
-// Scenarios run from a private directory copy. Use `nix run .#test-e2e`.
-// This file has no build tag so go list can still see the package.
+// Step execution lives in internal/testing/e2e. This package wires the
+// in-process CLI and the Kubernetes client. Use `nix run .#test-e2e`.
 package e2e

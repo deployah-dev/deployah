@@ -51,8 +51,10 @@ func (c *semanticPlanClient) RenderManifestsWithPrep(
 	return c.result, c.prep, func() {}, nil
 }
 
-func (s *E2ESuite) TestSemanticPlanDoesNotMutateLive() {
-	t := s.T()
+// Failures in this test should point here, not at the suite caller.
+//
+//nolint:thelper
+func runSemanticPlanDoesNotMutateLive(t *testing.T, env *e2eEnv) {
 	resolved := &spec.ResolvedSpec{
 		Spec: &spec.Spec{Project: "shop"},
 		Env:  spec.EnvIdentity{Original: "dev"},
@@ -70,7 +72,7 @@ func (s *E2ESuite) TestSemanticPlanDoesNotMutateLive() {
 			},
 			prep: helm.ReleasePrep{Operation: helm.OperationInstall, NextRevision: 1},
 		}
-		p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, s.mapper, nil, plan.SemanticBuildInput{
+		p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, env.mapper, nil, plan.SemanticBuildInput{
 			ClusterContext: kindContext,
 			Resolved:       resolved,
 		})
@@ -86,7 +88,7 @@ func (s *E2ESuite) TestSemanticPlanDoesNotMutateLive() {
 			assert.NotEqual(t, "Namespace", c.Resource.Kind)
 		}
 
-		cs, _ := s.kubeClients(t)
+		cs, _ := env.kubeClients(t)
 		_, err = cs.CoreV1().Namespaces().Get(t.Context(), ns, metav1.GetOptions{})
 		require.True(t, apierrors.IsNotFound(err), "namespace %s should still be absent: %v", ns, err)
 		_, err = cs.CoreV1().ConfigMaps(ns).Get(t.Context(), "app", metav1.GetOptions{})
@@ -97,10 +99,14 @@ func (s *E2ESuite) TestSemanticPlanDoesNotMutateLive() {
 	t.Run("upgrade reads live and does not mutate", func(t *testing.T) {
 		ns := fixtureNamespace("semantic-plan-upgrade")
 		manifest := configMapManifest(ns, "app", "same") + "---\n" + configMapManifest(ns, "other", "same")
-		cs, dyn := s.kubeClients(t)
-		_, err := cs.CoreV1().Namespaces().Create(t.Context(), &corev1.Namespace{Name: ns}, metav1.CreateOptions{})
+		cs, dyn := env.kubeClients(t)
+		claim, err := env.claimNamespace(t.Context(), ns)
 		require.NoError(t, err)
-		t.Cleanup(func() { s.deleteNamespace(t, ns) })
+		t.Cleanup(func() {
+			if cleanupErr := env.cleanupClaim(t, "", claim, nil); cleanupErr != nil {
+				t.Errorf("cleanup: %v", cleanupErr)
+			}
+		})
 		for _, name := range []string{"app", "other"} {
 			_, err = cs.CoreV1().ConfigMaps(ns).Create(t.Context(), &corev1.ConfigMap{
 				Name: name, Namespace: ns,
@@ -177,7 +183,7 @@ func (s *E2ESuite) TestSemanticPlanDoesNotMutateLive() {
 				NextRevision: 2,
 			},
 		}
-		p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, s.mapper, plan.NewDynamicLiveReader(dyn), plan.SemanticBuildInput{
+		p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, env.mapper, plan.NewDynamicLiveReader(dyn), plan.SemanticBuildInput{
 			ClusterContext: kindContext,
 			Resolved:       resolved,
 		})

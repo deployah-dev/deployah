@@ -16,8 +16,8 @@
 package e2e_test
 
 import (
-	"context"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -32,6 +32,7 @@ import (
 
 	"deployah.dev/deployah/internal/helm"
 	"deployah.dev/deployah/internal/spec"
+	"deployah.dev/deployah/internal/testing/e2e"
 
 	inttest "deployah.dev/deployah/internal/testing"
 )
@@ -44,95 +45,132 @@ const (
 
 // TestWildcardInstances deploys two review/* siblings and checks identity,
 // list/status isolation, independent runtime env, a manual run, and delete.
-func (s *E2ESuite) TestWildcardInstances() {
-	t := s.T()
-	src := filepath.Join(s.scenariosDir, "wildcard-review")
+// Failures in this test should point here, not at the suite caller.
+//
+//nolint:thelper
+func runWildcardInstances(t *testing.T, env *e2eEnv) {
+	src := filepath.Join(env.scenariosDir, "wildcard-review")
 	require.DirExists(t, src)
 
 	dir, err := inttest.NewScenarioWorkspace(t, src)
 	require.NoError(t, err)
 
 	ns := fixtureNamespace("wildcard-review")
-	s.createNamespace(t, ns)
+	claim, err := env.claimNamespace(t.Context(), ns)
+	require.NoError(t, err)
 	t.Cleanup(func() {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), namespaceWaitTimeout)
-		defer cancel()
-		for _, env := range []string{wildcardEnvA, wildcardEnvB} {
-			if _, _, delErr := runInErrContext(t, cleanupCtx, dir, "delete", wildcardProject, env,
-				"--yes", "--wait", "--allow-missing-platform",
-				"--context", kindContext, "--namespace", ns); delErr != nil {
-				t.Logf("cleanup delete %s failed (non-fatal): %v", env, delErr)
-			}
+		if cleanupErr := env.cleanupClaim(t, dir, claim, []releaseTarget{
+			{Project: wildcardProject, Env: wildcardEnvA},
+			{Project: wildcardProject, Env: wildcardEnvB},
+		}); cleanupErr != nil {
+			t.Errorf("cleanup: %v", cleanupErr)
 		}
-		s.deleteNamespace(t, ns)
 	})
 
 	releaseA := helm.GenerateReleaseName(wildcardProject, wildcardEnvA)
 	releaseB := helm.GenerateReleaseName(wildcardProject, wildcardEnvB)
 	require.NotEqual(t, releaseA, releaseB)
 
-	s.deployWildcard(t, dir, ns, wildcardEnvA)
-	s.waitWildcardReady(t, ns, wildcardEnvA, releaseA, "pr-123")
+	env.deployWildcard(t, dir, ns, wildcardEnvA)
+	env.waitWildcardReady(t, ns, wildcardEnvA, releaseA, "pr-123")
 
-	s.deployWildcard(t, dir, ns, wildcardEnvB)
-	s.waitWildcardReady(t, ns, wildcardEnvB, releaseB, "pr-456")
+	env.deployWildcard(t, dir, ns, wildcardEnvB)
+	env.waitWildcardReady(t, ns, wildcardEnvB, releaseB, "pr-456")
 
-	s.assertListJSON(t, dir, ns, "review", []string{wildcardEnvA, wildcardEnvB})
-	s.assertListJSON(t, dir, ns, wildcardEnvA, []string{wildcardEnvA})
-	s.assertStatusJSON(t, dir, ns, wildcardEnvA, releaseA)
+	env.assertListJSON(t, dir, ns, "review", []string{wildcardEnvA, wildcardEnvB})
+	env.assertListJSON(t, dir, ns, wildcardEnvA, []string{wildcardEnvA})
+	env.assertStatusJSON(t, dir, ns, wildcardEnvA, releaseA)
 
-	s.assertRunIsolated(t, dir, ns, releaseA)
+	env.assertRunIsolated(t, dir, ns, releaseA)
 
 	runIn(t, dir, "delete", wildcardProject, wildcardEnvA,
 		"--yes", "--wait", "--allow-missing-platform",
 		"--context", kindContext, "--namespace", ns)
 
-	zero := 0
-	s.waitForResources(t, ns, []inttest.ResourceAssertion{
-		{
-			MinCount: &zero,
-			Match: map[string]any{
-				"apiVersion": "apps/v1",
-				"kind":       "Deployment",
-				"metadata": map[string]any{
-					"labels": map[string]any{
-						spec.LabelInstance: releaseA,
-					},
-				},
-			},
-		},
+	env.waitWild(t, ns, []wildCheck{
+		{sel: e2e.ResourceSelect{
+			APIVersion: "apps/v1",
+			Kind:       "Deployment",
+			Labels:     map[string]string{spec.LabelInstance: releaseA},
+		}, empty: true},
 		wildcardDeployment(wildcardEnvB, releaseB),
 		wildcardEnvConfigMap(releaseB, "pr-456"),
 	}, 3*time.Minute)
 
-	s.assertStatusJSON(t, dir, ns, wildcardEnvB, releaseB)
+	env.assertStatusJSON(t, dir, ns, wildcardEnvB, releaseB)
 }
 
-func (s *E2ESuite) deployWildcard(t *testing.T, dir, ns, env string) {
+func (env *e2eEnv) deployWildcard(t *testing.T, dir, ns, environment string) {
 	t.Helper()
-	runIn(t, dir, "deploy", env, "--context", kindContext, "--namespace", ns)
+	runIn(t, dir, "deploy", environment, "--context", kindContext, "--namespace", ns)
 }
 
-func (s *E2ESuite) waitWildcardReady(t *testing.T, ns, original, release, slot string) {
+func (env *e2eEnv) waitWildcardReady(t *testing.T, ns, original, release, slot string) {
 	t.Helper()
-	s.waitForResources(t, ns, []inttest.ResourceAssertion{
+	env.waitWild(t, ns, []wildCheck{
 		wildcardDeployment(original, release),
 		wildcardEnvConfigMap(release, slot),
 	}, 3*time.Minute)
 }
 
-func wildcardDeployment(original, release string) inttest.ResourceAssertion {
-	return inttest.ResourceAssertion{
-		Match: map[string]any{
-			"apiVersion": "apps/v1",
-			"kind":       "Deployment",
+type wildCheck struct {
+	sel    e2e.ResourceSelect
+	expect map[string]any
+	empty  bool
+}
+
+func (env *e2eEnv) waitWild(t *testing.T, ns string, checks []wildCheck, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var last []string
+	for {
+		last = nil
+		for i, check := range checks {
+			objects, err := env.observe(t.Context(), check.sel, ns)
+			if err != nil {
+				last = append(last, fmt.Sprintf("check[%d]: %v", i, err))
+				continue
+			}
+			if check.empty {
+				if len(objects) != 0 {
+					last = append(last, fmt.Sprintf("check[%d]: want 0, got %d", i, len(objects)))
+				}
+				continue
+			}
+			if len(objects) == 0 {
+				last = append(last, fmt.Sprintf("check[%d]: no resources selected", i))
+				continue
+			}
+			for _, obj := range objects {
+				for _, diff := range inttest.DiffSubset("$", check.expect, obj) {
+					last = append(last, fmt.Sprintf("check[%d]: %s", i, diff))
+				}
+			}
+		}
+		if len(last) == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("wildcard resources not ready:\n%s", strings.Join(last, "\n"))
+		}
+		time.Sleep(resourcePollInterval)
+	}
+}
+
+func wildcardDeployment(original, release string) wildCheck {
+	return wildCheck{
+		sel: e2e.ResourceSelect{
+			APIVersion: "apps/v1",
+			Kind:       "Deployment",
+			Name:       release + "-web",
+			Labels: map[string]string{
+				spec.LabelProject:     wildcardProject,
+				spec.LabelEnvironment: "review",
+				spec.LabelInstance:    release,
+			},
+		},
+		expect: map[string]any{
 			"metadata": map[string]any{
-				"name": release + "-web",
-				"labels": map[string]any{
-					spec.LabelProject:     wildcardProject,
-					spec.LabelEnvironment: "review",
-					spec.LabelInstance:    release,
-				},
 				"annotations": map[string]any{
 					spec.AnnotationEnvironmentInstance: original,
 				},
@@ -142,28 +180,28 @@ func wildcardDeployment(original, release string) inttest.ResourceAssertion {
 	}
 }
 
-func wildcardEnvConfigMap(release, slot string) inttest.ResourceAssertion {
-	return inttest.ResourceAssertion{
-		Match: map[string]any{
-			"apiVersion": "v1",
-			"kind":       "ConfigMap",
-			"metadata": map[string]any{
-				"name": release + "-web-env",
-				"labels": map[string]any{
-					spec.LabelEnvironment: "review",
-					spec.LabelInstance:    release,
-				},
+func wildcardEnvConfigMap(release, slot string) wildCheck {
+	return wildCheck{
+		sel: e2e.ResourceSelect{
+			APIVersion: "v1",
+			Kind:       "ConfigMap",
+			Name:       release + "-web-env",
+			Labels: map[string]string{
+				spec.LabelEnvironment: "review",
+				spec.LabelInstance:    release,
 			},
+		},
+		expect: map[string]any{
 			"data": map[string]any{"PR_SLOT": slot},
 		},
 	}
 }
 
-func (s *E2ESuite) assertListJSON(t *testing.T, dir, ns, env string, wantInstances []string) {
+func (env *e2eEnv) assertListJSON(t *testing.T, dir, ns, environment string, wantInstances []string) {
 	t.Helper()
 	stdout, _ := runIn(t, dir, "list",
 		"--project", wildcardProject,
-		"--environment", env,
+		"--environment", environment,
 		"--output", "json",
 		"--context", kindContext,
 		"--namespace", ns)
@@ -182,31 +220,31 @@ func (s *E2ESuite) assertListJSON(t *testing.T, dir, ns, env string, wantInstanc
 	assert.ElementsMatch(t, wantInstances, got)
 }
 
-func (s *E2ESuite) assertStatusJSON(t *testing.T, dir, ns, env, release string) {
+func (env *e2eEnv) assertStatusJSON(t *testing.T, dir, ns, environment, release string) {
 	t.Helper()
 	stdout, _ := runIn(t, dir, "status", wildcardProject,
-		"--environment", env,
+		"--environment", environment,
 		"--output", "json",
 		"--context", kindContext,
 		"--namespace", ns)
 	var rows []map[string]any
 	require.NoError(t, json.Unmarshal([]byte(stdout), &rows), stdout)
 	require.Len(t, rows, 1, stdout)
-	assert.Equal(t, env, rows[0]["instance"])
+	assert.Equal(t, environment, rows[0]["instance"])
 	assert.Equal(t, release, rows[0]["release"])
 	sibling := wildcardEnvB
-	if env == wildcardEnvB {
+	if environment == wildcardEnvB {
 		sibling = wildcardEnvA
 	}
 	assert.NotContains(t, stdout, sibling)
 }
 
-func (s *E2ESuite) assertRunIsolated(t *testing.T, dir, ns, releaseA string) {
+func (env *e2eEnv) assertRunIsolated(t *testing.T, dir, ns, releaseA string) {
 	t.Helper()
 	runIn(t, dir, "run", "ping", wildcardEnvA,
 		"--context", kindContext, "--yes", "--namespace", ns)
 
-	res, err := s.newResources(ns)
+	res, err := env.newResources(ns)
 	require.NoError(t, err)
 	selector := labels.Set{
 		spec.LabelProject:     wildcardProject,

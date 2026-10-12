@@ -1,25 +1,29 @@
-# $schema: ../../internal/testing/e2e.schema.json
+# $schema: ../../internal/testing/e2e/e2e.schema.json
 env: prod
 parallel: false
-resources:
-  - match:
-      apiVersion: apiextensions.k8s.io/v1
-      kind: CustomResourceDefinition
-      metadata:
-        name: clusterwidgets.example.com
-      status:
-        conditions:
-          - type: Established
-            status: "True"
-  - match:
-      apiVersion: v1
-      kind: ConfigMap
-      metadata:
-        name: shared-widget
-  - match:
-      apiVersion: apps/v1
-      kind: Deployment
-      metadata:
-        name: extras-env-and-crds-prod-web
-      status:
-        readyReplicas: 1
+steps:
+  - deploy: {}
+    stopOnFailure: true
+  - assert:
+      - select:
+          apiVersion: apiextensions.k8s.io/v1
+          kind: CustomResourceDefinition
+          name: clusterwidgets.example.com
+        expect:
+          status:
+            conditions:
+              - type: Established
+                status: "True"
+      - select:
+          apiVersion: v1
+          kind: ConfigMap
+          name: shared-widget
+        expr:
+          - 'objects.size() == 1'
+      - select:
+          apiVersion: apps/v1
+          kind: Deployment
+          name: extras-env-and-crds-prod-web
+        expect:
+          status:
+            readyReplicas: 1

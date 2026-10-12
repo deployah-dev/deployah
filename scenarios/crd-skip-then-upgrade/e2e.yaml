@@ -1,35 +1,37 @@
-# $schema: ../../internal/testing/e2e.schema.json
+# $schema: ../../internal/testing/e2e/e2e.schema.json
 env: dev
 parallel: false
 steps:
   - deploy:
-      args: [--skip-crds]
-    resources:
-      - match:
+      args: ["--skip-crds"]
+    stopOnFailure: true
+  - assert:
+      - select:
           apiVersion: apps/v1
           kind: Deployment
-          metadata:
-            name: crd-skip-then-upgrade-dev-web
+          name: crd-skip-then-upgrade-dev-web
+        expect:
           status:
             readyReplicas: 1
-      - minCount: 0
-        match:
+      - select:
           apiVersion: apiextensions.k8s.io/v1
           kind: CustomResourceDefinition
-          metadata:
-            name: skipwidgets.example.com
+          name: skipwidgets.example.com
+        expr:
+          - 'objects.size() == 0'
   - deploy: {}
-    resources:
-      - match:
+    stopOnFailure: true
+  - assert:
+      - select:
           apiVersion: apps/v1
           kind: Deployment
-          metadata:
-            name: crd-skip-then-upgrade-dev-web
+          name: crd-skip-then-upgrade-dev-web
+        expect:
           status:
             readyReplicas: 1
-      - minCount: 0
-        match:
+      - select:
           apiVersion: apiextensions.k8s.io/v1
           kind: CustomResourceDefinition
-          metadata:
-            name: skipwidgets.example.com
+          name: skipwidgets.example.com
+        expr:
+          - 'objects.size() == 0'

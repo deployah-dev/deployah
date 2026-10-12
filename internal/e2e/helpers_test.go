@@ -35,11 +35,11 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
-func (s *E2ESuite) kubeClients(t *testing.T) (*kubernetes.Clientset, dynamic.Interface) {
+func (env *e2eEnv) kubeClients(t *testing.T) (*kubernetes.Clientset, dynamic.Interface) {
 	t.Helper()
-	cs, err := kubernetes.NewForConfig(s.client.RESTConfig())
+	cs, err := kubernetes.NewForConfig(env.client.RESTConfig())
 	require.NoError(t, err)
-	dyn, err := dynamic.NewForConfig(s.client.RESTConfig())
+	dyn, err := dynamic.NewForConfig(env.client.RESTConfig())
 	require.NoError(t, err)
 	return cs, dyn
 }
