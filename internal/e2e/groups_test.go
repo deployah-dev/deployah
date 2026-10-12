@@ -51,8 +51,7 @@ func TestRunGroups(t *testing.T) {
 
 	RunGroups(t, []string{"a", "b"}, []string{"c", "d"},
 		func(name string) string { return name },
-		func(t *testing.T, name string) {
-			t.Helper()
+		func(t *testing.T, name string) { //nolint:thelper // failures should stay in this test
 			if name == "a" || name == "b" {
 				mu.Lock()
 				inParallel++

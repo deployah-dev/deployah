@@ -34,8 +34,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// Failures in this test should point here, not at the suite caller.
+//
+//nolint:thelper
 func runPlanCLI(t *testing.T, env *e2eEnv) {
-	t.Helper()
 	src := filepath.Join(env.scenariosDir, "basic-web-service")
 	require.DirExists(t, src)
 	dir, err := inttest.NewScenarioWorkspace(t, src)

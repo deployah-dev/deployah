@@ -15,6 +15,7 @@
 package celassert
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -23,21 +24,96 @@ import (
 
 func TestDiagnose(t *testing.T) {
 	t.Parallel()
-	doc := map[string]any{"summary": map[string]any{"total": int64(0)}}
+	doc := map[string]any{
+		"helmAction": "upgrade",
+		"summary":    map[string]any{"total": int64(0), "create": int64(0)},
+	}
+	vars := map[string]any{"plan": doc}
 	tests := []struct {
-		name string
-		expr string
-		want string
+		name      string
+		expr      string
+		want      string
+		evalFalse bool
 	}{
 		{
-			name: "field compared with a literal",
-			expr: "plan.summary.total == 1",
-			want: "expected: plan.summary.total = 1\nactual: plan.summary.total = 0",
+			name:      "equal",
+			expr:      "plan.summary.total == 1",
+			want:      "expected: plan.summary.total == 1\nactual: plan.summary.total = 0",
+			evalFalse: true,
 		},
 		{
-			name: "logical expression has no invented pair",
-			expr: "plan.summary.total == 1 || plan.summary.total == 2",
-			want: "",
+			name:      "not equal",
+			expr:      "plan.summary.total != 0",
+			want:      "expected: plan.summary.total != 0\nactual: plan.summary.total = 0",
+			evalFalse: true,
+		},
+		{
+			name:      "greater than",
+			expr:      "plan.summary.create > 0",
+			want:      "expected: plan.summary.create > 0\nactual: plan.summary.create = 0",
+			evalFalse: true,
+		},
+		{
+			name:      "greater or equal",
+			expr:      "plan.summary.create >= 1",
+			want:      "expected: plan.summary.create >= 1\nactual: plan.summary.create = 0",
+			evalFalse: true,
+		},
+		{
+			name:      "less than",
+			expr:      "plan.summary.total < 0",
+			want:      "expected: plan.summary.total < 0\nactual: plan.summary.total = 0",
+			evalFalse: true,
+		},
+		{
+			name:      "less or equal",
+			expr:      "plan.summary.total <= -1",
+			want:      "expected: plan.summary.total <= -1\nactual: plan.summary.total = 0",
+			evalFalse: true,
+		},
+		{
+			name:      "string",
+			expr:      `plan.helmAction == "install"`,
+			want:      "expected: plan.helmAction == \"install\"\nactual: plan.helmAction = \"upgrade\"",
+			evalFalse: true,
+		},
+		{
+			name:      "nested field",
+			expr:      "plan.summary.total == 2",
+			want:      "expected: plan.summary.total == 2\nactual: plan.summary.total = 0",
+			evalFalse: true,
+		},
+		{
+			name:      "reversed literal",
+			expr:      "0 < plan.summary.create",
+			want:      "expected: 0 < plan.summary.create\nactual: plan.summary.create = 0",
+			evalFalse: true,
+		},
+		{
+			name:      "reversed equality",
+			expr:      "1 == plan.summary.total",
+			want:      "expected: 1 == plan.summary.total\nactual: plan.summary.total = 0",
+			evalFalse: true,
+		},
+		{
+			name:      "reversed string",
+			expr:      `"install" == plan.helmAction`,
+			want:      "expected: \"install\" == plan.helmAction\nactual: plan.helmAction = \"upgrade\"",
+			evalFalse: true,
+		},
+		{
+			name:      "logical expression",
+			expr:      "plan.summary.total == 1 || plan.summary.total == 2",
+			evalFalse: true,
+		},
+		{
+			name:      "call is not a field comparison",
+			expr:      "plan.summary.total == size(plan.summary)",
+			evalFalse: true,
+		},
+		{
+			name: "missing field",
+			expr: "plan.missing == 1",
 		},
 	}
 	for _, tt := range tests {
@@ -45,8 +121,13 @@ func TestDiagnose(t *testing.T) {
 			t.Parallel()
 			prog, err := Compile(tt.expr, WithVariable("plan"))
 			require.NoError(t, err)
-			require.ErrorIs(t, prog.Eval(t.Context(), map[string]any{"plan": doc}), ErrFalse)
-			assert.Equal(t, tt.want, prog.Diagnose(t.Context(), map[string]any{"plan": doc}))
+			evalErr := prog.Eval(t.Context(), vars)
+			require.Error(t, evalErr)
+			assert.Equal(t, tt.evalFalse, errors.Is(evalErr, ErrFalse))
+			assert.Equal(t, tt.want, prog.Diagnose(t.Context(), vars))
+			again := prog.Eval(t.Context(), vars)
+			require.Error(t, again)
+			assert.Equal(t, tt.evalFalse, errors.Is(again, ErrFalse))
 		})
 	}
 }

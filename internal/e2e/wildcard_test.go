@@ -45,8 +45,10 @@ const (
 
 // TestWildcardInstances deploys two review/* siblings and checks identity,
 // list/status isolation, independent runtime env, a manual run, and delete.
+// Failures in this test should point here, not at the suite caller.
+//
+//nolint:thelper
 func runWildcardInstances(t *testing.T, env *e2eEnv) {
-	t.Helper()
 	src := filepath.Join(env.scenariosDir, "wildcard-review")
 	require.DirExists(t, src)
 

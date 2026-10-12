@@ -59,37 +59,35 @@ var crdLifecycleGVR = schema.GroupVersionResource{
 
 // TestCRDLifecycle checks Helm-native chart CRD install, upgrade, and
 // uninstall. File mutation cannot be expressed in e2e.yaml.
+// Failures in this test should point here, not at the suite caller.
+//
+//nolint:thelper
 func runCRDLifecycle(t *testing.T, env *e2eEnv) {
-	t.Helper()
 	src := filepath.Join(env.scenariosDir, "crd-lifecycle")
 	require.DirExists(t, src)
 
 	dir, err := inttest.NewScenarioWorkspace(t, src)
 	require.NoError(t, err)
 
-	ns := fixtureNamespace("crd-lifecycle")
-	claim, err := env.claimNamespace(t.Context(), ns)
-	require.NoError(t, err)
-
 	restCfg := kubeRESTConfig(t, env.kcPath, kindContext)
 	ext := newApiextensionsClient(t, restCfg)
 	dyn := newDynamicClient(t, restCfg)
+
+	ns := fixtureNamespace("crd-lifecycle")
 	var crdUID types.UID
+	claim, err := env.claimNamespace(t.Context(), ns)
+	require.NoError(t, err)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), namespaceWaitTimeout)
 		defer cancel()
-		var errs []error
+		var crdErr error
 		if crdUID != "" {
-			if delErr := deleteOwnedCRD(ctx, ext, crdLifecycleName, crdUID); delErr != nil {
-				errs = append(errs, delErr)
-			}
+			crdErr = deleteOwnedCRD(ctx, ext, crdLifecycleName, crdUID)
 		}
-		if cleanupErr := env.cleanupClaim(t, dir, claim, []releaseTarget{{
+		nsErr := env.cleanupClaim(t, dir, claim, []releaseTarget{{
 			Project: "crd-lifecycle", Env: "dev",
-		}}); cleanupErr != nil {
-			errs = append(errs, cleanupErr)
-		}
-		if joined := errors.Join(errs...); joined != nil {
+		}})
+		if joined := errors.Join(crdErr, nsErr); joined != nil {
 			t.Errorf("cleanup: %v", joined)
 		}
 	})
@@ -137,36 +135,34 @@ const crdAddedName = "addedwidgets.example.com"
 
 // TestCRDNewlyAddedOnUpgrade checks that a CRD file added after the
 // first install is not installed by an ordinary Helm Upgrade.
+// Failures in this test should point here, not at the suite caller.
+//
+//nolint:thelper
 func runCRDNewlyAddedOnUpgrade(t *testing.T, env *e2eEnv) {
-	t.Helper()
 	src := filepath.Join(env.scenariosDir, "crd-lifecycle")
 	require.DirExists(t, src)
 
 	dir, err := inttest.NewScenarioWorkspace(t, src)
 	require.NoError(t, err)
 
-	ns := fixtureNamespace("crd-added")
-	claim, err := env.claimNamespace(t.Context(), ns)
-	require.NoError(t, err)
-
 	restCfg := kubeRESTConfig(t, env.kcPath, kindContext)
 	ext := newApiextensionsClient(t, restCfg)
+
+	ns := fixtureNamespace("crd-added")
 	var crdUID types.UID
+	claim, err := env.claimNamespace(t.Context(), ns)
+	require.NoError(t, err)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), namespaceWaitTimeout)
 		defer cancel()
-		var errs []error
+		var crdErr error
 		if crdUID != "" {
-			if delErr := deleteOwnedCRD(ctx, ext, crdLifecycleName, crdUID); delErr != nil {
-				errs = append(errs, delErr)
-			}
+			crdErr = deleteOwnedCRD(ctx, ext, crdLifecycleName, crdUID)
 		}
-		if cleanupErr := env.cleanupClaim(t, dir, claim, []releaseTarget{{
+		nsErr := env.cleanupClaim(t, dir, claim, []releaseTarget{{
 			Project: "crd-lifecycle", Env: "dev",
-		}}); cleanupErr != nil {
-			errs = append(errs, cleanupErr)
-		}
-		if joined := errors.Join(errs...); joined != nil {
+		}})
+		if joined := errors.Join(crdErr, nsErr); joined != nil {
 			t.Errorf("cleanup: %v", joined)
 		}
 	})

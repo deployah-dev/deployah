@@ -51,8 +51,10 @@ func (c *semanticPlanClient) RenderManifestsWithPrep(
 	return c.result, c.prep, func() {}, nil
 }
 
+// Failures in this test should point here, not at the suite caller.
+//
+//nolint:thelper
 func runSemanticPlanDoesNotMutateLive(t *testing.T, env *e2eEnv) {
-	t.Helper()
 	resolved := &spec.ResolvedSpec{
 		Spec: &spec.Spec{Project: "shop"},
 		Env:  spec.EnvIdentity{Original: "dev"},

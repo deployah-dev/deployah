@@ -1007,10 +1007,10 @@ steps:
 			},
 		})
 		assert.Equal(t, StatusFail, result.Steps[0].Status)
-		assert.Contains(t, result.Steps[0].Detail, "expected: plan.summary.total = 1")
+		assert.Contains(t, result.Steps[0].Detail, "expected: plan.summary.total == 1")
 		assert.Contains(t, result.Steps[0].Detail, "actual: plan.summary.total = 0")
 		assert.Contains(t, result.Steps[0].Detail, "expr[1]")
-		assert.NotContains(t, result.Steps[0].Detail, "expected: plan.summary.total = 1\nactual: plan.summary.total = 0\nexpected:")
+		assert.NotContains(t, result.Steps[0].Detail, "expected: plan.summary.total == 1\nactual: plan.summary.total = 0\nexpected:")
 	})
 }
 

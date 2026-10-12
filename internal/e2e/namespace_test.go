@@ -38,8 +38,10 @@ import (
 
 // TestDeployCreatesNamespace checks that deployah deploy creates a namespace
 // that the suite did not create first.
+// Failures in this test should point here, not at the suite caller.
+//
+//nolint:thelper
 func runDeployCreatesNamespace(t *testing.T, env *e2eEnv) {
-	t.Helper()
 	src := filepath.Join(env.scenariosDir, "basic-web-service")
 	require.DirExists(t, src)
 	dir, err := inttest.NewScenarioWorkspace(t, src)

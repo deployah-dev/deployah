@@ -162,8 +162,10 @@ func startCluster(t *testing.T) *e2eEnv {
 }
 
 // runE2EFixtures runs every scenarios/*/e2e.yaml.
+// Failures in this test should point here, not at the suite caller.
+//
+//nolint:thelper
 func runE2EFixtures(t *testing.T, env *e2eEnv) {
-	t.Helper()
 	// Parallel fixtures share the go test -parallel limit. Sequential
 	// fixtures run after them, in directory name order.
 	cases := env.loadE2ECases(t)

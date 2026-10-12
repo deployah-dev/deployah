@@ -35,8 +35,10 @@ import (
 
 // TestPublicImagePull deploys an image that is not special-cased by the
 // suite. Kind pulls it from the public registry.
+// Failures in this test should point here, not at the suite caller.
+//
+//nolint:thelper
 func runPublicImagePull(t *testing.T, env *e2eEnv) {
-	t.Helper()
 	src := filepath.Join(env.scenariosDir, "basic-web-service")
 	require.DirExists(t, src)
 	dir, err := inttest.NewScenarioWorkspace(t, src)

@@ -24,20 +24,22 @@ import (
 	"cel.dev/cel-go/interpreter"
 )
 
-// comparisonFns are CEL's built-in binary comparison overloads.
-var comparisonFns = map[string]struct{}{
-	"_==_": {},
-	"_!=_": {},
-	"_<_":  {},
-	"_<=_": {},
-	"_>_":  {},
-	"_>=_": {},
+// comparisonOps maps a CEL overload to the operator written in the source.
+// A literal on the left is supported. Other shapes stay empty.
+var comparisonOps = map[string]string{
+	"_==_": "==",
+	"_!=_": "!=",
+	"_<_":  "<",
+	"_<=_": "<=",
+	"_>_":  ">",
+	"_>=_": ">=",
 }
 
-// Diagnose explains a false comparison when the actual value is known.
+// Diagnose explains a false field comparison when the actual value is known.
+// The source operator is kept. Other expressions return an empty string.
 func (p *Program) Diagnose(ctx context.Context, vars map[string]any) string {
-	// A field compared with a literal includes the observed value.
-	// Anything else returns an empty string. Eval itself is unchanged.
+	// A field compared with a literal, in either order, includes the observed
+	// value. Eval itself is unchanged.
 	if p == nil || p.tracked == nil || p.root == nil || ctx == nil {
 		return ""
 	}
@@ -59,23 +61,35 @@ func comparisonDetail(root ast.Expr, state interpreter.EvalState) string {
 		return ""
 	}
 	call := root.AsCall()
-	if _, ok := comparisonFns[call.FunctionName()]; !ok || call.IsMemberFunction() {
+	op, ok := comparisonOps[call.FunctionName()]
+	if !ok || call.IsMemberFunction() {
 		return ""
 	}
 	args := call.Args()
 	if len(args) != 2 {
 		return ""
 	}
-	path, pathOK := selectorPath(args[0])
-	lit, litOK := literalText(args[1])
-	if pathOK && litOK {
-		actual, ok := state.Value(args[0].ID())
-		if !ok {
-			return ""
-		}
-		return fmt.Sprintf("expected: %s = %s\nactual: %s = %s", path, lit, path, formatCEL(actual))
+	if text := fieldLiteral(op, args[0], args[1], true, state); text != "" {
+		return text
 	}
-	return ""
+	return fieldLiteral(op, args[1], args[0], false, state)
+}
+
+func fieldLiteral(op string, field, lit ast.Expr, fieldOnLeft bool, state interpreter.EvalState) string {
+	path, pathOK := selectorPath(field)
+	text, litOK := literalText(lit)
+	if !pathOK || !litOK {
+		return ""
+	}
+	actual, ok := state.Value(field.ID())
+	if !ok {
+		return ""
+	}
+	expected := path + " " + op + " " + text
+	if !fieldOnLeft {
+		expected = text + " " + op + " " + path
+	}
+	return fmt.Sprintf("expected: %s\nactual: %s = %s", expected, path, formatCEL(actual))
 }
 
 func selectorPath(e ast.Expr) (string, bool) {
