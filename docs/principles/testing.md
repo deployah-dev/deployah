@@ -311,10 +311,12 @@ A helper earns its place when it removes real repetition or makes a failure
 easier to read. It **SHOULD** have one job, show its dependencies, and keep
 tests isolated.
 
-A few repeated lines are better than a one- or two-line wrapper. Call
-`t.TempDir`, `t.Cleanup`, `t.Setenv`, `t.Context`, or the testify assertion
-directly. Do not wrap a single obvious call in a function named `setup` or
-`helper`.
+Judge a helper by the intent it adds, not by its length. A short helper is
+appropriate when it names a testing contract, locks a shared default, or
+removes setup that is easy to get wrong. A short helper is unnecessary when
+it only forwards arguments to `t.TempDir`, `t.Cleanup`, `t.Setenv`,
+`t.Context`, or a testify assertion. Call those directly. Do not wrap one
+of them in a function named `setup` or `helper`.
 
 Extract a helper when the repeated operation has real behavior: building a
 value with several fields, loading fixtures, comparing output, or owning a
@@ -349,9 +351,14 @@ func mustPlan(tb testing.TB, helmAction semantic.HelmAction, changes []semantic.
 }
 ```
 
-That helper is worth having. A function whose body is only `t.TempDir()` is
-not. Do not move a package-local helper into `internal/testing/` only
-because several tests in the same package call it.
+`mustPlan` is short because it delegates. The value is the contract behind
+that call: `mustPlanWithTasks` fills the header the view tests share
+(project `web`, environment `prod`, release `web`, namespace `prod`), and
+`semantic.New` fails the test through `tb.Helper()` when the plan cannot be
+built. Each test passes the Helm action and the resource changes. A
+function whose body is only `t.TempDir()` adds none of that. Do not move a
+package-local helper into `internal/testing/` only because several tests in
+the same package call it.
 
 **Shared across packages.** A helper that more than one package imports
 **MAY** live under [`internal/testing/`](../../internal/testing/), in a
@@ -755,8 +762,10 @@ see.
 A test **SHOULD** pass alone and as part of the suite. The Nix test runners
 pass `-shuffle=on`. When a shuffled run fails, reuse the seed it prints.
 
-Shuffling test order is separate from random input inside a test. If a test
-needs random bytes, use a fixed seed and record it.
+Shuffling test order is separate from random values inside a test. Use a
+reproducible seed when randomness changes inputs or expected behavior. A
+random resource name may stay nondeterministic. See
+[Determinism](#determinism).
 
 ## Parallel execution
 
@@ -790,9 +799,21 @@ restriction should be obvious at the call site.
 
 A test **SHOULD** produce the same result on every run.
 
-Avoid uncontrolled random values, sleeps that hope a condition becomes
-true, assumptions about the wall clock, map order that the contract treats
-as stable, and shared mutable state.
+When randomness changes inputs, expected results, or assertions, use a
+reproducible seed, or keep enough information to rerun the failure.
+Randomized fixtures and property-style checks belong here.
+
+A random identifier **MAY** stay nondeterministic when its only job is to
+isolate a resource. `runDeployCreatesNamespace` reads `crypto/rand` and
+builds a namespace name, `e2e-ns-` plus random hex, so runs do not collide.
+The test checks that this namespace was missing and that deploy created it.
+The exact characters are not an expected value. An identifier used this way
+must leave assertions and golden output stable, keep the resource isolated,
+and still be cleaned up. Normalize it before it enters a golden file.
+
+Avoid sleeps that hope a condition becomes true, assumptions about the wall
+clock, map order that the contract treats as stable, and shared mutable
+state.
 
 For Kubernetes readiness, Helm, container startup, reconciliation, and
 background work, wait for a condition with a bounded timeout. Do not sleep
@@ -878,13 +899,30 @@ files require their build tags.
 Do not add a new build tag. Use unit tests, the `integration` tag, or the
 `e2e` tag.
 
-To regenerate an `e2e.yaml` skeleton from a live cluster:
+To generate an `e2e.yaml` skeleton from a live cluster, replace
+`<scenario-name>` with the scenario directory name. That directory name is
+the subtest. Fixtures run under `parallel` or `sequential`, so the pattern
+matches either group:
 
 ```sh
-go test -tags e2e ./internal/e2e -run 'TestE2EFixtures/<name>' -e2e.scaffold
+go test -v -tags e2e ./internal/e2e \
+  -run 'TestE2E/TestE2EFixtures/(parallel|sequential)/<scenario-name>' \
+  -e2e.scaffold
 ```
 
-That flag is not `-update`.
+`basic-web-service` is one such name. Pass `-v`. The skeleton is logged
+with `t.Logf`, and `go test` hides logs when the test passes.
+
+Scaffold copies the scenario into a temporary workspace
+(`NewScenarioWorkspace`), lists live objects in that case's namespace, and
+builds the skeleton from them. It does not edit the source-controlled
+scenario. When `e2e.yaml` is already in the workspace, which is the usual
+case, the skeleton is printed and the file is left unchanged. When the file
+is absent, the skeleton is written only inside that temporary copy. Review
+the output, then copy it into the scenario fixture yourself if you want to
+keep it.
+
+`-e2e.scaffold` is not `-update`. `-update` regenerates golden snapshots.
 
 ## Failure diagnostics
 
