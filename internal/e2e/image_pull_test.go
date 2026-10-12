@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
@@ -34,9 +35,9 @@ import (
 
 // TestPublicImagePull deploys an image that is not special-cased by the
 // suite. Kind pulls it from the public registry.
-func (s *E2ESuite) TestPublicImagePull() {
-	t := s.T()
-	src := filepath.Join(s.scenariosDir, "basic-web-service")
+func runPublicImagePull(t *testing.T, env *e2eEnv) {
+	t.Helper()
+	src := filepath.Join(env.scenariosDir, "basic-web-service")
 	require.DirExists(t, src)
 	dir, err := inttest.NewScenarioWorkspace(t, src)
 	require.NoError(t, err)
@@ -49,10 +50,10 @@ func (s *E2ESuite) TestPublicImagePull() {
 	require.NoError(t, os.WriteFile(specPath, []byte(updated), 0o600)) // #nosec G703 -- path under the copied workspace
 
 	ns := fixtureNamespace("public-image")
-	claim, err := s.claimNamespace(t.Context(), ns)
+	claim, err := env.claimNamespace(t.Context(), ns)
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		if cleanupErr := s.cleanupClaim(t, dir, claim, []releaseTarget{{
+		if cleanupErr := env.cleanupClaim(t, dir, claim, []releaseTarget{{
 			Project: "basic-web-service", Env: "dev",
 		}}); cleanupErr != nil {
 			t.Errorf("cleanup: %v", cleanupErr)
@@ -61,7 +62,7 @@ func (s *E2ESuite) TestPublicImagePull() {
 
 	runIn(t, dir, "deploy", "dev", "--context", kindContext, "--namespace", ns)
 	require.NoError(t, wait.For(func(ctx context.Context) (bool, error) {
-		objects, obsErr := s.observe(ctx, e2e.ResourceSelect{
+		objects, obsErr := env.observe(ctx, e2e.ResourceSelect{
 			APIVersion: "apps/v1",
 			Kind:       "Deployment",
 			Name:       "basic-web-service-dev",

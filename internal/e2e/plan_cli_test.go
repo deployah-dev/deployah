@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -33,9 +34,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func (s *E2ESuite) TestPlanCLI() {
-	t := s.T()
-	src := filepath.Join(s.scenariosDir, "basic-web-service")
+func runPlanCLI(t *testing.T, env *e2eEnv) {
+	t.Helper()
+	src := filepath.Join(env.scenariosDir, "basic-web-service")
 	require.DirExists(t, src)
 	dir, err := inttest.NewScenarioWorkspace(t, src)
 	require.NoError(t, err)
@@ -46,7 +47,7 @@ func (s *E2ESuite) TestPlanCLI() {
 		if claim.UID == "" {
 			return
 		}
-		if cleanupErr := s.cleanupClaim(t, dir, claim, []releaseTarget{{
+		if cleanupErr := env.cleanupClaim(t, dir, claim, []releaseTarget{{
 			Project: "basic-web-service",
 			Env:     "dev",
 		}}); cleanupErr != nil {
@@ -54,22 +55,22 @@ func (s *E2ESuite) TestPlanCLI() {
 		}
 	})
 
-	stdout, _, err := runInErr(t, dir, "plan", "dev", "-o", "json",
+	stdout, _, err := runInErrContext(t, t.Context(), dir, "plan", "dev", "-o", "json",
 		"--context", kindContext, "--namespace", ns)
 	require.NoError(t, err)
 	var fresh map[string]any
 	require.NoError(t, json.Unmarshal([]byte(stdout), &fresh))
 	assert.Empty(t, fresh["drift"])
-	cs, _ := s.kubeClients(t)
+	cs, _ := env.kubeClients(t)
 	_, err = cs.CoreV1().Namespaces().Get(t.Context(), ns, metav1.GetOptions{})
 	require.True(t, apierrors.IsNotFound(err), "fresh plan must not create namespace %s: %v", ns, err)
 
-	got, err := s.claimNamespace(t.Context(), ns)
+	got, err := env.claimNamespace(t.Context(), ns)
 	require.NoError(t, err)
 	claim = got
 	runIn(t, dir, "deploy", "dev", "--context", kindContext, "--namespace", ns)
 
-	stdout, _, err = runInErr(t, dir, "plan", "dev", "-o", "json",
+	stdout, _, err = runInErrContext(t, t.Context(), dir, "plan", "dev", "-o", "json",
 		"--context", kindContext, "--namespace", ns)
 	require.NoError(t, err)
 	var same map[string]any
@@ -77,7 +78,7 @@ func (s *E2ESuite) TestPlanCLI() {
 	assert.Empty(t, same["changes"])
 	assert.Empty(t, same["drift"])
 
-	_, _, err = runInErr(t, dir, "plan", "dev", "--detailed-exitcode",
+	_, _, err = runInErrContext(t, t.Context(), dir, "plan", "dev", "--detailed-exitcode",
 		"--context", kindContext, "--namespace", ns)
 	require.NoError(t, err)
 
@@ -88,7 +89,7 @@ func (s *E2ESuite) TestPlanCLI() {
 	_, err = cs.AppsV1().Deployments(ns).Update(t.Context(), dep, metav1.UpdateOptions{})
 	require.NoError(t, err)
 
-	stdout, _, err = runInErr(t, dir, "plan", "dev", "-o", "json",
+	stdout, _, err = runInErrContext(t, t.Context(), dir, "plan", "dev", "-o", "json",
 		"--context", kindContext, "--namespace", ns)
 	require.NoError(t, err)
 	var drifted map[string]any
@@ -105,11 +106,11 @@ func (s *E2ESuite) TestPlanCLI() {
 	}
 	assert.Equal(t, 1, modified)
 
-	_, _, err = runInErr(t, dir, "plan", "dev", "--detailed-exitcode",
+	_, _, err = runInErrContext(t, t.Context(), dir, "plan", "dev", "--detailed-exitcode",
 		"--context", kindContext, "--namespace", ns)
 	require.NoError(t, err, "drift alone must not exit 2")
 
-	human, _, err := runInErr(t, dir, "plan", "dev",
+	human, _, err := runInErrContext(t, t.Context(), dir, "plan", "dev",
 		"--context", kindContext, "--namespace", ns)
 	require.NoError(t, err)
 	assert.Contains(t, human, "Drift")
@@ -121,7 +122,7 @@ func (s *E2ESuite) TestPlanCLI() {
 	require.Equal(t, 1, bytes.Count(raw, old))
 	updated := bytes.Replace(raw, old, []byte("port: 80\n    replicas: 2\n"), 1)
 	require.NoError(t, os.WriteFile(specPath, updated, 0o600)) // #nosec G703 -- path under test-controlled temp dir
-	stdout, _, err = runInErr(t, dir, "plan", "dev", "--detailed-exitcode",
+	stdout, _, err = runInErrContext(t, t.Context(), dir, "plan", "dev", "--detailed-exitcode",
 		"--context", kindContext, "--namespace", ns)
 	require.ErrorIs(t, err, planCmd.ErrChangesPresent)
 	assert.NotEmpty(t, stdout)

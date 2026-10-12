@@ -66,12 +66,12 @@ func execCommand(t *testing.T) e2e.ExecFunc {
 	}
 }
 
-func (s *E2ESuite) claimNamespace(ctx context.Context, name string) (e2e.Claim, error) {
+func (env *e2eEnv) claimNamespace(ctx context.Context, name string) (e2e.Claim, error) {
 	runID := rand.Text()
 	ns := &corev1.Namespace{}
 	ns.Name = name
 	ns.Annotations = map[string]string{e2e.RunAnnotation: runID}
-	res, err := s.newResources("")
+	res, err := env.newResources("")
 	if err != nil {
 		return e2e.Claim{}, err
 	}
@@ -91,7 +91,7 @@ func (s *E2ESuite) claimNamespace(ctx context.Context, name string) (e2e.Claim, 
 	}
 	for attempt := range e2e.NamespaceReconcileAttempts {
 		if attempt > 0 || got == nil {
-			got, getErr = s.namespaceView(ctx, name)
+			got, getErr = env.namespaceView(ctx, name)
 		}
 		decision := e2e.ResolveNamespaceCreate(runID, name, class, got, getErr)
 		if decision.Owned {
@@ -128,8 +128,8 @@ func classifyCreate(err error) e2e.CreateClass {
 	}
 }
 
-func (s *E2ESuite) namespaceView(ctx context.Context, name string) (*e2e.NamespaceView, error) {
-	res, err := s.newResources("")
+func (env *e2eEnv) namespaceView(ctx context.Context, name string) (*e2e.NamespaceView, error) {
+	res, err := env.newResources("")
 	if err != nil {
 		return nil, err
 	}
@@ -147,32 +147,32 @@ func (s *E2ESuite) namespaceView(ctx context.Context, name string) (*e2e.Namespa
 	}, nil
 }
 
-func (s *E2ESuite) cleanupClaim(t *testing.T, dir string, claim e2e.Claim, releases []releaseTarget) error {
+func (env *e2eEnv) cleanupClaim(t *testing.T, dir string, claim e2e.Claim, releases []releaseTarget) error {
 	t.Helper()
 	phases := make([]e2e.CleanupPhase, 0, len(releases)+3)
 	for _, rel := range releases {
 		phases = append(phases, e2e.CleanupPhase{
 			Name: "delete " + rel.Project + "/" + rel.Env,
-			Run:  s.gated(claim, s.deleteRelease(t, dir, claim.Name, rel)),
+			Run:  env.gated(claim, env.deleteRelease(t, dir, claim.Name, rel)),
 		})
 	}
 	phases = append(phases,
-		e2e.CleanupPhase{Name: "workloads", Run: s.gated(claim, func(ctx context.Context) error {
-			return s.deleteWorkloads(ctx, claim.Name)
+		e2e.CleanupPhase{Name: "workloads", Run: env.gated(claim, func(ctx context.Context) error {
+			return env.deleteWorkloads(ctx, claim.Name)
 		})},
-		e2e.CleanupPhase{Name: "pvcs", Run: s.gated(claim, func(ctx context.Context) error {
-			return s.deletePVCs(ctx, claim.Name)
+		e2e.CleanupPhase{Name: "pvcs", Run: env.gated(claim, func(ctx context.Context) error {
+			return env.deletePVCs(ctx, claim.Name)
 		})},
-		e2e.CleanupPhase{Name: "namespace", Run: s.gated(claim, func(ctx context.Context) error {
-			return s.deleteNamespaceObject(ctx, claim)
+		e2e.CleanupPhase{Name: "namespace", Run: env.gated(claim, func(ctx context.Context) error {
+			return env.deleteNamespaceObject(ctx, claim)
 		})},
 	)
 	return e2e.RunCleanup(context.Background(), phases, e2e.WithPhaseTimeout(namespaceWaitTimeout))
 }
 
-func (s *E2ESuite) gated(claim e2e.Claim, fn func(context.Context) error) func(context.Context) error {
+func (env *e2eEnv) gated(claim e2e.Claim, fn func(context.Context) error) func(context.Context) error {
 	return func(ctx context.Context) error {
-		view, err := s.namespaceView(ctx, claim.Name)
+		view, err := env.namespaceView(ctx, claim.Name)
 		if confirmErr := e2e.ConfirmNamespaceOwner(claim, view, err); confirmErr != nil {
 			if errors.Is(confirmErr, e2e.ErrNamespaceGone) {
 				return nil
@@ -183,7 +183,7 @@ func (s *E2ESuite) gated(claim e2e.Claim, fn func(context.Context) error) func(c
 	}
 }
 
-func (s *E2ESuite) deleteRelease(t *testing.T, dir, namespace string, rel releaseTarget) func(context.Context) error {
+func (env *e2eEnv) deleteRelease(t *testing.T, dir, namespace string, rel releaseTarget) func(context.Context) error {
 	t.Helper()
 	return func(ctx context.Context) error {
 		_, _, err := runInErrContext(t, ctx, dir, "delete", rel.Project, rel.Env,
@@ -193,12 +193,12 @@ func (s *E2ESuite) deleteRelease(t *testing.T, dir, namespace string, rel releas
 	}
 }
 
-func (s *E2ESuite) deleteNamespaceObject(ctx context.Context, claim e2e.Claim) error {
+func (env *e2eEnv) deleteNamespaceObject(ctx context.Context, claim e2e.Claim) error {
 	pre, err := e2e.UIDPrecondition(claim.UID)
 	if err != nil {
 		return err
 	}
-	res, err := s.newResources("")
+	res, err := env.newResources("")
 	if err != nil {
 		return err
 	}
@@ -226,8 +226,8 @@ func (s *E2ESuite) deleteNamespaceObject(ctx context.Context, claim e2e.Claim) e
 		wait.WithContext(ctx), wait.WithImmediate())
 }
 
-func (s *E2ESuite) deleteWorkloads(ctx context.Context, namespace string) error {
-	res, err := s.newResources(namespace)
+func (env *e2eEnv) deleteWorkloads(ctx context.Context, namespace string) error {
+	res, err := env.newResources(namespace)
 	if err != nil {
 		return err
 	}
@@ -288,8 +288,8 @@ func (s *E2ESuite) deleteWorkloads(ctx context.Context, namespace string) error 
 	return errors.Join(errs...)
 }
 
-func (s *E2ESuite) deletePVCs(ctx context.Context, namespace string) error {
-	res, err := s.newResources(namespace)
+func (env *e2eEnv) deletePVCs(ctx context.Context, namespace string) error {
+	res, err := env.newResources(namespace)
 	if err != nil {
 		return err
 	}
@@ -326,12 +326,12 @@ func (s *E2ESuite) deletePVCs(ctx context.Context, namespace string) error {
 	return errors.Join(errs...)
 }
 
-func (s *E2ESuite) observe(ctx context.Context, sel e2e.ResourceSelect, scenarioNS string) ([]map[string]any, error) {
+func (env *e2eEnv) observe(ctx context.Context, sel e2e.ResourceSelect, scenarioNS string) ([]map[string]any, error) {
 	gvk, err := parseSelectGVK(sel)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", e2e.ErrObserveTerminal, err)
 	}
-	namespaced, err := s.isNamespaced(gvk)
+	namespaced, err := env.isNamespaced(gvk)
 	if err != nil {
 		return nil, wrapObserve(err)
 	}
@@ -342,7 +342,7 @@ func (s *E2ESuite) observe(ctx context.Context, sel e2e.ResourceSelect, scenario
 			lookupNS = sel.Namespace
 		}
 	}
-	res, err := s.newResources(lookupNS)
+	res, err := env.newResources(lookupNS)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", e2e.ErrObserveTerminal, err)
 	}
@@ -397,13 +397,13 @@ func parseSelectGVK(sel e2e.ResourceSelect) (schema.GroupVersionKind, error) {
 	return gv.WithKind(sel.Kind), nil
 }
 
-func (s *E2ESuite) isNamespaced(gvk schema.GroupVersionKind) (bool, error) {
-	s.mapperMu.Lock()
-	defer s.mapperMu.Unlock()
-	mapping, err := s.mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
+func (env *e2eEnv) isNamespaced(gvk schema.GroupVersionKind) (bool, error) {
+	env.mapperMu.Lock()
+	defer env.mapperMu.Unlock()
+	mapping, err := env.mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
 	if meta.IsNoMatchError(err) {
-		s.mapper.Reset()
-		mapping, err = s.mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
+		env.mapper.Reset()
+		mapping, err = env.mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
 	}
 	if err != nil {
 		return false, fmt.Errorf("RESTMapping %s: %w", gvk.String(), err)

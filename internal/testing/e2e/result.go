@@ -17,6 +17,7 @@ package e2e
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 // Status is the outcome of one step or assertion.
@@ -51,6 +52,8 @@ type StepResult struct {
 	Unsafe      bool
 	Assertions  []AssertResult
 	StoppedHere bool
+	Elapsed     time.Duration
+	Timeout     time.Duration
 }
 
 // String is the go test line for a step that did not pass.

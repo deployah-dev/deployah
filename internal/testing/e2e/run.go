@@ -111,16 +111,37 @@ func Run(ctx context.Context, in RunInput) RunResult {
 }
 
 func runOne(parent context.Context, in RunInput, step PreparedStep, index int) StepResult {
+	start := time.Now()
 	ctx, cancel := context.WithTimeout(parent, step.Timeout)
 	defer cancel()
+	var result StepResult
 	switch step.Op {
 	case "assert":
-		return runAssert(ctx, in, step, index)
+		result = runAssert(ctx, in, step, index)
 	case "logs":
-		return runLogs(ctx, in, step, index)
+		result = runLogs(ctx, in, step, index)
 	default:
-		return runCommand(ctx, in, step, index)
+		result = runCommand(ctx, in, step, index)
 	}
+	result.Elapsed = time.Since(start)
+	result.Timeout = step.Timeout
+	return result
+}
+
+func selectLabel(sel ResourceSelect) string {
+	label := sel.APIVersion + " " + sel.Kind
+	if sel.Name != "" {
+		label += "/" + sel.Name
+	}
+	return label
+}
+
+func celFalseDetail(index int, expr, diagnosis string) string {
+	detail := fmt.Sprintf("expr[%d] %s: false", index, expr)
+	if diagnosis == "" {
+		return detail
+	}
+	return detail + "\n" + diagnosis
 }
 
 func runCommand(ctx context.Context, in RunInput, step PreparedStep, index int) StepResult {
@@ -178,7 +199,7 @@ func evalPlan(ctx context.Context, base StepResult, plan *PreparedPlan, stdout s
 			continue
 		}
 		if errors.Is(err, celassert.ErrFalse) {
-			problems = append(problems, fmt.Sprintf("expr[%d] %s: false", i, expr))
+			problems = append(problems, celFalseDetail(i, expr, prog.Diagnose(ctx, map[string]any{"plan": doc})))
 			continue
 		}
 		base.Status = StatusError
@@ -389,7 +410,7 @@ func expectProblems(assertion PreparedAssert, objects []map[string]any) []string
 		return nil
 	}
 	if len(objects) == 0 {
-		return []string{"no resources selected"}
+		return []string{"no resources selected: " + selectLabel(assertion.Select) + " observed 0"}
 	}
 	var problems []string
 	for i, obj := range objects {
@@ -416,6 +437,10 @@ func exprProblems(ctx context.Context, assertion PreparedAssert, objects []map[s
 			continue
 		}
 		if errors.Is(err, celassert.ErrFalse) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			if errors.Is(err, celassert.ErrFalse) {
+				problems = append(problems, celFalseDetail(i, expr, prog.Diagnose(ctx, map[string]any{"objects": list})))
+				continue
+			}
 			problems = append(problems, fmt.Sprintf("expr[%d] %s: %v", i, expr, err))
 			continue
 		}

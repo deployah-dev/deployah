@@ -23,9 +23,12 @@ import (
 	"io"
 	"math/big"
 	"strings"
+	"sync"
 
 	"cel.dev/cel-go/cel"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+
+	celast "cel.dev/cel-go/common/ast"
 )
 
 const (
@@ -59,6 +62,9 @@ var (
 type Program struct {
 	expression string
 	prog       cel.Program
+	tracked    cel.Program
+	root       celast.Expr
+	mu         sync.Mutex
 }
 
 // Option configures Compile.
@@ -142,7 +148,20 @@ func Compile(expression string, opts ...Option) (*Program, error) {
 	if err != nil {
 		return nil, fmt.Errorf("compiling expression: %w", err)
 	}
-	return &Program{expression: expression, prog: prog}, nil
+	tracked, err := env.Program(ast,
+		cel.CostLimit(cfg.cost),
+		cel.InterruptCheckFrequency(DefaultInterruptCheckFrequency),
+		cel.EvalOptions(cel.OptTrackState),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("compiling expression: %w", err)
+	}
+	return &Program{
+		expression: expression,
+		prog:       prog,
+		tracked:    tracked,
+		root:       ast.NativeRep().Expr(),
+	}, nil
 }
 
 func (cfg config) validate(expression string) error {

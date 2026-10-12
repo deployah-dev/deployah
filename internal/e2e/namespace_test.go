@@ -38,9 +38,9 @@ import (
 
 // TestDeployCreatesNamespace checks that deployah deploy creates a namespace
 // that the suite did not create first.
-func (s *E2ESuite) TestDeployCreatesNamespace() {
-	t := s.T()
-	src := filepath.Join(s.scenariosDir, "basic-web-service")
+func runDeployCreatesNamespace(t *testing.T, env *e2eEnv) {
+	t.Helper()
+	src := filepath.Join(env.scenariosDir, "basic-web-service")
 	require.DirExists(t, src)
 	dir, err := inttest.NewScenarioWorkspace(t, src)
 	require.NoError(t, err)
@@ -49,26 +49,26 @@ func (s *E2ESuite) TestDeployCreatesNamespace() {
 	_, err = rand.Read(buf[:])
 	require.NoError(t, err)
 	ns := "e2e-ns-" + hex.EncodeToString(buf[:])
-	_, getErr := s.namespaceView(t.Context(), ns)
+	_, getErr := env.namespaceView(t.Context(), ns)
 	require.ErrorIs(t, getErr, e2e.ErrNotFound)
 
 	var uid string
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), namespaceWaitTimeout)
 		defer cancel()
-		if cleanupErr := s.cleanupCreatedNamespace(ctx, t, dir, ns, uid, "basic-web-service", "dev"); cleanupErr != nil {
+		if cleanupErr := env.cleanupCreatedNamespace(ctx, t, dir, ns, uid, "basic-web-service", "dev"); cleanupErr != nil {
 			t.Errorf("cleanup: %v", cleanupErr)
 		}
 	})
 
-	_, stderr, deployErr := runInErr(t, dir, "deploy", "dev",
+	_, stderr, deployErr := runInErrContext(t, t.Context(), dir, "deploy", "dev",
 		"--context", kindContext, "--namespace", ns)
-	view, viewErr := s.namespaceView(context.Background(), ns)
+	view, viewErr := env.namespaceView(context.Background(), ns)
 	if viewErr == nil && view != nil {
 		uid = view.UID
 		markCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		marked := &corev1.Namespace{}
-		res, markErr := s.newResources("")
+		res, markErr := env.newResources("")
 		if markErr == nil {
 			markErr = res.Get(markCtx, ns, "", marked)
 		}
@@ -92,7 +92,7 @@ func (s *E2ESuite) TestDeployCreatesNamespace() {
 	assertReleaseExists(t, dir, ns, "basic-web-service", "dev")
 
 	require.NoError(t, wait.For(func(ctx context.Context) (bool, error) {
-		objects, obsErr := s.observe(ctx, e2e.ResourceSelect{
+		objects, obsErr := env.observe(ctx, e2e.ResourceSelect{
 			APIVersion: "apps/v1",
 			Kind:       "Deployment",
 			Name:       "basic-web-service-dev",
@@ -114,10 +114,10 @@ func (s *E2ESuite) TestDeployCreatesNamespace() {
 		wait.WithContext(t.Context()), wait.WithImmediate()))
 }
 
-func (s *E2ESuite) cleanupCreatedNamespace(ctx context.Context, t *testing.T, dir, name, uid, project, env string) error {
+func (env *e2eEnv) cleanupCreatedNamespace(ctx context.Context, t *testing.T, dir, name, uid, project, environment string) error {
 	t.Helper()
 	if uid == "" {
-		view, err := s.namespaceView(ctx, name)
+		view, err := env.namespaceView(ctx, name)
 		if errors.Is(err, e2e.ErrNotFound) || apierrors.IsNotFound(err) {
 			return nil
 		}
@@ -131,47 +131,47 @@ func (s *E2ESuite) cleanupCreatedNamespace(ctx context.Context, t *testing.T, di
 	}
 	phases := []e2e.CleanupPhase{
 		{Name: "delete release", Run: func(phaseCtx context.Context) error {
-			if err := s.confirmCreated(phaseCtx, name, uid); err != nil {
+			if err := env.confirmCreated(phaseCtx, name, uid); err != nil {
 				if errors.Is(err, e2e.ErrNamespaceGone) {
 					return nil
 				}
 				return err
 			}
-			return s.deleteRelease(t, dir, name, releaseTarget{Project: project, Env: env})(phaseCtx)
+			return env.deleteRelease(t, dir, name, releaseTarget{Project: project, Env: environment})(phaseCtx)
 		}},
 		{Name: "workloads", Run: func(phaseCtx context.Context) error {
-			if err := s.confirmCreated(phaseCtx, name, uid); err != nil {
+			if err := env.confirmCreated(phaseCtx, name, uid); err != nil {
 				if errors.Is(err, e2e.ErrNamespaceGone) {
 					return nil
 				}
 				return err
 			}
-			return s.deleteWorkloads(phaseCtx, name)
+			return env.deleteWorkloads(phaseCtx, name)
 		}},
 		{Name: "pvcs", Run: func(phaseCtx context.Context) error {
-			if err := s.confirmCreated(phaseCtx, name, uid); err != nil {
+			if err := env.confirmCreated(phaseCtx, name, uid); err != nil {
 				if errors.Is(err, e2e.ErrNamespaceGone) {
 					return nil
 				}
 				return err
 			}
-			return s.deletePVCs(phaseCtx, name)
+			return env.deletePVCs(phaseCtx, name)
 		}},
 		{Name: "namespace", Run: func(phaseCtx context.Context) error {
-			if err := s.confirmCreated(phaseCtx, name, uid); err != nil {
+			if err := env.confirmCreated(phaseCtx, name, uid); err != nil {
 				if errors.Is(err, e2e.ErrNamespaceGone) {
 					return nil
 				}
 				return err
 			}
-			return s.deleteNamespaceObject(phaseCtx, e2e.Claim{Name: name, UID: uid, RunID: "recorded"})
+			return env.deleteNamespaceObject(phaseCtx, e2e.Claim{Name: name, UID: uid, RunID: "recorded"})
 		}},
 	}
 	return e2e.RunCleanup(ctx, phases, e2e.WithPhaseTimeout(namespaceWaitTimeout))
 }
 
-func (s *E2ESuite) confirmCreated(ctx context.Context, name, uid string) error {
-	view, err := s.namespaceView(ctx, name)
+func (env *e2eEnv) confirmCreated(ctx context.Context, name, uid string) error {
+	view, err := env.namespaceView(ctx, name)
 	if errors.Is(err, e2e.ErrNotFound) {
 		return e2e.ErrNamespaceGone
 	}

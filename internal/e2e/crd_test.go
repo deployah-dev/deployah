@@ -59,19 +59,19 @@ var crdLifecycleGVR = schema.GroupVersionResource{
 
 // TestCRDLifecycle checks Helm-native chart CRD install, upgrade, and
 // uninstall. File mutation cannot be expressed in e2e.yaml.
-func (s *E2ESuite) TestCRDLifecycle() {
-	t := s.T()
-	src := filepath.Join(s.scenariosDir, "crd-lifecycle")
+func runCRDLifecycle(t *testing.T, env *e2eEnv) {
+	t.Helper()
+	src := filepath.Join(env.scenariosDir, "crd-lifecycle")
 	require.DirExists(t, src)
 
 	dir, err := inttest.NewScenarioWorkspace(t, src)
 	require.NoError(t, err)
 
 	ns := fixtureNamespace("crd-lifecycle")
-	claim, err := s.claimNamespace(t.Context(), ns)
+	claim, err := env.claimNamespace(t.Context(), ns)
 	require.NoError(t, err)
 
-	restCfg := kubeRESTConfig(t, s.kcPath, kindContext)
+	restCfg := kubeRESTConfig(t, env.kcPath, kindContext)
 	ext := newApiextensionsClient(t, restCfg)
 	dyn := newDynamicClient(t, restCfg)
 	var crdUID types.UID
@@ -84,7 +84,7 @@ func (s *E2ESuite) TestCRDLifecycle() {
 				errs = append(errs, delErr)
 			}
 		}
-		if cleanupErr := s.cleanupClaim(t, dir, claim, []releaseTarget{{
+		if cleanupErr := env.cleanupClaim(t, dir, claim, []releaseTarget{{
 			Project: "crd-lifecycle", Env: "dev",
 		}}); cleanupErr != nil {
 			errs = append(errs, cleanupErr)
@@ -137,19 +137,19 @@ const crdAddedName = "addedwidgets.example.com"
 
 // TestCRDNewlyAddedOnUpgrade checks that a CRD file added after the
 // first install is not installed by an ordinary Helm Upgrade.
-func (s *E2ESuite) TestCRDNewlyAddedOnUpgrade() {
-	t := s.T()
-	src := filepath.Join(s.scenariosDir, "crd-lifecycle")
+func runCRDNewlyAddedOnUpgrade(t *testing.T, env *e2eEnv) {
+	t.Helper()
+	src := filepath.Join(env.scenariosDir, "crd-lifecycle")
 	require.DirExists(t, src)
 
 	dir, err := inttest.NewScenarioWorkspace(t, src)
 	require.NoError(t, err)
 
 	ns := fixtureNamespace("crd-added")
-	claim, err := s.claimNamespace(t.Context(), ns)
+	claim, err := env.claimNamespace(t.Context(), ns)
 	require.NoError(t, err)
 
-	restCfg := kubeRESTConfig(t, s.kcPath, kindContext)
+	restCfg := kubeRESTConfig(t, env.kcPath, kindContext)
 	ext := newApiextensionsClient(t, restCfg)
 	var crdUID types.UID
 	t.Cleanup(func() {
@@ -161,7 +161,7 @@ func (s *E2ESuite) TestCRDNewlyAddedOnUpgrade() {
 				errs = append(errs, delErr)
 			}
 		}
-		if cleanupErr := s.cleanupClaim(t, dir, claim, []releaseTarget{{
+		if cleanupErr := env.cleanupClaim(t, dir, claim, []releaseTarget{{
 			Project: "crd-lifecycle", Env: "dev",
 		}}); cleanupErr != nil {
 			errs = append(errs, cleanupErr)

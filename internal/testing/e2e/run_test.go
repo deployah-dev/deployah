@@ -989,6 +989,29 @@ steps:
 		assert.Equal(t, StatusError, result.Steps[0].Status)
 		assert.Contains(t, result.Steps[0].Detail, "expr[0]")
 	})
+
+	t.Run("false comparison shows the observed value", func(t *testing.T) {
+		t.Parallel()
+		prepared := prepareRun(t, `
+env: dev
+steps:
+  - plan:
+      expr:
+        - 'plan.summary.total == 1'
+        - 'plan.summary.total == 1 || plan.summary.total == 2'
+`)
+		result := Run(context.Background(), RunInput{
+			Env: "dev", Fixture: prepared,
+			Exec: func(context.Context, string, []string) CommandResult {
+				return CommandResult{Stdout: `{"summary":{"total":0}}`, ExitCode: 0}
+			},
+		})
+		assert.Equal(t, StatusFail, result.Steps[0].Status)
+		assert.Contains(t, result.Steps[0].Detail, "expected: plan.summary.total = 1")
+		assert.Contains(t, result.Steps[0].Detail, "actual: plan.summary.total = 0")
+		assert.Contains(t, result.Steps[0].Detail, "expr[1]")
+		assert.NotContains(t, result.Steps[0].Detail, "expected: plan.summary.total = 1\nactual: plan.summary.total = 0\nexpected:")
+	})
 }
 
 func TestScenariosDirResolves(t *testing.T) {

@@ -69,7 +69,7 @@ func isRetryableAPIError(err error) bool {
 		netutil.IsTimeout(err)
 }
 
-func (s *E2ESuite) scaffoldSimple(t *testing.T, dir, ns string, fx e2e.E2EFixture) {
+func (env *e2eEnv) scaffoldSimple(t *testing.T, dir, ns string, fx e2e.E2EFixture) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -88,7 +88,7 @@ func (s *E2ESuite) scaffoldSimple(t *testing.T, dir, ns string, fx e2e.E2EFixtur
 		list.SetGroupVersionKind(schema.GroupVersionKind{
 			Group: gvk.Group, Version: gvk.Version, Kind: gvk.Kind + "List",
 		})
-		if listErr := s.listKindInNamespace(ctx, ns, list); listErr != nil {
+		if listErr := env.listKindInNamespace(ctx, ns, list); listErr != nil {
 			t.Logf("scaffold list %s: %v", gvk.Kind, listErr)
 			continue
 		}
@@ -116,8 +116,8 @@ func (s *E2ESuite) scaffoldSimple(t *testing.T, dir, ns string, fx e2e.E2EFixtur
 	t.Logf("wrote scaffold %s", path)
 }
 
-func (s *E2ESuite) listKindInNamespace(ctx context.Context, ns string, list *unstructured.UnstructuredList) error {
-	res, err := s.newResources(ns)
+func (env *e2eEnv) listKindInNamespace(ctx context.Context, ns string, list *unstructured.UnstructuredList) error {
+	res, err := env.newResources(ns)
 	if err != nil {
 		return err
 	}

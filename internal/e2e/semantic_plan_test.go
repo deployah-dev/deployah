@@ -51,8 +51,8 @@ func (c *semanticPlanClient) RenderManifestsWithPrep(
 	return c.result, c.prep, func() {}, nil
 }
 
-func (s *E2ESuite) TestSemanticPlanDoesNotMutateLive() {
-	t := s.T()
+func runSemanticPlanDoesNotMutateLive(t *testing.T, env *e2eEnv) {
+	t.Helper()
 	resolved := &spec.ResolvedSpec{
 		Spec: &spec.Spec{Project: "shop"},
 		Env:  spec.EnvIdentity{Original: "dev"},
@@ -70,7 +70,7 @@ func (s *E2ESuite) TestSemanticPlanDoesNotMutateLive() {
 			},
 			prep: helm.ReleasePrep{Operation: helm.OperationInstall, NextRevision: 1},
 		}
-		p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, s.mapper, nil, plan.SemanticBuildInput{
+		p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, env.mapper, nil, plan.SemanticBuildInput{
 			ClusterContext: kindContext,
 			Resolved:       resolved,
 		})
@@ -86,7 +86,7 @@ func (s *E2ESuite) TestSemanticPlanDoesNotMutateLive() {
 			assert.NotEqual(t, "Namespace", c.Resource.Kind)
 		}
 
-		cs, _ := s.kubeClients(t)
+		cs, _ := env.kubeClients(t)
 		_, err = cs.CoreV1().Namespaces().Get(t.Context(), ns, metav1.GetOptions{})
 		require.True(t, apierrors.IsNotFound(err), "namespace %s should still be absent: %v", ns, err)
 		_, err = cs.CoreV1().ConfigMaps(ns).Get(t.Context(), "app", metav1.GetOptions{})
@@ -97,11 +97,11 @@ func (s *E2ESuite) TestSemanticPlanDoesNotMutateLive() {
 	t.Run("upgrade reads live and does not mutate", func(t *testing.T) {
 		ns := fixtureNamespace("semantic-plan-upgrade")
 		manifest := configMapManifest(ns, "app", "same") + "---\n" + configMapManifest(ns, "other", "same")
-		cs, dyn := s.kubeClients(t)
-		claim, err := s.claimNamespace(t.Context(), ns)
+		cs, dyn := env.kubeClients(t)
+		claim, err := env.claimNamespace(t.Context(), ns)
 		require.NoError(t, err)
 		t.Cleanup(func() {
-			if cleanupErr := s.cleanupClaim(t, "", claim, nil); cleanupErr != nil {
+			if cleanupErr := env.cleanupClaim(t, "", claim, nil); cleanupErr != nil {
 				t.Errorf("cleanup: %v", cleanupErr)
 			}
 		})
@@ -181,7 +181,7 @@ func (s *E2ESuite) TestSemanticPlanDoesNotMutateLive() {
 				NextRevision: 2,
 			},
 		}
-		p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, s.mapper, plan.NewDynamicLiveReader(dyn), plan.SemanticBuildInput{
+		p, _, cleanup, err := plan.BuildSemanticPlan(t.Context(), client, env.mapper, plan.NewDynamicLiveReader(dyn), plan.SemanticBuildInput{
 			ClusterContext: kindContext,
 			Resolved:       resolved,
 		})
