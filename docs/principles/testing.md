@@ -43,7 +43,8 @@ Test at the lowest level that gives enough confidence. A higher-level test
 **MUST** cover a contract that the lower level cannot cover well.
 
 Unit tests have no build tag. Scenario tests use the `integration` tag.
-Cluster tests use the `e2e` tag. Do not add another tag.
+Cluster tests use the `e2e` tag. Introduce additional testing build tags
+only when a concrete infrastructure or execution requirement justifies them.
 
 ### Unit tests
 
@@ -132,7 +133,7 @@ When several failures share one setup and one kind of assertion, a table is
 enough. This snippet is illustrative:
 
 ```go
-func TestValidate_MissingField(t *testing.T) {
+func TestValidate_InvalidEnvironment(t *testing.T) {
     t.Parallel()
     tests := []struct {
         name string
@@ -242,8 +243,8 @@ Give each table case a phrase for the scenario: `missing environment`,
 `unknown environment`, `context canceled`. Avoid `case1` and `invalid1`.
 
 The test name and the subtest name work as a pair.
-`TestValidate_MissingField/missing_environment` identifies the failure.
-`TestValidate_MissingField/case1` does not.
+`TestValidate_InvalidEnvironment/missing_environment` identifies the failure.
+`TestValidate_InvalidEnvironment/case1` does not.
 
 ## Helpers
 
@@ -346,15 +347,17 @@ a process, a local server, a client, a background goroutine, a container,
 or a Kubernetes object. Register it immediately after a successful acquire,
 so a later failure still releases it.
 
-If a helper returns a cleanup function, the caller owns it and registers it.
-The names in this snippet are illustrative:
+If a helper returns a cleanup function, the caller owns it. Register that
+cleanup before any assertion that can stop the test. A call can return both
+a cleanup function and an error. `require.NoError` would skip the
+registration. The names in this snippet are illustrative:
 
 ```go
-manifests, cleanup, err := render(t.Context(), spec)
-require.NoError(t, err)
+_, cleanup, err := render(t.Context(), spec)
 if cleanup != nil {
     t.Cleanup(cleanup)
 }
+require.NoError(t, err)
 ```
 
 Do not build a cleanup framework. Use `TestMain` only when process-wide
@@ -562,7 +565,7 @@ Use a table when several cases share the same inputs, outputs, and
 assertions. Name every case. Use `t.Run` so a failure names the case and so
 the case can run in parallel.
 
-The missing-field example above is the right size: two cases, one assertion
+The invalid-environment example above is the right size: two cases, one assertion
 shape. A larger table of one command against several fixture directories is
 the same idea, including a row that expects success and a row that expects
 an error, while every row still checks the command the same way.

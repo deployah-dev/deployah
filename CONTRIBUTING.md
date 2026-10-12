@@ -65,6 +65,11 @@ nix run .#test-integration
 DEPLOYAH_E2E_FORCE=1 nix run .#test-e2e
 ```
 
+`DEPLOYAH_E2E_FORCE=1` lets the end-to-end suite destroy an existing Kind
+cluster named `deployah` and create it again. Set it only when replacing
+that cluster is intentional. Without it, an existing cluster of that name
+stops the run.
+
 `test-unit` and `test-integration` run the race detector and shuffle test
 order. `test-e2e` does not use the race detector. The subject is a live
 cluster. `go test ./...` with no tags skips tests that require the
