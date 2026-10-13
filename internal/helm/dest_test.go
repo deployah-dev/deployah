@@ -162,6 +162,15 @@ func TestRESTClientGetter_UnconfiguredDiscoveryFails(t *testing.T) {
 	require.ErrorIs(t, err, ErrDestinationNotConfigured)
 	_, err = getter.ToRESTMapper()
 	require.ErrorIs(t, err, ErrDestinationNotConfigured)
+
+	loader := getter.ToRawKubeConfigLoader()
+	_, err = loader.RawConfig()
+	require.ErrorIs(t, err, ErrDestinationNotConfigured)
+	ns, overridden, err := loader.Namespace()
+	require.NoError(t, err)
+	assert.Equal(t, "default", ns)
+	assert.False(t, overridden)
+	assert.NotNil(t, loader.ConfigAccess())
 }
 
 func TestRESTClientGetter_NoInClusterFallback(t *testing.T) {
@@ -211,7 +220,41 @@ func TestNewClient_UnconfiguredGetterIgnoresAmbientKubeconfig(t *testing.T) {
 
 			err = client.IsReachable()
 			require.Error(t, err)
+			assert.ErrorIs(t, err, ErrClusterUnreachable)
 			assert.ErrorIs(t, err, ErrDestinationNotConfigured)
+		})
+	}
+}
+
+func TestDefaultKubeCacheDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("KUBECACHEDIR", "")
+	assert.Equal(t, filepath.Join(home, ".kube", "cache"), defaultKubeCacheDir())
+
+	explicit := t.TempDir()
+	t.Setenv("KUBECACHEDIR", explicit)
+	assert.Equal(t, explicit, defaultKubeCacheDir())
+}
+
+func TestComputeDiscoverCacheDir(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		host string
+		want string
+	}{
+		{name: "https host and port", host: "https://prod.example:6443", want: "prod.example_6443"},
+		{name: "http address", host: "http://127.0.0.1:8080", want: "127.0.0.1_8080"},
+		{name: "path separator stays", host: "https://api.example/cluster", want: "api.example/cluster"},
+		{name: "space becomes underscore", host: "https://bad host", want: "bad_host"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := computeDiscoverCacheDir("cache", tt.host)
+			assert.Equal(t, filepath.Join("cache", tt.want), got)
 		})
 	}
 }

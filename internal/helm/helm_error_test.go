@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"helm.sh/helm/v4/pkg/action"
+	"helm.sh/helm/v4/pkg/release"
 	"helm.sh/helm/v4/pkg/release/common"
 	"helm.sh/helm/v4/pkg/storage"
 	"helm.sh/helm/v4/pkg/storage/driver"
@@ -185,6 +186,21 @@ func TestNewestRelease_SortsByVersion(t *testing.T) {
 			},
 			want: 5,
 		},
+		{
+			name: "nil entries sort after real revisions",
+			in: []*v1.Release{
+				nil,
+				{Version: 2},
+				nil,
+				{Version: 4},
+			},
+			want: 4,
+		},
+		{
+			name: "only nil entries",
+			in:   []*v1.Release{nil, nil},
+			want: 0,
+		},
 	}
 
 	for _, tt := range tests {
@@ -199,6 +215,36 @@ func TestNewestRelease_SortsByVersion(t *testing.T) {
 			assert.Equal(t, tt.want, got.Version)
 		})
 	}
+}
+
+func TestReleaserToV1(t *testing.T) {
+	t.Parallel()
+
+	pointer := &v1.Release{Name: "shop", Version: 2}
+	got, err := releaserToV1(pointer)
+	require.NoError(t, err)
+	assert.Same(t, pointer, got)
+
+	value := v1.Release{Name: "shop", Version: 3}
+	got, err = releaserToV1(value)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, 3, got.Version)
+
+	_, err = releaserToV1(struct{}{})
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "unsupported helm release type")
+
+	list, err := releaserListToV1([]release.Releaser{nil, value, pointer})
+	require.NoError(t, err)
+	require.Len(t, list, 3)
+	assert.Nil(t, list[0])
+	assert.Equal(t, 3, list[1].Version)
+	assert.Same(t, pointer, list[2])
+
+	_, err = releaserListToV1([]release.Releaser{struct{}{}})
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "unsupported helm release type")
 }
 
 // TestInstallApp_PendingReleaseRejects pins the typed pending pre-check: a

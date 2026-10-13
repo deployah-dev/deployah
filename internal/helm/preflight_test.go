@@ -15,6 +15,7 @@
 package helm
 
 import (
+	"context"
 	"errors"
 	"io"
 	"testing"
@@ -373,6 +374,35 @@ func TestRenderManifests_MatchesWithPrepResult(t *testing.T) {
 	assert.Equal(t, withPrep.Revision, wrapped.Revision)
 	assert.Equal(t, withPrep.ReleaseName, wrapped.ReleaseName)
 	assert.Equal(t, withPrep.Namespace, wrapped.Namespace)
+}
+
+func TestInstallApp_DryRunDoesNotWriteHistory(t *testing.T) {
+	t.Parallel()
+
+	c, cfg, resolved, releaseName := memoryHelmApp(t, "dry-run-app")
+	cleanupChartCache(t, c.chartCache)
+	require.NoError(t, c.InstallApp(t.Context(), true, resolved, nil, nil, false))
+	_, err := cfg.Releases.History(releaseName)
+	assert.ErrorIs(t, err, driver.ErrReleaseNotFound)
+
+	seedRelease(t, cfg, releaseName, 1, common.StatusDeployed, applySSA)
+	require.NoError(t, c.InstallApp(t.Context(), true, resolved, nil, nil, false))
+	assert.Equal(t, 1, historyLen(t, cfg, releaseName))
+}
+
+func TestInstallApp_CanceledContextDoesNotInstall(t *testing.T) {
+	t.Parallel()
+
+	c, cfg, resolved, releaseName := memoryHelmApp(t, "canceled-app")
+	cleanupChartCache(t, c.chartCache)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	err := c.InstallApp(ctx, false, resolved, nil, nil, false)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+	_, histErr := cfg.Releases.History(releaseName)
+	assert.ErrorIs(t, histErr, driver.ErrReleaseNotFound)
 }
 
 func memoryHelmApp(t *testing.T, project string) (*Client, *action.Configuration, *spec.ResolvedSpec, string) {
