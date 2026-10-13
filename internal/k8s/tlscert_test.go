@@ -17,16 +17,19 @@ package k8s
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
 
 	"deployah.dev/deployah/internal/spec"
 
 	corev1 "k8s.io/api/core/v1"
+	k8stesting "k8s.io/client-go/testing"
 	certutil "k8s.io/client-go/util/cert"
 )
 
@@ -86,10 +89,21 @@ func TestEnsureSelfSignedCert(t *testing.T) {
 	wrongHostCert, wrongHostKey, err := GenerateSelfSignedCert("other.example.com")
 	require.NoError(t, err)
 
+	stillValidCert, stillValidKey, err := certutil.GenerateSelfSignedCertKeyWithOptions(certutil.SelfSignedCertKeyOptions{
+		Host:         tlsTestFQDN,
+		AlternateDNS: []string{tlsTestFQDN},
+		MaxAge:       31 * 24 * time.Hour, // just outside the 30-day renew window
+	})
+	require.NoError(t, err)
+
+	_, otherKey, err := GenerateSelfSignedCert(tlsTestFQDN)
+	require.NoError(t, err)
+
 	tests := []struct {
 		name           string
 		seed           *corev1.Secret
 		wantReuse      []byte // when set, returned cert must equal this
+		wantKey        []byte
 		wantRegenerate []byte // when set, returned cert must differ from this
 		checkLeaf      bool
 	}{
@@ -100,6 +114,13 @@ func TestEnsureSelfSignedCert(t *testing.T) {
 			name:      "reuses existing valid secret",
 			seed:      tlsSecret(validCert, validKey, corev1.SecretTypeTLS),
 			wantReuse: validCert,
+			wantKey:   validKey,
+		},
+		{
+			name:      "reuses a certificate outside the renew window",
+			seed:      tlsSecret(stillValidCert, stillValidKey, corev1.SecretTypeTLS),
+			wantReuse: stillValidCert,
+			wantKey:   stillValidKey,
 		},
 		{
 			name:           "regenerates when expiring soon",
@@ -111,6 +132,23 @@ func TestEnsureSelfSignedCert(t *testing.T) {
 			name:           "regenerates for wrong hostname",
 			seed:           tlsSecret(wrongHostCert, wrongHostKey, corev1.SecretTypeTLS),
 			wantRegenerate: wrongHostCert,
+			checkLeaf:      true,
+		},
+		{
+			name:           "regenerates when the key does not match",
+			seed:           tlsSecret(validCert, otherKey, corev1.SecretTypeTLS),
+			wantRegenerate: validCert,
+			checkLeaf:      true,
+		},
+		{
+			name:      "regenerates when cert bytes are empty",
+			seed:      tlsSecret(nil, validKey, corev1.SecretTypeTLS),
+			checkLeaf: true,
+		},
+		{
+			name:           "regenerates for invalid PEM",
+			seed:           tlsSecret([]byte("not-pem"), []byte("not-pem"), corev1.SecretTypeTLS),
+			wantRegenerate: []byte("not-pem"),
 			checkLeaf:      true,
 		},
 		{
@@ -140,7 +178,7 @@ func TestEnsureSelfSignedCert(t *testing.T) {
 
 			if tt.wantReuse != nil {
 				assert.Equal(t, tt.wantReuse, gotCert, "existing valid cert must be reused unchanged")
-				assert.Equal(t, validKey, gotKey, "existing valid key must be reused unchanged")
+				assert.Equal(t, tt.wantKey, gotKey, "existing valid key must be reused unchanged")
 			}
 			if tt.wantRegenerate != nil {
 				assert.NotEqual(t, tt.wantRegenerate, gotCert, "must regenerate instead of reuse")
@@ -198,4 +236,111 @@ func TestMaterializeSelfSignedTLS(t *testing.T) {
 		assert.Equal(t, certPEM, resolved.Components["web"].TLSCertPEM)
 		assert.Equal(t, keyPEM, resolved.Components["web"].TLSKeyPEM)
 	})
+}
+
+func TestEnsureSelfSignedCert_GetError(t *testing.T) {
+	t.Parallel()
+
+	cs := fake.NewClientset()
+	cs.PrependReactor("get", "secrets", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("unavailable")
+	})
+	certPEM, keyPEM, err := EnsureSelfSignedCert(t.Context(), cs, testNamespace, tlsTestFQDN)
+	require.Error(t, err)
+	assert.Nil(t, certPEM)
+	assert.Nil(t, keyPEM)
+	assert.ErrorContains(t, err, "get TLS secret "+tlsTestFQDN+"-tls")
+	assert.ErrorContains(t, err, "unavailable")
+}
+
+func TestEnsureSelfSignedCert_OtherNamespaceGenerates(t *testing.T) {
+	t.Parallel()
+
+	certPEM, keyPEM, err := GenerateSelfSignedCert(tlsTestFQDN)
+	require.NoError(t, err)
+	secret := tlsSecret(certPEM, keyPEM, corev1.SecretTypeTLS)
+	secret.Namespace = "other"
+	gotCert, gotKey, err := EnsureSelfSignedCert(t.Context(), fake.NewClientset(secret), testNamespace, tlsTestFQDN)
+	require.NoError(t, err)
+	assert.NotEqual(t, certPEM, gotCert)
+	assert.NotEqual(t, keyPEM, gotKey)
+	_, err = tls.X509KeyPair(gotCert, gotKey)
+	require.NoError(t, err)
+}
+
+func TestHasSelfSignedComponents(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		resolved *spec.ResolvedSpec
+		want     bool
+	}{
+		{name: "nil"},
+		{name: "no components", resolved: &spec.ResolvedSpec{}},
+		{
+			name: "self signed without fqdn",
+			resolved: &spec.ResolvedSpec{Components: map[string]spec.ResolvedComponent{
+				"web": {TLSMode: spec.TLSModeSelfSigned},
+			}},
+		},
+		{
+			name: "cert manager",
+			resolved: &spec.ResolvedSpec{Components: map[string]spec.ResolvedComponent{
+				"api": {FQDN: "api.example.com", TLSMode: spec.TLSModeCertManager},
+			}},
+		},
+		{
+			name: "self signed with fqdn",
+			resolved: &spec.ResolvedSpec{Components: map[string]spec.ResolvedComponent{
+				"web": {FQDN: tlsTestFQDN, TLSMode: spec.TLSModeSelfSigned},
+			}},
+			want: true,
+		},
+		{
+			name: "one self signed component is enough",
+			resolved: &spec.ResolvedSpec{Components: map[string]spec.ResolvedComponent{
+				"api": {FQDN: "api.example.com", TLSMode: spec.TLSModeCertManager},
+				"web": {FQDN: tlsTestFQDN, TLSMode: spec.TLSModeSelfSigned},
+			}},
+			want: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, HasSelfSignedComponents(tt.resolved))
+		})
+	}
+}
+
+func TestMaterializeSelfSignedTLS_SkipsEmptyFQDN(t *testing.T) {
+	t.Parallel()
+
+	resolved := &spec.ResolvedSpec{Components: map[string]spec.ResolvedComponent{
+		"web": {TLSMode: spec.TLSModeSelfSigned},
+		"api": {FQDN: tlsTestFQDN, TLSMode: spec.TLSModeSelfSigned},
+	}}
+	require.NoError(t, MaterializeSelfSignedTLS(t.Context(), nil, testNamespace, resolved))
+	assert.Empty(t, resolved.Components["web"].TLSCertPEM)
+	assert.Empty(t, resolved.Components["web"].TLSKeyPEM)
+	assert.NotEmpty(t, resolved.Components["api"].TLSCertPEM)
+	assert.NotEmpty(t, resolved.Components["api"].TLSKeyPEM)
+}
+
+func TestMaterializeSelfSignedTLS_SecretGetError(t *testing.T) {
+	t.Parallel()
+
+	cs := fake.NewClientset()
+	cs.PrependReactor("get", "secrets", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("unavailable")
+	})
+	resolved := &spec.ResolvedSpec{Components: map[string]spec.ResolvedComponent{
+		"web": {FQDN: tlsTestFQDN, TLSMode: spec.TLSModeSelfSigned},
+	}}
+	err := MaterializeSelfSignedTLS(t.Context(), cs, testNamespace, resolved)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "component web")
+	assert.ErrorContains(t, err, "get TLS secret")
+	assert.Empty(t, resolved.Components["web"].TLSCertPEM)
 }
