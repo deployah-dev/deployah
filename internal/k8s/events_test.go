@@ -16,6 +16,8 @@ package k8s
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"testing"
 	"time"
 
@@ -83,6 +85,8 @@ func sendAndDrain(t *testing.T, fw *watch.FakeWatcher, ch <-chan DeployEvent, ev
 // whose involved object name starts with the release prefix are
 // forwarded to the channel.
 func TestWatchDeployEvents_MatchingPrefixForwarded(t *testing.T) {
+	t.Parallel()
+
 	fw := watch.NewFake()
 	cs := fake.NewClientset()
 	// Replace the watch reactor to return our controlled fake watcher.
@@ -112,6 +116,8 @@ func TestWatchDeployEvents_MatchingPrefixForwarded(t *testing.T) {
 // TestWatchDeployEvents_NonMatchingPrefixFiltered verifies that
 // events for a different release are not forwarded.
 func TestWatchDeployEvents_NonMatchingPrefixFiltered(t *testing.T) {
+	t.Parallel()
+
 	fw := watch.NewFake()
 	cs := fake.NewClientset()
 	cs.PrependWatchReactor("events", func(action clienttesting.Action) (bool, watch.Interface, error) {
@@ -138,6 +144,8 @@ func TestWatchDeployEvents_NonMatchingPrefixFiltered(t *testing.T) {
 // TestWatchDeployEvents_ModifiedEventForwarded verifies that
 // MODIFIED watch events are forwarded with updated fields.
 func TestWatchDeployEvents_ModifiedEventForwarded(t *testing.T) {
+	t.Parallel()
+
 	fw := watch.NewFake()
 	cs := fake.NewClientset()
 	cs.PrependWatchReactor("events", func(action clienttesting.Action) (bool, watch.Interface, error) {
@@ -153,7 +161,8 @@ func TestWatchDeployEvents_ModifiedEventForwarded(t *testing.T) {
 	ev := makeEvent("uid-mod", testRelease+"-worker-abc", "BackOff", "back-off restarting", corev1.EventTypeWarning, "101")
 	ev.Count = 3
 
-	got, _ := sendAndDrain(t, fw, ch, watch.Modified, ev)
+	got, ok := sendAndDrain(t, fw, ch, watch.Modified, ev)
+	require.True(t, ok)
 	assert.Equal(t, types.UID("uid-mod"), got.UID)
 	assert.Equal(t, "Warning", got.Type)
 	assert.Equal(t, int32(3), got.Count)
@@ -162,6 +171,8 @@ func TestWatchDeployEvents_ModifiedEventForwarded(t *testing.T) {
 // TestWatchDeployEvents_ChannelClosedOnContextCancel verifies that
 // the event channel closes promptly after context cancellation.
 func TestWatchDeployEvents_ChannelClosedOnContextCancel(t *testing.T) {
+	t.Parallel()
+
 	fw := watch.NewFake()
 	cs := fake.NewClientset()
 	cs.PrependWatchReactor("events", func(action clienttesting.Action) (bool, watch.Interface, error) {
@@ -187,6 +198,8 @@ func TestWatchDeployEvents_ChannelClosedOnContextCancel(t *testing.T) {
 // TestWatchDeployEvents_FieldTranslation verifies that core event
 // fields are correctly translated into DeployEvent fields.
 func TestWatchDeployEvents_FieldTranslation(t *testing.T) {
+	t.Parallel()
+
 	fw := watch.NewFake()
 	cs := fake.NewClientset()
 	cs.PrependWatchReactor("events", func(action clienttesting.Action) (bool, watch.Interface, error) {
@@ -230,6 +243,8 @@ func TestWatchDeployEvents_FieldTranslation(t *testing.T) {
 
 // TestToDeployEvent_ZeroCount verifies that a zero Count is normalized to 1.
 func TestToDeployEvent_ZeroCount(t *testing.T) {
+	t.Parallel()
+
 	ev := watch.Event{
 		Type: watch.Added,
 		Object: &corev1.Event{
@@ -250,6 +265,8 @@ func TestToDeployEvent_ZeroCount(t *testing.T) {
 
 // TestToDeployEvent_NonEvent verifies that non-Event objects return false.
 func TestToDeployEvent_NonEvent(t *testing.T) {
+	t.Parallel()
+
 	ev := watch.Event{
 		Type:   watch.Added,
 		Object: &corev1.Pod{},
@@ -261,6 +278,8 @@ func TestToDeployEvent_NonEvent(t *testing.T) {
 // TestToDeployEvent_TimestampFallbacks verifies EventTime and
 // CreationTimestamp fallbacks when LastTimestamp is zero.
 func TestToDeployEvent_TimestampFallbacks(t *testing.T) {
+	t.Parallel()
+
 	eventTime := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
 	ev := watch.Event{
 		Type: watch.Added,
@@ -283,5 +302,122 @@ func TestToDeployEvent_TimestampFallbacks(t *testing.T) {
 	assert.Equal(t, eventTime.UTC(), got.Timestamp.UTC())
 }
 
-// Ensure fake.Clientset satisfies runtime.Object so the test compiles.
-var _ runtime.Object = (*corev1.Event)(nil)
+func TestToDeployEvent_CreationTimestampFallback(t *testing.T) {
+	t.Parallel()
+
+	created := time.Date(2026, 4, 2, 8, 0, 0, 0, time.UTC)
+	ev := watch.Event{
+		Type: watch.Added,
+		Object: &corev1.Event{
+			UID: "uid-created",
+			InvolvedObject: corev1.ObjectReference{
+				Kind: "Pod",
+				Name: "myapp-prod-api",
+			},
+			Type:              corev1.EventTypeNormal,
+			Reason:            "Created",
+			Count:             1,
+			CreationTimestamp: metav1.NewTime(created),
+		},
+	}
+	got, ok := toDeployEvent(ev, "myapp-prod-")
+	require.True(t, ok)
+	assert.Equal(t, created.UTC(), got.Timestamp.UTC())
+}
+
+func TestToDeployEvent_RequiresReleaseDash(t *testing.T) {
+	t.Parallel()
+
+	ev := watch.Event{
+		Type: watch.Added,
+		Object: &corev1.Event{
+			InvolvedObject: corev1.ObjectReference{
+				Kind: "Pod",
+				Name: "myapp-prod",
+			},
+		},
+	}
+	_, ok := toDeployEvent(ev, "myapp-prod-")
+	assert.False(t, ok)
+}
+
+func TestWatchDeployEvents_ListError(t *testing.T) {
+	t.Parallel()
+
+	cs := fake.NewClientset()
+	cs.PrependReactor("list", "events", func(clienttesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("apiserver timeout")
+	})
+	ch, err := WatchDeployEvents(t.Context(), cs, testNamespace, testReleasePrefix)
+	require.Error(t, err)
+	assert.Nil(t, ch)
+	assert.ErrorContains(t, err, `list events in "`+testNamespace+`"`)
+	assert.ErrorContains(t, err, "apiserver timeout")
+}
+
+func TestWatchDeployEvents_EmptyResourceVersion(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		rv   string
+	}{
+		{name: "empty", rv: ""},
+		{name: "zero", rv: "0"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			fw := watch.NewFake()
+			cs := fake.NewClientset()
+			cs.PrependReactor("list", "events", func(clienttesting.Action) (bool, runtime.Object, error) {
+				return true, &corev1.EventList{ResourceVersion: tt.rv}, nil
+			})
+			cs.PrependWatchReactor("events", func(clienttesting.Action) (bool, watch.Interface, error) {
+				return true, fw, nil
+			})
+
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+
+			ch, err := WatchDeployEvents(ctx, cs, testNamespace, testReleasePrefix)
+			require.NoError(t, err)
+
+			ev := makeEvent("uid-rv", testRelease+"-api-abc", "Scheduled", "pod scheduled", corev1.EventTypeNormal, "101")
+			got, ok := sendAndDrain(t, fw, ch, watch.Added, ev)
+			require.True(t, ok)
+			assert.Equal(t, types.UID("uid-rv"), got.UID)
+		})
+	}
+}
+
+func TestWatchDeployEvents_SkipsErrorEvents(t *testing.T) {
+	t.Parallel()
+
+	fw := watch.NewFake()
+	cs := fake.NewClientset()
+	cs.PrependWatchReactor("events", func(clienttesting.Action) (bool, watch.Interface, error) {
+		return true, fw, nil
+	})
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	ch, err := WatchDeployEvents(ctx, cs, testNamespace, testReleasePrefix)
+	require.NoError(t, err)
+
+	// 410 stops RetryWatcher after it forwards the error. The watcher must
+	// not turn that error into a deploy event.
+	fw.Error(&metav1.Status{
+		Status:  metav1.StatusFailure,
+		Message: "expired",
+		Code:    http.StatusGone,
+	})
+	select {
+	case _, ok := <-ch:
+		assert.False(t, ok, "watch errors are not deploy events")
+	case <-time.After(2 * time.Second):
+		t.Fatal("channel not closed after watch error")
+	}
+}

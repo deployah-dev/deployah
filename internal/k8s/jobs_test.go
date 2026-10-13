@@ -27,6 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/client-go/kubernetes/fake"
 
 	"deployah.dev/deployah/internal/helm"
@@ -70,7 +71,11 @@ func TestBuildTaskJob_IndexedAndLabels(t *testing.T) {
 	assert.Equal(t, "backfill", job.Labels[spec.LabelComponent])
 	assert.Equal(t, "backfill", job.Labels[spec.LabelTask])
 	assert.Equal(t, "dev", job.Labels[spec.LabelEnvironment])
+	assert.Equal(t, spec.ManagedByValue, job.Labels[spec.LabelManagedBy])
 	assert.Equal(t, "shop-dev", job.Labels[InstanceLabel])
+	assert.Equal(t, spec.SourceSpec, job.Annotations[spec.AnnotationSource])
+	assert.Equal(t, "shop", job.Annotations[spec.AnnotationProject])
+	assert.Equal(t, corev1.RestartPolicyOnFailure, job.Spec.Template.Spec.RestartPolicy)
 	require.Len(t, job.Spec.Template.Spec.Containers, 1)
 	assert.Equal(t, "busybox:1.36", job.Spec.Template.Spec.Containers[0].Image)
 	assert.Equal(t, []string{"backfill"}, job.Spec.Template.Spec.Containers[0].Command)
@@ -80,6 +85,54 @@ func TestBuildTaskJob_IndexedAndLabels(t *testing.T) {
 	assert.Empty(t, job.Spec.Template.Spec.ServiceAccountName)
 	require.NotNil(t, job.Spec.TTLSecondsAfterFinished)
 	assert.Equal(t, int32(spec.DefaultCLIJobTTLSeconds), *job.Spec.TTLSecondsAfterFinished)
+}
+
+func TestBuildTaskJob_TimeoutAndBackoff(t *testing.T) {
+	t.Parallel()
+
+	backoff := 1
+	job, err := BuildTaskJob(TaskJobOptions{
+		Project:     "shop",
+		Environment: "dev",
+		Namespace:   "default",
+		TaskName:    "migrate",
+		Task: spec.Task{
+			Image:        "busybox:1.36",
+			Command:      []string{"true"},
+			Timeout:      "2m",
+			BackoffLimit: &backoff,
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, job.Spec.ActiveDeadlineSeconds)
+	assert.Equal(t, int64(120), *job.Spec.ActiveDeadlineSeconds)
+	require.NotNil(t, job.Spec.BackoffLimit)
+	assert.Equal(t, int32(1), *job.Spec.BackoffLimit)
+}
+
+func TestBuildTaskJob_OmitsUnsetContainerFields(t *testing.T) {
+	t.Parallel()
+
+	job, err := BuildTaskJob(TaskJobOptions{
+		Project:     "shop",
+		Environment: "dev",
+		Namespace:   "default",
+		TaskName:    "migrate",
+		Task: spec.Task{
+			Image: "busybox:1.36",
+			Resources: spec.Resources{
+				CPU:              spec.MustQuantity("0"),
+				Memory:           spec.MustQuantity("0"),
+				EphemeralStorage: spec.MustQuantity("0"),
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, job.Spec.Template.Spec.Containers, 1)
+	container := job.Spec.Template.Spec.Containers[0]
+	assert.Nil(t, container.Command)
+	assert.Nil(t, container.Args)
+	assert.Empty(t, container.Resources.Requests)
 }
 
 func TestBuildTaskJob_WildcardEnvironmentLabel(t *testing.T) {
@@ -221,6 +274,16 @@ func TestRunConfigMapGenerateName_FitsAfterKubernetesSuffix(t *testing.T) {
 			want:      "shop-dev-migrate-run-",
 		},
 		{
+			name:      "empty prefix",
+			jobPrefix: "",
+			want:      "deployah-run-",
+		},
+		{
+			name:      "dash only",
+			jobPrefix: "-",
+			want:      "deployah-run-",
+		},
+		{
 			name:      "long hashed name",
 			jobPrefix: generateNamePrefix(release, task),
 			want:      strings.Repeat("p", 21) + "-167c-" + strings.Repeat("t", 21) + "-5c01-run-",
@@ -301,7 +364,8 @@ func TestCreateTaskJob_Error(t *testing.T) {
 		Task:        spec.Task{Image: "busybox:1.36", Command: []string{"true"}},
 	}, "shop-dev-backfill-create"))
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "quota exceeded")
+	assert.ErrorContains(t, err, "create job")
+	assert.ErrorContains(t, err, "quota exceeded")
 }
 
 func TestCreateTaskJob_UniqueNames(t *testing.T) {
@@ -362,7 +426,8 @@ func TestWaitForJob_SuccessAndFailure(t *testing.T) {
 		cs := fake.NewSimpleClientset(job)
 		err := WaitForJob(t.Context(), cs, "default", "bad")
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "backoff limit exceeded")
+		assert.ErrorContains(t, err, "wait for job bad")
+		assert.ErrorContains(t, err, "backoff limit exceeded")
 	})
 
 	t.Run("failed condition without message uses reason", func(t *testing.T) {
@@ -381,7 +446,8 @@ func TestWaitForJob_SuccessAndFailure(t *testing.T) {
 		cs := fake.NewSimpleClientset(job)
 		err := WaitForJob(t.Context(), cs, "default", "bad")
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "BackoffLimitExceeded")
+		assert.ErrorContains(t, err, "wait for job bad")
+		assert.ErrorContains(t, err, "BackoffLimitExceeded")
 	})
 
 	t.Run("nil completions treats one success as done", func(t *testing.T) {
@@ -459,17 +525,64 @@ func TestWaitForJob_GivesUpAfterConsecutiveNotFound(t *testing.T) {
 func TestWaitForJob_PermanentGetError(t *testing.T) {
 	t.Parallel()
 
-	cs := fake.NewSimpleClientset()
-	cs.PrependReactor("get", "jobs", func(action k8stesting.Action) (bool, runtime.Object, error) {
-		return true, nil, apierrors.NewForbidden(
-			schema.GroupResource{Group: "batch", Resource: "jobs"},
-			"denied",
-			errors.New("denied"),
-		)
-	})
-	err := WaitForJob(t.Context(), cs, "default", "denied")
-	require.Error(t, err)
-	assert.ErrorContains(t, err, "wait for job")
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{
+			name: "forbidden",
+			err: apierrors.NewForbidden(
+				schema.GroupResource{Group: "batch", Resource: "jobs"},
+				"denied",
+				errors.New("denied"),
+			),
+		},
+		{
+			name: "unauthorized",
+			err:  apierrors.NewUnauthorized("no"),
+		},
+		{
+			name: "bad request",
+			err:  apierrors.NewBadRequest("bad"),
+		},
+		{
+			name: "invalid",
+			err: apierrors.NewInvalid(
+				schema.GroupKind{Group: "batch", Kind: "Job"},
+				"denied",
+				field.ErrorList{field.Invalid(field.NewPath("spec"), "", "bad")},
+			),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cs := fake.NewSimpleClientset()
+			cs.PrependReactor("get", "jobs", func(k8stesting.Action) (bool, runtime.Object, error) {
+				return true, nil, tt.err
+			})
+			err := WaitForJob(t.Context(), cs, "default", "denied")
+			require.ErrorIs(t, err, tt.err)
+			assert.ErrorContains(t, err, "wait for job denied")
+		})
+	}
+}
+
+func TestWaitForJob_Canceled(t *testing.T) {
+	t.Parallel()
+
+	job := &batchv1.Job{
+		Name:      "slow",
+		Namespace: "default",
+		Spec:      batchv1.JobSpec{Completions: new(int32(1))},
+	}
+	cs := fake.NewSimpleClientset(job)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	err := WaitForJob(ctx, cs, "default", "slow")
+	require.ErrorIs(t, err, context.Canceled)
+	assert.ErrorContains(t, err, "wait for job slow")
 }
 
 func TestWaitForJob_RetriesTransportError(t *testing.T) {
@@ -614,11 +727,58 @@ func TestListJobs_Error(t *testing.T) {
 	})
 	_, err := ListJobs(t.Context(), cs, "default", "shop", "dev")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "apiserver timeout")
+	assert.ErrorContains(t, err, "list jobs")
+	assert.ErrorContains(t, err, "apiserver timeout")
 
 	err = DeleteJobs(t.Context(), cs, "default", "shop", "dev")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "apiserver timeout")
+	assert.ErrorContains(t, err, "list jobs")
+	assert.ErrorContains(t, err, "apiserver timeout")
+}
+
+func TestListJobs_RejectsInvalidSelector(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		project     string
+		environment string
+		want        string
+	}{
+		{
+			name:        "nested wildcard",
+			project:     "shop",
+			environment: "review/foo/bar",
+			want:        `exactly one '/'`,
+		},
+		{
+			name:        "project is not a label value",
+			project:     "bad value!",
+			environment: "dev",
+			want:        "project label",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cs := fake.NewSimpleClientset()
+			listed := false
+			cs.PrependReactor("list", "jobs", func(k8stesting.Action) (bool, runtime.Object, error) {
+				listed = true
+				return true, nil, errors.New("should not list")
+			})
+			_, err := ListJobs(t.Context(), cs, "default", tt.project, tt.environment)
+			require.Error(t, err)
+			assert.ErrorContains(t, err, "build job selector")
+			assert.ErrorContains(t, err, tt.want)
+
+			err = DeleteJobs(t.Context(), cs, "default", tt.project, tt.environment)
+			require.Error(t, err)
+			assert.ErrorContains(t, err, tt.want)
+			assert.False(t, listed)
+		})
+	}
 }
 
 func TestDeleteJobs(t *testing.T) {
@@ -769,7 +929,7 @@ func TestBuildTaskJob_InvalidTimeout(t *testing.T) {
 		},
 	})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "timeout")
+	assert.ErrorContains(t, err, "timeout")
 }
 
 func TestBuildTaskJob_AppliesProfile(t *testing.T) {
@@ -884,7 +1044,58 @@ func TestCreateRunJob_TemporaryConfigMapAndOwnerRef(t *testing.T) {
 		require.Len(t, cm.OwnerReferences, 1)
 		assert.Equal(t, job.Name, cm.OwnerReferences[0].Name)
 		assert.Equal(t, job.UID, cm.OwnerReferences[0].UID)
+		assert.Equal(t, job.Labels, cm.Labels)
+		assert.Equal(t, job.Annotations, cm.Annotations)
 	}
+}
+
+func TestCreateRunJob_NoFileValuesSkipsConfigMap(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		values map[string]string
+	}{
+		{name: "nil"},
+		{name: "empty", values: map[string]string{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cs := fake.NewSimpleClientset()
+			assignGenerateName(cs)
+			created, err := CreateRunJob(t.Context(), cs, runJob(t), tt.values)
+			require.NoError(t, err)
+			assert.NotEmpty(t, created.Name)
+			assert.Empty(t, created.Spec.Template.Spec.Containers[0].EnvFrom)
+
+			cms, cmErr := cs.CoreV1().ConfigMaps("default").List(t.Context(), metav1.ListOptions{})
+			require.NoError(t, cmErr)
+			assert.Empty(t, cms.Items)
+		})
+	}
+}
+
+func TestCreateRunJob_ConfigMapCreateError(t *testing.T) {
+	t.Parallel()
+
+	cs := fake.NewSimpleClientset()
+	assignGenerateName(cs)
+	cs.PrependReactor("create", "configmaps", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("quota exceeded")
+	})
+	_, err := CreateRunJob(t.Context(), cs, runJob(t), map[string]string{"REGION": "eu"})
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "create run configmap")
+	assert.ErrorContains(t, err, "quota exceeded")
+
+	jobs, jobErr := cs.BatchV1().Jobs("default").List(t.Context(), metav1.ListOptions{})
+	require.NoError(t, jobErr)
+	assert.Empty(t, jobs.Items)
+	cms, cmErr := cs.CoreV1().ConfigMaps("default").List(t.Context(), metav1.ListOptions{})
+	require.NoError(t, cmErr)
+	assert.Empty(t, cms.Items)
 }
 
 func TestCreateRunJob_RollbackSurvivesCanceledContext(t *testing.T) {
@@ -980,6 +1191,112 @@ func TestCreateRunJob_RollbackDeletesJobThenConfigMap(t *testing.T) {
 			assert.Empty(t, cms.Items)
 		})
 	}
+}
+
+func TestCreateRunJob_CleanupFailureReportsLeftovers(t *testing.T) {
+	t.Parallel()
+
+	t.Run("job create failure and configmap delete failure", func(t *testing.T) {
+		t.Parallel()
+
+		jobErr := errors.New("job denied")
+		deleteErr := errors.New("configmap delete denied")
+		cs := fake.NewSimpleClientset()
+		assignGenerateName(cs)
+		cs.PrependReactor("create", "jobs", func(k8stesting.Action) (bool, runtime.Object, error) {
+			return true, nil, jobErr
+		})
+		cs.PrependReactor("delete", "configmaps", func(k8stesting.Action) (bool, runtime.Object, error) {
+			return true, nil, deleteErr
+		})
+		_, err := CreateRunJob(t.Context(), cs, runJob(t), map[string]string{"REGION": "eu"})
+		require.ErrorIs(t, err, jobErr)
+		require.ErrorIs(t, err, deleteErr)
+		assert.ErrorContains(t, err, "also failed to delete configmap")
+
+		jobs, jobListErr := cs.BatchV1().Jobs("default").List(t.Context(), metav1.ListOptions{})
+		require.NoError(t, jobListErr)
+		assert.Empty(t, jobs.Items)
+		cms, cmErr := cs.CoreV1().ConfigMaps("default").List(t.Context(), metav1.ListOptions{})
+		require.NoError(t, cmErr)
+		require.Len(t, cms.Items, 1)
+	})
+
+	t.Run("not found configmap delete keeps the job error", func(t *testing.T) {
+		t.Parallel()
+
+		jobErr := errors.New("job denied")
+		cs := fake.NewSimpleClientset()
+		assignGenerateName(cs)
+		cs.PrependReactor("create", "jobs", func(k8stesting.Action) (bool, runtime.Object, error) {
+			return true, nil, jobErr
+		})
+		cs.PrependReactor("delete", "configmaps", func(k8stesting.Action) (bool, runtime.Object, error) {
+			return true, nil, apierrors.NewNotFound(schema.GroupResource{Resource: "configmaps"}, "run")
+		})
+		_, err := CreateRunJob(t.Context(), cs, runJob(t), map[string]string{"REGION": "eu"})
+		require.ErrorIs(t, err, jobErr)
+		assert.ErrorContains(t, err, "create job")
+		assert.NotContains(t, err.Error(), "also failed")
+	})
+
+	t.Run("owner update failure and job delete failure", func(t *testing.T) {
+		t.Parallel()
+
+		ownerErr := errors.New("owner denied")
+		deleteErr := errors.New("job delete denied")
+		cs := fake.NewSimpleClientset()
+		assignGenerateName(cs)
+		cs.PrependReactor("update", "configmaps", func(k8stesting.Action) (bool, runtime.Object, error) {
+			return true, nil, ownerErr
+		})
+		cs.PrependReactor("delete", "jobs", func(k8stesting.Action) (bool, runtime.Object, error) {
+			return true, nil, deleteErr
+		})
+		_, err := CreateRunJob(t.Context(), cs, runJob(t), map[string]string{"REGION": "eu"})
+		require.ErrorIs(t, err, ownerErr)
+		require.ErrorIs(t, err, deleteErr)
+		assert.ErrorContains(t, err, "leftover job")
+
+		jobs, jobListErr := cs.BatchV1().Jobs("default").List(t.Context(), metav1.ListOptions{})
+		require.NoError(t, jobListErr)
+		require.Len(t, jobs.Items, 1)
+		cms, cmErr := cs.CoreV1().ConfigMaps("default").List(t.Context(), metav1.ListOptions{})
+		require.NoError(t, cmErr)
+		assert.Empty(t, cms.Items)
+	})
+
+	t.Run("owner update failure and both deletes fail", func(t *testing.T) {
+		t.Parallel()
+
+		ownerErr := errors.New("owner denied")
+		jobDeleteErr := errors.New("job delete denied")
+		cmDeleteErr := errors.New("configmap delete denied")
+		cs := fake.NewSimpleClientset()
+		assignGenerateName(cs)
+		cs.PrependReactor("update", "configmaps", func(k8stesting.Action) (bool, runtime.Object, error) {
+			return true, nil, ownerErr
+		})
+		cs.PrependReactor("delete", "jobs", func(k8stesting.Action) (bool, runtime.Object, error) {
+			return true, nil, jobDeleteErr
+		})
+		cs.PrependReactor("delete", "configmaps", func(k8stesting.Action) (bool, runtime.Object, error) {
+			return true, nil, cmDeleteErr
+		})
+		_, err := CreateRunJob(t.Context(), cs, runJob(t), map[string]string{"REGION": "eu"})
+		require.ErrorIs(t, err, ownerErr)
+		require.ErrorIs(t, err, jobDeleteErr)
+		require.ErrorIs(t, err, cmDeleteErr)
+		assert.ErrorContains(t, err, "also failed to delete job")
+		assert.ErrorContains(t, err, "also failed to delete configmap")
+
+		jobs, jobListErr := cs.BatchV1().Jobs("default").List(t.Context(), metav1.ListOptions{})
+		require.NoError(t, jobListErr)
+		require.Len(t, jobs.Items, 1)
+		cms, cmErr := cs.CoreV1().ConfigMaps("default").List(t.Context(), metav1.ListOptions{})
+		require.NoError(t, cmErr)
+		require.Len(t, cms.Items, 1)
+	})
 }
 
 func runJob(t *testing.T) *batchv1.Job {
