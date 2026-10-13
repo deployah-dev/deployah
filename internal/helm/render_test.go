@@ -119,3 +119,33 @@ func TestRestoreCapabilitiesForDryRun(t *testing.T) {
 	assert.Same(t, originalReleases, cfg.Releases, "Releases must be restored")
 	assert.Same(t, originalCapabilities, cfg.Capabilities, "Capabilities must be restored for the Install dry-run path")
 }
+
+func TestWithDebug_KeepsChartDirectory(t *testing.T) {
+	t.Parallel()
+
+	_, _, resolved, _ := memoryHelmApp(t, "debug-keep")
+	c, err := NewClient(WithDebug(true), WithStorageDriver("memory"), WithNamespace("default"))
+	require.NoError(t, err)
+	cleanupChartCache(t, c.chartCache)
+
+	_, chartPath, cleanup, err := c.prepareAndLoadChart(t.Context(), resolved, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { removeChartDir(t, chartPath) })
+	cleanup()
+	assert.DirExists(t, chartPath)
+}
+
+func TestPrepareAndLoadChart_CleanupRemovesCopy(t *testing.T) {
+	t.Parallel()
+
+	_, _, resolved, _ := memoryHelmApp(t, "debug-off")
+	c, err := NewClient(WithDebug(false), WithStorageDriver("memory"), WithNamespace("default"))
+	require.NoError(t, err)
+	cleanupChartCache(t, c.chartCache)
+
+	_, chartPath, cleanup, err := c.prepareAndLoadChart(t.Context(), resolved, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { removeChartDir(t, chartPath) })
+	cleanup()
+	assert.NoDirExists(t, chartPath)
+}

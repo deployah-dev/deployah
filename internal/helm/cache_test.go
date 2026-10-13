@@ -87,6 +87,25 @@ func removeChartDir(tb testing.TB, path string) {
 	}
 }
 
+// cleanupChartCache removes every backing directory still stored in cache
+// when the test finishes. Register it before the call that fills the cache.
+func cleanupChartCache(tb testing.TB, cache *ChartCache) {
+	tb.Helper()
+	tb.Cleanup(func() {
+		cache.mu.Lock()
+		paths := make([]string, 0, len(cache.entries))
+		for _, entry := range cache.entries {
+			paths = append(paths, entry.path)
+		}
+		cache.mu.Unlock()
+		for _, path := range paths {
+			if err := os.RemoveAll(path); err != nil {
+				tb.Logf("cleanup: remove chart cache %s: %v", path, err)
+			}
+		}
+	})
+}
+
 // TestPrepareChart_RequiresCache verifies PrepareChart rejects a nil cache.
 func TestPrepareChart_RequiresCache(t *testing.T) {
 	t.Parallel()
@@ -133,17 +152,16 @@ func TestNewChartCache_NonPositiveTTLUsesDefault(t *testing.T) {
 // unknown keys, TTL expiry, and deleted backing directories.
 func TestChartCache_GetMissExpiredAndMissingDir(t *testing.T) {
 	t.Parallel()
-	cache := NewChartCache(time.Millisecond)
+	cache := NewChartCache(time.Hour)
 
 	_, found := cache.get("missing")
 	assert.False(t, found)
 
 	dir := t.TempDir()
 	cache.set("expired", dir)
-	require.Eventually(t, func() bool {
-		_, ok := cache.get("expired")
-		return !ok
-	}, 50*time.Millisecond, time.Millisecond)
+	cache.backdate(t, "expired", 2*time.Hour)
+	_, found = cache.get("expired")
+	assert.False(t, found)
 	assert.Equal(t, 1, cache.entryCount(), "expired entries remain until cleanup")
 
 	gone := filepath.Join(t.TempDir(), "removed")
@@ -201,6 +219,14 @@ func TestCreateChartCopy_CopiesFiles(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []byte("kind: Pod"), nested)
 	assert.NotEqual(t, src, dst)
+}
+
+func TestCreateChartCopy_MissingSource(t *testing.T) {
+	t.Parallel()
+	_, err := createChartCopy(filepath.Join(t.TempDir(), "missing"))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, os.ErrNotExist)
+	assert.ErrorContains(t, err, "failed to copy cached chart")
 }
 
 // TestPrepareChart_CanceledContextReturnsImmediately verifies PrepareChart

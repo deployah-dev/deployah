@@ -262,6 +262,20 @@ func TestBuildLivenessProbe_RestartAfterOnlyDefaultsInterval(t *testing.T) {
 	assert.Equal(t, 10, p["periodSeconds"])
 }
 
+// TestBuildLivenessProbe_InvalidDurationUsesDefaults verifies a duration
+// that slips past validation still produces the default probe instead of
+// failing the render.
+func TestBuildLivenessProbe_InvalidDurationUsesDefaults(t *testing.T) {
+	t.Parallel()
+
+	p, err := buildLivenessProbe(nil, "/livez", "nope", "also-nope")
+	require.NoError(t, err)
+	assert.Equal(t, spec.DefaultLivenessProbePeriod, p["periodSeconds"])
+	assert.Equal(t, spec.DefaultLivenessRestartAfterSec/spec.DefaultLivenessProbePeriod, p["failureThreshold"])
+	httpGet := mustNestedMap(t, p, "httpGet")
+	assert.Equal(t, "/livez", httpGet["path"])
+}
+
 // TestMapSpecToChartValues_EnvironmentFilterPrefixMatch verifies the
 // component environments filter uses the same exact-then-prefix matching as
 // spec.Resolve, so resolution and the generated chart agree on wildcard
@@ -507,6 +521,70 @@ func TestMapSpecToChartValues_CertManagerTLS(t *testing.T) {
 	annotations, ok := ingress["annotations"].(map[string]string)
 	require.True(t, ok)
 	assert.Equal(t, "letsencrypt-prod", annotations["cert-manager.io/cluster-issuer"])
+}
+
+// TestMapSpecToChartValues_ExposeWithoutTLS verifies an exposed service with
+// no TLS mode renders ingress TLS off, so the chart does not request a cert.
+func TestMapSpecToChartValues_ExposeWithoutTLS(t *testing.T) {
+	t.Parallel()
+
+	m := &spec.Spec{
+		APIVersion: spec.CurrentManifestVersion,
+		Project:    "shop",
+		Components: map[string]spec.Component{
+			"api": {
+				Role:   spec.ComponentRoleService,
+				Image:  "shop-api:latest",
+				Port:   8080,
+				Expose: &spec.Expose{},
+			},
+		},
+	}
+	require.NoError(t, spec.FillSpecWithDefaults(m, spec.CurrentManifestVersion))
+	resolved := &spec.ResolvedSpec{
+		Spec: m,
+		Env:  spec.NormalizeEnv("production"),
+		Components: map[string]spec.ResolvedComponent{
+			"api": {FQDN: "api.example.com"},
+		},
+	}
+
+	vals, err := MapSpecToChartValues(m, "production", resolved)
+	require.NoError(t, err)
+	ingress := mustNestedMap(t, mustNestedMap(t, vals, "api"), "ingress")
+	assert.Equal(t, true, ingress["enabled"])
+	assert.Equal(t, "api.example.com", ingress["hostname"])
+	assert.Equal(t, false, ingress["tls"])
+	assert.NotContains(t, ingress, "secrets")
+	assert.NotContains(t, ingress, "existingSecret")
+}
+
+func TestMapSpecToChartValues_ImageDigestAndArgs(t *testing.T) {
+	t.Parallel()
+
+	const digest = "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+	m := &spec.Spec{
+		APIVersion: spec.CurrentManifestVersion,
+		Project:    "shop",
+		Components: map[string]spec.Component{
+			"api": {
+				Role:  spec.ComponentRoleService,
+				Image: "ghcr.io/acme/shop@" + digest,
+				Port:  8080,
+				Args:  []string{"--verbose"},
+			},
+		},
+	}
+	require.NoError(t, spec.FillSpecWithDefaults(m, spec.CurrentManifestVersion))
+
+	vals, err := MapSpecToChartValues(m, "production", nil)
+	require.NoError(t, err)
+	api := mustNestedMap(t, vals, "api")
+	image := mustNestedMap(t, api, "image")
+	assert.Equal(t, "ghcr.io/acme/shop", image["repository"])
+	assert.Equal(t, digest, image["digest"])
+	assert.NotContains(t, image, "tag")
+	assert.Equal(t, []string{"--verbose"}, api["args"])
 }
 
 // TestMapSpecToChartValues_Autoscaling maps enabled HPA settings into values.
@@ -1091,6 +1169,7 @@ func TestMapSpecToChartValues_WorkerStateless(t *testing.T) {
 	assert.Equal(t, 60, worker["terminationGracePeriodSeconds"])
 	assert.Nil(t, worker["startupProbe"])
 	assert.Nil(t, worker["readinessProbe"])
+	assert.Equal(t, []string{"sleep", "infinity"}, worker["command"])
 	resolved := mustNestedMap(t, mustNestedMap(t, mustNestedMap(t, values, "deployah"), "resolved"), "components")
 	assert.Equal(t, "worker", mustNestedMap(t, resolved, "worker")["role"])
 }

@@ -225,6 +225,28 @@ func TestPrepareRelease_DoesNotMutateHistory(t *testing.T) {
 	assert.Same(t, second, history[1])
 }
 
+func TestPrepareRelease_NewestWithoutStatus(t *testing.T) {
+	t.Parallel()
+
+	_, err := PrepareRelease([]*v1.Release{{
+		Version:     3,
+		ApplyMethod: applySSA,
+	}})
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "newest revision 3 has no status")
+	assert.NotErrorIs(t, err, ErrReleasePending)
+	assert.NotErrorIs(t, err, ErrNoDeployedRevision)
+}
+
+func TestPrepareReleaseFromHistory_RejectsUnsupportedReleaseType(t *testing.T) {
+	t.Parallel()
+
+	_, err := prepareReleaseFromHistory([]release.Releaser{struct{ Name string }{Name: "nope"}}, nil)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "failed to convert release history")
+	assert.ErrorContains(t, err, "unsupported helm release type")
+}
+
 func TestPrepareRelease_PendingIsWrappable(t *testing.T) {
 	t.Parallel()
 
