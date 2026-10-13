@@ -383,6 +383,49 @@ func TestSecretRedaction_OmitsPlaintext(t *testing.T) {
 	}
 }
 
+func TestSecretRedaction_HookDefinitionsUnchanged(t *testing.T) {
+	t.Parallel()
+	p := mustPlanWithTasks(t, semantic.HelmUpgrade, nil, []semantic.TaskPlan{{
+		Name:    "migrate",
+		Phase:   semantic.TaskPreDeploy,
+		Action:  semantic.TaskUpdate,
+		WillRun: true,
+		Definitions: []semantic.HookDefinition{
+			{
+				Resource: ref("Secret", "hook-secret"),
+				Action:   semantic.Update,
+				Before:   snap(secretObj("hook-secret", "old-pass", "old-tok")),
+				After:    snap(secretObj("hook-secret", "new-pass", "new-tok")),
+			},
+			{
+				Resource: semantic.ResourceRef{APIVersion: "v1", Kind: "Secret", Namespace: "prod", Name: "created"},
+				Action:   semantic.Create,
+				After:    snap(secretObj("created", "c-pass", "c-tok")),
+			},
+			{
+				Resource: semantic.ResourceRef{APIVersion: "v1", Kind: "Secret", Namespace: "prod", Name: "removed"},
+				Action:   semantic.Delete,
+				Before:   snap(secretObj("removed", "d-pass", "d-tok")),
+			},
+		},
+	}})
+	require.NoError(t, view.WriteHuman(&bytes.Buffer{}, p, view.Options{}))
+	require.NoError(t, view.WriteJSON(&bytes.Buffer{}, p, view.Options{}))
+	defs := p.Tasks[0].Definitions
+	require.Len(t, defs, 3)
+	require.Equal(t, "created", objectString(t, defs[0].After.Object, "metadata", "name"))
+	require.Equal(t, "c-pass", objectString(t, defs[0].After.Object, "stringData", "password"))
+	require.Equal(t, "c-tok", objectString(t, defs[0].After.Object, "data", "token"))
+	require.Equal(t, "hook-secret", objectString(t, defs[1].Before.Object, "metadata", "name"))
+	require.Equal(t, "old-pass", objectString(t, defs[1].Before.Object, "stringData", "password"))
+	require.Equal(t, "old-tok", objectString(t, defs[1].Before.Object, "data", "token"))
+	require.Equal(t, "new-pass", objectString(t, defs[1].After.Object, "stringData", "password"))
+	require.Equal(t, "new-tok", objectString(t, defs[1].After.Object, "data", "token"))
+	require.Equal(t, "removed", objectString(t, defs[2].Before.Object, "metadata", "name"))
+	require.Equal(t, "d-pass", objectString(t, defs[2].Before.Object, "stringData", "password"))
+	require.Equal(t, "d-tok", objectString(t, defs[2].Before.Object, "data", "token"))
+}
+
 func TestSecretRedaction_DriftDefaultAndShowSecrets(t *testing.T) {
 	t.Parallel()
 	p := secretDriftPlan(t)

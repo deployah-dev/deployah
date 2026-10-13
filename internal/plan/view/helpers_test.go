@@ -381,17 +381,20 @@ func assertJSONPaths(tb testing.TB, raw []byte, wants []jsonPathWant) {
 }
 
 // assertGolden is the primary golden contract: got must equal
-// testdata/golden/<name>.golden in full. A mismatch stops the test.
+// testdata/golden/<name>.golden in full. A mismatch stops the test
+// with "golden file %s is stale; run with -update to regenerate".
 // A normal run never skips the comparison. -update rewrites the file
 // from got, then the same equality still runs.
 func assertGolden(t *testing.T, name, got string) {
 	t.Helper()
-	require.Equal(t, string(readGolden(t, name, got)), got)
+	path, want := readGolden(t, name, got)
+	require.Equal(t, string(want), got, "golden file %s is stale; run with -update to regenerate", path)
 }
 
 func assertJSONGolden(t *testing.T, name, got string) {
 	t.Helper()
-	require.JSONEq(t, string(readGolden(t, name, got)), got)
+	path, want := readGolden(t, name, got)
+	require.JSONEq(t, string(want), got, "golden file %s is stale; run with -update to regenerate", path)
 }
 
 func compilePlanSchema(t *testing.T) *jsonschema.Schema {
@@ -412,7 +415,7 @@ func validatePlanSchema(t *testing.T, raw []byte) {
 	require.NoError(t, compilePlanSchema(t).Validate(v))
 }
 
-func readGolden(t *testing.T, name, got string) []byte {
+func readGolden(t *testing.T, name, got string) (string, []byte) {
 	t.Helper()
 	path := filepath.Clean(filepath.Join("testdata", "golden", name+".golden"))
 	if *update {
@@ -423,5 +426,5 @@ func readGolden(t *testing.T, name, got string) []byte {
 	if err != nil {
 		t.Fatalf("golden %s missing or unreadable: %v\n--- got ---\n%s", path, err, got)
 	}
-	return want
+	return path, want
 }
