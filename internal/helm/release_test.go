@@ -80,6 +80,7 @@ func TestListReleases_LatestManagedMatchesSelector(t *testing.T) {
 
 			got, err := c.ListReleases(t.Context(), selector)
 			require.NoError(t, err)
+			require.Len(t, got, len(tt.want))
 			byName := map[string]*v1.Release{}
 			for _, rel := range got {
 				require.NotNil(t, rel)
