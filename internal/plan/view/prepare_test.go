@@ -56,6 +56,93 @@ func TestPrepareRender_InvalidEnums(t *testing.T) {
 			}(),
 			wantErr: "invalid change 0 field 0 op",
 		},
+		{
+			name: "invalid drift action",
+			plan: semantic.Plan{
+				HelmAction: semantic.HelmNone,
+				Drift: []semantic.DriftChange{{
+					Resource: ref("ConfigMap", "app"),
+				}},
+			},
+			wantErr: "invalid drift 0 action",
+		},
+		{
+			name: "invalid drift field op",
+			plan: semantic.Plan{
+				HelmAction: semantic.HelmNone,
+				Drift: []semantic.DriftChange{{
+					Resource: ref("ConfigMap", "app"),
+					Action:   semantic.DriftModified,
+					Fields:   []semantic.FieldChange{{Path: "/data/key"}},
+				}},
+			},
+			wantErr: "invalid drift 0 field 0 op",
+		},
+		{
+			name: "invalid task phase",
+			plan: semantic.Plan{
+				HelmAction: semantic.HelmUpgrade,
+				Tasks: []semantic.TaskPlan{{
+					Name: "migrate",
+				}},
+			},
+			wantErr: "invalid task 0 phase",
+		},
+		{
+			name: "invalid task action",
+			plan: semantic.Plan{
+				HelmAction: semantic.HelmUpgrade,
+				Tasks: []semantic.TaskPlan{{
+					Name:  "migrate",
+					Phase: semantic.TaskPreDeploy,
+				}},
+			},
+			wantErr: "invalid task 0 action",
+		},
+		{
+			name: "invalid definition action",
+			plan: semantic.Plan{
+				HelmAction: semantic.HelmUpgrade,
+				Tasks: []semantic.TaskPlan{{
+					Name:   "migrate",
+					Phase:  semantic.TaskPreDeploy,
+					Action: semantic.TaskUpdate,
+					Definitions: []semantic.HookDefinition{{
+						Resource: ref("ConfigMap", "app"),
+					}},
+				}},
+			},
+			wantErr: "invalid task 0 definition 0 action",
+		},
+		{
+			name: "invalid definition field op",
+			plan: semantic.Plan{
+				HelmAction: semantic.HelmUpgrade,
+				Tasks: []semantic.TaskPlan{{
+					Name:   "migrate",
+					Phase:  semantic.TaskPreDeploy,
+					Action: semantic.TaskUpdate,
+					Definitions: []semantic.HookDefinition{{
+						Resource: ref("ConfigMap", "app"),
+						Action:   semantic.Update,
+						Fields:   []semantic.FieldChange{{Path: "/data/key"}},
+					}},
+				}},
+			},
+			wantErr: "invalid task 0 definition 0 field 0 op",
+		},
+		{
+			name: "invalid chart crd lifecycle",
+			plan: semantic.Plan{
+				HelmAction: semantic.HelmUpgrade,
+				ChartCRDs: []semantic.ChartCRD{{
+					Source: ".deployah/crds/widgets.yaml",
+					Kind:   "CustomResourceDefinition",
+					Name:   "widgets.example.com",
+				}},
+			},
+			wantErr: "invalid chart crd 0 lifecycle",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

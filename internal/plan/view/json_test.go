@@ -444,6 +444,9 @@ func TestWriteJSON_DriftSecretRedaction(t *testing.T) {
 			assertJSONAt(t, buf.Bytes(), tt.before, "drift", 0, "fields", 0, "before")
 			validatePlanSchema(t, buf.Bytes())
 			require.Equal(t, "b2xk", p.Drift[0].Fields[0].Before)
+			require.Equal(t, "old", objectString(t, p.Drift[0].Previous.Object, "stringData", "password"))
+			require.Equal(t, "bmV3", objectString(t, p.Drift[0].Live.Object, "data", "password"))
+			require.Equal(t, "c2VjcmV0", objectString(t, p.Drift[1].Live.Object, "data", "password"))
 		})
 	}
 }
