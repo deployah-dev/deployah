@@ -1,6 +1,6 @@
 module deployah.dev/deployah
 
-go 1.27.0
+go 1.27.2
 
 require (
 	cel.dev/cel-go v0.32.0
@@ -20,7 +20,7 @@ require (
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/spf13/cast v1.10.0
 	github.com/spf13/cobra v1.10.2
-	github.com/stern/stern v1.34.0
+	github.com/stern/stern v1.35.0
 	github.com/stretchr/testify v1.12.1
 	github.com/wI2L/jsondiff v0.7.1
 	go.yaml.in/yaml/v3 v3.0.5
