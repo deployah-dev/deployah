@@ -227,7 +227,7 @@ func (p *kindProvider) create(ctx context.Context, name string, cfg *createConfi
 		return func() {}, nil
 	case <-ctx.Done():
 		// Drain Kind's Create so delete does not race.
-		return func() { <-errCh }, ctx.Err() //nolint:nilnil
+		return func() { <-errCh }, ctx.Err() //nolint:errcheck,nilnil // drain after cancel; caller has ctx.Err()
 	}
 }
 
