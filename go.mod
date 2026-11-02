@@ -23,7 +23,7 @@ require (
 	github.com/stern/stern v1.35.0
 	github.com/stretchr/testify v1.12.1
 	github.com/wI2L/jsondiff v0.7.1
-	go.yaml.in/yaml/v3 v3.0.5
+	go.yaml.in/yaml/v3 v3.0.6
 	golang.org/x/sync v0.24.0
 	golang.org/x/term v0.47.0
 	gopherly.dev/currus v0.8.1
